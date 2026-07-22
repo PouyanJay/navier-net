@@ -1,0 +1,9 @@
+# Non-dimensionalisation. Lengths scale on the channel width, velocities on the
+# measured nose speed; the reference time L_ref/U_ref is derived from these two
+# in naviernet.physics (never entered by hand).
+
+defaults:
+  - base_scales
+
+L_ref_um: 300.0
+U_ref: 0.20 # m/s

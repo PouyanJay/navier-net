@@ -1,0 +1,41 @@
+# Root configuration. Compose with Hydra overrides, e.g.
+#
+#   naviernet stage=train training.steps=500
+#   naviernet stage=all dataset=highest_t run_name=sharper model.alpha_eps=0.03
+#   naviernet --multirun training.seed=0,1,2        # parallel sweep
+#
+# The composed, fully-resolved config for every run is written to
+# `outputs/<run_name>/.hydra/config.yaml`, so any result can be reproduced
+# exactly from the directory it landed in.
+
+defaults:
+  - base_config
+  - _self_
+  - experiment: highest_t
+  - fluid: fc72
+  - imaging: default
+  - scales: default
+  - model: stage_a
+  - training: stage_a
+
+# Raw dataset to read from `data/raw/<dataset>/`.
+dataset: highest_t
+
+# Output directory name under `outputs/`. Defaults to the dataset name; give it
+# its own value to keep an experiment's results beside, not on top of, another.
+run_name: ${dataset}
+
+# One of: preprocess, train, evaluate, figures, video, all
+stage: all
+
+hydra:
+  # Hydra's own run directory *is* the run's output directory, so config
+  # snapshots and logs land next to the checkpoints and figures they produced.
+  run:
+    dir: ${paths.output_dir}
+  sweep:
+    dir: ${paths.root}/outputs/multirun/${run_name}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    # Never chdir: relative paths mean the same thing everywhere.
+    chdir: false

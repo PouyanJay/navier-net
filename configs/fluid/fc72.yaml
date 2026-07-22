@@ -1,0 +1,22 @@
+# FC-72 saturated properties at T_sat = 56.6 C, 1 atm.
+# Source: 3M product datasheet, cross-checked against Mudawar et al.
+
+defaults:
+  - base_fluid
+
+name: FC-72
+
+rho_l: 1601.6 # kg/m^3
+rho_v: 13.39
+
+mu_l: 4.46e-4 # Pa.s
+mu_v: 1.20e-5
+
+k_l: 0.0522 # W/m/K
+k_v: 0.0124
+
+cp_l: 1101.5 # J/kg/K
+cp_v: 885.0
+
+sigma: 8.35e-3 # N/m
+h_lv: 84.5e3 # J/kg
