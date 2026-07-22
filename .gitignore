@@ -216,3 +216,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# naviernet: data and run outputs
+# ---------------------------------------------------------------------------
+# Raw experimental frames. Large binary inputs -- distributed alongside the
+# repository, not inside it. Drop a dataset into data/raw/<name>/ as 1.tif,
+# 2.tif, ... and point `dataset=<name>` at it.
+/data/raw/**
+!/data/raw/**/
+!/data/raw/**/.gitkeep
+!/data/raw/**/README.md
+
+# Preprocessed tensors and the QC figure. Fully regenerable:
+#   naviernet stage=preprocess
+/data/processed/**
+!/data/processed/**/
+!/data/processed/**/.gitkeep
+
+# Everything a run produces -- checkpoints, metrics, figures, video, and
+# Hydra's config snapshot. Fully regenerable: naviernet stage=all
+/outputs/*
+!/outputs/.gitkeep
+
+# macOS
+.DS_Store
