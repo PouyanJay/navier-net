@@ -1,0 +1,31 @@
+# Highest-wall-temperature FC-72 dataset: one confined bubble imaged from
+# nucleation through to field-of-view exit.
+#
+# A 0.3 V pulse near the inlet triggers nucleation at a wall cavity; its effect
+# is absorbed into the frame-1 initial condition rather than modelled directly.
+
+defaults:
+  - base_experiment
+
+name: highest_t
+fluid: FC-72
+
+T_sat_C: 56.6 # saturation at 1 atm
+q_wall_W_cm2: 2.0
+flow_rate_mL_hr: 5.0
+
+channel_width_um: 300.0
+channel_height_um: 150.0
+
+dt_frame_ms: 0.5
+flow_direction: right_to_left # as seen in the raw camera frames
+
+n_frames_raw: 12 # 1.tif ... 12.tif
+n_frames_usable: 11 # frame 11 is FOV-truncated but still informative
+n_frames_event: 10 # frames 1-10 are one continuous growth event
+
+notes: >-
+  Frame 11 is truncated by the field-of-view edge (masked via
+  imaging.truncated_cols); frame 12 belongs to the next ebullition cycle and is
+  excluded. Inlet temperature is uncertain (~55 C at the ceiling) and is treated
+  as an inverse unknown in Stage B.

@@ -1,0 +1,30 @@
+# Stage A optimisation: alpha supervision + VOF transport + continuity with an
+# inferred dilatation source, with gradient-norm loss rebalancing.
+
+defaults:
+  - base_training
+
+steps: 1500
+lr: 2.0e-3
+lr_halflife: 800
+
+n_data: 3072
+n_coll: 3072
+n_bc: 512
+
+# Frame 6 (0-based index 5) is never supervised; its IoU is the headline
+# generalisation number. Set to -1 to train on every frame.
+holdout_frame: 5
+
+weights:
+  data: 10.0
+  vof: 1.0
+  div: 1.0
+  src: 0.1 # penalises source terms away from the interface
+  bc: 5.0
+
+rebalance_every: 500
+
+seed: 0
+device: cpu
+log_every: 200

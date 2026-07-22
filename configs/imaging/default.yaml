@@ -1,0 +1,19 @@
+# Segmentation parameters for the high-speed camera frames.
+#
+# The channel walls appear as the two darkest horizontal lines in the search
+# band; their separation is a known 300 um, which calibrates um/px directly
+# from the images with no external scale bar.
+
+defaults:
+  - base_imaging
+
+wall_search_rows: [300, 700]
+
+wall_margin_top: 3
+wall_margin_bottom: 2
+
+dark_thresh: 100 # bubble ring and other dark structure
+open_kernel: 9 # large enough to erase the thin heater traces
+close_kernel: 7 # seals gaps in the bubble's dark ring
+
+truncated_cols: 60 # FOV-cut safety band on the final usable frame

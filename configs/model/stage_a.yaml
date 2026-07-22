@@ -1,0 +1,20 @@
+# Stage A architecture: separate Fourier-feature MLPs for the level-set field
+# phi (which yields alpha), the two velocity components, and the inferred
+# dilatation source s.
+#
+# Stage B adds pressure and temperature by appending "p" and "T" to `fields`
+# and enabling the corresponding residuals -- no change to Stage-A code paths.
+
+defaults:
+  - base_model
+
+hidden: 96
+layers: 4
+
+fourier_feats: 64
+fourier_scale: 3.0 # std-dev of the Gaussian frequency matrix
+
+alpha_eps: 0.05 # interface half-thickness (non-dimensional)
+nodewise_activation: true # per-neuron adaptive tanh slopes
+
+fields: [phi, u, v, s]
