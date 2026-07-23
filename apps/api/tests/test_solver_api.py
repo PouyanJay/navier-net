@@ -78,3 +78,105 @@ def test_launch_trains_evaluates_and_streams(client: TestClient, repo_root: Path
     detail = client.get(f"/api/runs/{run_id}").json()
     assert detail["steps"] == 2
     assert detail["config"]["training"]["steps"] == 2
+
+
+def test_resume_continues_from_the_checkpoint(client: TestClient, repo_root: Path):
+    """Resuming an API-launched run adds steps onto its existing checkpoint."""
+    run_id = client.post("/api/runs", json=TINY_RUN).json()["run_id"]
+    read_stream(client, run_id)  # drain = wait for completion
+
+    response = client.post(
+        "/api/runs", json={"resume": True, "run_id": run_id, "steps": 2, "render": False}
+    )
+    assert response.status_code == 202
+    resumed = response.json()
+    assert resumed["run_id"] == run_id
+    assert resumed["dataset"] == "highest_t"
+
+    events = read_stream(client, run_id)
+    final = [e["data"] for e in events if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"resume failed: {final.get('message')}"
+    # 2 original + 2 resumed steps, visible in the status and the checkpoint.
+    assert final["steps_total"] == 4
+    assert client.get(f"/api/runs/{run_id}").json()["steps"] == 4
+    # The resumed session picked up training where the checkpoint left off.
+    lines = [e["data"]["line"] for e in events if e["event"] == "log"]
+    assert any("resuming run" in line for line in lines)
+    assert any("training steps 3-4" in line for line in lines)
+
+
+def test_launch_is_rejected_while_a_run_is_active(client: TestClient, monkeypatch):
+    """One training run at a time: a second launch is refused with 409."""
+    import threading
+
+    from naviernet_api.services import run_manager
+
+    release = threading.Event()
+
+    def slow_worker(settings, run_id, dataset, request):
+        release.wait(5)
+        with run_manager._lock:
+            run_manager._jobs[run_id].state = "done"
+
+    monkeypatch.setattr(run_manager, "_worker", slow_worker)
+    first = client.post("/api/runs", json=TINY_RUN)
+    assert first.status_code == 202
+
+    second = client.post("/api/runs", json=TINY_RUN)
+    assert second.status_code == 409
+    assert "already in progress" in second.json()["detail"]
+
+    active = client.get("/api/runs/active").json()
+    assert active is not None and active["run_id"] == first.json()["run_id"]
+    release.set()
+
+
+def test_a_failing_run_reports_error_over_the_stream(client: TestClient, repo_root: Path):
+    """A worker failure surfaces as state=error with a message, not a hang."""
+    broken = repo_root / "data" / "processed" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "tensors.npz").write_bytes(b"not an archive")
+
+    run_id = client.post("/api/runs", json={**TINY_RUN, "dataset": "broken"}).json()["run_id"]
+    events = read_stream(client, run_id)
+    final = [e["data"] for e in events if e["event"] == "status"][-1]
+    assert final["state"] == "error"
+    assert final["message"]
+    assert client.get(f"/api/runs/{run_id}/status").json()["state"] == "error"
+
+
+def test_launch_rejections(client: TestClient):
+    """Bounds and preconditions reject bad requests with the right status."""
+    bad = [
+        ({**TINY_RUN, "steps": 0}, 422),  # below range
+        ({**TINY_RUN, "steps": 100_000}, 422),  # above range
+        ({**TINY_RUN, "lr": 0}, 422),  # lr must be > 0
+        ({**TINY_RUN, "weights": {"data": -1}}, 422),  # negative weight
+        ({**TINY_RUN, "dataset": None}, 422),  # new run needs a dataset
+        ({"resume": True, "steps": 2}, 422),  # resume needs a run_id
+        ({**TINY_RUN, "dataset": "../evil"}, 404),  # traversal-shaped id
+        ({**TINY_RUN, "dataset": "sample"}, 409),  # exists but not preprocessed
+        ({"resume": True, "run_id": "no-such-run", "steps": 2}, 409),  # nothing to resume
+        ({"resume": True, "run_id": "scratch", "steps": 2}, 409),  # run with no checkpoint
+    ]
+    for payload, expected in bad:
+        response = client.post("/api/runs", json=payload)
+        assert response.status_code == expected, f"{payload} -> {response.status_code}"
+
+
+def test_stream_and_status_unknown_run(client: TestClient):
+    """Streams and statuses exist only for runs this server launched."""
+    assert client.get("/api/runs/no-such-run/status").status_code == 404
+    assert client.get("/api/runs/no-such-run/stream").status_code == 404
+    assert client.get("/api/runs/active").json() is None
+
+
+def test_stream_replays_fully_after_the_run_finished(client: TestClient):
+    """A late subscriber still gets the whole story (events are replayed)."""
+    run_id = client.post("/api/runs", json=TINY_RUN).json()["run_id"]
+    read_stream(client, run_id)  # first reader drains to completion
+
+    events = read_stream(client, run_id)  # late join: full replay, then EOF
+    names = {event["event"] for event in events}
+    assert {"status", "hist", "log"} <= names
+    assert [e["data"] for e in events if e["event"] == "status"][-1]["state"] == "done"
