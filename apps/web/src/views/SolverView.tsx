@@ -3,8 +3,9 @@ import { useCallback, useMemo, useState } from "react";
 import { Button, Chip, Console, LossChart, Panel, StatusDot, ViewCanvas } from "../components";
 import type { RunJobStatus } from "../lib/api";
 import { LossWeightsPanel, RunConfigPanel } from "./solver/ConfigPanels";
-import { FORM_DEFAULTS, toLaunchRequest, type SolverFormState } from "./solver/form";
+import { FORM_DEFAULTS, parseSeeds, toLaunchRequest, type SolverFormState } from "./solver/form";
 import { MonitorPanel } from "./solver/MonitorPanel";
+import { SweepPanel } from "./solver/SweepPanel";
 import { useRunTargets } from "./solver/useRunTargets";
 import { useSolverRun } from "./solver/useSolverRun";
 import "./solver/solver.css";
@@ -21,6 +22,7 @@ interface DotState {
 
 function statusDot(status: RunJobStatus | null): DotState {
   if (!status) return { tone: "default", label: "idle" };
+  if (status.state === "queued") return { tone: "default", label: "queued" };
   if (status.state === "running")
     return { tone: "accent", label: `running · ${status.stage ?? "train"}` };
   if (status.state === "done") return { tone: "green", label: "done" };
@@ -30,6 +32,8 @@ function statusDot(status: RunJobStatus | null): DotState {
 /** The Solver: configure a run on the left, watch it live on the right. */
 export function SolverView({ onRunState }: SolverViewProps) {
   const [form, setForm] = useState<SolverFormState>(FORM_DEFAULTS);
+  const [sweepMode, setSweepMode] = useState(false);
+  const [seedsText, setSeedsText] = useState("0, 1, 2");
   const targets = useRunTargets();
   const run = useSolverRun(onRunState, targets.refreshRuns);
 
@@ -38,12 +42,19 @@ export function SolverView({ onRunState }: SolverViewProps) {
     [],
   );
 
+  const seeds = useMemo(() => parseSeeds(seedsText), [seedsText]);
+
   const submit = useCallback(() => {
     const { resume, resumeRunId, dataset } = targets;
+    if (sweepMode) {
+      if (!dataset || !seeds) return;
+      void run.startSweep({ ...toLaunchRequest(form, { dataset }), seeds });
+      return;
+    }
     if ((resume && !resumeRunId) || (!resume && !dataset)) return;
     const target = resume ? { resumeRunId } : { dataset };
     void run.start(toLaunchRequest(form, target));
-  }, [run, form, targets]);
+  }, [run, form, targets, sweepMode, seeds]);
 
   const rebalanceSteps = useMemo(() => {
     if (run.hist.length === 0) return [];
@@ -55,8 +66,8 @@ export function SolverView({ onRunState }: SolverViewProps) {
 
   const dot = statusDot(run.status);
   const latest = run.hist.length > 0 ? run.hist[run.hist.length - 1] : null;
-  const canRun =
-    !run.running && (targets.resume ? targets.resumeRunId !== "" : targets.dataset !== "");
+  const targetReady = targets.resume ? targets.resumeRunId !== "" : targets.dataset !== "";
+  const canRun = !run.running && targetReady && (!sweepMode || seeds !== null);
   const noDatasets = targets.datasets !== null && targets.datasets.length === 0;
 
   return (
@@ -106,6 +117,14 @@ export function SolverView({ onRunState }: SolverViewProps) {
             resumableRuns={targets.resumableRuns}
             resumeRunId={targets.resumeRunId}
             onResumeRunId={targets.setResumeRunId}
+            sweepMode={sweepMode}
+            onSweepMode={(on) => {
+              setSweepMode(on);
+              if (on) targets.setResume(false);
+            }}
+            seedsText={seedsText}
+            onSeedsText={setSeedsText}
+            seedsValid={seeds !== null}
             locked={run.running}
           />
           <LossWeightsPanel
@@ -116,6 +135,7 @@ export function SolverView({ onRunState }: SolverViewProps) {
           />
         </div>
         <div className="solver-col">
+          {run.sweep && <SweepPanel sweep={run.sweep} />}
           <MonitorPanel status={run.status} latest={latest} holdoutIou={run.holdoutIou} />
           <Panel title="Loss history" subtitle="log₁₀ · rebalance markers">
             <ViewCanvas>

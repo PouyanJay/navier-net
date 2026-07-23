@@ -68,3 +68,21 @@
   font-size: 12px;
   text-align: center;
 }
+
+/* Sweep overview: status + one chip per child. */
+.sweep-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+.sweep-chips {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+/* Invalid free-text input (e.g. an unparseable seed list). */
+.ug:has(input[aria-invalid]) {
+  border-color: var(--red);
+}

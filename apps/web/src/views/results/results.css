@@ -94,3 +94,63 @@
 .figure-grid figure {
   margin: 0;
 }
+
+/* Run comparison */
+.compare-picker {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s4);
+}
+.compare-choice {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: var(--s1) var(--s3);
+  border-radius: var(--rs);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink2);
+  cursor: pointer;
+}
+.compare-choice:hover {
+  border-color: var(--acc2);
+}
+.compare-choice[aria-pressed="true"] {
+  background: var(--accsoft);
+  color: var(--ink);
+  border-color: var(--acc);
+}
+.compare-choice[data-series="1"][aria-pressed="true"] {
+  border-color: var(--green);
+}
+.compare-choice[data-series="2"][aria-pressed="true"] {
+  border-color: var(--purple);
+}
+.compare-choice[data-series="3"][aria-pressed="true"] {
+  border-color: var(--amber);
+}
+.compare-grids {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+}
+.compare-chart-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-bottom: var(--s3);
+}
+.compare-chart-head .fld {
+  max-width: 260px;
+}
+.compare-h {
+  margin: 0 0 var(--s3);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.compare-chart-head .compare-h {
+  margin-bottom: 0;
+}

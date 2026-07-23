@@ -65,3 +65,16 @@ export function toLaunchRequest(
   }
   return { ...base, dataset: target.dataset };
 }
+
+/** Seeds a sweep may run: 1-6 unique non-negative integers. */
+export const SWEEP_SEED_LIMIT = 6;
+
+/** Parse a comma/space-separated seed list; null when invalid. */
+export function parseSeeds(text: string): number[] | null {
+  const parts = text.split(/[\s,]+/).filter((part) => part !== "");
+  if (parts.length === 0 || parts.length > SWEEP_SEED_LIMIT) return null;
+  const seeds = parts.map(Number);
+  if (seeds.some((seed) => !Number.isInteger(seed) || seed < 0)) return null;
+  if (new Set(seeds).size !== seeds.length) return null;
+  return seeds;
+}

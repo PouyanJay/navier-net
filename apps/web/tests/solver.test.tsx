@@ -176,6 +176,82 @@ describe("SolverView", () => {
   });
 });
 
+describe("SolverView sweep mode", () => {
+  it("launches a sweep with parsed seeds and shows the child chips", async () => {
+    const posts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
+        const path = String(url);
+        if (options?.method === "POST" && path.endsWith("/api/sweeps")) {
+          posts.push(JSON.parse(String(options.body)));
+          return json({
+            sweep_id: "sweep-test",
+            dataset: "highest_t",
+            state: "running",
+            message: null,
+            seeds: [3, 4],
+            children: [
+              { run_id: "sweep-test-s3", dataset: "highest_t", state: "queued", stage: null, message: null, steps_done: 0, steps_total: 0 },
+              { run_id: "sweep-test-s4", dataset: "highest_t", state: "queued", stage: null, message: null, steps_done: 0, steps_total: 0 },
+            ],
+          });
+        }
+        if (path.endsWith("/api/datasets")) return json(DATASETS);
+        if (path.endsWith("/api/sweeps/active")) return json(null);
+        if (path.endsWith("/api/runs/active")) return json(null);
+        if (path.endsWith("/api/sweeps/sweep-test")) {
+          return json({
+            sweep_id: "sweep-test",
+            dataset: "highest_t",
+            state: "running",
+            message: null,
+            seeds: [3, 4],
+            children: [
+              { run_id: "sweep-test-s3", dataset: "highest_t", state: "running", stage: "train", message: null, steps_done: 0, steps_total: 40 },
+              { run_id: "sweep-test-s4", dataset: "highest_t", state: "queued", stage: null, message: null, steps_done: 0, steps_total: 0 },
+            ],
+          });
+        }
+        if (path.endsWith("/api/runs")) return json(TRAINED_RUNS);
+        return json({ detail: "not found" }, 404);
+      }),
+    );
+
+    render(<SolverView />);
+    await screen.findByLabelText("Dataset");
+    fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
+    fireEvent.change(screen.getByLabelText(/Seeds/), { target: { value: "3, 4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.seeds).toEqual([3, 4]);
+    expect(body.dataset).toBe("highest_t");
+    expect(body.resume).toBeUndefined();
+
+    // The sweep panel lists both children (queued until each starts).
+    expect(await screen.findByText("Seed sweep", { selector: "h2" })).toBeInTheDocument();
+    expect(screen.getByText(/seed 3/)).toBeInTheDocument();
+    expect(screen.getByText(/seed 4/)).toBeInTheDocument();
+    // The running child gets streamed once polling notices it.
+    await waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0), {
+      timeout: 3000,
+    });
+    expect(FakeEventSource.instances[0].url).toContain("/api/runs/sweep-test-s3/stream");
+  });
+
+  it("rejects an unparseable seed list by disabling Run", async () => {
+    stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("Dataset");
+    fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
+    fireEvent.change(screen.getByLabelText(/Seeds/), { target: { value: "1, 1, x" } });
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(screen.getByLabelText(/Seeds/)).toHaveAttribute("aria-invalid", "true");
+  });
+});
+
 describe("solver components", () => {
   it("Console renders tones and stays a live region", () => {
     const { container } = render(

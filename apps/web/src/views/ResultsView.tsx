@@ -1,6 +1,7 @@
 import { Chip, StatusDot } from "../components";
 import type { RunDetail, RunSummary } from "../lib/api";
 import { AgreementPerFrame } from "./results/AgreementPerFrame";
+import { ComparePanel } from "./results/ComparePanel";
 import { Deliverables } from "./results/Deliverables";
 import { PhysicsValidationPanel } from "./results/PhysicsValidation";
 import { useResultsData } from "./results/useResultsData";
@@ -47,6 +48,9 @@ export function ResultsView() {
           <PhysicsValidationPanel validation={detail.validation} />
           <Deliverables runId={detail.detail.id} artifacts={detail.detail.artifacts} />
         </>
+      )}
+      {runs.runs.filter((run) => run.status === "trained").length >= 2 && (
+        <ComparePanel candidates={runs.runs.filter((run) => run.status === "trained")} />
       )}
     </div>
   );

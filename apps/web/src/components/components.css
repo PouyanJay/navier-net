@@ -475,3 +475,71 @@
   stroke: var(--viewline);
   stroke-dasharray: 2 3;
 }
+
+/* Comparison series colors (up to four runs side by side) */
+.chart-line.series-0 {
+  stroke: var(--acc);
+}
+.chart-line.series-1 {
+  stroke: var(--green);
+}
+.chart-line.series-2 {
+  stroke: var(--purple);
+}
+.chart-line.series-3 {
+  stroke: var(--amber);
+}
+
+/* Pointer crosshair + tooltip on interactive charts (dark canvas) */
+.chart-wrap {
+  position: relative;
+}
+.chart-hover-capture {
+  fill: transparent;
+  cursor: crosshair;
+}
+.chart-cursor {
+  stroke: var(--sidetxt);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--view2);
+  border: 1px solid var(--viewline);
+  border-radius: var(--rs);
+  padding: var(--s2) var(--s3);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--sidetxt);
+  white-space: nowrap;
+  z-index: 2;
+}
+.chart-tip .tip-x {
+  color: var(--sidehl);
+  margin-bottom: 2px;
+}
+.chart-tip .tip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.chart-tip .tip-swatch {
+  width: 10px;
+  height: 3px;
+  display: inline-block;
+}
+.chart-tip .tip-swatch.series-0 {
+  background: var(--acc);
+}
+.chart-tip .tip-swatch.series-1 {
+  background: var(--green);
+}
+.chart-tip .tip-swatch.series-2 {
+  background: var(--purple);
+}
+.chart-tip .tip-swatch.series-3 {
+  background: var(--amber);
+}

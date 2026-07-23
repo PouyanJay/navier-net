@@ -125,11 +125,25 @@ export interface RunLaunchRequest {
 export interface RunJobStatus {
   run_id: string;
   dataset: string | null;
-  state: "running" | "done" | "error";
+  state: "queued" | "running" | "done" | "error";
   stage: string | null;
   message: string | null;
   steps_done: number;
   steps_total: number;
+}
+
+/** A request to run the same configuration across several seeds. */
+export interface SweepLaunchRequest extends RunLaunchRequest {
+  seeds: number[];
+}
+
+export interface SweepStatus {
+  sweep_id: string;
+  dataset: string;
+  state: "running" | "done" | "error";
+  message: string | null;
+  seeds: number[];
+  children: RunJobStatus[];
 }
 
 /** One per-log-step loss record, streamed live over SSE (`hist` events). */
@@ -191,6 +205,12 @@ export const api = {
     sendJson<RunJobStatus>("/api/runs", "POST", request),
   getRunStatus: (id: string) => getJson<RunJobStatus>(`${runPath(id)}/status`),
   getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
+  getLossHistory: (id: string) => getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
+
+  startSweep: (request: SweepLaunchRequest) =>
+    sendJson<SweepStatus>("/api/sweeps", "POST", request),
+  getSweep: (id: string) => getJson<SweepStatus>(`/api/sweeps/${encodeURIComponent(id)}`),
+  getActiveSweep: () => getJson<SweepStatus | null>("/api/sweeps/active"),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),
