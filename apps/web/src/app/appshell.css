@@ -84,6 +84,10 @@
 }
 .pagehead {
   margin-bottom: var(--s5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s5);
 }
 .pagehead h1 {
   margin: 0 0 var(--s1);
@@ -99,6 +103,38 @@
   display: flex;
   flex-direction: column;
   gap: var(--s5);
+}
+
+/* Training pill: visible while a run is in flight; clicking opens the Solver. */
+.runpill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s3);
+  border-radius: 999px;
+  border: 1px solid var(--acc);
+  background: var(--accsoft);
+  color: var(--acc);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.runpill .pdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--acc);
+  animation: runpill-pulse 1.2s ease-in-out infinite;
+}
+.runpill .mono {
+  font-weight: 500;
+}
+@keyframes runpill-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 @media (max-width: 720px) {
