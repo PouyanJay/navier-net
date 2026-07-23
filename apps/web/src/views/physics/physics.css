@@ -1,0 +1,11 @@
+.prose {
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink2);
+  max-width: 70ch;
+  margin: 0 0 var(--s3);
+}
+.prose em {
+  font-style: italic;
+}

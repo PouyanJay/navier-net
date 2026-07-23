@@ -43,6 +43,16 @@ test("datasets view shows operating conditions and live dimensionless groups", a
   ).toBeVisible();
 });
 
+test("physics & model view shows equations and the live topology", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Physics & model" }).click();
+
+  await expect(page.getByRole("heading", { name: "Governing equations" })).toBeVisible();
+  await expect(page.locator(".katex").first()).toBeVisible(); // KaTeX rendered
+  await expect(page.getByRole("heading", { name: "Model topology — live" })).toBeVisible();
+  await expect(page.getByText("phi, u, v, s")).toBeVisible(); // architecture fields
+});
+
 test("theme toggle flips the document theme", async ({ page }) => {
   await page.goto("/");
   const html = page.locator("html");

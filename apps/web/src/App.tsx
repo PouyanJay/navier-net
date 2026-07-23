@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { AppShell, NAV_ITEMS } from "./app/AppShell";
 import { DatasetsView } from "./views/DatasetsView";
+import { PhysicsModelView } from "./views/PhysicsModelView";
 import { Placeholder } from "./views/Placeholder";
 import { ProjectsView } from "./views/ProjectsView";
 import { ResultsView } from "./views/ResultsView";
@@ -15,6 +16,8 @@ const PAGE_INTRO: Record<string, string> = {
     "Each imaged dataset is a project. Open one to inspect its conditions, upload frames, and preprocess.",
   datasets:
     "Operating conditions, derived dimensionless groups, the raw image sequence, and calibration/segmentation.",
+  physics:
+    "The governing equations the network is constrained by, and the live architecture of the field ensemble.",
   results:
     "Solver runs and their validation against the measured bubble. Every number is read live from the pipeline's own artifacts.",
 };
@@ -38,9 +41,8 @@ export function App() {
         {active === "results" && <ResultsView />}
         {active === "projects" && <ProjectsView onOpen={openDataset} />}
         {active === "datasets" && <DatasetsView datasetId={datasetId} />}
-        {active !== "results" && active !== "projects" && active !== "datasets" && (
-          <Placeholder title={PAGE_TITLE[active]} />
-        )}
+        {active === "physics" && <PhysicsModelView />}
+        {active === "solver" && <Placeholder title={PAGE_TITLE[active]} />}
       </div>
     </AppShell>
   );

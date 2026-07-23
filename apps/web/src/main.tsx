@@ -10,6 +10,7 @@ import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/jetbrains-mono/600.css";
 import "@fontsource/crimson-pro/500.css";
 import "@fontsource/crimson-pro/600.css";
+import "katex/dist/katex.min.css";
 
 import "./tokens.css";
 import { App } from "./App";
