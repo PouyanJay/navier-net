@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -32,16 +32,47 @@ jobs:
           # CPU-only torch: the CUDA build is a gigabyte and CI has no GPU.
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev]"
+          # The platform API and its FastAPI stack (its tests are in testpaths).
+          pip install -e "apps/api[dev]"
 
       - name: Lint
         run: |
-          ruff check src tests
-          ruff format --check src tests
+          ruff check src tests apps/api
+          ruff format --check src tests apps/api
 
       - name: Test
         # The raw dataset is not in the repository, so data-dependent tests
-        # skip here; everything else runs.
+        # skip here; everything else runs (core solver + API).
         run: pytest -m "not needs_data" --cov --cov-report=term-missing
 
       - name: Config composes
         run: naviernet --cfg job --resolve
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

@@ -1,0 +1,163 @@
+/* Shared component styles. Every value is a token from tokens.css. */
+
+/* Panel / card */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--sh);
+}
+.card > .hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  border-bottom: 1px solid var(--line2);
+}
+.card > .hd h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.card > .hd .sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink3);
+}
+.card > .body {
+  padding: var(--s5);
+}
+
+/* Stat */
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.stat .lbl {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.stat .val {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.1;
+}
+.stat .val .unit {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink2);
+  margin-left: var(--s1);
+}
+.stat[data-tone="green"] .val {
+  color: var(--green);
+}
+.stat[data-tone="amber"] .val {
+  color: var(--amber);
+}
+.stat[data-tone="red"] .val {
+  color: var(--red);
+}
+.stat .hint {
+  font-size: 11px;
+  color: var(--ink3);
+}
+
+/* Chip */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: 2px var(--s2);
+  border-radius: var(--rs);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--panel2);
+  color: var(--ink2);
+  border: 1px solid var(--line);
+}
+.chip[data-tone="accent"] {
+  background: var(--accsoft);
+  color: var(--acc);
+  border-color: transparent;
+}
+.chip[data-tone="green"] {
+  background: var(--greensoft);
+  color: var(--green);
+  border-color: transparent;
+}
+.chip[data-tone="amber"] {
+  background: var(--ambersoft);
+  color: var(--amber);
+  border-color: transparent;
+}
+.chip[data-tone="red"] {
+  background: var(--redsoft);
+  color: var(--red);
+  border-color: transparent;
+}
+
+/* Status dot + label */
+.dot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 12px;
+  color: var(--ink2);
+}
+.dot::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink3);
+}
+.dot[data-tone="green"]::before {
+  background: var(--green);
+}
+.dot[data-tone="amber"]::before {
+  background: var(--amber);
+}
+.dot[data-tone="red"]::before {
+  background: var(--red);
+}
+.dot[data-tone="accent"]::before {
+  background: var(--acc);
+}
+
+/* Button */
+.btn {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  padding: var(--s2) var(--s4);
+  border-radius: var(--rs);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.btn:hover {
+  background: var(--panel2);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn.primary {
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+}
+.btn.primary:hover {
+  background: var(--acc2);
+  border-color: var(--acc2);
+}

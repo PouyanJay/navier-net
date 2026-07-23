@@ -1,0 +1,32 @@
+.runlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.runrow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--s5);
+  padding: var(--s4) var(--s5);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.runrow .id {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+.runrow .meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s1);
+}
+.state-note {
+  color: var(--ink2);
+}
+.state-note.error {
+  color: var(--red);
+}

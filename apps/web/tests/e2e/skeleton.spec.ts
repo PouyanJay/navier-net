@@ -1,0 +1,29 @@
+import { expect, test } from "@playwright/test";
+
+/**
+ * Walking-skeleton round trip: the browser loads the app, the app calls the real
+ * API, and the API's real run (from outputs/) appears on the page. This proves
+ * every layer is wired together.
+ */
+test("renders the shell and a real run from the API", async ({ page }) => {
+  await page.goto("/");
+
+  // Shell
+  await expect(page.getByText("NavierNet")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Results & validation" })).toBeVisible();
+
+  // A real trained run, read end-to-end from outputs/ via the API.
+  await expect(page.getByText("highest_t").first()).toBeVisible();
+  await expect(page.getByText("trained").first()).toBeVisible();
+});
+
+test("theme toggle flips the document theme", async ({ page }) => {
+  await page.goto("/");
+  const html = page.locator("html");
+  const before = await html.getAttribute("data-theme");
+
+  await page.getByRole("button", { name: /Switch to (light|dark) theme/ }).click();
+
+  const after = await html.getAttribute("data-theme");
+  expect(after).not.toBe(before);
+});

@@ -14,8 +14,10 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to the repo root: these are Python packaging dirs. Unanchored, `lib/`
+# also matched apps/web/src/lib/ and silently dropped the web API client.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -238,6 +240,23 @@ __marimo__/
 # Hydra's config snapshot. Fully regenerable: naviernet stage=all
 /outputs/*
 !/outputs/.gitkeep
+
+# Claude Code local config, skills, agents, references, plans, and the UI mockup
+# (developer tooling / design assets — not part of the shipped package)
+.claude/
+
+# journey skill tracking files (feature requirements/implementation state)
+.memory/
+
+# ---------------------------------------------------------------------------
+# Web platform (apps/web) — product code is tracked; deps and build output not
+# ---------------------------------------------------------------------------
+node_modules/
+apps/web/dist/
+apps/web/coverage/
+apps/web/playwright-report/
+apps/web/test-results/
+apps/web/.vite/
 
 # macOS
 .DS_Store
