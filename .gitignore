@@ -14,8 +14,10 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to the repo root: these are Python packaging dirs. Unanchored, `lib/`
+# also matched apps/web/src/lib/ and silently dropped the web API client.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
