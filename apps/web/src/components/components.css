@@ -257,3 +257,38 @@
   stroke: var(--viewline);
   stroke-width: 1;
 }
+
+/* Model topology (on the dark view canvas) */
+.topo-node {
+  fill: var(--acc);
+  stroke: var(--view2);
+  stroke-width: 1;
+}
+.topo-node.field {
+  fill: var(--amber);
+}
+.topo-edges line {
+  stroke: var(--viewline);
+  stroke-width: 1;
+}
+.topo-node-label {
+  fill: var(--view);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+}
+.topo-axis {
+  fill: var(--sidetxt);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* Equation block (KaTeX renders its own math font; give it room) */
+.eq {
+  margin: var(--s3) 0;
+  overflow-x: auto;
+  color: var(--ink);
+}
+.eq .katex {
+  font-size: 1.05em;
+}

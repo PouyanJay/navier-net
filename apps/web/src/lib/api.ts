@@ -85,6 +85,16 @@ export interface PreprocessStatus {
   has_qc: boolean;
 }
 
+export interface ModelArchitecture {
+  fields: string[];
+  hidden: number;
+  layers: number;
+  fourier_feats: number;
+  fourier_scale: number;
+  alpha_eps: number;
+  nodewise_activation: boolean;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -128,6 +138,8 @@ export const api = {
     for (const file of Array.from(files)) form.append("files", file);
     return send<DatasetSummary>(`${datasetPath(id)}/upload`, "POST", form);
   },
+
+  getModel: (id: string) => getJson<ModelArchitecture>(`/api/model/${encodeURIComponent(id)}`),
 };
 
 /** Direct artifact URLs (used as href / img src / video src, not fetched as JSON). */

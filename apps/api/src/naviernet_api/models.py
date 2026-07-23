@@ -87,6 +87,18 @@ class PreprocessStatus(BaseModel):
     has_qc: bool = False
 
 
+class ModelArchitecture(BaseModel):
+    """The PINN field-ensemble architecture (from the model config)."""
+
+    fields: list[str]
+    hidden: int
+    layers: int
+    fourier_feats: int
+    fourier_scale: float
+    alpha_eps: float
+    nodewise_activation: bool
+
+
 class PhysicsValidation(BaseModel):
     """The physics-validation summary the Results view shows.
 
