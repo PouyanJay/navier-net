@@ -35,7 +35,15 @@ hydra:
     dir: ${paths.output_dir}
   sweep:
     dir: ${paths.root}/outputs/multirun/${run_name}
+    # Name each job's directory after the parameters actually being swept, so a
+    # seed sweep gives .../training.seed=0, .../training.seed=1 rather than
+    # opaque job numbers.
     subdir: ${hydra.job.override_dirname}
   job:
     # Never chdir: relative paths mean the same thing everywhere.
     chdir: false
+    config:
+      override_dirname:
+        # Keep infrastructure overrides out of the sweep directory names; only
+        # the parameters under study should shape the layout.
+        exclude_keys: [paths.root, run_name, dataset, stage]
