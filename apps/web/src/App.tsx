@@ -11,9 +11,12 @@ const PAGE_TITLE: Record<string, string> = Object.fromEntries(
 );
 
 const PAGE_INTRO: Record<string, string> = {
-  projects: "Each imaged dataset is a project. Open one to inspect its conditions, upload frames, and preprocess.",
-  datasets: "Operating conditions, derived dimensionless groups, the raw image sequence, and calibration/segmentation.",
-  results: "Solver runs and their validation against the measured bubble. Every number is read live from the pipeline's own artifacts.",
+  projects:
+    "Each imaged dataset is a project. Open one to inspect its conditions, upload frames, and preprocess.",
+  datasets:
+    "Operating conditions, derived dimensionless groups, the raw image sequence, and calibration/segmentation.",
+  results:
+    "Solver runs and their validation against the measured bubble. Every number is read live from the pipeline's own artifacts.",
 };
 
 export function App() {

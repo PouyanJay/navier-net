@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import pytest
 from naviernet_api.services import datasets as datasets_service
@@ -114,3 +115,82 @@ def test_start_preprocess_does_not_restart_a_running_job(repo_root, monkeypatch)
     result = jobs_service.start_preprocess(settings, "sample")
     assert result.state == "running"
     assert spawns == []
+
+
+def test_start_preprocess_via_http_route(client, monkeypatch):
+    """The POST route itself wires through to a running job."""
+    monkeypatch.setattr(jobs_service, "_run", lambda _s, _d: None)
+    r = client.post("/api/datasets/sample/preprocess")
+    assert r.status_code == 200
+    assert r.json()["state"] == "running"
+
+
+@pytest.mark.parametrize("bad_id", [".", "..", "../evil", "a b"])
+def test_unsafe_dataset_ids_are_invalid(bad_id):
+    """ "." / ".." collapse to the data root; others escape — none are valid
+    (SECURITY.md §3). ("." can't be sent through the httpx TestClient, which
+    normalizes it away, so the guard is asserted at the service level.)"""
+    assert datasets_service.is_valid_dataset_id(bad_id) is False
+    assert datasets_service._raw_dir(Settings(repo_root=Path("/tmp")), bad_id) is None
+
+
+def test_groups_of_unknown_dataset_is_404(client):
+    """Live groups require the dataset to exist, not just a syntactically valid id."""
+    assert client.get("/api/datasets/made-up/groups").status_code == 404
+
+
+def test_reupload_replaces_the_sequence(client, tiff_bytes):
+    def upload(count: int):
+        files = [("files", (f"{i}.tif", tiff_bytes, "image/tiff")) for i in range(count)]
+        return client.post("/api/datasets/reup/upload", files=files)
+
+    assert upload(3).json()["n_frames"] == 3
+    # A shorter re-upload must not leave stale frames 4..N behind.
+    assert upload(2).json()["n_frames"] == 2
+
+
+def test_upload_rejects_undecodable_tiff(client):
+    """Magic bytes alone aren't enough — the body must actually decode."""
+    fake = b"II*\x00" + b"\x00" * 32  # TIFF magic, garbage body
+    files = [("files", ("1.tif", fake, "image/tiff"))]
+    r = client.post("/api/datasets/broken/upload", files=files)
+    assert r.status_code == 400
+    assert "decodable" in r.json()["detail"]
+
+
+def test_save_frames_empty_and_oversize(repo_root, tiff_bytes, monkeypatch):
+    settings = Settings(repo_root=repo_root)
+    with pytest.raises(datasets_service.UploadError, match="no files"):
+        datasets_service.save_frames(settings, "x", [])
+    monkeypatch.setattr(datasets_service, "MAX_FRAME_BYTES", 2)
+    with pytest.raises(datasets_service.UploadError, match="exceeds"):
+        datasets_service.save_frames(settings, "x", [tiff_bytes])
+
+
+@pytest.mark.needs_data
+@pytest.mark.slow
+def test_preprocess_write_path_end_to_end(tmp_path, monkeypatch):
+    """Upload the real frames, drive the real preprocess, and produce tensors + QC."""
+    import shutil
+    import time
+
+    source = Path("data/raw/highest_t")
+    if not source.is_dir():
+        pytest.skip("real highest_t frames not present")
+
+    raw = tmp_path / "data" / "raw" / "highest_t"
+    raw.mkdir(parents=True)
+    for tif in source.glob("*.tif"):
+        shutil.copy(tif, raw / tif.name)
+
+    settings = Settings(repo_root=tmp_path)
+    jobs_service.start_preprocess(settings, "highest_t")
+    for _ in range(120):
+        status = jobs_service.status(settings, "highest_t")
+        if status.state != "running":
+            break
+        time.sleep(0.5)
+
+    assert status.state == "done", status.message
+    assert (tmp_path / "data" / "processed" / "highest_t" / "tensors.npz").is_file()
+    assert status.has_qc

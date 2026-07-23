@@ -36,9 +36,11 @@ def get_dataset(dataset: str, settings: Settings = Depends(get_settings)) -> Dat
 
 
 @router.get("/{dataset}/groups")
-def get_dataset_groups(dataset: str, settings: Settings = Depends(get_settings)) -> dict:
+def get_dataset_groups(
+    dataset: str, settings: Settings = Depends(get_settings)
+) -> dict[str, float]:
     """Live dimensionless groups, computed from the dataset's config."""
-    if not datasets_service.is_valid_dataset_id(dataset):
+    if datasets_service.get_dataset(settings, dataset) is None:
         raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
     return compute_groups_for(dataset)
 
@@ -70,12 +72,22 @@ async def upload_frames(
     settings: Settings = Depends(get_settings),
 ) -> DatasetSummary:
     """Upload an image sequence (validated TIFFs) into the dataset."""
-    frames = [await f.read() for f in files]
+    # Reject the count before buffering any payload (SECURITY.md §4), and read
+    # each part bounded so an oversized frame can't exhaust memory first.
+    if len(files) > datasets_service.MAX_FRAMES:
+        raise HTTPException(status_code=400, detail=f"too many frames ({len(files)})")
+    limit = datasets_service.MAX_FRAME_BYTES
+    frames = [await f.read(limit + 1) for f in files]
+
     try:
         datasets_service.save_frames(settings, dataset, frames)
     except UploadError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return next(d for d in datasets_service.list_datasets(settings) if d.id == dataset)
+
+    summary = datasets_service.get_dataset_summary(settings, dataset)
+    if summary is None:  # saved but not found — should not happen
+        raise HTTPException(status_code=500, detail="upload saved but dataset not found")
+    return summary
 
 
 @router.post("/{dataset}/preprocess", response_model=PreprocessStatus)
@@ -93,4 +105,6 @@ def preprocess_status(
     dataset: str, settings: Settings = Depends(get_settings)
 ) -> PreprocessStatus:
     """Poll the preprocessing job state."""
+    if not datasets_service.is_valid_dataset_id(dataset):
+        raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
     return jobs_service.status(settings, dataset)

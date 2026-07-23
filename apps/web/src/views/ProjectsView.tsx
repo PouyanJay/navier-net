@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { Chip, Panel, StatusDot } from "../components";
 import { api, type DatasetSummary } from "../lib/api";
+import { errorMessage } from "../lib/errors";
 import "./datasets/datasets.css";
 import "./runs.css";
 
@@ -14,7 +15,7 @@ export function ProjectsView({ onOpen }: { onOpen: (id: string) => void }) {
     api
       .listDatasets()
       .then(setDatasets)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err) => setError(errorMessage(err)));
   }, []);
 
   if (error) {
@@ -30,20 +31,32 @@ export function ProjectsView({ onOpen }: { onOpen: (id: string) => void }) {
         <p className="state-note">No datasets yet. Drop image sequences into data/raw/.</p>
       ) : (
         <div className="project-grid">
-          {datasets.map((d) => (
-            <button key={d.id} type="button" className="project-card" onClick={() => onOpen(d.id)}>
-              <div className="name">{d.id}</div>
-              <div className="meta">
-                <Chip tone="accent">{d.n_frames} frames</Chip>
-                <StatusDot
-                  tone={d.processed ? "green" : "default"}
-                  label={d.processed ? "processed" : "raw"}
-                />
-              </div>
-            </button>
+          {datasets.map((dataset) => (
+            <ProjectCard key={dataset.id} dataset={dataset} onOpen={onOpen} />
           ))}
         </div>
       )}
     </Panel>
+  );
+}
+
+function ProjectCard({
+  dataset,
+  onOpen,
+}: {
+  dataset: DatasetSummary;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <button type="button" className="project-card" onClick={() => onOpen(dataset.id)}>
+      <div className="name">{dataset.id}</div>
+      <div className="meta">
+        <Chip tone="accent">{dataset.n_frames} frames</Chip>
+        <StatusDot
+          tone={dataset.processed ? "green" : "default"}
+          label={dataset.processed ? "processed" : "raw"}
+        />
+      </div>
+    </button>
   );
 }

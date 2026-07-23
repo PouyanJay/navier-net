@@ -95,6 +95,46 @@ describe("DatasetsView", () => {
     fireEvent.click(button);
     await waitFor(() => expect(calls.startPreprocess).toBe(1));
   });
+
+  it("polls a running job to completion and shows the QC preview", async () => {
+    let started = false;
+    let polls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, opts?: RequestInit) => {
+        const u = String(url);
+        const post = opts?.method === "POST";
+        if (u.endsWith("/api/datasets")) {
+          return json([{ id: "sample", n_frames: 3, processed: polls >= 2 }]);
+        }
+        if (u.endsWith("/groups")) return json(GROUPS);
+        if (u.endsWith("/preprocess")) {
+          if (post) {
+            started = true;
+            return json({ ...IDLE, state: "running" });
+          }
+          if (!started) return json(IDLE); // idle until a POST starts it
+          polls += 1;
+          const done = polls >= 2;
+          return json({ ...IDLE, state: done ? "done" : "running", has_qc: done });
+        }
+        if (/\/api\/datasets\/[^/]+$/.test(u)) return json({ ...DETAIL, has_qc: polls >= 2 });
+        return new Response("not found", { status: 404 });
+      }),
+    );
+
+    render(<DatasetsView datasetId="sample" />);
+    const button = await screen.findByRole("button", { name: /Run preprocessing/ });
+    fireEvent.click(button);
+
+    // The hook polls every 1s (real timers); wait until the job completes and the
+    // QC preview appears — proving the running->done transition + refresh + cleanup.
+    await waitFor(
+      () => expect(screen.getByRole("img", { name: /quality-control/ })).toBeInTheDocument(),
+      { timeout: 4000 },
+    );
+    expect(polls).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe("ProjectsView", () => {

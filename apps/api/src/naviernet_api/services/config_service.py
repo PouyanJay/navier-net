@@ -12,10 +12,13 @@ import threading
 
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from naviernet.config import config_dir, register_configs
 
+# NOTE: both this cache and the job registry key on dataset name alone, assuming
+# one Settings.repo_root per process (true for the API). The cached configs are
+# marked read-only below so a shared instance can't be silently mutated.
 _lock = threading.Lock()
 _registered = False
 _cache: dict[tuple[str, tuple[str, ...]], DictConfig] = {}
@@ -44,11 +47,12 @@ def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
                 config_name="config",
                 overrides=[f"dataset={dataset}", *(overrides or [])],
             )
+        OmegaConf.set_readonly(cfg, True)  # a cached instance is shared; fail on mutation
         _cache[key] = cfg
         return cfg
 
 
-def compute_groups_for(dataset: str) -> dict:
+def compute_groups_for(dataset: str) -> dict[str, float]:
     """Live dimensionless groups for a dataset, computed from its config."""
     from naviernet.physics.groups import compute_groups
 

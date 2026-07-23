@@ -1,4 +1,5 @@
 import { Chip } from "../components";
+import type { DatasetSummary } from "../lib/api";
 import { ConditionsPanel } from "./datasets/ConditionsPanel";
 import { GroupsPanel } from "./datasets/GroupsPanel";
 import { ImageSequence } from "./datasets/ImageSequence";
@@ -19,28 +20,15 @@ export function DatasetsView({ datasetId }: { datasetId?: string | null }) {
 
   return (
     <div className="stack">
-      <div className="dataset-head">
-        <span className="id">{data.selected}</span>
-        {data.detail && <Chip tone="accent">{data.detail.n_frames} frames</Chip>}
-        {data.datasets.length > 1 && (
-          <select
-            aria-label="Select dataset"
-            value={data.selected ?? ""}
-            onChange={(e) => data.setSelected(e.target.value)}
-          >
-            {data.datasets.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.id}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+      <DatasetHeader
+        datasets={data.datasets}
+        selected={data.selected}
+        nFrames={data.detail?.n_frames ?? null}
+        onSelect={data.setSelected}
+      />
 
       {data.error && (
-        <p className="state-note error" role="alert">
-          {data.error}
-        </p>
+        <p className="state-note error" role="alert">{data.error}</p>
       )}
 
       {data.detail && (
@@ -56,6 +44,35 @@ export function DatasetsView({ datasetId }: { datasetId?: string | null }) {
           <ConditionsPanel conditions={data.detail.conditions} />
           {data.groups && <GroupsPanel groups={data.groups} />}
         </>
+      )}
+    </div>
+  );
+}
+
+interface DatasetHeaderProps {
+  datasets: DatasetSummary[];
+  selected: string | null;
+  nFrames: number | null;
+  onSelect: (id: string) => void;
+}
+
+function DatasetHeader({ datasets, selected, nFrames, onSelect }: DatasetHeaderProps) {
+  return (
+    <div className="dataset-head">
+      <span className="id">{selected}</span>
+      {nFrames != null && <Chip tone="accent">{nFrames} frames</Chip>}
+      {datasets.length > 1 && (
+        <select
+          aria-label="Select dataset"
+          value={selected ?? ""}
+          onChange={(e) => onSelect(e.target.value)}
+        >
+          {datasets.map((dataset) => (
+            <option key={dataset.id} value={dataset.id}>
+              {dataset.id}
+            </option>
+          ))}
+        </select>
       )}
     </div>
   );

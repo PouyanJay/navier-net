@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   api,
@@ -7,10 +7,9 @@ import {
   type DimensionlessGroups,
   type PreprocessStatus,
 } from "../../lib/api";
+import { errorMessage } from "../../lib/errors";
 
-function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+const POLL_INTERVAL_MS = 1000;
 
 export interface DatasetData {
   datasets: DatasetSummary[] | null;
@@ -25,72 +24,93 @@ export interface DatasetData {
   runPreprocess: () => Promise<void>;
 }
 
-/**
- * Owns the Datasets view's data: the dataset list, the selected dataset's detail
- * + live groups, and the preprocess job (polled while running). Exposes upload
- * and run-preprocess actions that refresh the affected state.
- */
-export function useDatasetData(focusId?: string | null): DatasetData {
+/** The dataset list plus the current selection (defaulting to the first). */
+function useDatasetList(focusId?: string | null) {
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
   const [selected, setSelected] = useState<string | null>(focusId ?? null);
-  const [detail, setDetail] = useState<DatasetDetail | null>(null);
-  const [groups, setGroups] = useState<DimensionlessGroups | null>(null);
-  const [preprocess, setPreprocess] = useState<PreprocessStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const pollRef = useRef<number | null>(null);
 
-  const refreshList = useCallback(async () => {
+  const refresh = useCallback(async () => {
     const list = await api.listDatasets();
     setDatasets(list);
     setSelected((cur) => cur ?? list[0]?.id ?? null);
   }, []);
 
   useEffect(() => {
-    refreshList().catch((err) => setError(message(err)));
-  }, [refreshList]);
-
-  // Follow an externally-focused dataset (e.g. opened from the Projects grid).
+    refresh().catch((err) => setError(errorMessage(err)));
+  }, [refresh]);
   useEffect(() => {
-    if (focusId) setSelected(focusId);
+    if (focusId) setSelected(focusId); // follow an externally-focused dataset
   }, [focusId]);
 
-  const loadSelected = useCallback(async (id: string) => {
-    setError(null);
-    const [d, g, p] = await Promise.all([
-      api.getDataset(id),
-      api.getDatasetGroups(id),
-      api.getPreprocessStatus(id),
-    ]);
-    setDetail(d);
-    setGroups(g);
-    setPreprocess(p);
-  }, []);
+  return { datasets, selected, setSelected, refresh, error, setError };
+}
 
-  useEffect(() => {
-    if (selected) loadSelected(selected).catch((err) => setError(message(err)));
-  }, [selected, loadSelected]);
-
-  // Poll while a preprocess job is running; refresh detail when it finishes.
+/** Poll a running preprocess job to completion, then run onSettled once. */
+function usePreprocessPolling(
+  selected: string | null,
+  preprocess: PreprocessStatus | null,
+  setPreprocess: (s: PreprocessStatus) => void,
+  onSettled: () => Promise<void>,
+  onError: (msg: string) => void,
+) {
   useEffect(() => {
     if (preprocess?.state !== "running" || !selected) return;
-    pollRef.current = window.setInterval(async () => {
+    const id = window.setInterval(async () => {
       try {
         const status = await api.getPreprocessStatus(selected);
         setPreprocess(status);
         if (status.state !== "running") {
-          window.clearInterval(pollRef.current!);
-          await loadSelected(selected);
-          await refreshList();
+          window.clearInterval(id);
+          await onSettled();
         }
       } catch (err) {
-        setError(message(err));
+        window.clearInterval(id);
+        onError(errorMessage(err));
       }
-    }, 1000);
-    return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current);
-    };
-  }, [preprocess?.state, selected, loadSelected, refreshList]);
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [preprocess?.state, selected, setPreprocess, onSettled, onError]);
+}
+
+/**
+ * Owns the Datasets view's data: the list + selection (via useDatasetList), the
+ * selected dataset's detail/groups/status, preprocess polling, and the upload /
+ * run-preprocess actions that refresh the affected state.
+ */
+export function useDatasetData(focusId?: string | null): DatasetData {
+  const { datasets, selected, setSelected, refresh, error, setError } = useDatasetList(focusId);
+  const [detail, setDetail] = useState<DatasetDetail | null>(null);
+  const [groups, setGroups] = useState<DimensionlessGroups | null>(null);
+  const [preprocess, setPreprocess] = useState<PreprocessStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadSelected = useCallback(
+    async (id: string) => {
+      setError(null);
+      const [d, g, p] = await Promise.all([
+        api.getDataset(id),
+        api.getDatasetGroups(id),
+        api.getPreprocessStatus(id),
+      ]);
+      setDetail(d);
+      setGroups(g);
+      setPreprocess(p);
+    },
+    [setError],
+  );
+
+  useEffect(() => {
+    if (selected) loadSelected(selected).catch((err) => setError(errorMessage(err)));
+  }, [selected, loadSelected, setError]);
+
+  const onSettled = useCallback(async () => {
+    if (!selected) return;
+    await loadSelected(selected);
+    await refresh();
+  }, [selected, loadSelected, refresh]);
+
+  usePreprocessPolling(selected, preprocess, setPreprocess, onSettled, setError);
 
   const upload = useCallback(
     async (files: FileList | File[]) => {
@@ -99,15 +119,14 @@ export function useDatasetData(focusId?: string | null): DatasetData {
       setError(null);
       try {
         await api.uploadFrames(selected, files);
-        await loadSelected(selected);
-        await refreshList();
+        await onSettled();
       } catch (err) {
-        setError(message(err));
+        setError(errorMessage(err));
       } finally {
         setBusy(false);
       }
     },
-    [selected, loadSelected, refreshList],
+    [selected, onSettled, setError],
   );
 
   const runPreprocess = useCallback(async () => {
@@ -116,20 +135,9 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     try {
       setPreprocess(await api.startPreprocess(selected));
     } catch (err) {
-      setError(message(err));
+      setError(errorMessage(err));
     }
-  }, [selected]);
+  }, [selected, setError]);
 
-  return {
-    datasets,
-    selected,
-    setSelected,
-    detail,
-    groups,
-    preprocess,
-    error,
-    busy,
-    upload,
-    runPreprocess,
-  };
+  return { datasets, selected, setSelected, detail, groups, preprocess, error, busy, upload, runPreprocess };
 }

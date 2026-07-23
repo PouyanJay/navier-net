@@ -62,14 +62,18 @@ export function UploadPreprocess({
         </p>
       )}
 
-      {hasQc && (
-        <img
-          key={state}
-          className="qc-figure"
-          src={artifactUrl.datasetQc(detail.id)}
-          alt="Preprocessing quality-control: growth curve, interface evolution, signed distance"
-        />
-      )}
+      {hasQc && <QcFigure datasetId={detail.id} cacheKey={state} />}
     </Panel>
+  );
+}
+
+function QcFigure({ datasetId, cacheKey }: { datasetId: string; cacheKey: string }) {
+  return (
+    <img
+      key={cacheKey}
+      className="qc-figure"
+      src={artifactUrl.datasetQc(datasetId)}
+      alt="Preprocessing quality-control: growth curve, interface evolution, signed distance"
+    />
   );
 }

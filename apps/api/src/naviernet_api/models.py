@@ -7,6 +7,8 @@ introducing a parallel data model.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -80,7 +82,7 @@ class PreprocessStatus(BaseModel):
     """State of a dataset's preprocessing job."""
 
     dataset: str
-    state: str  # "idle" | "running" | "done" | "error"
+    state: Literal["idle", "running", "done", "error"]
     message: str | None = None
     has_qc: bool = False
 
