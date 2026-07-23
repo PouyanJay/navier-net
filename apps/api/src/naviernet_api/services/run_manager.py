@@ -18,6 +18,9 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
+
+from omegaconf import DictConfig
 
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import RunJobStatus, RunLaunchRequest
@@ -30,6 +33,14 @@ log = get_logger(__name__)
 # Training is CPU-bound and long-running; one run at a time keeps the box
 # responsive and the console unambiguous.
 MAX_CONCURRENT_RUNS = 1
+
+# Finished registry entries kept for late SSE joins. Older runs are evicted —
+# their artifacts (checkpoint, metrics, solver_console.log) live on disk — which
+# bounds the process's memory across many launches: each job's event buffer is
+# itself bounded (log_every >= 10 over steps <= 20000).
+MAX_FINISHED_JOBS = 8
+
+_RunState = Literal["running", "done", "error"]
 
 
 class LaunchRejected(Exception):
@@ -44,7 +55,7 @@ class LaunchRejected(Exception):
 @dataclass
 class _RunJob:
     dataset: str | None
-    state: str = "running"  # running | done | error
+    state: _RunState = "running"
     stage: str | None = None
     message: str | None = None
     steps_done: int = 0
@@ -90,7 +101,7 @@ def _status_snapshot(run_id: str, job: _RunJob) -> RunJobStatus:
     return RunJobStatus(
         run_id=run_id,
         dataset=job.dataset,
-        state=job.state,  # type: ignore[arg-type]
+        state=job.state,
         stage=job.stage,
         message=job.message,
         steps_done=job.steps_done,
@@ -131,8 +142,10 @@ def active_run() -> RunJobStatus | None:
 def events_since(run_id: str, cursor: int) -> tuple[list[dict], int, bool] | None:
     """Events after ``cursor`` plus the new cursor and whether the run is over.
 
-    ``terminal`` is only True once every buffered event has been handed out, so
-    a consumer that drains until terminal never misses the final status event.
+    A job's state only turns terminal in the same lock acquisition that appends
+    its final status event (`_finish`), so ``terminal=True`` guarantees the
+    final event is included in (or preceded) this batch — a consumer that
+    drains until terminal never misses it.
     """
     with _lock:
         job = _jobs.get(run_id)
@@ -140,7 +153,7 @@ def events_since(run_id: str, cursor: int) -> tuple[list[dict], int, bool] | Non
             return None
         events = job.events[cursor:]
         new_cursor = len(job.events)
-        terminal = job.state != "running" and new_cursor == cursor + len(events)
+        terminal = job.state != "running"
     return events, new_cursor, terminal
 
 
@@ -151,6 +164,7 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
     """Validate a launch request, reserve the slot, and start the worker."""
     if request.resume:
         run_id, dataset = _validate_resume(settings, request)
+        request.dataset = dataset  # resolved from the run's own artifacts
     else:
         run_id, dataset = None, _validate_new_run(settings, request)
 
@@ -159,19 +173,28 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
         if running >= MAX_CONCURRENT_RUNS:
             raise LaunchRejected(409, "a training run is already in progress")
         if run_id is None:
+            # Minting stats the filesystem while holding the lock — one .exists()
+            # per launch, accepted so id reservation and registration are atomic.
             run_id = _mint_run_id(settings)
         _jobs[run_id] = _RunJob(dataset=dataset, stage="train")
+        _evict_finished_jobs()
     # Spawn and report OUTSIDE the lock: both re-acquire it.
     thread = threading.Thread(
-        target=_worker,
-        args=(settings, run_id, dataset, request),
-        name=f"train-{run_id}",
-        daemon=True,
+        target=_worker, args=(settings, run_id, request), name=f"train-{run_id}", daemon=True
     )
     thread.start()
     result = status(run_id)
-    assert result is not None  # the job was just registered
+    if result is None:  # unreachable: the job was registered above
+        raise RuntimeError(f"run {run_id!r} vanished from the registry")
     return result
+
+
+def _evict_finished_jobs() -> None:
+    """Drop the oldest finished entries beyond the retention cap. Call under
+    the lock; insertion order makes the registry oldest-first."""
+    finished = [run_id for run_id, job in _jobs.items() if job.state != "running"]
+    for run_id in finished[: max(0, len(finished) - MAX_FINISHED_JOBS)]:
+        del _jobs[run_id]
 
 
 def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> str:
@@ -179,8 +202,7 @@ def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> str:
     dataset = request.dataset or ""
     if not datasets_service.is_valid_dataset_id(dataset):
         raise LaunchRejected(404, f"unknown dataset {dataset!r}")
-    tensors = settings.repo_root / "data" / "processed" / dataset / "tensors.npz"
-    if not tensors.is_file():
+    if datasets_service.tensors_path(settings, dataset) is None:
         raise LaunchRejected(
             409, f"dataset {dataset!r} is not preprocessed — run preprocessing first"
         )
@@ -230,77 +252,89 @@ def _set_stage(run_id: str, stage: str) -> None:
     _console(run_id, f"[stage] {stage}", tone="em")
 
 
-def _worker(
-    settings: Settings, run_id: str, dataset: str | None, request: RunLaunchRequest
-) -> None:
-    """Background worker: train, evaluate, and optionally render the run."""
+def _worker(settings: Settings, run_id: str, request: RunLaunchRequest) -> None:
+    """Background worker: configure, train, evaluate, render, finalize."""
     from naviernet.pipeline import Pipeline
 
     handler = _ConsoleHandler(run_id, threading.get_ident())
     pipeline_logger = logging.getLogger("naviernet")
     pipeline_logger.addHandler(handler)
     try:
-        cfg, base_steps = _configure(settings, run_id, dataset, request)
-        with _lock:
-            job = _jobs[run_id]
-            job.steps_done = base_steps
-            job.steps_total = base_steps + request.steps
-        verb = "resuming" if request.resume else "starting"
-        _console(
-            run_id,
-            f"[naviernet] {verb} run {run_id} · dataset {cfg.dataset} · {request.steps} steps",
-            tone="dim",
-        )
-        _emit_status(run_id)
-
+        cfg, base_steps = _configure(settings, run_id, request)
+        _announce_start(run_id, base_steps, request)
         pipeline = Pipeline(cfg)
         if not request.resume:
             _write_snapshot(cfg, pipeline.paths.output_dir)
-
-        def on_hist(record: dict) -> None:
-            with _lock:
-                job = _jobs.get(run_id)
-                if job is not None:
-                    job.steps_done = int(record["step"])
-                    job.events.append({"event": "hist", "data": record})
-
-        pipeline.train(steps=request.steps, on_log=on_hist)
-        _set_stage(run_id, "evaluate")
-        pipeline.evaluate()
-        if request.render:
-            _set_stage(run_id, "figures")
-            pipeline.figures()
-            _set_stage(run_id, "video")
-            pipeline.video()
-
-        with _lock:
-            job = _jobs[run_id]
-            job.state = "done"
-            job.stage = None
-            job.steps_done = job.steps_total  # hist only records every log_every steps
-        _console(
-            run_id,
-            f"[naviernet] run complete — checkpoint at outputs/{run_id}/checkpoints/ckpt.pt",
-            tone="ok",
-        )
-        # Persist the transcript BEFORE the terminal status: once a subscriber
-        # sees the stream end, the run directory is fully settled.
-        _dump_console(settings, run_id)
-        _emit_status(run_id)
+        _run_stages(pipeline, run_id, request)
+        _finish(settings, run_id, error=None)
         log.info("run %s finished", run_id)
     except Exception as exc:  # noqa: BLE001 — report any failure to the client
         log.exception("run %s failed", run_id)
+        _finish(settings, run_id, error=exc)
+    finally:
+        pipeline_logger.removeHandler(handler)
+
+
+def _announce_start(run_id: str, base_steps: int, request: RunLaunchRequest) -> None:
+    """Record the step budget and open the console with the launch banner."""
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is None:
+            return
+        job.steps_done = base_steps
+        job.steps_total = base_steps + request.steps
+        dataset = job.dataset
+    verb = "resuming" if request.resume else "starting"
+    origin = f" · dataset {dataset}" if dataset else ""
+    _console(run_id, f"[naviernet] {verb} run {run_id}{origin} · {request.steps} steps", "dim")
+    _emit_status(run_id)
+
+
+def _run_stages(pipeline, run_id: str, request: RunLaunchRequest) -> None:
+    """Drive the pipeline stages, streaming loss records into the event buffer."""
+
+    def on_hist(record: dict) -> None:
         with _lock:
             job = _jobs.get(run_id)
             if job is not None:
-                job.state = "error"
-                job.stage = None
-                job.message = str(exc)
-        _console(run_id, f"[naviernet] run failed: {exc}", tone="err")
-        _dump_console(settings, run_id)
-        _emit_status(run_id)
-    finally:
-        pipeline_logger.removeHandler(handler)
+                job.steps_done = int(record["step"])
+                job.events.append({"event": "hist", "data": record})
+
+    pipeline.train(steps=request.steps, on_log=on_hist)
+    _set_stage(run_id, "evaluate")
+    pipeline.evaluate()
+    if request.render:
+        _set_stage(run_id, "figures")
+        pipeline.figures()
+        _set_stage(run_id, "video")
+        pipeline.video()
+
+
+def _finish(settings: Settings, run_id: str, error: Exception | None) -> None:
+    """Finalize the run: transcript first, then the terminal state and status
+    event under ONE lock acquisition, so a stream that observes a terminal
+    state is guaranteed to have the final status event in its buffer."""
+    if error is None:
+        line = f"[naviernet] run complete — checkpoint at outputs/{run_id}/checkpoints/ckpt.pt"
+        tone = "ok"
+    else:
+        line, tone = f"[naviernet] run failed: {error}", "err"
+    _console(run_id, line, tone)
+    _dump_console(settings, run_id)
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is None:
+            return
+        job.stage = None
+        if error is None:
+            job.state = "done"
+            job.steps_done = job.steps_total  # hist only records every log_every steps
+        else:
+            job.state = "error"
+            job.message = str(error)
+        job.events.append(
+            {"event": "status", "data": _status_snapshot(run_id, job).model_dump()}
+        )
 
 
 def _dump_console(settings: Settings, run_id: str) -> None:
@@ -323,11 +357,16 @@ def _dump_console(settings: Settings, run_id: str) -> None:
         log.warning("could not persist console for %s: %s", run_id, exc)
 
 
-def _configure(settings: Settings, run_id: str, dataset: str | None, request: RunLaunchRequest):
+def _configure(
+    settings: Settings, run_id: str, request: RunLaunchRequest
+) -> tuple[DictConfig, int]:
     """The composed config and already-completed step count for this launch."""
     if request.resume:
         return _resume_config(settings, run_id, request)
 
+    dataset = request.dataset
+    if dataset is None:  # unreachable: enforced by the model validator + launch()
+        raise RuntimeError("new run reached the worker without a dataset")
     overrides = [
         f"paths.root={settings.repo_root}",
         f"run_name={run_id}",
@@ -348,23 +387,30 @@ def _configure(settings: Settings, run_id: str, dataset: str | None, request: Ru
         f"training.weights.src={request.weights.src}",
         f"training.weights.bc={request.weights.bc}",
     ]
-    from naviernet_api.services.config_service import compose_cfg
+    from naviernet_api.services.config_service import compose_cfg_once
 
-    assert dataset is not None  # enforced by _validate_new_run
-    return compose_cfg(dataset, overrides=overrides, cache=False), 0
+    return compose_cfg_once(dataset, overrides=overrides), 0
 
 
-def _resume_config(settings: Settings, run_id: str, request: RunLaunchRequest):
+def _resume_config(
+    settings: Settings, run_id: str, request: RunLaunchRequest
+) -> tuple[DictConfig, int]:
     """Reload the run's own config so a resumed run keeps its architecture."""
     import torch
     from omegaconf import OmegaConf
 
-    cfg = OmegaConf.load(_snapshot_path(settings, run_id))
+    from naviernet.config.schema import Config
+
+    # Merge the snapshot over the structured schema: unknown keys or wrong
+    # types in a (possibly hand-edited) snapshot fail here, not mid-training.
+    snapshot = OmegaConf.load(_snapshot_path(settings, run_id))
+    cfg = OmegaConf.merge(OmegaConf.structured(Config), snapshot)
     # Re-pin what must reflect *this* launch: the repo location, the requested
     # extra steps, and the server-side device policy.
     cfg.paths.root = str(settings.repo_root)
     cfg.training.steps = request.steps
     cfg.training.device = "cpu"
+    OmegaConf.set_readonly(cfg, True)  # match compose_cfg's contract
 
     checkpoint = settings.outputs_dir / run_id / "checkpoints" / "ckpt.pt"
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)

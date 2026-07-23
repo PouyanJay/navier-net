@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 # A deliberately tiny run: 2 steps over small batches finishes in ~a second.
@@ -25,7 +26,11 @@ TINY_RUN = {
 
 
 def read_stream(client: TestClient, run_id: str) -> list[dict]:
-    """Read the run's SSE stream to completion into (event, data) records."""
+    """Read the run's SSE stream to completion into (event, data) records.
+
+    Minimal parser: assumes single-line `data:` payloads (what sse-starlette
+    emits for our compact JSON events); multi-line data would need joining.
+    """
     events: list[dict] = []
     name = None
     with client.stream("GET", f"/api/runs/{run_id}/stream") as response:
@@ -118,30 +123,20 @@ def test_holdout_none_trains_on_all_frames(client: TestClient, repo_root: Path):
     assert metrics["holdout_frame"] is None
 
 
-def test_launch_is_rejected_while_a_run_is_active(client: TestClient, monkeypatch):
+def test_launch_is_rejected_while_a_run_is_active(client: TestClient):
     """One training run at a time: a second launch is refused with 409."""
-    import threading
-
     from naviernet_api.services import run_manager
 
-    release = threading.Event()
-
-    def slow_worker(settings, run_id, dataset, request):
-        release.wait(5)
-        with run_manager._lock:
-            run_manager._jobs[run_id].state = "done"
-
-    monkeypatch.setattr(run_manager, "_worker", slow_worker)
-    first = client.post("/api/runs", json=TINY_RUN)
-    assert first.status_code == 202
+    # Seed a running job directly (the established registry-test idiom) — no
+    # thread, so nothing races the autouse registry-clearing fixture.
+    run_manager._jobs["existing-run"] = run_manager._RunJob(dataset="highest_t")
 
     second = client.post("/api/runs", json=TINY_RUN)
     assert second.status_code == 409
     assert "already in progress" in second.json()["detail"]
 
     active = client.get("/api/runs/active").json()
-    assert active is not None and active["run_id"] == first.json()["run_id"]
-    release.set()
+    assert active is not None and active["run_id"] == "existing-run"
 
 
 def test_a_failing_run_reports_error_over_the_stream(client: TestClient, repo_root: Path):
@@ -158,23 +153,31 @@ def test_a_failing_run_reports_error_over_the_stream(client: TestClient, repo_ro
     assert client.get(f"/api/runs/{run_id}/status").json()["state"] == "error"
 
 
-def test_launch_rejections(client: TestClient):
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        pytest.param({**TINY_RUN, "steps": 0}, 422, id="steps-below-range"),
+        pytest.param({**TINY_RUN, "steps": 100_000}, 422, id="steps-above-range"),
+        pytest.param({**TINY_RUN, "lr": 0}, 422, id="lr-must-be-positive"),
+        pytest.param({**TINY_RUN, "weights": {"data": -1}}, 422, id="negative-weight"),
+        pytest.param({**TINY_RUN, "dataset": None}, 422, id="new-run-needs-dataset"),
+        pytest.param({"resume": True, "steps": 2}, 422, id="resume-needs-run-id"),
+        pytest.param({**TINY_RUN, "dataset": "../evil"}, 404, id="traversal-shaped-dataset"),
+        pytest.param({**TINY_RUN, "dataset": "."}, 404, id="dot-dataset"),
+        pytest.param({**TINY_RUN, "dataset": "sample"}, 409, id="not-preprocessed"),
+        pytest.param(
+            {"resume": True, "run_id": "no-such-run", "steps": 2}, 409, id="resume-unknown-run"
+        ),
+        pytest.param({"resume": True, "run_id": ".", "steps": 2}, 409, id="resume-dot-run-id"),
+        pytest.param(
+            {"resume": True, "run_id": "scratch", "steps": 2}, 409, id="resume-no-checkpoint"
+        ),
+    ],
+)
+def test_launch_rejections(client: TestClient, payload: dict, expected: int):
     """Bounds and preconditions reject bad requests with the right status."""
-    bad = [
-        ({**TINY_RUN, "steps": 0}, 422),  # below range
-        ({**TINY_RUN, "steps": 100_000}, 422),  # above range
-        ({**TINY_RUN, "lr": 0}, 422),  # lr must be > 0
-        ({**TINY_RUN, "weights": {"data": -1}}, 422),  # negative weight
-        ({**TINY_RUN, "dataset": None}, 422),  # new run needs a dataset
-        ({"resume": True, "steps": 2}, 422),  # resume needs a run_id
-        ({**TINY_RUN, "dataset": "../evil"}, 404),  # traversal-shaped id
-        ({**TINY_RUN, "dataset": "sample"}, 409),  # exists but not preprocessed
-        ({"resume": True, "run_id": "no-such-run", "steps": 2}, 409),  # nothing to resume
-        ({"resume": True, "run_id": "scratch", "steps": 2}, 409),  # run with no checkpoint
-    ]
-    for payload, expected in bad:
-        response = client.post("/api/runs", json=payload)
-        assert response.status_code == expected, f"{payload} -> {response.status_code}"
+    response = client.post("/api/runs", json=payload)
+    assert response.status_code == expected
 
 
 def test_stream_and_status_unknown_run(client: TestClient):

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { Button, Chip, Console, LossChart, Panel, StatusDot, ViewCanvas } from "../components";
-import { api, type DatasetSummary, type RunJobStatus, type RunSummary } from "../lib/api";
+import type { RunJobStatus } from "../lib/api";
 import { LossWeightsPanel, RunConfigPanel } from "./solver/ConfigPanels";
 import { FORM_DEFAULTS, toLaunchRequest, type SolverFormState } from "./solver/form";
 import { MonitorPanel } from "./solver/MonitorPanel";
+import { useRunTargets } from "./solver/useRunTargets";
 import { useSolverRun } from "./solver/useSolverRun";
 import "./solver/solver.css";
 
@@ -13,7 +14,12 @@ interface SolverViewProps {
   onRunState?: (status: RunJobStatus | null) => void;
 }
 
-function statusDot(status: RunJobStatus | null): { tone: "default" | "accent" | "green" | "red"; label: string } {
+interface DotState {
+  tone: "default" | "accent" | "green" | "red";
+  label: string;
+}
+
+function statusDot(status: RunJobStatus | null): DotState {
   if (!status) return { tone: "default", label: "idle" };
   if (status.state === "running")
     return { tone: "accent", label: `running · ${status.stage ?? "train"}` };
@@ -24,37 +30,8 @@ function statusDot(status: RunJobStatus | null): { tone: "default" | "accent" | 
 /** The Solver: configure a run on the left, watch it live on the right. */
 export function SolverView({ onRunState }: SolverViewProps) {
   const [form, setForm] = useState<SolverFormState>(FORM_DEFAULTS);
-  const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [dataset, setDataset] = useState("");
-  const [resume, setResume] = useState(false);
-  const [resumeRunId, setResumeRunId] = useState("");
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  const refreshRuns = useCallback(() => {
-    api
-      .listRuns()
-      .then((list) => {
-        const trained = list.filter((run) => run.status === "trained");
-        setRuns(trained);
-        setResumeRunId((cur) => cur || trained[0]?.id || "");
-      })
-      .catch(() => {}); // resume stays unavailable; launching still works
-  }, []);
-
-  const run = useSolverRun(onRunState, refreshRuns);
-
-  useEffect(() => {
-    api
-      .listDatasets()
-      .then((list) => {
-        const processed = list.filter((entry) => entry.processed);
-        setDatasets(processed);
-        setDataset((cur) => cur || processed[0]?.id || "");
-      })
-      .catch(() => setLoadError("Could not load datasets — is the API running?"));
-    refreshRuns();
-  }, [refreshRuns]);
+  const targets = useRunTargets();
+  const run = useSolverRun(onRunState, targets.refreshRuns);
 
   const patchForm = useCallback(
     (patch: Partial<SolverFormState>) => setForm((prev) => ({ ...prev, ...patch })),
@@ -62,10 +39,11 @@ export function SolverView({ onRunState }: SolverViewProps) {
   );
 
   const submit = useCallback(() => {
-    const target = resume ? { resumeRunId } : { dataset };
+    const { resume, resumeRunId, dataset } = targets;
     if ((resume && !resumeRunId) || (!resume && !dataset)) return;
+    const target = resume ? { resumeRunId } : { dataset };
     void run.start(toLaunchRequest(form, target));
-  }, [run, form, resume, resumeRunId, dataset]);
+  }, [run, form, targets]);
 
   const rebalanceSteps = useMemo(() => {
     if (run.hist.length === 0) return [];
@@ -77,8 +55,9 @@ export function SolverView({ onRunState }: SolverViewProps) {
 
   const dot = statusDot(run.status);
   const latest = run.hist.length > 0 ? run.hist[run.hist.length - 1] : null;
-  const canRun = !run.running && (resume ? resumeRunId !== "" : dataset !== "");
-  const noDatasets = datasets !== null && datasets.length === 0;
+  const canRun =
+    !run.running && (targets.resume ? targets.resumeRunId !== "" : targets.dataset !== "");
+  const noDatasets = targets.datasets !== null && targets.datasets.length === 0;
 
   return (
     <>
@@ -107,7 +86,7 @@ export function SolverView({ onRunState }: SolverViewProps) {
           Run failed: {run.status.message}
         </p>
       )}
-      {loadError && <p className="state-note error">{loadError}</p>}
+      {targets.loadError && <p className="state-note error">{targets.loadError}</p>}
       {noDatasets && (
         <p className="state-note">
           No preprocessed dataset yet — upload and preprocess one under Datasets &amp;
@@ -119,21 +98,21 @@ export function SolverView({ onRunState }: SolverViewProps) {
           <RunConfigPanel
             form={form}
             onForm={patchForm}
-            datasetOptions={(datasets ?? []).map((d) => ({ value: d.id, label: d.id }))}
-            dataset={dataset}
-            onDataset={setDataset}
-            resume={resume}
-            onResume={setResume}
-            resumableRuns={runs}
-            resumeRunId={resumeRunId}
-            onResumeRunId={setResumeRunId}
+            datasetOptions={(targets.datasets ?? []).map((d) => ({ value: d.id, label: d.id }))}
+            dataset={targets.dataset}
+            onDataset={targets.setDataset}
+            resume={targets.resume}
+            onResume={targets.setResume}
+            resumableRuns={targets.resumableRuns}
+            resumeRunId={targets.resumeRunId}
+            onResumeRunId={targets.setResumeRunId}
             locked={run.running}
           />
           <LossWeightsPanel
             weights={form.weights}
             rebalanceEvery={form.rebalance_every}
             onForm={patchForm}
-            locked={run.running || resume}
+            locked={run.running || targets.resume}
           />
         </div>
         <div className="solver-col">

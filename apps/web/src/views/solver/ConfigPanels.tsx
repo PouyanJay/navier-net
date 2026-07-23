@@ -4,6 +4,28 @@ import { NumberField, Panel, SelectField, Switch, type SelectOption } from "../.
 import type { LossWeightsInput, RunSummary } from "../../lib/api";
 import { FORM_BOUNDS, HOLDOUT_OPTIONS, type SolverFormState } from "./form";
 
+/** The numeric run-config fields, in display order. Each maps 1:1 onto a
+ * `cfg.training` value; bounds come from FORM_BOUNDS by the same key. */
+interface NumberSpec {
+  key: "steps" | "lr" | "lr_halflife" | "n_data" | "n_coll" | "n_bc" | "log_every";
+  label: string;
+  hint?: string;
+  suffix?: string;
+  step: number;
+  /** Steps still applies on resume; every other field is fixed by the run. */
+  editableOnResume?: boolean;
+}
+
+const NUMBER_FIELDS: NumberSpec[] = [
+  { key: "steps", label: "Steps", step: 100, editableOnResume: true },
+  { key: "lr", label: "Learning rate", step: 0.0005 },
+  { key: "lr_halflife", label: "LR schedule", hint: "halve every", suffix: "steps", step: 100 },
+  { key: "n_data", label: "Data batch", suffix: "pts", step: 512 },
+  { key: "n_coll", label: "Collocation batch", suffix: "pts", step: 512 },
+  { key: "n_bc", label: "Boundary batch", suffix: "pts", step: 128 },
+  { key: "log_every", label: "Log every", suffix: "steps", step: 10 },
+];
+
 interface RunConfigPanelProps {
   form: SolverFormState;
   onForm: (patch: Partial<SolverFormState>) => void;
@@ -39,7 +61,8 @@ export function RunConfigPanel({
 }: RunConfigPanelProps) {
   const fixedByResume = locked || resume; // fields the original run's config owns
   const resumeTarget = resumableRuns.find((run) => run.id === resumeRunId);
-  const resumeHint = resumeTarget?.steps != null ? `ckpt.pt · step ${resumeTarget.steps}` : "ckpt.pt";
+  const resumeHint =
+    resumeTarget?.steps != null ? `ckpt.pt · step ${resumeTarget.steps}` : "ckpt.pt";
 
   return (
     <Panel title="Run configuration" subtitle="inputs to this run">
@@ -51,81 +74,26 @@ export function RunConfigPanel({
           options={datasetOptions}
           disabled={fixedByResume}
         />
-        <NumberField
-          label="Steps"
-          value={form.steps}
-          onChange={(steps) => onForm({ steps })}
-          min={FORM_BOUNDS.steps.min}
-          max={FORM_BOUNDS.steps.max}
-          step={100}
-          disabled={locked}
-        />
-        <NumberField
-          label="Learning rate"
-          value={form.lr}
-          onChange={(lr) => onForm({ lr })}
-          min={FORM_BOUNDS.lr.min}
-          max={FORM_BOUNDS.lr.max}
-          step={0.0005}
-          disabled={fixedByResume}
-        />
-        <NumberField
-          label="LR schedule"
-          hint="halve every"
-          value={form.lr_halflife}
-          onChange={(lr_halflife) => onForm({ lr_halflife })}
-          min={FORM_BOUNDS.lr_halflife.min}
-          max={FORM_BOUNDS.lr_halflife.max}
-          step={100}
-          suffix="steps"
-          disabled={fixedByResume}
-        />
-        <NumberField
-          label="Data batch"
-          value={form.n_data}
-          onChange={(n_data) => onForm({ n_data })}
-          min={FORM_BOUNDS.n_data.min}
-          max={FORM_BOUNDS.n_data.max}
-          step={512}
-          suffix="pts"
-          disabled={fixedByResume}
-        />
-        <NumberField
-          label="Collocation batch"
-          value={form.n_coll}
-          onChange={(n_coll) => onForm({ n_coll })}
-          min={FORM_BOUNDS.n_coll.min}
-          max={FORM_BOUNDS.n_coll.max}
-          step={512}
-          suffix="pts"
-          disabled={fixedByResume}
-        />
-        <NumberField
-          label="Boundary batch"
-          value={form.n_bc}
-          onChange={(n_bc) => onForm({ n_bc })}
-          min={FORM_BOUNDS.n_bc.min}
-          max={FORM_BOUNDS.n_bc.max}
-          step={128}
-          suffix="pts"
-          disabled={fixedByResume}
-        />
+        {NUMBER_FIELDS.map((spec) => (
+          <NumberField
+            key={spec.key}
+            label={spec.label}
+            hint={spec.hint}
+            value={form[spec.key]}
+            onChange={(value) => onForm({ [spec.key]: value })}
+            min={FORM_BOUNDS[spec.key].min}
+            max={FORM_BOUNDS[spec.key].max}
+            step={spec.step}
+            suffix={spec.suffix}
+            disabled={spec.editableOnResume ? locked : fixedByResume}
+          />
+        ))}
         <SelectField
           label="Holdout frame"
           hint="generalization metric"
           value={String(form.holdout_frame)}
           onChange={(value) => onForm({ holdout_frame: Number(value) })}
           options={HOLDOUT_OPTIONS}
-          disabled={fixedByResume}
-        />
-        <NumberField
-          label="Log every"
-          value={form.log_every}
-          onChange={(log_every) => onForm({ log_every })}
-          min={FORM_BOUNDS.log_every.min}
-          max={FORM_BOUNDS.log_every.max}
-          step={10}
-          suffix="steps"
           disabled={fixedByResume}
         />
       </div>

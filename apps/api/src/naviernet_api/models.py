@@ -102,8 +102,9 @@ class RunLaunchRequest(BaseModel):
 
     Every numeric field maps 1:1 onto `cfg.training`; the bounds exist because
     the Hydra schema types but does not range-check its values, and these come
-    from the network (SECURITY.md §2). On resume only `steps` and `render`
-    apply — the rest of the configuration is fixed by the original run.
+    from the network (SECURITY.md §4). On resume only `steps` and `render`
+    apply — the rest of the configuration is fixed by the original run's own
+    config snapshot, and any other values sent here are ignored.
     """
 
     dataset: str | None = None  # required for a new run
@@ -119,7 +120,7 @@ class RunLaunchRequest(BaseModel):
     rebalance_every: int = Field(default=500, ge=10, le=100_000)
     log_every: int = Field(default=200, ge=10, le=5000)  # ≥10 bounds the event stream
     seed: int = Field(default=0, ge=0, le=2**31 - 1)
-    weights: LossWeightsInput = LossWeightsInput()
+    weights: LossWeightsInput = Field(default_factory=LossWeightsInput)
     render: bool = True  # render figures + video after evaluation
 
     @model_validator(mode="after")

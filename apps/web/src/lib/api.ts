@@ -149,16 +149,10 @@ export interface ConsoleLine {
   tone: "ok" | "em" | "dim" | "err" | null;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { Accept: "application/json" } });
-  if (!response.ok) {
-    throw new Error(`GET ${path} failed: ${response.status} ${response.statusText}`);
-  }
-  return (await response.json()) as T;
-}
-
-async function send<T>(path: string, method: string, body?: BodyInit): Promise<T> {
-  const response = await fetch(path, { method, body });
+/** Fetch + shared error handling: failures throw the API's `detail` when the
+ * error body carries one, so every caller surfaces the actionable reason. */
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, init);
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try {
@@ -171,23 +165,18 @@ async function send<T>(path: string, method: string, body?: BodyInit): Promise<T
   return (await response.json()) as T;
 }
 
-async function sendJson<T>(path: string, method: string, payload: unknown): Promise<T> {
-  const response = await fetch(path, {
+const getJson = <T,>(path: string) =>
+  request<T>(path, { headers: { Accept: "application/json" } });
+
+const send = <T,>(path: string, method: string, body?: BodyInit) =>
+  request<T>(path, { method, body });
+
+const sendJson = <T,>(path: string, method: string, payload: unknown) =>
+  request<T>(path, {
     method,
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
-    try {
-      detail = ((await response.json()) as { detail?: string }).detail ?? detail;
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new Error(detail);
-  }
-  return (await response.json()) as T;
-}
 
 const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
 

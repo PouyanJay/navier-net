@@ -42,12 +42,20 @@ test("configure, launch, watch live, and find the run in Results", async ({ page
   await page.getByLabel(/Log every/).fill("10");
   await page.getByRole("switch", { name: "Render deliverables" }).click();
 
+  // Capture the minted run id straight off the launch response, BEFORE any UI
+  // assertion can fail — so afterAll can always clean up what was created.
+  const launchResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/api/runs") && response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Run", exact: true }).click();
+  const launched = await launchResponse;
+  expect(launched.status()).toBe(202);
+  launchedRunId = ((await launched.json()) as { run_id: string }).run_id;
 
   // The run is live: id assigned, pill on, console streaming, chart drawing.
   const runId = (await page.locator(".solver-head .id").textContent({ timeout: 15_000 }))!;
   expect(runId).toMatch(RUN_ID_SHAPE);
-  launchedRunId = runId;
+  expect(runId).toBe(launchedRunId);
   await expect(page.getByText(`[naviernet] starting run ${runId}`, { exact: false })).toBeVisible();
   await expect(page.locator(".runpill")).toBeVisible();
   await expect(page.getByText(/training steps 1-25/)).toBeVisible({ timeout: 30_000 });

@@ -32,7 +32,9 @@ _FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
 
 def _safe_run_dir(settings: Settings, run_id: str) -> Path | None:
     """Resolve a run id to its directory, or None if invalid / missing."""
-    if not _RUN_ID_RE.match(run_id):
+    # "." matches the character class but would resolve to outputs/ itself,
+    # collapsing per-run scoping (same guard as dataset ids — SECURITY.md §3).
+    if not _RUN_ID_RE.match(run_id) or run_id in {".", ".."}:
         return None
     outputs = settings.outputs_dir.resolve()
     run_dir = (outputs / run_id).resolve()

@@ -69,6 +69,7 @@ export function useSolverRun(
             ...prev,
             { line: "[naviernet] live stream interrupted — status may lag", tone: "err" },
           ]);
+          // Best-effort refresh; the interrupted banner above already told the user.
           api.getRunStatus(runId).then(handleStatus).catch(() => {});
         },
       });

@@ -102,7 +102,8 @@ describe("SolverView", () => {
     expect(screen.getByLabelText("Steps")).toHaveValue(1500);
     expect(screen.getByLabelText(/Learning rate/)).toHaveValue(0.002);
     expect(screen.getByLabelText(/w\s*data/)).toHaveValue(10);
-    expect(screen.getByText("[naviernet] solver idle — configure a run and press Run")).toBeInTheDocument();
+    const idleLine = "[naviernet] solver idle — configure a run and press Run";
+    expect(screen.getByText(idleLine)).toBeInTheDocument();
   });
 
   it("launches a run from the form and follows it live over SSE", async () => {
@@ -124,9 +125,10 @@ describe("SolverView", () => {
     const stream = FakeEventSource.instances[0];
     expect(stream.url).toContain("/api/runs/run-test/stream");
 
+    const record = { step: 10, lr: 0.002, data: 0.5, vof: 0.04, div: 0.01, src: 0.001, bc: 0.02 };
     act(() => {
       stream.emit("log", { line: "[naviernet] starting run run-test", tone: "dim" });
-      stream.emit("hist", { step: 10, lr: 0.002, data: 0.5, vof: 0.04, div: 0.01, src: 0.001, bc: 0.02 });
+      stream.emit("hist", record);
     });
     expect(screen.getByText("[naviernet] starting run run-test")).toBeInTheDocument();
     expect(screen.getByText("5.00e-1")).toBeInTheDocument(); // latest data loss
