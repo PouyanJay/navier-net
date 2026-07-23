@@ -8,6 +8,8 @@ and shared, rather than being deserialised again for each.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from naviernet.config.schema import STAGES
 from naviernet.data.preprocess import preprocess
 from naviernet.physics.groups import save_groups
@@ -36,10 +38,14 @@ class Pipeline:
         self._model = self._data = None
         return meta
 
-    def train(self, steps: int | None = None):
+    def train(
+        self,
+        steps: int | None = None,
+        on_log: Callable[[dict], None] | None = None,
+    ):
         from naviernet import training
 
-        model, data, state = training.train(self.cfg, self.paths, steps=steps)
+        model, data, state = training.train(self.cfg, self.paths, steps=steps, on_log=on_log)
         self._model, self._data = model, data
         return state
 

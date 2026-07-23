@@ -47,6 +47,17 @@
   --red: #ef4444;
   --redsoft: #ef444414;
 
+  /* Chart series — third line-series color (after --acc and --green) */
+  --purple: #a855f7;
+
+  /* Solver console tones — the console sits on the always-dark view canvas,
+     so these do not vary with the theme (values from the mockup's console). */
+  --console-text: #9fb0cb;
+  --console-ok: #4ec08a;
+  --console-em: #7fa6f7;
+  --console-dim: #586a8a;
+  --console-err: #fb7185;
+
   /* Elevation / geometry */
   --sh: 0 1px 2px #18121f14, 0 1px 3px #18121f0f;
   --r: 8px;
@@ -101,6 +112,7 @@
   --ambersoft: #fbbf2414;
   --red: #fb7185;
   --redsoft: #fb718516;
+  --purple: #c084fc;
 
   --sh: 0 1px 2px #00000057, 0 1px 3px #00000040;
 

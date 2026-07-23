@@ -25,31 +25,44 @@ _cache: dict[tuple[str, tuple[str, ...]], DictConfig] = {}
 
 
 def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
-    """Compose the config for ``dataset`` (+ optional Hydra overrides).
+    """Compose the config for ``dataset`` (+ optional Hydra overrides), memoized.
 
     Composition is serialized and memoized: Hydra keeps global state, so doing it
     once per (dataset, overrides) and caching the result both avoids redundant
     work on every request and keeps repeated `initialize_config_dir` calls (which
     do not compose cleanly under concurrency) to a minimum.
     """
-    global _registered
     key = (dataset, tuple(overrides or ()))
     with _lock:
         cached = _cache.get(key)
         if cached is not None:
             return cached
-        if not _registered:
-            register_configs()
-            _registered = True
-        GlobalHydra.instance().clear()
-        with initialize_config_dir(config_dir=str(config_dir()), version_base="1.3"):
-            cfg = compose(
-                config_name="config",
-                overrides=[f"dataset={dataset}", *(overrides or [])],
-            )
-        OmegaConf.set_readonly(cfg, True)  # a cached instance is shared; fail on mutation
+        cfg = _compose_locked(dataset, overrides)
         _cache[key] = cfg
         return cfg
+
+
+def compose_cfg_once(dataset: str, overrides: list[str] | None = None) -> DictConfig:
+    """Compose without memoizing — for overrides unique per call (a run launch
+    carries a freshly minted ``run_name``, so caching would only grow)."""
+    with _lock:
+        return _compose_locked(dataset, overrides)
+
+
+def _compose_locked(dataset: str, overrides: list[str] | None) -> DictConfig:
+    """The actual Hydra composition. Call only while holding ``_lock``."""
+    global _registered
+    if not _registered:
+        register_configs()
+        _registered = True
+    GlobalHydra.instance().clear()
+    with initialize_config_dir(config_dir=str(config_dir()), version_base="1.3"):
+        cfg = compose(
+            config_name="config",
+            overrides=[f"dataset={dataset}", *(overrides or [])],
+        )
+    OmegaConf.set_readonly(cfg, True)  # instances may be shared; fail on mutation
+    return cfg
 
 
 def compute_groups_for(dataset: str) -> dict[str, float]:

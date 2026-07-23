@@ -61,9 +61,17 @@ def _count_frames(raw_dir: Path) -> int:
     return sum(1 for p in raw_dir.iterdir() if _FRAME_RE.match(p.name))
 
 
-def _is_processed(settings: Settings, dataset: str) -> bool:
+def tensors_path(settings: Settings, dataset: str) -> Path | None:
+    """The dataset's preprocessed tensors archive, or None if absent/invalid."""
     processed = _processed_dir(settings, dataset)
-    return processed is not None and (processed / "tensors.npz").is_file()
+    if processed is None:
+        return None
+    tensors = processed / "tensors.npz"
+    return tensors if tensors.is_file() else None
+
+
+def _is_processed(settings: Settings, dataset: str) -> bool:
+    return tensors_path(settings, dataset) is not None
 
 
 def list_datasets(settings: Settings) -> list[DatasetSummary]:

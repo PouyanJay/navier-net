@@ -1,0 +1,70 @@
+.solver-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+}
+.solver-head .id {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 15px;
+}
+.solver-head .actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--s3);
+}
+
+/* Two-column solver layout: narrow config, wide monitor (mockup's .solx). */
+.solx {
+  display: grid;
+  grid-template-columns: minmax(300px, 350px) minmax(0, 1fr);
+  gap: var(--s5);
+  align-items: start;
+}
+@media (max-width: 1080px) {
+  .solx {
+    grid-template-columns: 1fr;
+  }
+}
+.solver-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  min-width: 0;
+}
+
+/* Config field grid inside the cards. */
+.cfg {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: var(--s3);
+}
+.cfg-narrow {
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+}
+.switch-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin-top: var(--s4);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line2);
+}
+
+/* Live stats row above the progress meter. */
+.statrow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--s4);
+  margin-bottom: var(--s4);
+}
+
+/* Placeholder text inside the dark chart canvas. */
+.canvas-note {
+  margin: 0;
+  padding: var(--s6) var(--s4);
+  color: var(--sidetxt);
+  font-size: 12px;
+  text-align: center;
+}

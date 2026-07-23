@@ -6,6 +6,8 @@ each reads from the on-disk artifacts the pipeline produces. No database.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,6 +17,9 @@ from naviernet_api.settings import get_settings
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # The pipeline's INFO transcript is part of the product here: the solver
+    # console streams it live, so it must clear the (WARNING) root default.
+    logging.getLogger("naviernet").setLevel(logging.INFO)
     app = FastAPI(
         title="naviernet API",
         version="0.1.0",

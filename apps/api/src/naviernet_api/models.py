@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 
 class RunSummary(BaseModel):
@@ -85,6 +85,63 @@ class PreprocessStatus(BaseModel):
     state: Literal["idle", "running", "done", "error"]
     message: str | None = None
     has_qc: bool = False
+
+
+class LossWeightsInput(BaseModel):
+    """Initial loss-term weights for a run (`cfg.training.weights`)."""
+
+    data: float = Field(default=10.0, ge=0, le=1e4)
+    vof: float = Field(default=1.0, ge=0, le=1e4)
+    div: float = Field(default=1.0, ge=0, le=1e4)
+    src: float = Field(default=0.1, ge=0, le=1e4)
+    bc: float = Field(default=5.0, ge=0, le=1e4)
+
+
+class RunLaunchRequest(BaseModel):
+    """A request to start (or resume) a training run.
+
+    Every numeric field maps 1:1 onto `cfg.training`; the bounds exist because
+    the Hydra schema types but does not range-check its values, and these come
+    from the network (SECURITY.md §4). On resume only `steps` and `render`
+    apply — the rest of the configuration is fixed by the original run's own
+    config snapshot, and any other values sent here are ignored.
+    """
+
+    dataset: str | None = None  # required for a new run
+    resume: bool = False
+    run_id: str | None = None  # required when resuming
+    steps: int = Field(default=1500, ge=1, le=20_000)
+    lr: float = Field(default=2e-3, gt=0, le=1.0)
+    lr_halflife: int = Field(default=800, ge=1, le=100_000)
+    n_data: int = Field(default=3072, ge=16, le=16_384)
+    n_coll: int = Field(default=3072, ge=16, le=16_384)
+    n_bc: int = Field(default=512, ge=8, le=8192)
+    holdout_frame: int = Field(default=5, ge=-1, le=64)  # -1 = train on all frames
+    rebalance_every: int = Field(default=500, ge=10, le=100_000)
+    log_every: int = Field(default=200, ge=10, le=5000)  # ≥10 bounds the event stream
+    seed: int = Field(default=0, ge=0, le=2**31 - 1)
+    weights: LossWeightsInput = Field(default_factory=LossWeightsInput)
+    render: bool = True  # render figures + video after evaluation
+
+    @model_validator(mode="after")
+    def _check_target(self) -> RunLaunchRequest:
+        if self.resume and not self.run_id:
+            raise ValueError("resume requires run_id")
+        if not self.resume and not self.dataset:
+            raise ValueError("a new run requires dataset")
+        return self
+
+
+class RunJobStatus(BaseModel):
+    """Live state of a launched training run."""
+
+    run_id: str
+    dataset: str | None = None
+    state: Literal["running", "done", "error"]
+    stage: str | None = None  # pipeline stage currently executing
+    message: str | None = None
+    steps_done: int = 0
+    steps_total: int = 0
 
 
 class ModelArchitecture(BaseModel):

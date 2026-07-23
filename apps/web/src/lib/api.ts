@@ -95,16 +95,64 @@ export interface ModelArchitecture {
   nodewise_activation: boolean;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { Accept: "application/json" } });
-  if (!response.ok) {
-    throw new Error(`GET ${path} failed: ${response.status} ${response.statusText}`);
-  }
-  return (await response.json()) as T;
+/** Initial loss-term weights for a run (`cfg.training.weights`). */
+export interface LossWeightsInput {
+  data: number;
+  vof: number;
+  div: number;
+  src: number;
+  bc: number;
 }
 
-async function send<T>(path: string, method: string, body?: BodyInit): Promise<T> {
-  const response = await fetch(path, { method, body });
+/** A request to start (or resume) a training run. Mirrors the backend model. */
+export interface RunLaunchRequest {
+  dataset?: string | null;
+  resume?: boolean;
+  run_id?: string | null;
+  steps: number;
+  lr: number;
+  lr_halflife: number;
+  n_data: number;
+  n_coll: number;
+  n_bc: number;
+  holdout_frame: number;
+  rebalance_every: number;
+  log_every: number;
+  weights: LossWeightsInput;
+  render: boolean;
+}
+
+export interface RunJobStatus {
+  run_id: string;
+  dataset: string | null;
+  state: "running" | "done" | "error";
+  stage: string | null;
+  message: string | null;
+  steps_done: number;
+  steps_total: number;
+}
+
+/** One per-log-step loss record, streamed live over SSE (`hist` events). */
+export interface LossRecord {
+  step: number;
+  lr: number;
+  data: number;
+  vof: number;
+  div: number;
+  src: number;
+  bc: number;
+}
+
+/** One solver-console line (`log` events). */
+export interface ConsoleLine {
+  line: string;
+  tone: "ok" | "em" | "dim" | "err" | null;
+}
+
+/** Fetch + shared error handling: failures throw the API's `detail` when the
+ * error body carries one, so every caller surfaces the actionable reason. */
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, init);
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try {
@@ -117,6 +165,19 @@ async function send<T>(path: string, method: string, body?: BodyInit): Promise<T
   return (await response.json()) as T;
 }
 
+const getJson = <T,>(path: string) =>
+  request<T>(path, { headers: { Accept: "application/json" } });
+
+const send = <T,>(path: string, method: string, body?: BodyInit) =>
+  request<T>(path, { method, body });
+
+const sendJson = <T,>(path: string, method: string, payload: unknown) =>
+  request<T>(path, {
+    method,
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
+
 const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
 
 const datasetPath = (id: string) => `/api/datasets/${encodeURIComponent(id)}`;
@@ -125,6 +186,11 @@ export const api = {
   listRuns: () => getJson<RunSummary[]>("/api/runs"),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
   getValidation: (id: string) => getJson<PhysicsValidation>(`${runPath(id)}/validation`),
+
+  startRun: (request: RunLaunchRequest) =>
+    sendJson<RunJobStatus>("/api/runs", "POST", request),
+  getRunStatus: (id: string) => getJson<RunJobStatus>(`${runPath(id)}/status`),
+  getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),
