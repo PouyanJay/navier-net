@@ -19,4 +19,6 @@ def test_model_architecture(client):
 
 
 def test_model_of_unknown_dataset_is_404(client):
-    assert client.get("/api/model/made-up").status_code == 404
+    r = client.get("/api/model/made-up")
+    assert r.status_code == 404
+    assert "made-up" in r.json()["detail"]

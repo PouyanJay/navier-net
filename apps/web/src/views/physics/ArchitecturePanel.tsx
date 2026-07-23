@@ -1,14 +1,17 @@
 import { DL, type KV, Panel } from "../../components";
 import type { ModelArchitecture } from "../../lib/api";
 
-function rows(net: ModelArchitecture): KV[] {
+function rows(model: ModelArchitecture): KV[] {
   return [
-    { label: "Fields", value: net.fields.join(", ") },
-    { label: "Fourier features", value: net.fourier_feats, hint: `scale ${net.fourier_scale}` },
-    { label: "Hidden width", value: net.hidden },
-    { label: "Hidden layers", value: net.layers },
-    { label: "Activation", value: net.nodewise_activation ? "adaptive tanh (per-neuron)" : "adaptive tanh" },
-    { label: "Interface half-width ε", value: net.alpha_eps },
+    { label: "Fields", value: model.fields.join(", ") },
+    { label: "Fourier features", value: model.fourier_feats, hint: `scale ${model.fourier_scale}` },
+    { label: "Hidden width", value: model.hidden },
+    { label: "Hidden layers", value: model.layers },
+    {
+      label: "Activation",
+      value: model.nodewise_activation ? "adaptive tanh (per-neuron)" : "adaptive tanh",
+    },
+    { label: "Interface half-width ε", value: model.alpha_eps, hint: "non-dim" },
   ];
 }
 

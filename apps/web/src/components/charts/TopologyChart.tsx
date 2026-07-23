@@ -8,27 +8,23 @@ const HEIGHT = 300;
 const MARGIN = { top: 16, right: 16, bottom: 40, left: 16 };
 const INNER_W = WIDTH - MARGIN.left - MARGIN.right;
 const INNER_H = HEIGHT - MARGIN.top - MARGIN.bottom;
-const MAX_NODES = 7; // display cap per column; real counts go in the labels
+const MAX_NODES = 6; // display cap per column; real counts go in the labels
 
 interface Column {
   label: string;
-  count: number; // real width
   nodes: string[]; // node labels (empty string = anonymous)
+  isField: boolean; // output column, drawn in the field color
 }
 
 type G = d3.Selection<SVGGElement, unknown, null, undefined>;
 
-function columns(net: ModelArchitecture): Column[] {
-  const anon = (n: number) => Array.from({ length: Math.min(n, MAX_NODES) }, () => "");
+function columns(model: ModelArchitecture): Column[] {
+  const anon = Array.from({ length: MAX_NODES }, () => "");
   return [
-    { label: "input · x, y, t", count: 3, nodes: ["x", "y", "t"] },
-    { label: `Fourier · ${2 * net.fourier_feats}`, count: 2 * net.fourier_feats, nodes: anon(6) },
-    {
-      label: `hidden · ${net.hidden} × ${net.layers}`,
-      count: net.hidden,
-      nodes: anon(6),
-    },
-    { label: `fields · ${net.fields.length}`, count: net.fields.length, nodes: net.fields },
+    { label: "input · x, y, t", nodes: ["x", "y", "t"], isField: false },
+    { label: `Fourier · ${2 * model.fourier_feats}`, nodes: anon, isField: false },
+    { label: `hidden · ${model.hidden} × ${model.layers}`, nodes: anon, isField: false },
+    { label: `fields · ${model.fields.length}`, nodes: model.fields.slice(0, MAX_NODES), isField: true },
   ];
 }
 
@@ -57,13 +53,13 @@ function drawEdges(g: G, cols: Column[], x: (i: number) => number): void {
   }
 }
 
-function drawColumn(g: G, col: Column, cx: number, isField: boolean): void {
+function drawColumn(g: G, col: Column, cx: number): void {
   const group = g.append("g");
   col.nodes.forEach((label, i) => {
     const cy = nodeY(i, col.nodes.length);
     group
       .append("circle")
-      .attr("class", isField ? "topo-node field" : "topo-node")
+      .attr("class", col.isField ? "topo-node field" : "topo-node")
       .attr("cx", cx)
       .attr("cy", cy)
       .attr("r", 7);
@@ -107,7 +103,7 @@ export function TopologyChart({ model }: { model: ModelArchitecture }) {
     const cx = (i: number) => x(i) ?? 0;
 
     drawEdges(g, cols, cx);
-    cols.forEach((col, i) => drawColumn(g, col, cx(i), i === cols.length - 1));
+    cols.forEach((col, i) => drawColumn(g, col, cx(i)));
   }, [model]);
 
   return (

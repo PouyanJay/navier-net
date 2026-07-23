@@ -5,20 +5,27 @@ import { useModel } from "./physics/useModel";
 import "./runs.css";
 
 export function PhysicsModelView() {
-  const { model, error } = useModel();
+  const load = useModel();
 
   return (
     <div className="stack">
       <GoverningEquations />
 
-      {error && (
-        <p className="state-note error" role="alert">{error}</p>
+      {load.status === "loading" && (
+        <p className="state-note" role="status">Loading model…</p>
       )}
-
-      {model && (
+      {load.status === "empty" && (
+        <p className="state-note">
+          No datasets yet — upload a sequence to see the model topology.
+        </p>
+      )}
+      {load.status === "error" && (
+        <p className="state-note error" role="alert">{load.message}</p>
+      )}
+      {load.status === "ready" && (
         <>
-          <ModelTopology model={model} />
-          <ArchitecturePanel model={model} />
+          <ModelTopology model={load.model} />
+          <ArchitecturePanel model={load.model} />
         </>
       )}
     </div>

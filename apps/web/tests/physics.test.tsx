@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EquationBlock, TopologyChart } from "../src/components";
@@ -40,11 +40,15 @@ describe("EquationBlock", () => {
 });
 
 describe("TopologyChart", () => {
-  it("draws a node per field in the output column", () => {
+  it("draws field-output nodes, connecting edges, and labels from the model", () => {
     const { container } = render(<TopologyChart model={MODEL} />);
     // 4 field outputs are drawn as .field nodes.
     expect(container.querySelectorAll(".topo-node.field")).toHaveLength(4);
-    expect(container.querySelectorAll(".topo-node").length).toBeGreaterThan(4);
+    // Edges wire the columns together (the "topology").
+    expect(container.querySelectorAll(".topo-edges line").length).toBeGreaterThan(0);
+    // Column labels reflect the model's real dimensions.
+    expect(container.textContent).toContain("hidden · 96 × 4");
+    expect(container.textContent).toContain("Fourier · 128");
   });
 });
 
@@ -60,5 +64,31 @@ describe("PhysicsModelView", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("phi, u, v, s")).toBeInTheDocument();
     expect(screen.getByText("96")).toBeInTheDocument(); // hidden width
+  });
+
+  it("shows an error state when the model fails to load", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.endsWith("/api/datasets")) {
+          return json([{ id: "sample", n_frames: 3, processed: false }]);
+        }
+        return new Response("not found", { status: 404 }); // getModel fails
+      }),
+    );
+    render(<PhysicsModelView />);
+    // Equations always render; the model panels are replaced by an alert.
+    expect(screen.getByRole("heading", { name: "Governing equations" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+
+  it("shows only the equations when there are no datasets yet", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json([])));
+    render(<PhysicsModelView />);
+    expect(screen.getByRole("heading", { name: "Governing equations" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Model topology — live" })).not.toBeInTheDocument(),
+    );
   });
 });

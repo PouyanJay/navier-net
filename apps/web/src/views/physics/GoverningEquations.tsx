@@ -1,6 +1,11 @@
 import { EquationBlock, Panel } from "../../components";
 import "./physics.css";
 
+const VOF = String.raw`r_{\text{vof}} = \alpha_t + u\,\alpha_x + v\,\alpha_y = 0`;
+const CONTINUITY = String.raw`r_{\text{div}} = u_x + v_y - s = 0`;
+const VOLUME_FRACTION = String.raw`\alpha = \sigma\!\left(\phi / \varepsilon\right)`;
+const BOUNDARY = String.raw`u\big|_{\text{inlet}} = u_{\text{in}}, \qquad \mathbf{u}\big|_{\text{wall}} = \mathbf{0}`;
+
 /** The Stage-A governing physics, rendered as math with explanatory prose. */
 export function GoverningEquations() {
   return (
@@ -12,21 +17,21 @@ export function GoverningEquations() {
       </p>
 
       <p className="prose">Volume-of-fluid transport (the interface moves with the flow):</p>
-      <EquationBlock tex="r_{\text{vof}} = \alpha_t + u\,\alpha_x + v\,\alpha_y = 0" />
+      <EquationBlock tex={VOF} />
 
       <p className="prose">Continuity with an inferred dilatation source <em>s</em>:</p>
-      <EquationBlock tex="r_{\text{div}} = u_x + v_y - s = 0" />
+      <EquationBlock tex={CONTINUITY} />
 
       <p className="prose">
         The volume fraction is a bounded function of a level-set field, making the
         interface half-thickness <em>ε</em> an explicit, annealable parameter:
       </p>
-      <EquationBlock tex="\alpha = \sigma\!\left(\phi / \varepsilon\right)" />
+      <EquationBlock tex={VOLUME_FRACTION} />
 
       <p className="prose">
         Boundary conditions: plug inflow at the inlet and no-slip side walls.
       </p>
-      <EquationBlock tex="u\big|_{\text{inlet}} = u_{\text{in}}, \qquad \mathbf{u}\big|_{\text{wall}} = \mathbf{0}" />
+      <EquationBlock tex={BOUNDARY} />
     </Panel>
   );
 }
