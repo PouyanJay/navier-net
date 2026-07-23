@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { AppShell, NAV_ITEMS } from "./app/AppShell";
 import { Placeholder } from "./views/Placeholder";
-import { RunsOverview } from "./views/RunsOverview";
+import { ResultsView } from "./views/ResultsView";
 
 const PAGE_TITLE: Record<string, string> = Object.fromEntries(
   NAV_ITEMS.map((item) => [item.id, item.label]),
@@ -24,7 +24,7 @@ export function App() {
         )}
       </header>
       <div className="stack">
-        {active === "results" ? <RunsOverview /> : <Placeholder title={PAGE_TITLE[active]} />}
+        {active === "results" ? <ResultsView /> : <Placeholder title={PAGE_TITLE[active]} />}
       </div>
     </AppShell>
   );

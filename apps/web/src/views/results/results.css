@@ -1,0 +1,96 @@
+.results-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+}
+.results-head .id {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 15px;
+}
+.results-head .steps {
+  color: var(--ink3);
+  font-size: 12px;
+}
+.results-head select {
+  margin-left: auto;
+}
+
+.nose-compare {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s6);
+  margin-bottom: var(--s5);
+  flex-wrap: wrap;
+}
+.nose-error {
+  padding-bottom: var(--s1);
+}
+
+.agreement-table {
+  margin-top: var(--s4);
+}
+
+.deliverables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.deliverable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4);
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+}
+.deliverable .name {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.deliverable .desc {
+  color: var(--ink3);
+  font-size: 12px;
+}
+
+.figure-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--s3);
+  margin-top: var(--s4);
+}
+.figure-grid a {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+  overflow: hidden;
+  background: var(--view);
+}
+.figure-grid img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.figure-grid figcaption {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+  padding: var(--s1) var(--s2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-video {
+  width: 100%;
+  margin-top: var(--s4);
+  border-radius: var(--rs);
+  border: 1px solid var(--line);
+  background: var(--view);
+}
+.figure-grid figure {
+  margin: 0;
+}

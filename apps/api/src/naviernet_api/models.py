@@ -40,3 +40,24 @@ class RunDetail(BaseModel):
     metrics: dict | None = None  # verbatim metrics.json
     config: dict | None = None  # resolved Hydra config snapshot (.hydra/config.yaml)
     artifacts: ArtifactFlags
+
+
+class PhysicsValidation(BaseModel):
+    """The physics-validation summary the Results view shows.
+
+    Composed from the run's `metrics.json` and `dimensionless_groups.json` plus a
+    documented measured nose speed; the API does no physics of its own.
+    """
+
+    nose_speed_inferred_mm_s: float | None = None
+    nose_speed_measured_mm_s: float | None = None
+    nose_speed_error_pct: float | None = None
+    bretherton_film_um: float | None = None
+    hele_shaw: float | None = None
+    reynolds: float | None = None
+    weber: float | None = None
+    capillary: float | None = None
+    prandtl: float | None = None
+    iou_mean: float | None = None
+    iou_holdout: float | None = None
+    holdout_frame: int | None = None
