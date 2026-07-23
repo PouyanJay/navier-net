@@ -118,3 +118,52 @@ def test_inferred_nose_speed_matches_the_measurement(trained, cfg):
     mm_s = float(speed[middle].mean()) * cfg.scales.U_ref * 1e3
 
     assert mm_s == pytest.approx(180.0, rel=0.10)
+
+
+@pytest.mark.needs_data
+@pytest.mark.slow
+def test_multirun_seed_sweep_produces_independent_runs(cfg, paths, tmp_path):
+    """Regression: each --multirun job must own its output directory.
+
+    Previously every sweep job shared ``outputs/<run_name>``, so the second
+    seed silently resumed the first job's checkpoint instead of training a fresh
+    model. The CLI now binds the output directory to Hydra's per-job runtime
+    directory; this drives a real two-seed sweep and checks the jobs stay
+    independent.
+    """
+    import shutil
+    import subprocess
+    import sys
+
+    # Train reads only the preprocessed tensors, so stage those under a
+    # throwaway root -- no raw frames needed.
+    processed = tmp_path / "data" / "processed" / cfg.dataset
+    processed.mkdir(parents=True)
+    shutil.copy(paths.tensors, processed / "tensors.npz")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "naviernet.cli",
+            "--multirun",
+            "stage=train",
+            "training.steps=1",
+            "training.log_every=1",
+            f"paths.root={tmp_path}",
+            "training.seed=0,1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+
+    checkpoints = sorted((tmp_path / "outputs" / "multirun").rglob("ckpt.pt"))
+    assert len(checkpoints) == 2, f"expected two independent runs, got {checkpoints}"
+
+    # A fresh single-step run reports done == 1. If the second job had resumed
+    # the first's checkpoint it would report 2.
+    for ckpt in checkpoints:
+        state = torch.load(ckpt, weights_only=False)["state"]
+        assert state["done"] == 1, f"{ckpt} completed {state['done']} steps (resumed?)"
