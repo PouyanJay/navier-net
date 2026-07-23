@@ -15,6 +15,14 @@ test("renders the shell and a real run from the API", async ({ page }) => {
   // A real trained run, read end-to-end from outputs/ via the API.
   await expect(page.getByText("highest_t").first()).toBeVisible();
   await expect(page.getByText("trained").first()).toBeVisible();
+
+  // Phase 1 Results content, all read live from the pipeline's artifacts.
+  await expect(page.getByText("Agreement per frame")).toBeVisible();
+  await expect(page.getByText(/holdout — never supervised/)).toBeVisible();
+  await expect(page.getByText("Physics validation")).toBeVisible();
+  await expect(page.getByText("177")).toBeVisible(); // inferred nose speed
+  await expect(page.getByText("215.5")).toBeVisible(); // Reynolds
+  await expect(page.getByText("training_data.npz")).toBeVisible();
 });
 
 test("theme toggle flips the document theme", async ({ page }) => {

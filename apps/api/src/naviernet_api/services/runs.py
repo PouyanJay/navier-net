@@ -23,6 +23,9 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # Directory names under outputs/ that are not individual runs.
 _NON_RUN_DIRS = {"multirun"}
 
+# Served figure files must be simple PNG names inside the run's figures dir.
+_FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
+
 
 def _safe_run_dir(settings: Settings, run_id: str) -> Path | None:
     """Resolve a run id to its directory, or None if invalid / missing."""
@@ -150,3 +153,75 @@ def get_run(settings: Settings, run_id: str) -> RunDetail | None:
         config=_read_hydra_config(run_dir),
         artifacts=artifacts,
     )
+
+
+def _paths_for(settings: Settings, run_id: str, run_dir: Path) -> RunPaths:
+    dataset = _dataset_of(run_dir, _read_json(run_dir / "metrics.json"))
+    return _run_paths(settings, run_id, dataset)
+
+
+def read_groups(settings: Settings, run_id: str) -> dict | None:
+    """The dimensionless groups sub-dict from `dimensionless_groups.json`."""
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    payload = _read_json(run_dir / "dimensionless_groups.json")
+    return payload.get("groups") if payload else None
+
+
+def read_loss_history(settings: Settings, run_id: str) -> list[dict] | None:
+    """The per-log-step loss records saved in the checkpoint's run state."""
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    checkpoint = _paths_for(settings, run_id, run_dir).checkpoint
+    if not checkpoint.is_file():
+        return None
+    import torch
+
+    try:
+        state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        return [dict(record) for record in state["state"]["hist"]]
+    except Exception:
+        return None
+
+
+def figure_path(settings: Settings, run_id: str, name: str) -> Path | None:
+    """Path to a figure PNG, confined to the run's figures dir (SECURITY.md §3)."""
+    if not _FIGURE_NAME_RE.match(name):
+        return None
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    figures_dir = _paths_for(settings, run_id, run_dir).figures_dir.resolve()
+    path = (figures_dir / name).resolve()
+    if not path.is_relative_to(figures_dir) or not path.is_file():
+        return None
+    return path
+
+
+def video_path(settings: Settings, run_id: str) -> Path | None:
+    """Path to the run's rendered video, or None if absent."""
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    video = _paths_for(settings, run_id, run_dir).video
+    return video if video.is_file() else None
+
+
+def checkpoint_path(settings: Settings, run_id: str) -> Path | None:
+    """Path to the run's checkpoint, or None if absent."""
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    checkpoint = _paths_for(settings, run_id, run_dir).checkpoint
+    return checkpoint if checkpoint.is_file() else None
+
+
+def tensors_path(settings: Settings, run_id: str) -> Path | None:
+    """Path to the preprocessed tensors for the run's dataset, or None."""
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    tensors = _paths_for(settings, run_id, run_dir).tensors
+    return tensors if tensors.is_file() else None

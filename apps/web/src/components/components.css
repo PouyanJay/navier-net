@@ -161,3 +161,96 @@
   background: var(--acc2);
   border-color: var(--acc2);
 }
+
+/* Definition list (key -> value) */
+.dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--s2) var(--s5);
+}
+.dl dt {
+  color: var(--ink2);
+  font-size: 13px;
+}
+.dl dd {
+  margin: 0;
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.dl .dl-hint {
+  color: var(--ink3);
+  font-size: 11px;
+  margin-left: var(--s2);
+}
+
+/* Table */
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.tbl th,
+.tbl td {
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line2);
+  text-align: left;
+}
+.tbl th {
+  color: var(--ink3);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.tbl td.num,
+.tbl th.num {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.tbl tr[data-tone="amber"] td {
+  background: var(--ambersoft);
+}
+.tbl tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Dark visualization canvas (D3 lives here) */
+.view-canvas {
+  background: var(--view);
+  border: 1px solid var(--viewline);
+  border-radius: var(--r);
+  padding: var(--s4);
+}
+.view-canvas svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/*
+ * Chart primitives. The view canvas is dark in BOTH themes, so chart text uses a
+ * light-on-dark token (--sidetxt), never --ink*. Color comes from tokens here so
+ * D3 only owns geometry.
+ */
+.chart-bar {
+  fill: var(--acc);
+}
+.chart-bar.holdout {
+  fill: var(--amber);
+}
+.chart-grid line {
+  stroke: var(--viewline);
+  stroke-width: 1;
+}
+.chart-axis text {
+  fill: var(--sidetxt);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.chart-baseline {
+  stroke: var(--viewline);
+  stroke-width: 1;
+}

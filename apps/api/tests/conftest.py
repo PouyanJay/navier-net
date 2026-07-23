@@ -31,6 +31,8 @@ def repo_root(tmp_path: Path) -> Path:
                 "run_name": "demo_run",
                 "dataset": "highest_t",
                 "iou_holdout": 0.968,
+                "iou_mean": 0.962,
+                "holdout_frame": 6,
                 "iou_per_frame": {"1": 0.973, "6": 0.968},
                 "nose_speed_mm_s": 177.0,
             }
@@ -39,17 +41,43 @@ def repo_root(tmp_path: Path) -> Path:
     (run / ".hydra" / "config.yaml").write_text(
         "dataset: highest_t\nrun_name: demo_run\ntraining:\n  steps: 1500\n"
     )
-    (run / "dimensionless_groups.json").write_text("{}")
+    (run / "dimensionless_groups.json").write_text(
+        json.dumps(
+            {
+                "groups": {
+                    "Re": 215.5,
+                    "We": 2.302,
+                    "Ca": 0.01068,
+                    "Pr": 9.411,
+                    "hele_shaw": 0.2228,
+                    "bretherton_film_um": 4.875,
+                }
+            }
+        )
+    )
     (run / "figures" / "trajectories.png").write_bytes(b"\x89PNG\r\n")
     (run / "video" / "growth.mp4").write_bytes(b"\x00")
 
-    # A real (tiny) first-party checkpoint so step-count reading works.
+    # A real (tiny) first-party checkpoint so step-count and loss-history read.
     import torch
 
     torch.save(
-        {"model": {}, "opt": {}, "state": {"done": 1500, "hist": [], "w": {}}},
+        {
+            "model": {},
+            "opt": {},
+            "state": {
+                "done": 1500,
+                "hist": [{"step": 200, "data": 5e-3, "vof": 4e-2, "div": 4e-3, "bc": 2e-3}],
+                "w": {},
+            },
+        },
         run / "checkpoints" / "ckpt.pt",
     )
+
+    # Preprocessed tensors are dataset-scoped (data/processed/<dataset>/).
+    tensors = tmp_path / "data" / "processed" / "highest_t"
+    tensors.mkdir(parents=True)
+    (tensors / "tensors.npz").write_bytes(b"PK\x03\x04")
 
     # An "empty" run: a directory with no checkpoint yet.
     (tmp_path / "outputs" / "scratch").mkdir(parents=True)
