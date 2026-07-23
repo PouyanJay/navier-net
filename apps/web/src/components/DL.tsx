@@ -11,7 +11,7 @@ export function DL({ items }: { items: KV[] }) {
   return (
     <dl className="dl">
       {items.map((item) => (
-        <div key={item.label} style={{ display: "contents" }}>
+        <div key={item.label} className="dl-row">
           <dt>{item.label}</dt>
           <dd className="mono">
             {item.value}

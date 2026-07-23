@@ -24,6 +24,13 @@
   margin-bottom: var(--s5);
   flex-wrap: wrap;
 }
+.nose-error {
+  padding-bottom: var(--s1);
+}
+
+.agreement-table {
+  margin-top: var(--s4);
+}
 
 .deliverables {
   display: flex;
@@ -79,7 +86,11 @@
 
 .result-video {
   width: 100%;
+  margin-top: var(--s4);
   border-radius: var(--rs);
   border: 1px solid var(--line);
   background: var(--view);
+}
+.figure-grid figure {
+  margin: 0;
 }

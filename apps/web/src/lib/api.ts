@@ -36,8 +36,6 @@ export interface RunDetail {
   artifacts: ArtifactFlags;
 }
 
-export type DimensionlessGroups = Record<string, number>;
-
 export interface PhysicsValidation {
   nose_speed_inferred_mm_s: number | null;
   nose_speed_measured_mm_s: number | null;
@@ -66,7 +64,6 @@ const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
 export const api = {
   listRuns: () => getJson<RunSummary[]>("/api/runs"),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
-  getGroups: (id: string) => getJson<DimensionlessGroups>(`${runPath(id)}/groups`),
   getValidation: (id: string) => getJson<PhysicsValidation>(`${runPath(id)}/validation`),
 };
 

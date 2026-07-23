@@ -83,18 +83,44 @@ describe("ResultsView", () => {
     expect(screen.getByText("215.5")).toBeInTheDocument(); // Reynolds
   });
 
-  it("shows deliverables with downloads", async () => {
+  it("shows deliverables whose download links point at the run's artifacts", async () => {
     mockApi();
     render(<ResultsView />);
 
     expect(await screen.findByText("training_data.npz")).toBeInTheDocument();
     expect(screen.getByText("ckpt.pt")).toBeInTheDocument();
-    expect(screen.getAllByText("Download").length).toBeGreaterThan(0);
+
+    const links = screen.getAllByRole("link", { name: "Download" });
+    const hrefs = links.map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/api/runs/highest_t/tensors");
+    expect(hrefs).toContain("/api/runs/highest_t/checkpoint");
   });
 
   it("shows an empty state when there are no runs", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json([])));
     render(<ResultsView />);
     expect(await screen.findByText(/No runs yet/)).toBeInTheDocument();
+  });
+
+  it("shows an error state when the run list fails to load", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("boom", { status: 500, statusText: "Server Error" })),
+    );
+    render(<ResultsView />);
+    expect(await screen.findByText(/Could not load runs/)).toBeInTheDocument();
+  });
+
+  it("shows an error state when the selected run's detail fails to load", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.endsWith("/api/runs")) return json([RUN]);
+        return new Response("boom", { status: 500 }); // detail + validation fail
+      }),
+    );
+    render(<ResultsView />);
+    expect(await screen.findByText(/Could not load results/)).toBeInTheDocument();
   });
 });

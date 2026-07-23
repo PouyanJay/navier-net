@@ -26,7 +26,7 @@ def build_validation(
     inferred = metrics.get("nose_speed_mm_s")
     measured = MEASURED_NOSE_SPEED_MM_S.get(dataset or "")
     error_pct = None
-    if inferred is not None and measured:
+    if inferred is not None and measured:  # measured is a positive speed or absent
         error_pct = abs(inferred - measured) / measured * 100.0
 
     return PhysicsValidation(

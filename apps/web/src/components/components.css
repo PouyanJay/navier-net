@@ -169,6 +169,9 @@
   grid-template-columns: 1fr auto;
   gap: var(--s2) var(--s5);
 }
+.dl .dl-row {
+  display: contents;
+}
 .dl dt {
   color: var(--ink2);
   font-size: 13px;

@@ -26,23 +26,14 @@ export function Deliverables({ runId, artifacts }: DeliverablesProps) {
       </div>
 
       {artifacts.video && (
-        <video className="result-video" controls preload="metadata" style={{ marginTop: "var(--s4)" }}>
+        <video className="result-video" controls preload="metadata">
           <source src={artifactUrl.video(runId)} type="video/mp4" />
           Your browser cannot play this video.
         </video>
       )}
 
       {artifacts.figures.length > 0 && (
-        <div className="figure-grid">
-          {artifacts.figures.map((name) => (
-            <a key={name} href={artifactUrl.figure(runId, name)} target="_blank" rel="noreferrer">
-              <figure style={{ margin: 0 }}>
-                <img src={artifactUrl.figure(runId, name)} alt={name} loading="lazy" />
-                <figcaption>{name}</figcaption>
-              </figure>
-            </a>
-          ))}
-        </div>
+        <FigureGrid runId={runId} figures={artifacts.figures} />
       )}
     </Panel>
   );
@@ -58,6 +49,21 @@ function FileRow({ name, desc, href }: { name: string; desc: string; href: strin
       <a className="btn" href={href} download>
         Download
       </a>
+    </div>
+  );
+}
+
+function FigureGrid({ runId, figures }: { runId: string; figures: string[] }) {
+  return (
+    <div className="figure-grid">
+      {figures.map((name) => (
+        <a key={name} href={artifactUrl.figure(runId, name)} target="_blank" rel="noreferrer">
+          <figure>
+            <img src={artifactUrl.figure(runId, name)} alt={name} loading="lazy" />
+            <figcaption>{name}</figcaption>
+          </figure>
+        </a>
+      ))}
     </div>
   );
 }

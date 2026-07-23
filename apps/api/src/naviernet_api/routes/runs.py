@@ -42,11 +42,13 @@ def get_validation(
     run_id: str, settings: Settings = Depends(get_settings)
 ) -> PhysicsValidation:
     """Physics-validation summary (nose speed, Bretherton, key groups, IoU)."""
-    detail = runs_service.get_run(settings, run_id)
-    if detail is None:
+    # Read only dataset + metrics (no checkpoint load — validation never uses it).
+    result = runs_service.read_dataset_and_metrics(settings, run_id)
+    if result is None:
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+    dataset, metrics = result
     groups = runs_service.read_groups(settings, run_id)
-    return physics_service.build_validation(detail.dataset, detail.metrics, groups)
+    return physics_service.build_validation(dataset, metrics, groups)
 
 
 @router.get("/{run_id}/loss-history")
