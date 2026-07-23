@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from naviernet_api.routes import runs
+from naviernet_api.routes import datasets, runs
 from naviernet_api.settings import get_settings
 
 
@@ -33,6 +33,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(runs.router)
+    app.include_router(datasets.router)
     return app
 
 

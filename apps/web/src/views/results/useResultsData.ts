@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api, type PhysicsValidation, type RunDetail, type RunSummary } from "../../lib/api";
+import { errorMessage as message } from "../../lib/errors";
 
 export type RunsLoad =
   | { status: "loading" }
@@ -11,10 +12,6 @@ export type DetailLoad =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; detail: RunDetail; validation: PhysicsValidation };
-
-function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /**
  * Owns the Results view's data: the run list (defaulting the selection to the

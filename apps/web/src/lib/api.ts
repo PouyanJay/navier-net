@@ -51,6 +51,40 @@ export interface PhysicsValidation {
   holdout_frame: number | null;
 }
 
+export interface OperatingConditions {
+  fluid: string;
+  T_sat_C: number;
+  q_wall_W_cm2: number;
+  flow_rate_mL_hr: number;
+  channel_width_um: number;
+  channel_height_um: number;
+  dt_frame_ms: number;
+  flow_direction: string;
+  n_frames_raw: number;
+  n_frames_usable: number;
+  n_frames_event: number;
+}
+
+export interface DatasetSummary {
+  id: string;
+  n_frames: number;
+  processed: boolean;
+}
+
+export interface DatasetDetail extends DatasetSummary {
+  has_qc: boolean;
+  conditions: OperatingConditions;
+}
+
+export type DimensionlessGroups = Record<string, number>;
+
+export interface PreprocessStatus {
+  dataset: string;
+  state: "idle" | "running" | "done" | "error";
+  message: string | null;
+  has_qc: boolean;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -59,12 +93,41 @@ async function getJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function send<T>(path: string, method: string, body?: BodyInit): Promise<T> {
+  const response = await fetch(path, { method, body });
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      detail = ((await response.json()) as { detail?: string }).detail ?? detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail);
+  }
+  return (await response.json()) as T;
+}
+
 const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
+
+const datasetPath = (id: string) => `/api/datasets/${encodeURIComponent(id)}`;
 
 export const api = {
   listRuns: () => getJson<RunSummary[]>("/api/runs"),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
   getValidation: (id: string) => getJson<PhysicsValidation>(`${runPath(id)}/validation`),
+
+  listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
+  getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),
+  getDatasetGroups: (id: string) => getJson<DimensionlessGroups>(`${datasetPath(id)}/groups`),
+  getPreprocessStatus: (id: string) =>
+    getJson<PreprocessStatus>(`${datasetPath(id)}/preprocess`),
+  startPreprocess: (id: string) =>
+    send<PreprocessStatus>(`${datasetPath(id)}/preprocess`, "POST"),
+  uploadFrames: (id: string, files: FileList | File[]) => {
+    const form = new FormData();
+    for (const file of Array.from(files)) form.append("files", file);
+    return send<DatasetSummary>(`${datasetPath(id)}/upload`, "POST", form);
+  },
 };
 
 /** Direct artifact URLs (used as href / img src / video src, not fetched as JSON). */
@@ -74,4 +137,6 @@ export const artifactUrl = {
   video: (id: string) => `${runPath(id)}/video`,
   checkpoint: (id: string) => `${runPath(id)}/checkpoint`,
   tensors: (id: string) => `${runPath(id)}/tensors`,
+  datasetQc: (id: string) => `${datasetPath(id)}/qc`,
+  datasetFrame: (id: string, n: number) => `${datasetPath(id)}/frames/${n}`,
 };

@@ -25,6 +25,24 @@ test("renders the shell and a real run from the API", async ({ page }) => {
   await expect(page.getByText("training_data.npz")).toBeVisible();
 });
 
+test("datasets view shows operating conditions and live dimensionless groups", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Datasets & conditions" }).click();
+
+  // Target panel headings (the page intro paragraph also names these sections).
+  await expect(page.getByRole("heading", { name: "Operating conditions" })).toBeVisible();
+  await expect(page.getByText("FC-72")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Derived dimensionless groups" }),
+  ).toBeVisible();
+  await expect(page.getByText("215.5")).toBeVisible(); // live Reynolds
+  await expect(
+    page.getByRole("heading", { name: "Calibration & segmentation" }),
+  ).toBeVisible();
+});
+
 test("theme toggle flips the document theme", async ({ page }) => {
   await page.goto("/");
   const html = page.locator("html");
