@@ -42,6 +42,49 @@ class RunDetail(BaseModel):
     artifacts: ArtifactFlags
 
 
+class OperatingConditions(BaseModel):
+    """The experiment's operating conditions (from the experiment config)."""
+
+    fluid: str
+    T_sat_C: float
+    q_wall_W_cm2: float
+    flow_rate_mL_hr: float
+    channel_width_um: float
+    channel_height_um: float
+    dt_frame_ms: float
+    flow_direction: str
+    n_frames_raw: int
+    n_frames_usable: int
+    n_frames_event: int
+
+
+class DatasetSummary(BaseModel):
+    """One row in the datasets list."""
+
+    id: str
+    n_frames: int  # raw TIFFs present on disk
+    processed: bool  # preprocessed tensors exist
+
+
+class DatasetDetail(BaseModel):
+    """Full detail for one dataset."""
+
+    id: str
+    n_frames: int
+    processed: bool
+    has_qc: bool  # a preprocessing QC figure exists
+    conditions: OperatingConditions
+
+
+class PreprocessStatus(BaseModel):
+    """State of a dataset's preprocessing job."""
+
+    dataset: str
+    state: str  # "idle" | "running" | "done" | "error"
+    message: str | None = None
+    has_qc: bool = False
+
+
 class PhysicsValidation(BaseModel):
     """The physics-validation summary the Results view shows.
 

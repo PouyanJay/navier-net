@@ -16,8 +16,9 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
-      // API — run from the repo root so it finds outputs/ and the venv package.
-      command: "../../.venv/bin/python -m naviernet_api",
+      // API — run from the repo root (cwd) so it finds outputs/ and the venv
+      // package; the command path is therefore relative to the repo root.
+      command: ".venv/bin/python -m naviernet_api",
       cwd: "../..",
       env: { NAVIERNET_API_PORT: "8000" },
       url: "http://127.0.0.1:8000/healthz",

@@ -81,7 +81,26 @@ def repo_root(tmp_path: Path) -> Path:
 
     # An "empty" run: a directory with no checkpoint yet.
     (tmp_path / "outputs" / "scratch").mkdir(parents=True)
+
+    # A raw dataset with a few real (tiny) TIFF frames.
+    raw = tmp_path / "data" / "raw" / "sample"
+    raw.mkdir(parents=True)
+    from PIL import Image
+
+    for i in (1, 2, 3):
+        Image.new("L", (64, 48), color=20 * i).save(raw / f"{i}.tif", format="TIFF")
+
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _clear_preprocess_jobs():
+    """The preprocess job registry is process-global; isolate it per test."""
+    from naviernet_api.services import jobs
+
+    jobs._jobs.clear()
+    yield
+    jobs._jobs.clear()
 
 
 @pytest.fixture
@@ -89,3 +108,15 @@ def client(repo_root: Path) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: Settings(repo_root=repo_root)
     return TestClient(app)
+
+
+@pytest.fixture
+def tiff_bytes() -> bytes:
+    """A minimal valid TIFF image as bytes (for upload tests)."""
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("L", (32, 24)).save(buffer, format="TIFF")
+    return buffer.getvalue()

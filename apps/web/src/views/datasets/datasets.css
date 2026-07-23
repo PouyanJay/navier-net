@@ -1,0 +1,87 @@
+.dataset-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+}
+.dataset-head .id {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 15px;
+}
+.dataset-head select {
+  margin-left: auto;
+}
+
+.sequence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--s3);
+}
+.sequence-grid figure {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+  overflow: hidden;
+  background: var(--view);
+}
+.sequence-grid img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.sequence-grid figcaption {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+  padding: var(--s1) var(--s2);
+}
+
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-bottom: var(--s4);
+}
+.upload-row input[type="file"] {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink2);
+}
+
+.qc-figure {
+  width: 100%;
+  margin-top: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--s4);
+}
+.project-card {
+  text-align: left;
+  padding: var(--s4);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--sh);
+  cursor: pointer;
+  font: inherit;
+}
+.project-card:hover {
+  border-color: var(--acc);
+}
+.project-card .name {
+  font-family: var(--mono);
+  font-weight: 600;
+  margin-bottom: var(--s2);
+}
+.project-card .meta {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+}
