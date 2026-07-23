@@ -47,7 +47,7 @@ Repository = "https://github.com/pouyanjahangiri/naviernet"
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "apps/api/tests"]
 addopts = "-q --strict-markers"
 markers = [
     "slow: exercises real training or rendering (deselect with '-m \"not slow\"')",

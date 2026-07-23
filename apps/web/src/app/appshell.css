@@ -1,0 +1,116 @@
+.shell {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  height: 100%;
+}
+
+/* Sidebar — dark navy chrome */
+.sidebar {
+  background: var(--side);
+  border-right: 1px solid var(--sideline);
+  display: flex;
+  flex-direction: column;
+  padding: var(--s5) var(--s3);
+  gap: var(--s5);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 0 var(--s2);
+  color: var(--sidehl);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.brand .mark {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--acc2);
+}
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nav button {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  text-align: left;
+  padding: var(--s2) var(--s3);
+  border: 0;
+  border-radius: var(--rs);
+  background: transparent;
+  color: var(--sidetxt);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.nav button:hover {
+  background: var(--side2);
+  color: var(--sidehl);
+}
+.nav button[aria-current="page"] {
+  background: var(--side2);
+  color: var(--sidehl);
+}
+.sidebar .spacer {
+  flex: 1;
+}
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--sideline);
+  border-radius: var(--rs);
+  background: transparent;
+  color: var(--sidetxt);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.theme-toggle:hover {
+  color: var(--sidehl);
+}
+
+/* Workspace — paper */
+.workspace {
+  overflow-y: auto;
+  padding: var(--s6) var(--s7);
+}
+.pagehead {
+  margin-bottom: var(--s5);
+}
+.pagehead h1 {
+  margin: 0 0 var(--s1);
+  font-size: 20px;
+  font-weight: 600;
+}
+.pagehead p {
+  margin: 0;
+  color: var(--ink2);
+  max-width: 70ch;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+}
+
+@media (max-width: 720px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+  }
+  .sidebar .spacer {
+    display: none;
+  }
+}
