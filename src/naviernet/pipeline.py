@@ -36,10 +36,10 @@ class Pipeline:
         self._model = self._data = None
         return meta
 
-    def train(self, steps: int | None = None):
+    def train(self, steps: int | None = None, on_log=None):
         from naviernet import training
 
-        model, data, state = training.train(self.cfg, self.paths, steps=steps)
+        model, data, state = training.train(self.cfg, self.paths, steps=steps, on_log=on_log)
         self._model, self._data = model, data
         return state
 

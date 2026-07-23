@@ -24,13 +24,19 @@ _registered = False
 _cache: dict[tuple[str, tuple[str, ...]], DictConfig] = {}
 
 
-def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
+def compose_cfg(
+    dataset: str, overrides: list[str] | None = None, cache: bool = True
+) -> DictConfig:
     """Compose the config for ``dataset`` (+ optional Hydra overrides).
 
     Composition is serialized and memoized: Hydra keeps global state, so doing it
     once per (dataset, overrides) and caching the result both avoids redundant
     work on every request and keeps repeated `initialize_config_dir` calls (which
     do not compose cleanly under concurrency) to a minimum.
+
+    ``cache=False`` skips memoization for one-off compositions whose overrides
+    are unique per call (a run launch carries a freshly minted ``run_name``, so
+    caching those would grow the cache without ever hitting it).
     """
     global _registered
     key = (dataset, tuple(overrides or ()))
@@ -48,7 +54,8 @@ def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
                 overrides=[f"dataset={dataset}", *(overrides or [])],
             )
         OmegaConf.set_readonly(cfg, True)  # a cached instance is shared; fail on mutation
-        _cache[key] = cfg
+        if cache:
+            _cache[key] = cfg
         return cfg
 
 

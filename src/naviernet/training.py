@@ -19,6 +19,8 @@ the optimising backward pass, and its gradients are discarded.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import torch
 
@@ -76,8 +78,13 @@ def train(
     cfg,
     paths: RunPaths,
     steps: int | None = None,
+    on_log: Callable[[dict], None] | None = None,
 ) -> tuple[BubblePINN, BubbleDataset, dict]:
-    """Train (or continue training) and write the checkpoint. Returns the model."""
+    """Train (or continue training) and write the checkpoint. Returns the model.
+
+    ``on_log``, when given, receives a copy of each history record as it is
+    logged, so a caller can observe progress while the run is still going.
+    """
     tcfg = cfg.training
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
@@ -139,6 +146,8 @@ def train(
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
+            if on_log is not None:
+                on_log(dict(record))
             log.info(
                 "step %5d | lr=%.2e | %s",
                 step,

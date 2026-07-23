@@ -1,22 +1,86 @@
-"""Run endpoints: list runs and read one run's detail."""
+"""Run endpoints: list, read, launch, and stream runs."""
 
 from __future__ import annotations
 
+import asyncio
+import json
+from collections.abc import AsyncIterator
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from sse_starlette.sse import EventSourceResponse
 
-from naviernet_api.models import PhysicsValidation, RunDetail, RunSummary
+from naviernet_api.models import (
+    PhysicsValidation,
+    RunDetail,
+    RunJobStatus,
+    RunLaunchRequest,
+    RunSummary,
+)
 from naviernet_api.services import physics as physics_service
+from naviernet_api.services import run_manager
 from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings, get_settings
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+# How often the SSE stream checks the run's event buffer for news.
+_STREAM_POLL_SECONDS = 0.25
 
 
 @router.get("", response_model=list[RunSummary])
 def list_runs(settings: Settings = Depends(get_settings)) -> list[RunSummary]:
     """Every run under `outputs/`."""
     return runs_service.list_runs(settings)
+
+
+@router.post("", response_model=RunJobStatus, status_code=202)
+def launch_run(
+    request: RunLaunchRequest, settings: Settings = Depends(get_settings)
+) -> RunJobStatus:
+    """Start (or resume) a background training run."""
+    try:
+        return run_manager.launch(settings, request)
+    except run_manager.LaunchRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.get("/active", response_model=RunJobStatus | None)
+def get_active_run() -> RunJobStatus | None:
+    """The training run currently in progress, if any."""
+    return run_manager.active_run()
+
+
+@router.get("/{run_id}/status", response_model=RunJobStatus)
+def get_run_status(run_id: str) -> RunJobStatus:
+    """Live status of a run launched by this server."""
+    result = run_manager.status(run_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"no launched run {run_id!r}")
+    return result
+
+
+async def _run_events(run_id: str) -> AsyncIterator[dict]:
+    """Replay the run's buffered events, then follow until it finishes."""
+    cursor = 0
+    while True:
+        batch = run_manager.events_since(run_id, cursor)
+        if batch is None:
+            return
+        events, cursor, terminal = batch
+        for event in events:
+            yield {"event": event["event"], "data": json.dumps(event["data"])}
+        if terminal:
+            return
+        await asyncio.sleep(_STREAM_POLL_SECONDS)
+
+
+@router.get("/{run_id}/stream")
+def stream_run(run_id: str) -> EventSourceResponse:
+    """SSE stream of a launched run: `hist`, `log`, and `status` events."""
+    if run_manager.status(run_id) is None:
+        raise HTTPException(status_code=404, detail=f"no launched run {run_id!r}")
+    return EventSourceResponse(_run_events(run_id))
 
 
 @router.get("/{run_id}", response_model=RunDetail)

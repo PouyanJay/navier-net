@@ -1,0 +1,357 @@
+"""Launching and tracking training runs in the background.
+
+The fuller sibling of `jobs.py` (which drives the quick preprocess stage): a
+training run takes minutes-to-hours, so each launched run gets a registry entry
+holding its live state plus an append-only event buffer (loss records, console
+lines, status transitions) that the SSE endpoint replays and follows. The
+registry is process-local; the filesystem stays the source of truth for the
+run's artifacts, and a finished run is served from disk like any other.
+
+Lock discipline (same as `jobs.py`): the lock is not reentrant, so state is
+set inside it and threads are spawned / statuses reported outside it.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+from naviernet.utils.logging import get_logger
+from naviernet_api.models import RunJobStatus, RunLaunchRequest
+from naviernet_api.services import datasets as datasets_service
+from naviernet_api.services import runs as runs_service
+from naviernet_api.settings import Settings
+
+log = get_logger(__name__)
+
+# Training is CPU-bound and long-running; one run at a time keeps the box
+# responsive and the console unambiguous.
+MAX_CONCURRENT_RUNS = 1
+
+
+class LaunchRejected(Exception):
+    """A launch request that is well-formed but cannot be honored."""
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+@dataclass
+class _RunJob:
+    dataset: str | None
+    state: str = "running"  # running | done | error
+    stage: str | None = None
+    message: str | None = None
+    steps_done: int = 0
+    steps_total: int = 0
+    events: list[dict] = field(default_factory=list)
+
+
+_jobs: dict[str, _RunJob] = {}
+_lock = threading.Lock()
+
+
+class _ConsoleHandler(logging.Handler):
+    """Mirrors the worker thread's pipeline log lines into the run's events.
+
+    Filtering on the emitting thread id gives an exact per-run console: other
+    threads (request handlers, a preprocess job) share the `naviernet` loggers
+    but never leak into this run's stream.
+    """
+
+    def __init__(self, run_id: str, thread_id: int):
+        super().__init__(level=logging.INFO)
+        self._run_id = run_id
+        self._thread_id = thread_id
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.thread != self._thread_id:
+            return
+        tone = "err" if record.levelno >= logging.WARNING else None
+        _append_event(self._run_id, "log", {"line": record.getMessage(), "tone": tone})
+
+
+# -- registry access --------------------------------------------------------
+
+
+def _append_event(run_id: str, name: str, data: dict) -> None:
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None:
+            job.events.append({"event": name, "data": data})
+
+
+def _status_snapshot(run_id: str, job: _RunJob) -> RunJobStatus:
+    return RunJobStatus(
+        run_id=run_id,
+        dataset=job.dataset,
+        state=job.state,  # type: ignore[arg-type]
+        stage=job.stage,
+        message=job.message,
+        steps_done=job.steps_done,
+        steps_total=job.steps_total,
+    )
+
+
+def _emit_status(run_id: str) -> None:
+    """Append the job's current status to its own event stream."""
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None:
+            job.events.append(
+                {"event": "status", "data": _status_snapshot(run_id, job).model_dump()}
+            )
+
+
+def _console(run_id: str, line: str, tone: str | None = None) -> None:
+    _append_event(run_id, "log", {"line": line, "tone": tone})
+
+
+def status(run_id: str) -> RunJobStatus | None:
+    """The live status of a run launched by this process, or None."""
+    with _lock:
+        job = _jobs.get(run_id)
+        return _status_snapshot(run_id, job) if job else None
+
+
+def active_run() -> RunJobStatus | None:
+    """The currently running job, if any (there is at most one)."""
+    with _lock:
+        for run_id, job in _jobs.items():
+            if job.state == "running":
+                return _status_snapshot(run_id, job)
+    return None
+
+
+def events_since(run_id: str, cursor: int) -> tuple[list[dict], int, bool] | None:
+    """Events after ``cursor`` plus the new cursor and whether the run is over.
+
+    ``terminal`` is only True once every buffered event has been handed out, so
+    a consumer that drains until terminal never misses the final status event.
+    """
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is None:
+            return None
+        events = job.events[cursor:]
+        new_cursor = len(job.events)
+        terminal = job.state != "running" and new_cursor == cursor + len(events)
+    return events, new_cursor, terminal
+
+
+# -- launching --------------------------------------------------------------
+
+
+def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
+    """Validate a launch request, reserve the slot, and start the worker."""
+    if request.resume:
+        run_id, dataset = _validate_resume(settings, request)
+    else:
+        run_id, dataset = None, _validate_new_run(settings, request)
+
+    with _lock:
+        running = sum(1 for job in _jobs.values() if job.state == "running")
+        if running >= MAX_CONCURRENT_RUNS:
+            raise LaunchRejected(409, "a training run is already in progress")
+        if run_id is None:
+            run_id = _mint_run_id(settings)
+        _jobs[run_id] = _RunJob(dataset=dataset, stage="train")
+    # Spawn and report OUTSIDE the lock: both re-acquire it.
+    thread = threading.Thread(
+        target=_worker,
+        args=(settings, run_id, dataset, request),
+        name=f"train-{run_id}",
+        daemon=True,
+    )
+    thread.start()
+    result = status(run_id)
+    assert result is not None  # the job was just registered
+    return result
+
+
+def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> str:
+    """The dataset for a new run, after checking it is trainable."""
+    dataset = request.dataset or ""
+    if not datasets_service.is_valid_dataset_id(dataset):
+        raise LaunchRejected(404, f"unknown dataset {dataset!r}")
+    tensors = settings.repo_root / "data" / "processed" / dataset / "tensors.npz"
+    if not tensors.is_file():
+        raise LaunchRejected(
+            409, f"dataset {dataset!r} is not preprocessed — run preprocessing first"
+        )
+    return dataset
+
+
+def _validate_resume(settings: Settings, request: RunLaunchRequest) -> tuple[str, str | None]:
+    """The (run_id, dataset) to resume, after checking it can be resumed."""
+    run_id = request.run_id or ""
+    if runs_service.checkpoint_path(settings, run_id) is None:
+        raise LaunchRejected(409, f"run {run_id!r} has no checkpoint to resume from")
+    if not _snapshot_path(settings, run_id).is_file():
+        raise LaunchRejected(409, f"run {run_id!r} has no config snapshot — cannot resume")
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None and job.state == "running":
+            raise LaunchRejected(409, f"run {run_id!r} is already running")
+    found = runs_service.read_dataset_and_metrics(settings, run_id)
+    dataset = found[0] if found else None
+    return run_id, dataset
+
+
+def _mint_run_id(settings: Settings) -> str:
+    """A unique run id: training auto-resumes any existing checkpoint, so a new
+    run must never land in an existing run's directory."""
+    base = datetime.now().strftime("run-%Y%m%d-%H%M%S")
+    candidate, n = base, 2
+    while candidate in _jobs or (settings.outputs_dir / candidate).exists():
+        candidate = f"{base}-{n}"
+        n += 1
+    return candidate
+
+
+def _snapshot_path(settings: Settings, run_id: str) -> Path:
+    return settings.outputs_dir / run_id / ".hydra" / "config.yaml"
+
+
+# -- the worker -------------------------------------------------------------
+
+
+def _set_stage(run_id: str, stage: str) -> None:
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None:
+            job.stage = stage
+    _emit_status(run_id)
+    _console(run_id, f"[stage] {stage}", tone="em")
+
+
+def _worker(
+    settings: Settings, run_id: str, dataset: str | None, request: RunLaunchRequest
+) -> None:
+    """Background worker: train, evaluate, and optionally render the run."""
+    from naviernet.pipeline import Pipeline
+
+    handler = _ConsoleHandler(run_id, threading.get_ident())
+    pipeline_logger = logging.getLogger("naviernet")
+    pipeline_logger.addHandler(handler)
+    try:
+        cfg, base_steps = _configure(settings, run_id, dataset, request)
+        with _lock:
+            job = _jobs[run_id]
+            job.steps_done = base_steps
+            job.steps_total = base_steps + request.steps
+        verb = "resuming" if request.resume else "starting"
+        _console(
+            run_id,
+            f"[naviernet] {verb} run {run_id} · dataset {cfg.dataset} · {request.steps} steps",
+            tone="dim",
+        )
+        _emit_status(run_id)
+
+        pipeline = Pipeline(cfg)
+        if not request.resume:
+            _write_snapshot(cfg, pipeline.paths.output_dir)
+
+        def on_hist(record: dict) -> None:
+            with _lock:
+                job = _jobs.get(run_id)
+                if job is not None:
+                    job.steps_done = int(record["step"])
+                    job.events.append({"event": "hist", "data": record})
+
+        pipeline.train(steps=request.steps, on_log=on_hist)
+        _set_stage(run_id, "evaluate")
+        pipeline.evaluate()
+        if request.render:
+            _set_stage(run_id, "figures")
+            pipeline.figures()
+            _set_stage(run_id, "video")
+            pipeline.video()
+
+        with _lock:
+            job = _jobs[run_id]
+            job.state = "done"
+            job.stage = None
+            job.steps_done = job.steps_total  # hist only records every log_every steps
+        _console(
+            run_id,
+            f"[naviernet] run complete — checkpoint at outputs/{run_id}/checkpoints/ckpt.pt",
+            tone="ok",
+        )
+        _emit_status(run_id)
+        log.info("run %s finished", run_id)
+    except Exception as exc:  # noqa: BLE001 — report any failure to the client
+        log.exception("run %s failed", run_id)
+        with _lock:
+            job = _jobs.get(run_id)
+            if job is not None:
+                job.state = "error"
+                job.stage = None
+                job.message = str(exc)
+        _console(run_id, f"[naviernet] run failed: {exc}", tone="err")
+        _emit_status(run_id)
+    finally:
+        pipeline_logger.removeHandler(handler)
+
+
+def _configure(settings: Settings, run_id: str, dataset: str | None, request: RunLaunchRequest):
+    """The composed config and already-completed step count for this launch."""
+    if request.resume:
+        return _resume_config(settings, run_id, request)
+
+    overrides = [
+        f"paths.root={settings.repo_root}",
+        f"run_name={run_id}",
+        f"training.steps={request.steps}",
+        f"training.lr={request.lr}",
+        f"training.lr_halflife={request.lr_halflife}",
+        f"training.n_data={request.n_data}",
+        f"training.n_coll={request.n_coll}",
+        f"training.n_bc={request.n_bc}",
+        f"training.holdout_frame={request.holdout_frame}",
+        f"training.rebalance_every={request.rebalance_every}",
+        f"training.log_every={request.log_every}",
+        f"training.seed={request.seed}",
+        "training.device=cpu",  # the server never schedules onto an accelerator
+        f"training.weights.data={request.weights.data}",
+        f"training.weights.vof={request.weights.vof}",
+        f"training.weights.div={request.weights.div}",
+        f"training.weights.src={request.weights.src}",
+        f"training.weights.bc={request.weights.bc}",
+    ]
+    from naviernet_api.services.config_service import compose_cfg
+
+    assert dataset is not None  # enforced by _validate_new_run
+    return compose_cfg(dataset, overrides=overrides, cache=False), 0
+
+
+def _resume_config(settings: Settings, run_id: str, request: RunLaunchRequest):
+    """Reload the run's own config so a resumed run keeps its architecture."""
+    import torch
+    from omegaconf import OmegaConf
+
+    cfg = OmegaConf.load(_snapshot_path(settings, run_id))
+    # Re-pin what must reflect *this* launch: the repo location, the requested
+    # extra steps, and the server-side device policy.
+    cfg.paths.root = str(settings.repo_root)
+    cfg.training.steps = request.steps
+    cfg.training.device = "cpu"
+
+    checkpoint = settings.outputs_dir / run_id / "checkpoints" / "ckpt.pt"
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    return cfg, int(state["state"]["done"])
+
+
+def _write_snapshot(cfg, output_dir: Path) -> None:
+    """Persist the composed config like Hydra does for CLI runs, so the run's
+    detail view (and a later resume) can read it back."""
+    from omegaconf import OmegaConf
+
+    snapshot_dir = output_dir / ".hydra"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(cfg, snapshot_dir / "config.yaml")

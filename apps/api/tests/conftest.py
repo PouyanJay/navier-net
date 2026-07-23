@@ -16,6 +16,46 @@ from naviernet_api.main import create_app
 from naviernet_api.settings import Settings, get_settings
 
 
+def write_synthetic_tensors(path: Path) -> None:
+    """A tiny but schema-complete `tensors.npz`: an 11-frame growing bubble.
+
+    Small enough that a real 2-step training run over it takes a second, so the
+    solver tests stay in the fast, data-free tier.
+    """
+    import numpy as np
+
+    n_t, height, width = 11, 12, 16
+    alpha = np.zeros((n_t, height, width), dtype=np.float32)
+    for i in range(n_t):
+        alpha[i, 3:9, : 3 + i] = 1.0  # a bubble growing downstream, frame by frame
+    sdf = ((0.5 - alpha) * 0.1).astype(np.float32)
+    valid = np.ones_like(alpha)
+    x_star = ((np.arange(width) + 0.5) / width).astype(np.float32)
+    y_star = ((np.arange(height) + 0.5) / height).astype(np.float32)
+    t_star = (np.arange(n_t) * 0.1).astype(np.float32)
+    meta = {
+        "dataset": "highest_t",
+        "um_per_px": 4.3,
+        "L_ref_um": 300.0,
+        "U_ref": 0.2,
+        "t_ref_ms": 1.5,
+        "x_pin_star": float(x_star[1]),
+        "n_frames_usable": n_t,
+        "n_frames_event": 10,
+    }
+    np.savez_compressed(
+        path,
+        alpha=alpha,
+        sdf=sdf,
+        valid=valid,
+        x_star=x_star,
+        y_star=y_star,
+        t_star=t_star,
+        masks_camera=(alpha > 0.5).astype(np.uint8),
+        meta=json.dumps(meta),
+    )
+
+
 @pytest.fixture
 def repo_root(tmp_path: Path) -> Path:
     """A minimal repo layout with one fully-populated run, `demo_run`."""
@@ -75,9 +115,10 @@ def repo_root(tmp_path: Path) -> Path:
     )
 
     # Preprocessed tensors are dataset-scoped (data/processed/<dataset>/).
+    # They are real (tiny) tensors so a launched run can actually train on them.
     tensors = tmp_path / "data" / "processed" / "highest_t"
     tensors.mkdir(parents=True)
-    (tensors / "tensors.npz").write_bytes(b"PK\x03\x04")
+    write_synthetic_tensors(tensors / "tensors.npz")
 
     # An "empty" run: a directory with no checkpoint yet.
     (tmp_path / "outputs" / "scratch").mkdir(parents=True)
@@ -94,13 +135,15 @@ def repo_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _clear_preprocess_jobs():
-    """The preprocess job registry is process-global; isolate it per test."""
-    from naviernet_api.services import jobs
+def _clear_job_registries():
+    """The job registries are process-global; isolate them per test."""
+    from naviernet_api.services import jobs, run_manager
 
     jobs._jobs.clear()
+    run_manager._jobs.clear()
     yield
     jobs._jobs.clear()
+    run_manager._jobs.clear()
 
 
 @pytest.fixture
