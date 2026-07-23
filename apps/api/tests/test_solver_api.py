@@ -107,6 +107,17 @@ def test_resume_continues_from_the_checkpoint(client: TestClient, repo_root: Pat
     assert any("training steps 3-4" in line for line in lines)
 
 
+def test_holdout_none_trains_on_all_frames(client: TestClient, repo_root: Path):
+    """holdout_frame=-1 supervises every frame; the holdout metric is absent."""
+    run_id = client.post("/api/runs", json={**TINY_RUN, "holdout_frame": -1}).json()["run_id"]
+    events = read_stream(client, run_id)
+    final = [e["data"] for e in events if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"run failed: {final.get('message')}"
+    metrics = client.get(f"/api/runs/{run_id}").json()["metrics"]
+    assert metrics["iou_holdout"] is None
+    assert metrics["holdout_frame"] is None
+
+
 def test_launch_is_rejected_while_a_run_is_active(client: TestClient, monkeypatch):
     """One training run at a time: a second launch is refused with 409."""
     import threading
