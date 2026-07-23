@@ -73,6 +73,8 @@ def test_launch_trains_evaluates_and_streams(client: TestClient, repo_root: Path
     assert (run_dir / "checkpoints" / "ckpt.pt").is_file()
     assert (run_dir / "metrics.json").is_file()
     assert (run_dir / ".hydra" / "config.yaml").is_file()
+    # The streamed console is also persisted as the run's transcript.
+    assert "training steps" in (run_dir / "solver_console.log").read_text()
     listed = {run["id"]: run for run in client.get("/api/runs").json()}
     assert listed[run_id]["status"] == "trained"
     detail = client.get(f"/api/runs/{run_id}").json()

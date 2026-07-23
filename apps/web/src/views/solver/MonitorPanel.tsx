@@ -13,7 +13,9 @@ interface MonitorPanelProps {
 /** Live run stats — step progress, the headline loss terms, holdout IoU. */
 export function MonitorPanel({ status, latest, holdoutIou }: MonitorPanelProps) {
   const total = status?.steps_total ?? 0;
-  const done = status?.steps_done ?? 0;
+  // Status events only arrive on stage changes; between them the freshest step
+  // count is the latest streamed loss record's.
+  const done = Math.max(status?.steps_done ?? 0, latest?.step ?? 0);
   return (
     <Panel title="Run monitor" subtitle="live from the solver">
       <div className="statrow">

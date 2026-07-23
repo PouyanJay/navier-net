@@ -127,10 +127,11 @@ describe("SolverView", () => {
     act(() => {
       stream.emit("log", { line: "[naviernet] starting run run-test", tone: "dim" });
       stream.emit("hist", { step: 10, lr: 0.002, data: 0.5, vof: 0.04, div: 0.01, src: 0.001, bc: 0.02 });
-      stream.emit("status", { ...LAUNCHED, steps_done: 10 });
     });
     expect(screen.getByText("[naviernet] starting run run-test")).toBeInTheDocument();
     expect(screen.getByText("5.00e-1")).toBeInTheDocument(); // latest data loss
+    // Step progress advances from hist records alone (status only changes per stage).
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "10");
     expect(screen.getByText("running · train")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
 

@@ -283,6 +283,9 @@ def _worker(
             f"[naviernet] run complete — checkpoint at outputs/{run_id}/checkpoints/ckpt.pt",
             tone="ok",
         )
+        # Persist the transcript BEFORE the terminal status: once a subscriber
+        # sees the stream end, the run directory is fully settled.
+        _dump_console(settings, run_id)
         _emit_status(run_id)
         log.info("run %s finished", run_id)
     except Exception as exc:  # noqa: BLE001 — report any failure to the client
@@ -294,9 +297,30 @@ def _worker(
                 job.stage = None
                 job.message = str(exc)
         _console(run_id, f"[naviernet] run failed: {exc}", tone="err")
+        _dump_console(settings, run_id)
         _emit_status(run_id)
     finally:
         pipeline_logger.removeHandler(handler)
+
+
+def _dump_console(settings: Settings, run_id: str) -> None:
+    """Persist the session's console transcript into the run directory.
+
+    CLI runs get a Hydra log file; this is the API-launched equivalent, so a
+    run's transcript survives the process that streamed it. Appended per
+    session, so a resumed run keeps its earlier transcript too.
+    """
+    with _lock:
+        job = _jobs.get(run_id)
+        lines = [e["data"]["line"] for e in job.events if e["event"] == "log"] if job else []
+    run_dir = settings.outputs_dir / run_id
+    if not lines or not run_dir.is_dir():
+        return  # nothing to persist, or the run never got a directory
+    try:
+        with (run_dir / "solver_console.log").open("a") as f:
+            f.write("\n".join(lines) + "\n")
+    except OSError as exc:
+        log.warning("could not persist console for %s: %s", run_id, exc)
 
 
 def _configure(settings: Settings, run_id: str, dataset: str | None, request: RunLaunchRequest):
