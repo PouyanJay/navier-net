@@ -137,11 +137,44 @@ class RunJobStatus(BaseModel):
 
     run_id: str
     dataset: str | None = None
-    state: Literal["running", "done", "error"]
+    state: Literal["queued", "running", "done", "error"]
     stage: str | None = None  # pipeline stage currently executing
     message: str | None = None
     steps_done: int = 0
     steps_total: int = 0
+
+
+class SweepLaunchRequest(RunLaunchRequest):
+    """A request to run the same configuration across several seeds.
+
+    Children are ordinary runs (train + evaluate; rendering defaults off — a
+    sweep is for comparison, not deliverables). `seed` is ignored; `seeds`
+    drives the children. Sweeps never resume.
+    """
+
+    seeds: list[int] = Field(min_length=1, max_length=6)
+    render: bool = False
+
+    @model_validator(mode="after")
+    def _check_sweep(self) -> SweepLaunchRequest:
+        if self.resume or self.run_id:
+            raise ValueError("a sweep cannot resume an existing run")
+        if len(set(self.seeds)) != len(self.seeds):
+            raise ValueError("seeds must be unique")
+        if any(seed < 0 or seed > 2**31 - 1 for seed in self.seeds):
+            raise ValueError("seeds must be non-negative 32-bit integers")
+        return self
+
+
+class SweepStatus(BaseModel):
+    """Live state of a seed sweep and its child runs."""
+
+    sweep_id: str
+    dataset: str
+    state: Literal["running", "done", "error"]
+    message: str | None = None
+    seeds: list[int]
+    children: list[RunJobStatus]
 
 
 class ModelArchitecture(BaseModel):

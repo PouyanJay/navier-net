@@ -137,13 +137,16 @@ def repo_root(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def _clear_job_registries():
     """The job registries are process-global; isolate them per test."""
-    from naviernet_api.services import jobs, run_manager
+    from naviernet_api.services import jobs, run_manager, sweep_manager
 
-    jobs._jobs.clear()
-    run_manager._jobs.clear()
+    def clear() -> None:
+        jobs._jobs.clear()
+        run_manager._jobs.clear()
+        sweep_manager._sweeps.clear()
+
+    clear()
     yield
-    jobs._jobs.clear()
-    run_manager._jobs.clear()
+    clear()
 
 
 @pytest.fixture

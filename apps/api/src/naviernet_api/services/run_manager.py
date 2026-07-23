@@ -40,7 +40,8 @@ MAX_CONCURRENT_RUNS = 1
 # itself bounded (log_every >= 10 over steps <= 20000).
 MAX_FINISHED_JOBS = 8
 
-_RunState = Literal["running", "done", "error"]
+_RunState = Literal["queued", "running", "done", "error"]
+_TERMINAL_STATES = ("done", "error")
 
 
 class LaunchRejected(Exception):
@@ -143,9 +144,9 @@ def events_since(run_id: str, cursor: int) -> tuple[list[dict], int, bool] | Non
     """Events after ``cursor`` plus the new cursor and whether the run is over.
 
     A job's state only turns terminal in the same lock acquisition that appends
-    its final status event (`_finish`), so ``terminal=True`` guarantees the
-    final event is included in (or preceded) this batch — a consumer that
-    drains until terminal never misses it.
+    its final status event (`_finish` / `abort_queued`), so ``terminal=True``
+    guarantees the final event is included in (or preceded) this batch — a
+    consumer that drains until terminal never misses it.
     """
     with _lock:
         job = _jobs.get(run_id)
@@ -153,7 +154,7 @@ def events_since(run_id: str, cursor: int) -> tuple[list[dict], int, bool] | Non
             return None
         events = job.events[cursor:]
         new_cursor = len(job.events)
-        terminal = job.state != "running"
+        terminal = job.state in _TERMINAL_STATES
     return events, new_cursor, terminal
 
 
@@ -169,8 +170,7 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
         run_id, dataset = None, _validate_new_run(settings, request)
 
     with _lock:
-        running = sum(1 for job in _jobs.values() if job.state == "running")
-        if running >= MAX_CONCURRENT_RUNS:
+        if _slot_busy():
             raise LaunchRejected(409, "a training run is already in progress")
         if run_id is None:
             # Minting stats the filesystem while holding the lock — one .exists()
@@ -189,17 +189,74 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
     return result
 
 
+def _slot_busy() -> bool:
+    """Whether the single training slot is claimed. Call under the lock.
+
+    Queued jobs count: a sweep reserves all its children upfront so nothing
+    can slip into the slot between two of its children.
+    """
+    return sum(1 for job in _jobs.values() if job.state in ("queued", "running")) >= (
+        MAX_CONCURRENT_RUNS
+    )
+
+
 def _evict_finished_jobs() -> None:
     """Drop the oldest finished entries beyond the retention cap. Call under
     the lock; insertion order makes the registry oldest-first."""
-    finished = [run_id for run_id, job in _jobs.items() if job.state != "running"]
+    finished = [run_id for run_id, job in _jobs.items() if job.state in _TERMINAL_STATES]
     for run_id in finished[: max(0, len(finished) - MAX_FINISHED_JOBS)]:
         del _jobs[run_id]
 
 
-def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> str:
-    """The dataset for a new run, after checking it is trainable."""
-    dataset = request.dataset or ""
+# -- sweep support: reserved (queued) children run by the sweep's own thread --
+
+
+def reserve_children(settings: Settings, child_ids: list[str], dataset: str) -> None:
+    """Atomically claim the training slot with a sweep's children (queued).
+
+    Registering every child upfront means the sweep owns the slot end-to-end;
+    an unrelated launch cannot slip in between two children.
+    """
+    with _lock:
+        if _slot_busy():
+            raise LaunchRejected(409, "a training run is already in progress")
+        for child_id in child_ids:
+            _jobs[child_id] = _RunJob(dataset=dataset, state="queued")
+        _evict_finished_jobs()
+
+
+def execute_child(settings: Settings, run_id: str, request: RunLaunchRequest) -> RunJobStatus:
+    """Run one reserved child to completion in the calling thread."""
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is None or job.state != "queued":
+            raise RuntimeError(f"child {run_id!r} is not reserved")
+        job.state = "running"
+        job.stage = "train"
+    _worker(settings, run_id, request)
+    result = status(run_id)
+    if result is None:  # unreachable: children are never evicted while queued/running
+        raise RuntimeError(f"child {run_id!r} vanished from the registry")
+    return result
+
+
+def abort_queued(run_ids: list[str], message: str) -> None:
+    """Flip still-queued children to error, each with its terminal status event."""
+    for run_id in run_ids:
+        with _lock:
+            job = _jobs.get(run_id)
+            if job is None or job.state != "queued":
+                continue
+            job.state = "error"
+            job.message = message
+            job.events.append(
+                {"event": "status", "data": _status_snapshot(run_id, job).model_dump()}
+            )
+
+
+def validate_trainable_dataset(settings: Settings, dataset: str | None) -> str:
+    """The dataset id, after checking a run could train on it."""
+    dataset = dataset or ""
     if not datasets_service.is_valid_dataset_id(dataset):
         raise LaunchRejected(404, f"unknown dataset {dataset!r}")
     if datasets_service.tensors_path(settings, dataset) is None:
@@ -207,6 +264,11 @@ def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> str:
             409, f"dataset {dataset!r} is not preprocessed — run preprocessing first"
         )
     return dataset
+
+
+def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> str:
+    """The dataset for a new run, after checking it is trainable."""
+    return validate_trainable_dataset(settings, request.dataset)
 
 
 def _validate_resume(settings: Settings, request: RunLaunchRequest) -> tuple[str, str | None]:
