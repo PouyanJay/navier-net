@@ -23,8 +23,6 @@ export interface DatasetData {
   groups: DimensionlessGroups | null;
   preprocess: PreprocessStatus | null;
   error: string | null;
-  busy: boolean;
-  upload: (files: FileList | File[]) => Promise<void>;
   runPreprocess: () => Promise<void>;
   /** Fold a saved conditions round-trip into the detail + groups state. */
   applyConditions: (response: ConditionsResponse) => void;
@@ -91,7 +89,6 @@ export function useDatasetData(focusId?: string | null): DatasetData {
   const [detail, setDetail] = useState<DatasetDetail | null>(null);
   const [groups, setGroups] = useState<DimensionlessGroups | null>(null);
   const [preprocess, setPreprocess] = useState<PreprocessStatus | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const loadSelected = useCallback(
     async (id: string) => {
@@ -119,23 +116,6 @@ export function useDatasetData(focusId?: string | null): DatasetData {
   }, [selected, loadSelected, refresh]);
 
   usePreprocessPolling(selected, preprocess, setPreprocess, onSettled, setError);
-
-  const upload = useCallback(
-    async (files: FileList | File[]) => {
-      if (!selected) return;
-      setBusy(true);
-      setError(null);
-      try {
-        await api.uploadFrames(selected, files);
-        await onSettled();
-      } catch (err) {
-        setError(errorMessage(err));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [selected, onSettled, setError],
-  );
 
   const runPreprocess = useCallback(async () => {
     if (!selected) return;
@@ -166,8 +146,6 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     groups,
     preprocess,
     error,
-    busy,
-    upload,
     runPreprocess,
     applyConditions,
     refresh,

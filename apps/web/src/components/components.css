@@ -630,3 +630,83 @@
 .tbl-wrap {
   overflow-x: auto;
 }
+
+/* Modal — one focused task over the workspace (command-palette overlay kin) */
+.modal-ov {
+  position: fixed;
+  inset: 0;
+  background: rgb(10 12 18 / 45%);
+  backdrop-filter: blur(2px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 14vh;
+  z-index: 50;
+}
+.modal {
+  width: min(480px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--sh);
+}
+.modal > .hd {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--line2);
+}
+.modal > .hd h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.modal > .hd .sub {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+.modal > .body {
+  padding: var(--s4);
+  display: grid;
+  gap: var(--s3);
+}
+
+/* File drop target (mockup .drop) — wraps a hidden file input */
+.drop {
+  display: block;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--r);
+  padding: var(--s5) var(--s4);
+  text-align: center;
+  color: var(--ink3);
+  background: var(--panel2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.drop b {
+  color: var(--acc);
+}
+.drop input {
+  display: none;
+}
+.drop:focus-within,
+.drop:hover {
+  border-color: var(--acc2);
+}
+
+/* Indeterminate meter: the pipeline reports states, not percentages */
+.meter.indeterminate i {
+  width: 40%;
+  animation: meter-slide 1.2s ease-in-out infinite;
+}
+@keyframes meter-slide {
+  from {
+    margin-left: -40%;
+  }
+  to {
+    margin-left: 100%;
+  }
+}

@@ -96,7 +96,7 @@ function json(body: unknown) {
 
 interface Calls {
   upload: string[];
-  startPreprocess: number;
+  startPreprocess: string[];
   conditionPatches: Record<string, unknown>[];
   projectPatches: Record<string, unknown>[];
 }
@@ -104,7 +104,7 @@ interface Calls {
 function mockApi({ processed = false, holdout = 6 } = {}): Calls {
   const calls: Calls = {
     upload: [],
-    startPreprocess: 0,
+    startPreprocess: [],
     conditionPatches: [],
     projectPatches: [],
   };
@@ -153,12 +153,15 @@ function mockApi({ processed = false, holdout = 6 } = {}): Calls {
           frame_px: [16, 12],
         });
       }
-      if (u.endsWith("/preprocess")) {
+      const pre = u.match(/\/api\/datasets\/([^/]+)\/preprocess$/);
+      if (pre) {
         if (post) {
-          calls.startPreprocess += 1;
-          return json({ ...IDLE, state: "running" });
+          calls.startPreprocess.push(pre[1]);
+          return json({ ...IDLE, dataset: pre[1], state: "running" });
         }
-        return json(IDLE);
+        // Once started, the job settles immediately so polling flows finish.
+        const done = calls.startPreprocess.includes(pre[1]);
+        return json({ ...IDLE, dataset: pre[1], state: done ? "done" : "idle" });
       }
       const patch = u.match(/\/api\/projects\/([0-9a-f]{32})$/);
       if (patch && opts?.method === "PATCH") {
@@ -207,38 +210,33 @@ describe("DatasetsView", () => {
     expect(await screen.findByText("431.0")).toBeInTheDocument(); // live Re
   });
 
-  it("uploads replacement frames for the selected series", async () => {
-    const calls = mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    const input = (await screen.findByLabelText(
-      /Image sequence \(TIFF frames\)/,
-    )) as HTMLInputElement;
-
-    const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
-      type: "image/tiff",
-    });
-    fireEvent.change(input, { target: { files: [file] } });
-
-    await waitFor(() => expect(calls.upload).toEqual(["sample"]));
-  });
-
-  it("uploads a new series and attaches it to the project", async () => {
+  it("uploads a new series through the modal and preprocesses it", async () => {
     const calls = mockApi();
     const onProjectChanged = vi.fn();
     render(<Harness onProjectChanged={onProjectChanged} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /Upload new series/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Upload new series" });
+    expect(dialog).toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText("Series name"), { target: { value: "mid_T" } });
     const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
       type: "image/tiff",
     });
-    fireEvent.change(screen.getByLabelText("Frames"), { target: { files: [file] } });
-    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    fireEvent.change(screen.getByLabelText(/Image sequence/), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload & preprocess" }));
 
     await waitFor(() =>
       expect(calls.projectPatches).toEqual([{ datasets: ["sample", "mid_T"] }]),
     );
     expect(calls.upload).toEqual(["mid_T"]);
+    // The pipeline runs right after the upload…
+    await waitFor(() => expect(calls.startPreprocess).toEqual(["mid_T"]));
+    // …and the modal closes on completion (polling saw state: done).
+    await waitFor(
+      () => expect(screen.queryByRole("dialog", { name: "Upload new series" })).toBeNull(),
+      { timeout: 4000 },
+    );
     expect(onProjectChanged).toHaveBeenCalledWith(
       expect.objectContaining({ datasets: ["sample", "mid_T"] }),
     );
@@ -252,7 +250,7 @@ describe("DatasetsView", () => {
     const button = await screen.findByRole("button", { name: /Run preprocessing/ });
 
     fireEvent.click(button);
-    await waitFor(() => expect(calls.startPreprocess).toBe(1));
+    await waitFor(() => expect(calls.startPreprocess).toEqual(["sample"]));
   });
 
   it("shows the interactive QC checks once the series is preprocessed", async () => {
@@ -324,14 +322,14 @@ describe("DatasetsView with several series", () => {
   });
 });
 
-describe("NewSeriesForm failure paths", () => {
+describe("NewSeriesModal failure paths", () => {
   function openFormAndFill(name = "mid_T") {
     fireEvent.click(screen.getByRole("button", { name: /Upload new series/ }));
     fireEvent.change(screen.getByLabelText("Series name"), { target: { value: name } });
     const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
       type: "image/tiff",
     });
-    fireEvent.change(screen.getByLabelText("Frames"), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText(/Image sequence/), { target: { files: [file] } });
   }
 
   it("reports a failed upload and never attempts the attach", async () => {
@@ -347,7 +345,7 @@ describe("NewSeriesForm failure paths", () => {
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText("Series library");
     openFormAndFill();
-    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload & preprocess" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/Upload failed: too many/);
     expect(calls.projectPatches).toEqual([]);
@@ -367,7 +365,7 @@ describe("NewSeriesForm failure paths", () => {
     render(<DatasetsView project={PROJECT} onProjectChanged={onProjectChanged} />);
     await screen.findByText("Series library");
     openFormAndFill();
-    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload & preprocess" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /Uploaded, but linking the series failed: disk full/,
@@ -385,7 +383,7 @@ describe("NewSeriesForm failure paths", () => {
     expect(
       screen.getByText(/A series with this name already exists/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upload & preprocess" })).toBeDisabled();
   });
 });
 

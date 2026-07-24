@@ -4,7 +4,6 @@ import { GroupsPanel } from "./datasets/GroupsPanel";
 import { ImageSequence } from "./datasets/ImageSequence";
 import { QcPanel } from "./datasets/QcPanel";
 import { SeriesLibrary } from "./datasets/SeriesLibrary";
-import { UploadPreprocess } from "./datasets/UploadPreprocess";
 import { useDatasetData, useQcData, useTrainedIds } from "./datasets/useDatasetData";
 import "./datasets/datasets.css";
 import "./runs.css";
@@ -64,12 +63,9 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
         )}
         {detail && (
           <>
-            <ImageSequence detail={detail} />
-            <UploadPreprocess
+            <ImageSequence
               detail={detail}
               preprocess={data.preprocess}
-              busy={data.busy}
-              onUpload={data.upload}
               onPreprocess={data.runPreprocess}
             />
             {qcError && (

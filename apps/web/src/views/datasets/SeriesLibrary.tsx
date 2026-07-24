@@ -1,9 +1,8 @@
 import { useState } from "react";
 
-import { Button, Chip, Panel } from "../../components";
-import { useToast } from "../../components/Toast";
-import { api, type DatasetSummary, type ProjectSummary } from "../../lib/api";
-import { errorMessage } from "../../lib/errors";
+import { Chip, Panel } from "../../components";
+import type { DatasetSummary, ProjectSummary } from "../../lib/api";
+import { NewSeriesModal } from "./NewSeriesModal";
 
 interface SeriesLibraryProps {
   project: ProjectSummary;
@@ -43,11 +42,11 @@ export function SeriesLibrary({
   onSelect,
   onProjectChanged,
 }: SeriesLibraryProps) {
-  const [adding, setAdding] = useState(series.length === 0);
+  const [adding, setAdding] = useState(false);
 
   return (
     <Panel title="Series library" subtitle="per-series conditions">
-      {series.length === 0 && !adding && (
+      {series.length === 0 && (
         <div className="dsempty">
           <b>No series yet</b>
           Upload the first high-speed sequence for this project to begin calibration and
@@ -74,122 +73,23 @@ export function SeriesLibrary({
           </button>
         ))}
       </div>
-      {adding ? (
-        <NewSeriesForm
+      <button type="button" className="addds" onClick={() => setAdding(true)}>
+        + Upload new series — TIFF frames
+      </button>
+      {adding && (
+        <NewSeriesModal
           project={project}
-          onDone={(updated, seriesId) => {
-            setAdding(false);
+          onClose={() => setAdding(false)}
+          onAttached={(updated, seriesId) => {
             onProjectChanged(updated);
             onSelect(seriesId);
           }}
-          onCancel={() => setAdding(false)}
         />
-      ) : (
-        <button type="button" className="addds" onClick={() => setAdding(true)}>
-          + Upload new series — TIFF frames
-        </button>
       )}
       <p className="note">
         <b>Transfer learning:</b> once two or more series are configured, Stage B can train
         jointly across heat-flux conditions.
       </p>
     </Panel>
-  );
-}
-
-const SERIES_ID_RE = /^[A-Za-z0-9._-]+$/;
-
-function NewSeriesForm({
-  project,
-  onDone,
-  onCancel,
-}: {
-  project: ProjectSummary;
-  onDone: (project: ProjectSummary, seriesId: string) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [files, setFiles] = useState<FileList | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const toast = useToast();
-
-  const validName = SERIES_ID_RE.test(name) && !project.datasets.includes(name);
-
-  async function upload() {
-    if (!validName || !files?.length) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.uploadFrames(name, files);
-    } catch (err) {
-      setError(`Upload failed: ${errorMessage(err)}`);
-      setBusy(false);
-      return;
-    }
-    try {
-      // Frames are on disk now — a failure past this point is only the link.
-      const updated = await api.updateProject(project.id, {
-        datasets: [...project.datasets, name],
-      });
-      toast("Series uploaded", `${name} — ${files.length} frames`, "ok");
-      onDone(updated, name);
-    } catch (err) {
-      setError(`Uploaded, but linking the series failed: ${errorMessage(err)}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form
-      className="pform addds-form"
-      aria-label="Upload new series"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void upload();
-      }}
-    >
-      <label className="pform-field">
-        Series name
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="mid_T"
-          required
-          pattern="[A-Za-z0-9._\-]+"
-          autoFocus
-        />
-      </label>
-      <label className="pform-field">
-        Frames
-        <input
-          type="file"
-          accept=".tif,.tiff,image/tiff"
-          multiple
-          onChange={(e) => setFiles(e.target.files)}
-        />
-      </label>
-      {name.length > 0 && !validName && (
-        <p className="state-note error">
-          {project.datasets.includes(name)
-            ? "A series with this name already exists in the project."
-            : "Series names use letters, digits, dots, dashes, and underscores."}
-        </p>
-      )}
-      {error && (
-        <p className="state-note error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="pform-actions">
-        <Button type="submit" variant="primary" disabled={busy || !validName || !files?.length}>
-          {busy ? "Uploading…" : "Upload"}
-        </Button>
-        <Button type="button" onClick={onCancel} disabled={busy}>
-          Cancel
-        </Button>
-      </div>
-    </form>
   );
 }
