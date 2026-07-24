@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
 import { Panel, SelectField, ViewCanvas } from "../../components";
-import { CompareChart } from "../../components/charts/CompareChart";
-import { api, type Trajectory } from "../../lib/api";
+import { CompareChart, type ComparePoint } from "../../components/charts/CompareChart";
+import { api, ApiError, type KinematicsSeries, type Trajectory } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 
 type Load =
@@ -13,8 +13,15 @@ type Load =
 
 type Quantity = "nose" | "area";
 
-const toSeries = (t: number[], values: number[]) =>
-  t.map((time, i) => ({ x: time, y: values[i] }));
+/** Pair times with values, skipping instants where either is null (a gap). */
+function toSeries(t: KinematicsSeries, values: KinematicsSeries): ComparePoint[] {
+  const points: ComparePoint[] = [];
+  t.forEach((time, i) => {
+    const value = values[i];
+    if (time != null && value != null) points.push({ x: time, y: value });
+  });
+  return points;
+}
 
 /** Nose position / vapor area over time: the PINN's continuous curve vs the
  * measured camera instants — the trajectories figure, as an interactive chart. */
@@ -30,11 +37,11 @@ export function GrowthKinematics({ runId }: { runId: string }) {
       .then((trajectory) => alive && setLoad({ status: "ready", trajectory }))
       .catch((err) => {
         if (!alive) return;
-        const message = errorMessage(err);
+        // A 404 means the evaluate stage hasn't produced kinematics yet.
         setLoad(
-          message.includes("no trajectory")
+          err instanceof ApiError && err.status === 404
             ? { status: "unavailable" }
-            : { status: "error", message },
+            : { status: "error", message: errorMessage(err) },
         );
       });
     return () => {

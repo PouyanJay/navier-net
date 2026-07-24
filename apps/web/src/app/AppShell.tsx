@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { CommandPalette, type PaletteAction } from "../components/CommandPalette";
 import type { RunJobStatus } from "../lib/api";
@@ -84,11 +84,13 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
   const [theme, setTheme] = useState<Theme>(() => initialTheme());
   const [paletteOpen, setPaletteOpen] = useState(false);
 
-  function toggleTheme() {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    applyTheme(next);
-  }
+  const toggleTheme = useCallback(() => {
+    setTheme((current) => {
+      const next: Theme = current === "dark" ? "light" : "dark";
+      applyTheme(next);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -103,7 +105,7 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+  }, [toggleTheme]);
 
   const paletteActions = useMemo<PaletteAction[]>(
     () => [
@@ -115,8 +117,7 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
       })),
       { group: "Appearance", label: "Toggle dark mode", shortcut: "⌘J", run: toggleTheme },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- toggleTheme reads current theme
-    [onNavigate, theme],
+    [onNavigate, toggleTheme],
   );
 
   const activeLabel = NAV_ITEMS.find((item) => item.id === active)?.label ?? "";

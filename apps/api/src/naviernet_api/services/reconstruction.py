@@ -7,16 +7,24 @@ visualization geometry — the physics all lives in the pipeline; contour
 extraction uses contourpy, the same engine matplotlib's own contour plots use.
 
 Loading the checkpoint + tensors takes a moment, so results are memoized per
-(run, frame-count) and invalidated when the checkpoint changes on disk.
+(run, frame-count), invalidated when the checkpoint changes on disk. The cache
+is a small bounded FIFO; concurrent misses on the same key may both build (the
+build is idempotent and read-only — accepted, like `_mint_run_id`'s documented
+filesystem race, to keep the lock away from model inference).
 """
 
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from naviernet.utils.logging import get_logger
 from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings
+
+if TYPE_CHECKING:
+    import numpy as np
 
 log = get_logger(__name__)
 
@@ -55,59 +63,105 @@ def interface_frames(settings: Settings, run_id: str, n_frames: int) -> dict | N
     return payload
 
 
-def _build(settings: Settings, run_id: str, n_frames: int) -> dict | None:
-    import numpy as np
-    from contourpy import contour_generator
+@dataclass(frozen=True)
+class _Scene:
+    """A loaded run: model + data + the strided grid it is rendered on."""
 
-    from naviernet.evaluation import predict_alpha
+    cfg: object
+    model: object
+    data: object
+    stride: int
+    xs: np.ndarray  # µm
+    ys: np.ndarray  # µm
+
+
+def _build(settings: Settings, run_id: str, n_frames: int) -> dict | None:
+    scene = _load_scene(settings, run_id)
+    if scene is None:
+        return None
+    return {
+        "run_id": run_id,
+        "domain": _domain(scene),
+        "frames": _predicted_frames(scene, n_frames),
+        "measured": _measured_frames(scene),
+    }
+
+
+def _load_scene(settings: Settings, run_id: str) -> _Scene | None:
+    from omegaconf import OmegaConf
+
     from naviernet.training import load_model
 
     cfg = runs_service.load_run_config(settings, run_id)
     paths = runs_service.run_paths_for(settings, run_id)
     if cfg is None or paths is None:
         return None
+    OmegaConf.set_readonly(cfg, True)  # match compose_cfg's contract
     model, data, _ = load_model(cfg, paths)
 
     l_ref = float(cfg.scales.L_ref_um)
-    t_ref_ms = float(data.meta["t_ref_ms"])
     _, height, width = data.alpha.shape
     stride = max(1, min(MAX_STRIDE, min(height, width) // 32))
-    xs = data.x[::stride] * l_ref
-    ys = data.y[::stride] * l_ref
+    return _Scene(
+        cfg=cfg,
+        model=model,
+        data=data,
+        stride=stride,
+        xs=data.x[::stride] * l_ref,
+        ys=data.y[::stride] * l_ref,
+    )
 
-    def contours_of(field: np.ndarray) -> list[list[list[float]]]:
-        generator = contour_generator(x=xs, y=ys, z=field)
-        lines = generator.lines(float(cfg.evaluation.threshold))
-        return [
-            [[round(float(x), 1), round(float(y), 1)] for x, y in line]
-            for line in lines
-            if len(line) >= MIN_CONTOUR_POINTS
-        ]
 
+def _domain(scene: _Scene) -> dict:
+    l_ref = float(scene.cfg.scales.L_ref_um)
+    return {
+        "x_um": [round(float(scene.xs[0]), 1), round(float(scene.xs[-1]), 1)],
+        "y_um": [round(float(scene.ys[0]), 1), round(float(scene.ys[-1]), 1)],
+        "x_pin_um": round(float(scene.data.domain.x_pin) * l_ref, 1),
+    }
+
+
+def _predicted_frames(scene: _Scene, n_frames: int) -> list[dict]:
+    import numpy as np
+
+    from naviernet.evaluation import predict_alpha
+
+    t_ref_ms = float(scene.data.meta["t_ref_ms"])
     # The final camera frame is FOV-truncated; stop one frame short, like the
     # evaluation's own trajectory does.
-    times = np.linspace(float(data.t[0]), float(data.t[-2]), n_frames)
-    frames = [
+    times = np.linspace(float(scene.data.t[0]), float(scene.data.t[-2]), n_frames)
+    return [
         {
             "t_ms": round(float(t) * t_ref_ms, 4),
-            "contours": contours_of(predict_alpha(model, data, float(t), stride)),
+            "contours": _contours(
+                scene, predict_alpha(scene.model, scene.data, float(t), scene.stride)
+            ),
         }
         for t in times
     ]
-    measured = [
+
+
+def _measured_frames(scene: _Scene) -> list[dict]:
+    t_ref_ms = float(scene.data.meta["t_ref_ms"])
+    return [
         {
-            "t_ms": round(float(data.t[frame]) * t_ref_ms, 4),
-            "contours": contours_of(data.alpha[frame, ::stride, ::stride]),
+            "t_ms": round(float(scene.data.t[frame]) * t_ref_ms, 4),
+            "contours": _contours(
+                scene, scene.data.alpha[frame, :: scene.stride, :: scene.stride]
+            ),
         }
-        for frame in range(int(cfg.experiment.n_frames_event))
+        for frame in range(int(scene.cfg.experiment.n_frames_event))
     ]
-    return {
-        "run_id": run_id,
-        "domain": {
-            "x_um": [round(float(xs[0]), 1), round(float(xs[-1]), 1)],
-            "y_um": [round(float(ys[0]), 1), round(float(ys[-1]), 1)],
-            "x_pin_um": round(float(data.domain.x_pin) * l_ref, 1),
-        },
-        "frames": frames,
-        "measured": measured,
-    }
+
+
+def _contours(scene: _Scene, field: np.ndarray) -> list[list[list[float]]]:
+    """The field's threshold-level contours as rounded [x, y] µm polylines."""
+    from contourpy import contour_generator
+
+    generator = contour_generator(x=scene.xs, y=scene.ys, z=field)
+    lines = generator.lines(float(scene.cfg.evaluation.threshold))
+    return [
+        [[round(float(x), 1), round(float(y), 1)] for x, y in line]
+        for line in lines
+        if len(line) >= MIN_CONTOUR_POINTS
+    ]

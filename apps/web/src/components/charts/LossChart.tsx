@@ -2,6 +2,7 @@ import * as d3 from "d3";
 import { useEffect, useRef } from "react";
 
 import type { LossRecord } from "../../lib/api";
+import { attachCrosshair } from "./crosshair";
 
 const WIDTH = 640;
 const HEIGHT = 210;
@@ -144,50 +145,29 @@ export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
     drawLegend(g);
 
     // Crosshair: every loss term at the nearest logged step.
-    const crosshair = g
-      .append("line")
-      .attr("class", "chart-cursor")
-      .attr("y1", 0)
-      .attr("y2", INNER_H)
-      .style("display", "none");
-    const tip = d3.select(tipRef.current);
     const bisect = d3.bisector((r: LossRecord) => r.step).center;
-
-    const showReadout = (event: PointerEvent) => {
-      const [px] = d3.pointer(event, g.node());
-      const record = records[bisect(records, x.invert(px))];
-      if (!record) return;
-      crosshair.style("display", null).attr("x1", x(record.step)).attr("x2", x(record.step));
-      tip.style("display", "block").text("");
-      tip.append("div").attr("class", "tip-x").text(`step ${record.step}`);
-      READOUT_TERMS.forEach((term) => {
-        const row = tip.append("div").attr("class", "tip-row");
-        const seriesIndex = (SERIES as readonly string[]).indexOf(term);
-        row.append("i").attr("class", seriesIndex >= 0 ? `tip-swatch ${term}` : "tip-swatch");
-        row.append("span").text(`${term}  ${record[term].toExponential(2)}`);
-      });
-      const bounds = (ref.current as SVGSVGElement).getBoundingClientRect();
-      const scale = bounds.width / WIDTH;
-      tip
-        .style("left", `${(MARGIN.left + x(record.step)) * scale + 12}px`)
-        .style("top", `${MARGIN.top * scale + 8}px`);
-    };
-    const hideReadout = () => {
-      crosshair.style("display", "none");
-      tip.style("display", "none");
-    };
-
-    svg
-      .append("rect")
-      .attr("class", "chart-hover-capture")
-      .attr("x", MARGIN.left)
-      .attr("y", MARGIN.top)
-      .attr("width", INNER_W)
-      .attr("height", INNER_H)
-      .on("pointermove", showReadout)
-      .on("pointerleave", hideReadout);
-
-    return () => hideReadout();
+    const hide = attachCrosshair({
+      svg,
+      g,
+      tipEl: tipRef.current,
+      width: WIDTH,
+      margin: MARGIN,
+      innerWidth: INNER_W,
+      innerHeight: INNER_H,
+      readout: (px) => {
+        const record = records[bisect(records, x.invert(px))];
+        if (!record) return null;
+        return {
+          xPix: x(record.step),
+          title: `step ${record.step}`,
+          rows: READOUT_TERMS.map((term) => ({
+            text: `${term}  ${record[term].toExponential(2)}`,
+            swatchClass: (SERIES as readonly string[]).includes(term) ? term : undefined,
+          })),
+        };
+      },
+    });
+    return hide;
   }, [records, rebalanceSteps]);
 
   return (

@@ -1,6 +1,8 @@
 import * as d3 from "d3";
 import { useEffect, useRef } from "react";
 
+import { attachCrosshair } from "./crosshair";
+
 export interface ComparePoint {
   x: number;
   y: number;
@@ -119,54 +121,33 @@ export function CompareChart({
     });
 
     // Crosshair + tooltip: nearest-x readout across every series.
-    const crosshair = g
-      .append("line")
-      .attr("class", "chart-cursor")
-      .attr("y1", 0)
-      .attr("y2", INNER_H)
-      .style("display", "none");
-    const tip = d3.select(tipRef.current);
-
-    const showReadout = (event: PointerEvent) => {
-      const [px] = d3.pointer(event, g.node());
-      const xValue = x.invert(px);
-      const nearest = drawable.map((s) => {
-        const idx = d3.bisector((p: ComparePoint) => p.x).center(s.points, xValue);
-        return { id: s.id, point: s.points[idx] };
-      });
-      const anchor = nearest[0]?.point;
-      if (!anchor) return;
-      crosshair.style("display", null).attr("x1", x(anchor.x)).attr("x2", x(anchor.x));
-
-      tip.style("display", "block").text("");
-      tip.append("div").attr("class", "tip-x").text(`${xLabel} ${anchor.x}`);
-      nearest.forEach((entry, i) => {
-        const row = tip.append("div").attr("class", "tip-row");
-        row.append("i").attr("class", `tip-swatch series-${i % 4}`);
-        row.append("span").text(`${entry.id}  ${yFormat(entry.point.y)}`);
-      });
-      const bounds = (svgRef.current as SVGSVGElement).getBoundingClientRect();
-      const scale = bounds.width / WIDTH;
-      tip
-        .style("left", `${(MARGIN.left + x(anchor.x)) * scale + 12}px`)
-        .style("top", `${MARGIN.top * scale + 8}px`);
-    };
-    const hideReadout = () => {
-      crosshair.style("display", "none");
-      tip.style("display", "none");
-    };
-
-    svg
-      .append("rect")
-      .attr("class", "chart-hover-capture")
-      .attr("x", MARGIN.left)
-      .attr("y", MARGIN.top)
-      .attr("width", INNER_W)
-      .attr("height", INNER_H)
-      .on("pointermove", showReadout)
-      .on("pointerleave", hideReadout);
-
-    return () => hideReadout();
+    const hide = attachCrosshair({
+      svg,
+      g,
+      tipEl: tipRef.current,
+      width: WIDTH,
+      margin: MARGIN,
+      innerWidth: INNER_W,
+      innerHeight: INNER_H,
+      readout: (px) => {
+        const xValue = x.invert(px);
+        const nearest = drawable.map((s) => {
+          const idx = d3.bisector((p: ComparePoint) => p.x).center(s.points, xValue);
+          return { id: s.id, point: s.points[idx] };
+        });
+        const anchor = nearest[0]?.point;
+        if (!anchor) return null;
+        return {
+          xPix: x(anchor.x),
+          title: `${xLabel} ${anchor.x}`,
+          rows: nearest.map((entry, i) => ({
+            text: `${entry.id}  ${yFormat(entry.point.y)}`,
+            swatchClass: `series-${i % 4}`,
+          })),
+        };
+      },
+    });
+    return hide;
   }, [series, logY, xLabel, yFormat]);
 
   return (

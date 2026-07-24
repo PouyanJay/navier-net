@@ -46,11 +46,15 @@ def test_sweep_trains_children_sequentially(client: TestClient, repo_root: Path)
         assert len(history) >= 1
 
 
-def test_sweep_owns_the_slot_end_to_end(client: TestClient):
-    """While a sweep is queued/running, ordinary launches are refused."""
+def test_queued_children_count_against_the_training_slot(client: TestClient):
+    """A reserved (queued) child claims the slot even before it starts training.
+
+    The registry is seeded directly (the established idiom — a real sweep
+    completes too fast to race a second POST deterministically); this proves
+    the counting invariant `_slot_busy` enforces, not reserve_children itself.
+    """
     from naviernet_api.services import run_manager
 
-    # A reserved (queued) child claims the slot even before it starts training.
     run_manager._jobs["some-sweep-s0"] = run_manager._RunJob(
         dataset="highest_t", state="queued"
     )

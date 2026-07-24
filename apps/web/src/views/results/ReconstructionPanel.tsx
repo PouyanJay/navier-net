@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { ReconstructionViewport } from "../../components/ReconstructionViewport";
-import { api, type InterfaceData } from "../../lib/api";
+import { api, ApiError, type InterfaceData } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 
 type Load =
@@ -23,11 +23,10 @@ export function ReconstructionPanel({ runId }: { runId: string }) {
       .catch((err) => {
         if (!alive) return;
         // A 404 means "nothing trained to reconstruct" — an empty state, not a failure.
-        const message = errorMessage(err);
         setLoad(
-          message.includes("no trained model")
+          err instanceof ApiError && err.status === 404
             ? { status: "unavailable" }
-            : { status: "error", message },
+            : { status: "error", message: errorMessage(err) },
         );
       });
     return () => {

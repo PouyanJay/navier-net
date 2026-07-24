@@ -163,12 +163,16 @@ export interface ConsoleLine {
   tone: "ok" | "em" | "dim" | "err" | null;
 }
 
+/** One kinematics series; null marks an instant with no resolvable value
+ * (e.g. an empty predicted mask early in growth). */
+export type KinematicsSeries = (number | null)[];
+
 /** Growth kinematics written by the evaluate stage (physical units). */
 export interface Trajectory {
-  t_ms: number[];
-  nose_um: number[];
-  area_um2: number[];
-  measured: { t_ms: number[]; nose_um: number[]; area_um2: number[] };
+  t_ms: KinematicsSeries;
+  nose_um: KinematicsSeries;
+  area_um2: KinematicsSeries;
+  measured: { t_ms: KinematicsSeries; nose_um: KinematicsSeries; area_um2: KinematicsSeries };
 }
 
 /** One reconstructed instant: interface contour polylines in µm. */
@@ -184,6 +188,18 @@ export interface InterfaceData {
   measured: InterfaceFrame[];
 }
 
+/** A failed API response: the server's `detail` plus the HTTP status, so
+ * callers can distinguish "not there yet" (404) from a real failure. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 /** Fetch + shared error handling: failures throw the API's `detail` when the
  * error body carries one, so every caller surfaces the actionable reason. */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -195,7 +211,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* non-JSON error body */
     }
-    throw new Error(detail);
+    throw new ApiError(detail, response.status);
   }
   return (await response.json()) as T;
 }

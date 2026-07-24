@@ -27,15 +27,15 @@ def launch_sweep(
 
 
 @router.get("/active", response_model=SweepStatus | None)
-def get_active_sweep() -> SweepStatus | None:
+def get_active_sweep(settings: Settings = Depends(get_settings)) -> SweepStatus | None:
     """The sweep currently in progress, if any."""
-    return sweep_manager.active_sweep()
+    return sweep_manager.active_sweep(settings)
 
 
 @router.get("/{sweep_id}", response_model=SweepStatus)
-def get_sweep(sweep_id: str) -> SweepStatus:
+def get_sweep(sweep_id: str, settings: Settings = Depends(get_settings)) -> SweepStatus:
     """Live status of a sweep launched by this server."""
-    result = sweep_manager.status(sweep_id)
+    result = sweep_manager.status(settings, sweep_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"no sweep {sweep_id!r}")
     return result

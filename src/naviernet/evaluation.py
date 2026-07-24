@@ -12,6 +12,8 @@ measured off the raw frames, and neither quantity was ever given to the model.
 from __future__ import annotations
 
 import json
+import math
+from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -58,11 +60,25 @@ def frame_iou(cfg, model, data, frame: int) -> float:
     return float((predicted & measured).sum() / max(union, 1))
 
 
-def nose_trajectory(cfg, model, data) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Continuous nose position and projected vapour area over time.
+class GrowthTrajectory(NamedTuple):
+    """Nose position and projected vapour area over a set of times.
 
-    Returns ``(t_star, nose_x_star, area_star)``. The final camera frame is
-    excluded from the time span because its bubble is cut by the field of view.
+    ``times`` is t* for the predicted trajectory and milliseconds for the
+    measured one (each producer documents its convention); ``nose``/``area``
+    are dimensionless (x*, area*).
+    """
+
+    times: np.ndarray
+    nose: np.ndarray
+    area: np.ndarray
+
+
+def nose_trajectory(cfg, model, data) -> GrowthTrajectory:
+    """Continuous nose position and projected vapour area over time (t*).
+
+    The final camera frame is excluded from the time span because its bubble
+    is cut by the field of view. A timestep whose predicted mask is empty
+    yields ``nan`` for the nose position.
     """
     stride = cfg.evaluation.stride
     threshold = cfg.evaluation.threshold
@@ -75,11 +91,11 @@ def nose_trajectory(cfg, model, data) -> tuple[np.ndarray, np.ndarray, np.ndarra
         columns = np.where(mask.any(axis=0))[0]
         nose.append(xs[columns.max()] if len(columns) else np.nan)
         area.append(mask.mean() * data.domain.area)
-    return times, np.asarray(nose), np.asarray(area)
+    return GrowthTrajectory(times, np.asarray(nose), np.asarray(area))
 
 
-def measured_trajectory(cfg, data) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """The same quantities read straight off the segmented camera frames."""
+def measured_trajectory(cfg, data) -> GrowthTrajectory:
+    """The same quantities read straight off the segmented camera frames (ms)."""
     n_event = cfg.experiment.n_frames_event
     threshold = cfg.evaluation.threshold
     times = np.arange(n_event) * cfg.experiment.dt_frame_ms
@@ -90,23 +106,24 @@ def measured_trajectory(cfg, data) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         columns = np.where(mask.any(axis=0))[0]
         nose.append(data.x[columns.max()])
         area.append(mask.mean() * data.domain.area)
-    return times, np.asarray(nose), np.asarray(area)
+    return GrowthTrajectory(times, np.asarray(nose), np.asarray(area))
 
 
 def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     """Full evaluation report; also written to ``metrics.json`` in the run dir."""
+    paths.ensure()  # artifacts below need the run directory to exist
     n_event = cfg.experiment.n_frames_event
     holdout = int(cfg.training.holdout_frame)
 
     # Keyed by 1-based physical frame number, matching the TIFF filenames.
     ious = {frame + 1: frame_iou(cfg, model, data, frame) for frame in range(n_event)}
 
-    times, nose, area = nose_trajectory(cfg, model, data)
-    _write_trajectory(cfg, data, paths, times, nose, area)
-    speed = np.gradient(nose, times)
+    predicted = nose_trajectory(cfg, model, data)
+    _write_trajectory(cfg, data, paths, predicted)
+    speed = np.gradient(predicted.nose, predicted.times)
     # Trim the ends, where one-sided differences and the pinned start distort
     # the estimate, and average over the steady middle of the growth.
-    middle = slice(len(times) // 5, 4 * len(times) // 5)
+    middle = slice(len(predicted.times) // 5, 4 * len(predicted.times) // 5)
     mean_speed_star = float(speed[middle].mean())
 
     report = {
@@ -129,13 +146,18 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
         )
     log.info("inferred nose speed: %.0f mm/s", report["nose_speed_mm_s"])
 
-    paths.ensure()
     paths.metrics_json.write_text(json.dumps(report, indent=2))
     log.info("metrics written to %s", paths.metrics_json)
     return report
 
 
-def _write_trajectory(cfg, data, paths: RunPaths, times, nose, area) -> None:
+def _scaled(values, factor: float, digits: int) -> list[float | None]:
+    """Scale an array into physical units; NaN becomes None (JSON has no NaN,
+    and a bare ``NaN`` token would break every standards-compliant consumer)."""
+    return [None if math.isnan(v) else round(float(v) * factor, digits) for v in values]
+
+
+def _write_trajectory(cfg, data, paths: RunPaths, predicted: GrowthTrajectory) -> None:
     """Persist the continuous and measured growth kinematics as data.
 
     The same arrays the trajectory figure plots, in physical units, so the
@@ -143,16 +165,16 @@ def _write_trajectory(cfg, data, paths: RunPaths, times, nose, area) -> None:
     """
     l_ref = float(cfg.scales.L_ref_um)
     t_ref_ms = float(data.meta["t_ref_ms"])
-    t_meas, nose_meas, area_meas = measured_trajectory(cfg, data)
+    measured = measured_trajectory(cfg, data)
     payload = {
-        "t_ms": [round(float(t) * t_ref_ms, 4) for t in times],
-        "nose_um": [round(float(x) * l_ref, 2) for x in nose],
-        "area_um2": [round(float(a) * l_ref * l_ref, 1) for a in area],
+        "t_ms": _scaled(predicted.times, t_ref_ms, 4),
+        "nose_um": _scaled(predicted.nose, l_ref, 2),
+        "area_um2": _scaled(predicted.area, l_ref * l_ref, 1),
         "measured": {
-            "t_ms": [round(float(t), 4) for t in t_meas],
-            "nose_um": [round(float(x) * l_ref, 2) for x in nose_meas],
-            "area_um2": [round(float(a) * l_ref * l_ref, 1) for a in area_meas],
+            "t_ms": _scaled(measured.times, 1.0, 4),  # already in ms
+            "nose_um": _scaled(measured.nose, l_ref, 2),
+            "area_um2": _scaled(measured.area, l_ref * l_ref, 1),
         },
     }
-    paths.trajectory_json.write_text(json.dumps(payload))
+    paths.trajectory_json.write_text(json.dumps(payload, allow_nan=False))
     log.info("trajectory written to %s", paths.trajectory_json)

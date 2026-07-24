@@ -18,9 +18,18 @@ test("a rejected upload surfaces the API's reason", async ({ page }) => {
   await expect(alert).toContainText(/TIFF|tif|image|file/i);
 });
 
-test("an unknown run id in the URL-free flows cannot break Results", async ({ page }) => {
-  // Results always lists real runs; selecting each renders without silent gaps.
+test("a failed reconstruction fetch surfaces an error, not a blank panel", async ({ page }) => {
+  await page.route("**/api/runs/*/interface*", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "reconstruction backend unavailable" }),
+    }),
+  );
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Results & validation" })).toBeVisible();
+  const alert = page.getByRole("alert").filter({ hasText: "Could not load the reconstruction" });
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText("reconstruction backend unavailable");
+  // The rest of Results still renders — one failed panel never blanks the view.
   await expect(page.getByText("Agreement per frame")).toBeVisible();
 });

@@ -11,11 +11,15 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 from naviernet_api.models import ArtifactFlags, RunDetail, RunSummary
 from naviernet_api.settings import Settings
+
+if TYPE_CHECKING:
+    from omegaconf import DictConfig
 
 log = get_logger(__name__)
 
@@ -93,7 +97,7 @@ def run_paths_for(settings: Settings, run_id: str) -> RunPaths | None:
     return _run_paths_or_none(settings, run_id)
 
 
-def load_run_config(settings: Settings, run_id: str):
+def load_run_config(settings: Settings, run_id: str) -> DictConfig | None:
     """The run's own config, schema-merged and re-pinned to this repository.
 
     Merging the snapshot over the structured schema means unknown keys or
