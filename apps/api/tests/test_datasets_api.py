@@ -344,7 +344,7 @@ def test_excluding_the_holdout_frame_is_rejected(client, long_series):
 
 def test_excluding_almost_every_frame_is_rejected(client, long_series):
     holdout = client.get(f"/api/datasets/{long_series}").json()["holdout_frame"]
-    nearly_all = [n for n in range(1, 11) if n != holdout]
+    nearly_all = [n for n in range(1, 12) if n != holdout]  # leaves 2 of 12
 
     r = client.put(
         f"/api/datasets/{long_series}/excluded-frames", json={"excluded_frames": nearly_all}
@@ -359,30 +359,109 @@ def test_excluded_frames_of_unknown_dataset_is_404(client):
     assert r.status_code == 404
 
 
-def test_exclusions_reach_the_composed_config(repo_root):
+def test_exclusions_reach_the_composed_config(client, repo_root, tiff_bytes):
     """The override is what makes preprocessing and every run drop the frame."""
     settings = Settings(repo_root=repo_root)
-    datasets_service.save_excluded_frames(settings, "sample", [2])
+    # Frame counts now follow the upload, so the series needs enough frames to
+    # have one to spare (the 3-frame `sample` fixture does not).
+    files = [("files", (f"f{i}.tif", tiff_bytes, "image/tiff")) for i in range(6)]
+    assert client.post("/api/datasets/droppable/upload", files=files).status_code == 200
+    datasets_service.save_excluded_frames(settings, "droppable", [2])
 
-    overrides = datasets_service.series_overrides(settings, "sample")
+    overrides = datasets_service.series_overrides(settings, "droppable")
 
     assert "experiment.excluded_frames=[2]" in overrides
-    cfg = compose_cfg("sample", overrides=overrides)
+    cfg = compose_cfg("droppable", overrides=overrides)
     assert list(cfg.experiment.excluded_frames) == [2]
     assert 2 not in usable_frame_numbers(cfg)
 
 
-def test_exclusions_are_flagged_unapplied_until_preprocessing_reruns(client, repo_root):
+def test_an_exclusion_the_pipeline_would_refuse_is_rejected_up_front(client, repo_root):
+    """The 3-frame fixture cannot spare one: dropping it would leave the time
+    axis too short to reconstruct. The API must say so, not defer to a
+    preprocessing run that fails minutes later."""
+    settings = Settings(repo_root=repo_root)
+    with pytest.raises(datasets_service.ExclusionError, match="must remain"):
+        datasets_service.save_excluded_frames(settings, "sample", [2])
+
+
+def test_exclusions_are_flagged_unapplied_until_preprocessing_reruns(
+    client, repo_root, long_series
+):
     """Tensors built without the new exclusion must not read as up to date."""
     settings = Settings(repo_root=repo_root)
-    processed = repo_root / "data" / "processed" / "sample"
+    processed = repo_root / "data" / "processed" / long_series
     processed.mkdir(parents=True)
     from conftest import write_synthetic_tensors
 
     write_synthetic_tensors(processed / "tensors.npz")  # meta has no exclusions
 
-    assert client.get("/api/datasets/sample").json()["exclusions_applied"] is True
+    assert client.get(f"/api/datasets/{long_series}").json()["exclusions_applied"] is True
 
-    datasets_service.save_excluded_frames(settings, "sample", [2])
+    datasets_service.save_excluded_frames(settings, long_series, [2])
 
-    assert client.get("/api/datasets/sample").json()["exclusions_applied"] is False
+    assert client.get(f"/api/datasets/{long_series}").json()["exclusions_applied"] is False
+
+
+def test_notes_are_withheld_from_a_series_without_its_own_experiment_config(client, tiff_bytes):
+    """`configs/config.yaml` pins one experiment group, so an unrelated series
+    composes another's block. Its frame-usage prose must not be reported as if
+    it described this dataset."""
+    files = [("files", (f"f{i}.tif", tiff_bytes, "image/tiff")) for i in range(3)]
+    assert client.post("/api/datasets/unrelated/upload", files=files).status_code == 200
+
+    detail = client.get("/api/datasets/unrelated").json()
+
+    assert detail["notes"] is None
+    # The inherited conditions are still reported (they are what the pipeline
+    # would use); only the prose about another series' frames is withheld.
+    assert detail["conditions"]["fluid"] == "FC-72"
+
+
+def test_notes_are_reported_for_the_series_they_describe(repo_root, client):
+    """highest_t owns configs/experiment/highest_t.yaml, so its notes apply."""
+    raw = repo_root / "data" / "raw" / "highest_t"
+    raw.mkdir(parents=True)
+    from PIL import Image
+
+    Image.new("L", (32, 24)).save(raw / "1.tif", format="TIFF")
+
+    detail = client.get("/api/datasets/highest_t").json()
+
+    assert detail["notes"] and "field-of-view" in detail["notes"]
+
+
+def test_frame_counts_follow_the_uploaded_sequence(client, repo_root, tiff_bytes):
+    """An uploaded series inherits the pinned experiment's block, whose frame
+    counts describe a different sequence. Preprocessing would then look for
+    frames that were never uploaded."""
+    files = [("files", (f"f{i}.tif", tiff_bytes, "image/tiff")) for i in range(4)]
+    assert client.post("/api/datasets/fresh_series/upload", files=files).status_code == 200
+
+    conditions = client.get("/api/datasets/fresh_series").json()["conditions"]
+
+    assert conditions["n_frames_raw"] == 4
+    assert conditions["n_frames_usable"] == 4
+    assert conditions["n_frames_event"] == 4
+    # The overrides are what carry it into preprocessing and every run.
+    overrides = datasets_service.series_overrides(Settings(repo_root=repo_root), "fresh_series")
+    assert "experiment.n_frames_usable=4" in overrides
+
+
+def test_a_series_with_its_own_config_keeps_its_declared_counts(repo_root):
+    """highest_t declares 12 raw / 11 usable / 10 event: frame 11 is truncated
+    and frame 12 is the next cycle. No file listing can infer that, so the
+    declared counts must win over the count on disk."""
+    settings = Settings(repo_root=repo_root)
+    raw = repo_root / "data" / "raw" / "highest_t"
+    raw.mkdir(parents=True)
+    from PIL import Image
+
+    for i in range(1, 13):
+        Image.new("L", (32, 24)).save(raw / f"{i}.tif", format="TIFF")
+
+    overrides = datasets_service.series_overrides(settings, "highest_t")
+
+    assert not [o for o in overrides if o.startswith("experiment.n_frames")]
+    cfg = compose_cfg("highest_t", overrides=overrides)
+    assert (cfg.experiment.n_frames_usable, cfg.experiment.n_frames_event) == (11, 10)

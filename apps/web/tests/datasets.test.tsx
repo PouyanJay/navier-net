@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -290,14 +296,21 @@ describe("DatasetsView", () => {
     });
     expect(dialog).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Series name"), {
+    const form = within(dialog);
+    fireEvent.change(form.getByLabelText("Series name"), {
       target: { value: "mid_T" },
     });
     const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
       type: "image/tiff",
     });
-    fireEvent.change(screen.getByLabelText(/Image sequence/), {
+    fireEvent.change(form.getByLabelText(/Image sequence/), {
       target: { files: [file] },
+    });
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Upload & preprocess" }),
@@ -443,14 +456,24 @@ describe("DatasetsView with several series", () => {
 describe("NewSeriesModal failure paths", () => {
   function openFormAndFill(name = "mid_T") {
     fireEvent.click(screen.getByRole("button", { name: /Upload new series/ }));
-    fireEvent.change(screen.getByLabelText("Series name"), {
+    // Scope to the dialog: the conditions panel behind it uses the same labels.
+    const form = within(
+      screen.getByRole("dialog", { name: "Upload new series" }),
+    );
+    fireEvent.change(form.getByLabelText("Series name"), {
       target: { value: name },
     });
     const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
       type: "image/tiff",
     });
-    fireEvent.change(screen.getByLabelText(/Image sequence/), {
+    fireEvent.change(form.getByLabelText(/Image sequence/), {
       target: { files: [file] },
+    });
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
     });
   }
 
@@ -848,5 +871,141 @@ describe("frame strip scrolling", () => {
     });
 
     expect(strip.scrollLeft).toBeGreaterThan(0);
+  });
+});
+
+describe("new series conditions", () => {
+  const tiff = () =>
+    new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
+      type: "image/tiff",
+    });
+
+  /** Queries scoped to the dialog: the conditions panel behind it shares labels. */
+  async function openModal() {
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Upload new series/ }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Upload new series",
+    });
+    const form = within(dialog);
+    fireEvent.change(form.getByLabelText("Series name"), {
+      target: { value: "mid_T" },
+    });
+    fireEvent.change(form.getByLabelText(/Image sequence/), {
+      target: { files: [tiff()] },
+    });
+    return form;
+  }
+
+  const submit = () =>
+    screen.getByRole("button", { name: "Upload & preprocess" });
+
+  it("will not upload until the frame interval and channel width are given", async () => {
+    mockApi();
+    render(<Harness />);
+    const form = await openModal();
+
+    // Name and frames alone are not enough: preprocessing bakes these two in.
+    expect(submit()).toBeDisabled();
+
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    expect(submit()).toBeDisabled();
+
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
+    });
+    expect(submit()).toBeEnabled();
+  });
+
+  it("rejects a frame interval outside the server's bounds", async () => {
+    mockApi();
+    render(<Harness />);
+    const form = await openModal();
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
+    });
+
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "-1" },
+    });
+
+    expect(form.getByLabelText(/Frame interval/)).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(submit()).toBeDisabled();
+  });
+
+  it("saves the conditions before preprocessing, not after", async () => {
+    const calls = mockApi();
+    const order: string[] = [];
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        const u = String(url);
+        if (u.endsWith("/conditions")) order.push("conditions");
+        if (u.endsWith("/preprocess") && opts?.method === "POST")
+          order.push("preprocess");
+        return original(url, opts);
+      },
+    );
+
+    render(<Harness />);
+    const form = await openModal();
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
+    });
+    fireEvent.click(submit());
+
+    await waitFor(() => expect(calls.startPreprocess).toEqual(["mid_T"]));
+    // Tensors built before the conditions land would carry the wrong time axis
+    // and the wrong µm/px, and nothing downstream would say so.
+    expect(order).toEqual(["conditions", "preprocess"]);
+    expect(calls.conditionPatches).toEqual([
+      { dt_frame_ms: 0.25, channel_width_um: 400 },
+    ]);
+  });
+
+  it("does not preprocess when the conditions could not be saved", async () => {
+    const calls = mockApi();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/conditions")) {
+          return new Response(
+            JSON.stringify({ detail: "dt_frame_ms out of range" }),
+            {
+              status: 400,
+            },
+          );
+        }
+        return original(url, opts);
+      },
+    );
+
+    render(<Harness />);
+    const form = await openModal();
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
+    });
+    fireEvent.click(submit());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /operating conditions could not be saved/,
+    );
+    // Silently preprocessing with another series' values is the failure mode
+    // this whole flow exists to prevent.
+    expect(calls.startPreprocess).toEqual([]);
   });
 });

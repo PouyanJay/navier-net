@@ -199,7 +199,9 @@ def save_excluded_frames(settings: Settings, dataset: str, frames: list[int]) ->
         if not 1 <= frame <= n_raw:
             raise ExclusionError(f"frame {frame} is outside the sequence (1-{n_raw})")
 
-    cfg = compose_cfg(dataset, overrides=conditions_overrides(settings, dataset))
+    # The same config preprocessing will compose (minus the exclusions being
+    # judged), so the API cannot accept a set the pipeline would then refuse.
+    cfg = compose_cfg(dataset, overrides=base_overrides(settings, dataset))
     holdout = int(cfg.training.holdout_frame) + 1  # config is 0-based; frames are 1-based
     if holdout > 0 and holdout in wanted:
         raise ExclusionError(
@@ -228,11 +230,61 @@ def save_excluded_frames(settings: Settings, dataset: str, frames: list[int]) ->
     return wanted
 
 
+def has_own_experiment_config(dataset: str) -> bool:
+    """Whether `configs/experiment/<dataset>.yaml` describes this series.
+
+    `configs/config.yaml` pins a single experiment group, so a series without
+    one of these composes another series' experiment block. What is safe to
+    inherit (fluid, wall heat flux) and what is not (how many frames there are)
+    is decided against this.
+    """
+    from naviernet.config import config_dir
+
+    return (config_dir() / "experiment" / f"{dataset}.yaml").is_file()
+
+
+def _frame_count_overrides(settings: Settings, dataset: str) -> list[str]:
+    """Frame counts taken from the frames actually on disk.
+
+    Without this, an uploaded series inherits the pinned experiment's counts and
+    preprocessing walks off the end of the sequence looking for frames that were
+    never uploaded. A series with its own config keeps the counts it declares:
+    those encode which frames are usable and which belong to one growth event,
+    which no file listing can infer.
+    """
+    if has_own_experiment_config(dataset):
+        return []
+    raw_dir = _raw_dir(settings, dataset)
+    n_frames = _count_frames(raw_dir) if raw_dir is not None else 0
+    if n_frames == 0:
+        return []
+    # Every uploaded frame is assumed usable and part of the event until the
+    # user says otherwise (by excluding frames in the sequence panel).
+    return [
+        f"experiment.n_frames_raw={n_frames}",
+        f"experiment.n_frames_usable={n_frames}",
+        f"experiment.n_frames_event={n_frames}",
+    ]
+
+
+def base_overrides(settings: Settings, dataset: str) -> list[str]:
+    """The series' conditions and frame counts, without its exclusions.
+
+    What an exclusion edit has to be validated against: folding in the current
+    exclusions would judge a proposed set against itself.
+    """
+    return [
+        *conditions_overrides(settings, dataset),
+        *_frame_count_overrides(settings, dataset),
+    ]
+
+
 def series_overrides(settings: Settings, dataset: str) -> list[str]:
-    """Everything saved for this series as Hydra overrides: its conditions plus
-    its excluded frames. Every compose site for the dataset uses this, so the
-    detail view, the groups, preprocessing, and run launches see one series."""
-    overrides = conditions_overrides(settings, dataset)
+    """Everything known about this series as Hydra overrides: its saved
+    conditions, the frame counts read off disk, and its excluded frames. Every
+    compose site for the dataset uses this, so the detail view, the groups,
+    preprocessing, and run launches all see one series."""
+    overrides = base_overrides(settings, dataset)
     excluded = read_excluded_frames(settings, dataset)
     if excluded:
         overrides.append(f"experiment.excluded_frames=[{','.join(map(str, excluded))}]")
@@ -313,6 +365,19 @@ def list_datasets(settings: Settings) -> list[DatasetSummary]:
     return summaries
 
 
+def _notes_for(cfg: DictConfig, dataset: str) -> str | None:
+    """The experiment's frame-usage story, but only if it is about *this* series.
+
+    `configs/config.yaml` pins one experiment group, so a series with no config
+    of its own composes another experiment's block. Its prose describes that
+    other series' frames; reporting it here would state confident falsehoods
+    about frames this dataset does not have.
+    """
+    if not has_own_experiment_config(dataset):
+        return None
+    return cfg.experiment.notes or None
+
+
 def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
     """Detail for one dataset, or None if the id is invalid or the dir is absent."""
     raw_dir = _raw_dir(settings, dataset)
@@ -335,7 +400,7 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
             None if int(cfg.training.holdout_frame) < 0 else int(cfg.training.holdout_frame) + 1
         ),
         um_per_px=meta.get("um_per_px"),
-        notes=(cfg.experiment.notes or None),
+        notes=_notes_for(cfg, dataset),
         excluded_frames=read_excluded_frames(settings, dataset),
         exclusions_applied=exclusions_applied(settings, dataset),
     )
