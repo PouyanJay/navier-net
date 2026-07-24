@@ -14,6 +14,7 @@ interface Column {
   label: string;
   nodes: string[]; // node labels (empty string = anonymous)
   isField: boolean; // output column, drawn in the field color
+  tooltip: string; // hover readout with the real dimensions
 }
 
 type G = d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -21,10 +22,32 @@ type G = d3.Selection<SVGGElement, unknown, null, undefined>;
 function columns(model: ModelArchitecture): Column[] {
   const anon = Array.from({ length: MAX_NODES }, () => "");
   return [
-    { label: "input · x, y, t", nodes: ["x", "y", "t"], isField: false },
-    { label: `Fourier · ${2 * model.fourier_feats}`, nodes: anon, isField: false },
-    { label: `hidden · ${model.hidden} × ${model.layers}`, nodes: anon, isField: false },
-    { label: `fields · ${model.fields.length}`, nodes: model.fields.slice(0, MAX_NODES), isField: true },
+    {
+      label: "input · x, y, t",
+      nodes: ["x", "y", "t"],
+      isField: false,
+      tooltip: "nondimensional space-time input (x*, y*, t*)",
+    },
+    {
+      label: `Fourier · ${2 * model.fourier_feats}`,
+      nodes: anon,
+      isField: false,
+      tooltip: `${model.fourier_feats} Fourier pairs · scale σ_B = ${model.fourier_scale}`,
+    },
+    {
+      label: `hidden · ${model.hidden} × ${model.layers}`,
+      nodes: anon,
+      isField: false,
+      tooltip: `${model.layers} hidden layers × ${model.hidden} units${
+        model.nodewise_activation ? " · adaptive tanh" : ""
+      }`,
+    },
+    {
+      label: `fields · ${model.fields.length}`,
+      nodes: model.fields.slice(0, MAX_NODES),
+      isField: true,
+      tooltip: `one MLP head per field: ${model.fields.join(", ")}`,
+    },
   ];
 }
 
@@ -62,7 +85,10 @@ function drawColumn(g: G, col: Column, cx: number): void {
       .attr("class", col.isField ? "topo-node field" : "topo-node")
       .attr("cx", cx)
       .attr("cy", cy)
-      .attr("r", 7);
+      .attr("r", 7)
+      // Real dimensions on hover (and as the node's accessible name).
+      .append("title")
+      .text(col.tooltip);
     if (label) {
       group
         .append("text")

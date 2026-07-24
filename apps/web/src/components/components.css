@@ -543,3 +543,14 @@
 .chart-tip .tip-swatch.series-3 {
   background: var(--amber);
 }
+
+/* Per-term swatches in the loss readout (same colors as the chart lines) */
+.chart-tip .tip-swatch.data {
+  background: var(--acc);
+}
+.chart-tip .tip-swatch.vof {
+  background: var(--green);
+}
+.chart-tip .tip-swatch.div {
+  background: var(--purple);
+}

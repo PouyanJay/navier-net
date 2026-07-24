@@ -62,7 +62,10 @@ function drawBars(g: G, x: XScale, y: YScale, data: FramePoint[]): void {
     .attr("width", x.bandwidth())
     .attr("y", (d) => y(d.iou))
     .attr("height", (d) => INNER_H - y(d.iou))
-    .attr("rx", 2);
+    .attr("rx", 2)
+    // Native tooltip: value readout on hover, exposed to AT as the bar's name.
+    .append("title")
+    .text((d) => `frame ${d.frame} — IoU ${d.iou.toFixed(3)}${d.holdout ? " (holdout)" : ""}`);
 }
 
 function drawXAxisAndBaseline(g: G, x: XScale, data: FramePoint[]): void {

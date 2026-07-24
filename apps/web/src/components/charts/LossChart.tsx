@@ -112,13 +112,18 @@ interface LossChartProps {
   rebalanceSteps?: number[];
 }
 
+/** Every loss term shown in the crosshair readout (chart lines stay the
+ * headline three, matching the mockup; src/bc appear in the readout only). */
+const READOUT_TERMS = ["data", "vof", "div", "src", "bc"] as const;
+
 /**
- * Live multi-series loss history on a log₁₀ axis. D3 owns geometry only; the
- * series colors come from CSS token classes so both themes read correctly on
- * the always-dark view canvas. Redraws in place as records stream in.
+ * Live multi-series loss history on a log₁₀ axis with a crosshair readout of
+ * all five terms. D3 owns geometry only; the series colors come from CSS token
+ * classes so both themes read correctly on the always-dark view canvas.
  */
 export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
   const ref = useRef<SVGSVGElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const svg = d3.select(ref.current);
@@ -137,15 +142,64 @@ export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
     );
     drawSeries(g, x, y, records);
     drawLegend(g);
+
+    // Crosshair: every loss term at the nearest logged step.
+    const crosshair = g
+      .append("line")
+      .attr("class", "chart-cursor")
+      .attr("y1", 0)
+      .attr("y2", INNER_H)
+      .style("display", "none");
+    const tip = d3.select(tipRef.current);
+    const bisect = d3.bisector((r: LossRecord) => r.step).center;
+
+    const showReadout = (event: PointerEvent) => {
+      const [px] = d3.pointer(event, g.node());
+      const record = records[bisect(records, x.invert(px))];
+      if (!record) return;
+      crosshair.style("display", null).attr("x1", x(record.step)).attr("x2", x(record.step));
+      tip.style("display", "block").text("");
+      tip.append("div").attr("class", "tip-x").text(`step ${record.step}`);
+      READOUT_TERMS.forEach((term) => {
+        const row = tip.append("div").attr("class", "tip-row");
+        const seriesIndex = (SERIES as readonly string[]).indexOf(term);
+        row.append("i").attr("class", seriesIndex >= 0 ? `tip-swatch ${term}` : "tip-swatch");
+        row.append("span").text(`${term}  ${record[term].toExponential(2)}`);
+      });
+      const bounds = (ref.current as SVGSVGElement).getBoundingClientRect();
+      const scale = bounds.width / WIDTH;
+      tip
+        .style("left", `${(MARGIN.left + x(record.step)) * scale + 12}px`)
+        .style("top", `${MARGIN.top * scale + 8}px`);
+    };
+    const hideReadout = () => {
+      crosshair.style("display", "none");
+      tip.style("display", "none");
+    };
+
+    svg
+      .append("rect")
+      .attr("class", "chart-hover-capture")
+      .attr("x", MARGIN.left)
+      .attr("y", MARGIN.top)
+      .attr("width", INNER_W)
+      .attr("height", INNER_H)
+      .on("pointermove", showReadout)
+      .on("pointerleave", hideReadout);
+
+    return () => hideReadout();
   }, [records, rebalanceSteps]);
 
   return (
-    <svg
-      ref={ref}
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      preserveAspectRatio="xMidYMid meet"
-      role="img"
-      aria-label="Training loss per term over steps, on a logarithmic axis."
-    />
+    <div className="chart-wrap">
+      <svg
+        ref={ref}
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="Training loss per term over steps, on a logarithmic axis."
+      />
+      <div ref={tipRef} className="chart-tip" style={{ display: "none" }} />
+    </div>
   );
 }
