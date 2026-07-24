@@ -90,8 +90,11 @@ ui::spinner_start() { # <label>
 
 ui::spinner_stop() {
   if [ -n "$UI_SPINNER_PID" ]; then
-    kill "$UI_SPINNER_PID" 2>/dev/null
-    wait "$UI_SPINNER_PID" 2>/dev/null
+    kill "$UI_SPINNER_PID" 2>/dev/null || true
+    # `wait` reports the killed spinner's status (143) — without the guard,
+    # set -e would silently abort the calling script right here. TTY-only
+    # path: test changes to this function under a pty (script -q /dev/null).
+    wait "$UI_SPINNER_PID" 2>/dev/null || true
     UI_SPINNER_PID=''
     printf '\r\033[K' # clear the spinner line before the status line replaces it
   fi
