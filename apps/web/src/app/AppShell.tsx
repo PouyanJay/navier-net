@@ -44,20 +44,6 @@ interface AppShellProps {
   children: ReactNode;
 }
 
-function BrandMark() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M2 10 C4 6 6 6 8 9 C10 12 12 12 14 7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
 function ThemeIcon({ theme }: { theme: Theme }) {
   return theme === "dark" ? (
     <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -303,9 +289,7 @@ export function AppShell({
     <div className="shell">
       <header className="topbar">
         <div className="brandblock">
-          <span className="mark" aria-hidden="true">
-            <BrandMark />
-          </span>
+          <img className="mark" src="/navnet.png" alt="" />
           <div>
             NavierNet
             <small>PINN Solver Platform</small>

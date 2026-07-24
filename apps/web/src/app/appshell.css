@@ -23,19 +23,10 @@
   letter-spacing: -0.01em;
 }
 .brandblock .mark {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--rs);
-  background: var(--acc);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  width: 28px;
+  height: 28px;
   flex: none;
-}
-.brandblock .mark svg {
-  width: 16px;
-  height: 16px;
+  object-fit: contain;
 }
 .brandblock small {
   display: block;
