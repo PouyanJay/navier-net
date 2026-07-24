@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DatasetsView } from "../src/views/DatasetsView";
-import { ProjectsView } from "../src/views/ProjectsView";
 
 const DETAIL = {
   id: "sample",
@@ -135,18 +134,6 @@ describe("DatasetsView", () => {
       { timeout: 4000 },
     );
     expect(polls).toBeGreaterThanOrEqual(2);
-  });
-});
-
-describe("ProjectsView", () => {
-  it("renders dataset cards and opens one", async () => {
-    mockApi();
-    const onOpen = vi.fn();
-    render(<ProjectsView onOpen={onOpen} />);
-
-    const card = await screen.findByRole("button", { name: /sample/ });
-    fireEvent.click(card);
-    expect(onOpen).toHaveBeenCalledWith("sample");
   });
 });
 

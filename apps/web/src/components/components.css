@@ -152,6 +152,16 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+.btn.ghost {
+  box-shadow: none;
+  border-color: transparent;
+  background: transparent;
+  color: var(--acc);
+  padding: 2px var(--s2);
+}
+.btn.ghost:hover {
+  background: var(--accsoft);
+}
 .btn.primary {
   background: var(--acc);
   border-color: var(--acc);

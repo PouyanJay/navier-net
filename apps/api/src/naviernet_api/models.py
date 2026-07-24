@@ -60,6 +60,32 @@ class OperatingConditions(BaseModel):
     n_frames_event: int
 
 
+class ProjectSummary(BaseModel):
+    """A project: a uuid identity with editable metadata, linked to a dataset
+    once data has been uploaded."""
+
+    id: str
+    name: str
+    description: str = ""
+    dataset: str | None = None  # data/raw/<dataset> once attached
+    created_at: str  # ISO-8601 UTC
+
+
+class ProjectCreate(BaseModel):
+    """Payload for creating a project (an empty environment, no data yet)."""
+
+    name: str
+    description: str = ""
+
+
+class ProjectUpdate(BaseModel):
+    """Editable project fields; omitted fields are left unchanged."""
+
+    name: str | None = None
+    description: str | None = None
+    dataset: str | None = None
+
+
 class DatasetSummary(BaseModel):
     """One row in the datasets list."""
 

@@ -155,6 +155,8 @@ activemq-data/
 # Runtime state written by scripts/run.sh and scripts/install.sh (PIDs,
 # ports, logs, install stamps).
 .run-state/
+# Project metadata files written by the platform API (user data, like outputs/).
+/projects/
 .venv
 env/
 venv/

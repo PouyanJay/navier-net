@@ -74,11 +74,13 @@
   border: 1px solid var(--line);
   border-radius: var(--r);
   box-shadow: var(--sh);
-  cursor: pointer;
   font: inherit;
+}
+.pcard-clickable {
+  cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.pcard:hover {
+.pcard-clickable:hover {
   border-color: var(--acc2);
   transform: translateY(-1px);
 }
@@ -153,10 +155,43 @@
   font-size: 11px;
   color: var(--ink3);
 }
-.pcard .popen {
-  color: var(--acc);
-  font-weight: 600;
+.pcard .pfoot-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+/* Inline name/description editing (create + edit share this form) */
+.pform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-height: 164px;
+}
+.pform-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
   font-size: 12px;
+  font-weight: 600;
+  color: var(--ink2);
+}
+.pform-field input,
+.pform-field textarea {
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+  padding: var(--s2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  background: var(--panel);
+  color: var(--ink);
+  resize: vertical;
+}
+.pform-actions {
+  display: flex;
+  gap: var(--s2);
+  margin-top: auto;
 }
 .newproj {
   display: flex;
