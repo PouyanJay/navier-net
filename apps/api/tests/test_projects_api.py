@@ -184,3 +184,18 @@ def test_list_is_sorted_oldest_first(repo_root: Path):
     b = projects_service.create_project(settings, "second")
     ids = [p.id for p in projects_service.list_projects(settings)]
     assert ids.index(a.id) < ids.index(b.id)
+
+
+def test_patch_validates_every_dataset_in_the_list(client, tiff_bytes):
+    files = [("files", ("1.tif", tiff_bytes, "image/tiff"))]
+    assert client.post("/api/datasets/second/upload", files=files).status_code == 200
+    project = client.post("/api/projects", json={"name": "multi"}).json()
+
+    # One bad entry anywhere in the list rejects the whole edit.
+    r = client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample", "nope"]})
+    assert r.status_code == 400
+
+    # Two valid series persist together, in order.
+    r = client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample", "second"]})
+    assert r.status_code == 200
+    assert r.json()["datasets"] == ["sample", "second"]

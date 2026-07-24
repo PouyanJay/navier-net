@@ -230,7 +230,7 @@ def test_patch_conditions_unknown_dataset_is_404(client):
     )
 
 
-def test_conditions_overrides_reach_the_run_config(repo_root, tiff_bytes):
+def test_conditions_overrides_reach_the_run_config(repo_root):
     settings = Settings(repo_root=repo_root)
     datasets_service.save_conditions(settings, "sample", {"U_ref": 0.5})
     overrides = datasets_service.conditions_overrides(settings, "sample")
@@ -239,10 +239,8 @@ def test_conditions_overrides_reach_the_run_config(repo_root, tiff_bytes):
 
 def test_dataset_summary_carries_frame_size(client):
     ids = {d["id"]: d for d in client.get("/api/datasets").json()}
-    # The fixture writes small real TIFFs; their true size must be reported.
-    assert ids["sample"]["frame_px"] is not None
-    width, height = ids["sample"]["frame_px"]
-    assert width > 0 and height > 0
+    # The fixture writes 64x48 TIFFs; the true size must be reported.
+    assert ids["sample"]["frame_px"] == [64, 48]
 
 
 def test_qc_data_has_all_three_checks(client):
@@ -251,7 +249,8 @@ def test_qc_data_has_all_three_checks(client):
     qc = r.json()
     kin = qc["kinematics"]
     assert len(kin["t_ms"]) == len(kin["length_um"]) == 11
-    assert isinstance(kin["fit_slope_mm_s"], (int, float))
+    # The synthetic bubble only grows, so the fitted growth rate is positive.
+    assert kin["fit_slope_mm_s"] > 0
     assert len(qc["interface"]["frames"]) == 6  # every 2nd of 11 frames
     assert qc["interface"]["frames"][0]["contours"]  # real polylines
     sdf = qc["sdf"]
@@ -261,3 +260,20 @@ def test_qc_data_has_all_three_checks(client):
 
 def test_qc_data_before_preprocessing_is_404(client):
     assert client.get("/api/datasets/sample/qc-data").status_code == 404
+
+
+def test_conditions_bounds_are_per_field(client):
+    # Temperatures may be legitimately negative (within physical range)...
+    r = client.patch("/api/datasets/sample/conditions", json={"T_sat_C": -40})
+    assert r.status_code == 200
+    # ...but not below absolute zero, and lengths must stay positive.
+    assert (
+        client.patch("/api/datasets/sample/conditions", json={"T_sat_C": -300}).status_code
+        == 400
+    )
+    assert (
+        client.patch(
+            "/api/datasets/sample/conditions", json={"channel_width_um": 0}
+        ).status_code
+        == 400
+    )

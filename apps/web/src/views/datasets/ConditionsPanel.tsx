@@ -102,7 +102,12 @@ export function ConditionsPanel({ datasetId, conditions, onSaved }: ConditionsPa
     const raw = drafts[spec.field];
     if (raw === undefined) return; // untouched
     const parsed = Number(raw);
-    if (raw === "" || !Number.isFinite(parsed) || parsed === spec.value(conditions)) return;
+    if (raw === "" || !Number.isFinite(parsed)) {
+      // Not silently dropped: say why the edit didn't save.
+      setError(`${spec.label}: enter a number to save this condition.`);
+      return;
+    }
+    if (parsed === spec.value(conditions)) return; // unchanged — nothing to save
     setSaving(true);
     setError(null);
     try {

@@ -13,6 +13,8 @@ import math
 import re
 from pathlib import Path
 
+from omegaconf import DictConfig
+
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import DatasetDetail, DatasetSummary, OperatingConditions
 from naviernet_api.services.config_service import compose_cfg
@@ -37,17 +39,19 @@ class ConditionsError(ValueError):
     """A rejected conditions edit (unknown field, non-physical value)."""
 
 
-# Editable per-series conditions → the Hydra override path each one drives.
-# Saved values are applied at every compose site for the dataset (detail,
-# groups, preprocess, run launches), so the whole pipeline sees them.
-CONDITION_OVERRIDE_PATHS = {
-    "T_sat_C": "experiment.T_sat_C",
-    "dt_frame_ms": "experiment.dt_frame_ms",
-    "channel_width_um": "experiment.channel_width_um",
-    "channel_height_um": "experiment.channel_height_um",
-    "flow_rate_mL_hr": "experiment.flow_rate_mL_hr",
-    "q_wall_W_cm2": "experiment.q_wall_W_cm2",
-    "U_ref": "scales.U_ref",
+# Editable per-series conditions: the Hydra override path each field drives,
+# plus its accepted [min, max] (server-side bounds per SECURITY.md §4 — the
+# ranges are generous physical sanity limits, not experiment tuning). Saved
+# values apply at every compose site for the dataset (detail, groups,
+# preprocess, run launches), so the whole pipeline sees them.
+CONDITION_FIELDS: dict[str, tuple[str, float, float]] = {
+    "T_sat_C": ("experiment.T_sat_C", -273.15, 1000.0),
+    "dt_frame_ms": ("experiment.dt_frame_ms", 1e-6, 1e4),
+    "channel_width_um": ("experiment.channel_width_um", 1.0, 1e6),
+    "channel_height_um": ("experiment.channel_height_um", 1.0, 1e6),
+    "flow_rate_mL_hr": ("experiment.flow_rate_mL_hr", 1e-3, 1e6),
+    "q_wall_W_cm2": ("experiment.q_wall_W_cm2", 1e-3, 1e4),
+    "U_ref": ("scales.U_ref", 1e-6, 1e3),
 }
 
 
@@ -112,13 +116,18 @@ def read_conditions(settings: Settings, dataset: str) -> dict[str, float]:
     except (OSError, ValueError) as exc:
         log.warning("ignoring unreadable conditions for %s: %s", dataset, exc)
         return {}
-    return {k: v for k, v in saved.items() if k in CONDITION_OVERRIDE_PATHS}
+    if not isinstance(saved, dict):
+        # A wrong-shaped file must degrade like a corrupt one — not take the
+        # whole dataset listing down with an AttributeError.
+        log.warning("ignoring non-object conditions file for %s", dataset)
+        return {}
+    return {k: v for k, v in saved.items() if k in CONDITION_FIELDS}
 
 
 def conditions_overrides(settings: Settings, dataset: str) -> list[str]:
     """Saved conditions as Hydra overrides, for compose sites of this dataset."""
     saved = read_conditions(settings, dataset)
-    return [f"{CONDITION_OVERRIDE_PATHS[key]}={value}" for key, value in sorted(saved.items())]
+    return [f"{CONDITION_FIELDS[key][0]}={value}" for key, value in sorted(saved.items())]
 
 
 def save_conditions(
@@ -129,10 +138,13 @@ def save_conditions(
     if path is None or not path.parent.is_dir():
         raise ConditionsError(f"dataset {dataset!r} not found")
     for key, value in updates.items():
-        if key not in CONDITION_OVERRIDE_PATHS:
+        if key not in CONDITION_FIELDS:
             raise ConditionsError(f"unknown condition field {key!r}")
-        if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-            raise ConditionsError(f"{key} must be a positive number, got {value!r}")
+        _, lo, hi = CONDITION_FIELDS[key]
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ConditionsError(f"{key} must be a finite number, got {value!r}")
+        if not lo <= value <= hi:
+            raise ConditionsError(f"{key} must be within [{lo}, {hi}], got {value!r}")
 
     merged = {**read_conditions(settings, dataset), **updates}
     tmp = path.with_suffix(".json.tmp")
@@ -208,14 +220,17 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
         conditions_set=bool(read_conditions(settings, dataset)),
         frame_px=_frame_dimensions(raw_dir),
         # Config stores the 0-based tensor index; report the 1-based camera
-        # frame (f06), matching evaluation's metrics.json convention.
-        holdout_frame=int(cfg.training.holdout_frame) + 1,
+        # frame (f06), matching evaluation's metrics.json convention. -1 means
+        # "train on all frames" — no holdout to mark.
+        holdout_frame=(
+            None if int(cfg.training.holdout_frame) < 0 else int(cfg.training.holdout_frame) + 1
+        ),
         um_per_px=meta.get("um_per_px"),
         notes=(cfg.experiment.notes or None),
     )
 
 
-def conditions_from_cfg(cfg) -> OperatingConditions:
+def conditions_from_cfg(cfg: DictConfig) -> OperatingConditions:
     """The response model's view of a composed config's operating conditions."""
     exp = cfg.experiment
     return OperatingConditions(

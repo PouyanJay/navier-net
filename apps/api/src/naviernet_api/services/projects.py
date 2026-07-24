@@ -33,6 +33,7 @@ _lock = threading.Lock()
 _PROJECT_ID_RE = re.compile(r"^[0-9a-f]{32}$")  # uuid4().hex
 MAX_NAME_CHARS = 120
 MAX_DESCRIPTION_CHARS = 2000
+MAX_DATASETS = 50
 
 # Purpose line for materialized legacy datasets (the platform's experiment).
 _LEGACY_DESCRIPTION = (
@@ -168,6 +169,11 @@ def update_project(
         fields["description"] = ""  # explicit null clears the description
     if "datasets" in fields and fields["datasets"] is None:
         fields["datasets"] = []  # explicit null clears the series list
+    if "datasets" in fields:
+        # Order-preserving dedup with a sanity cap, mirroring the metadata limits.
+        fields["datasets"] = list(dict.fromkeys(fields["datasets"]))
+        if len(fields["datasets"]) > MAX_DATASETS:
+            raise ProjectError(f"projects are limited to {MAX_DATASETS} series")
 
     for dataset in fields.get("datasets") or []:
         if datasets_service.get_dataset_summary(settings, dataset) is None:

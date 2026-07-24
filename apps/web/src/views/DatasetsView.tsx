@@ -1,14 +1,11 @@
-import { useEffect, useState } from "react";
-
-import { api, type ProjectSummary, type QcData, type RunSummary } from "../lib/api";
-import { isTrainedRun } from "../lib/runs";
+import { type ProjectSummary } from "../lib/api";
 import { ConditionsPanel } from "./datasets/ConditionsPanel";
 import { GroupsPanel } from "./datasets/GroupsPanel";
 import { ImageSequence } from "./datasets/ImageSequence";
 import { QcPanel } from "./datasets/QcPanel";
 import { SeriesLibrary } from "./datasets/SeriesLibrary";
 import { UploadPreprocess } from "./datasets/UploadPreprocess";
-import { useDatasetData } from "./datasets/useDatasetData";
+import { useDatasetData, useQcData, useTrainedIds } from "./datasets/useDatasetData";
 import "./datasets/datasets.css";
 import "./runs.css";
 
@@ -22,33 +19,8 @@ interface DatasetsViewProps {
  * frames, calibration, conditions, groups, and preprocessing QC. */
 export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   const data = useDatasetData(project.datasets[0] ?? null);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [qc, setQc] = useState<QcData | null>(null);
-
-  useEffect(() => {
-    api
-      .listRuns()
-      .then(setRuns)
-      .catch(() => setRuns([])); // chips only — panels surface real errors
-  }, []);
-
-  // The QC charts follow the selected series and refresh after preprocessing.
-  const selectedProcessed = data.detail?.processed ?? false;
-  useEffect(() => {
-    let stale = false;
-    setQc(null);
-    if (data.selected && selectedProcessed) {
-      api
-        .getQcData(data.selected)
-        .then((payload) => {
-          if (!stale) setQc(payload);
-        })
-        .catch(() => {}); // 404 before preprocessing is expected
-    }
-    return () => {
-      stale = true;
-    };
-  }, [data.selected, selectedProcessed]);
+  const trainedIds = useTrainedIds();
+  const { qc, qcError } = useQcData(data.selected, data.detail?.processed ?? false);
 
   if (data.datasets === null && data.error) {
     return (
@@ -68,9 +40,6 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   const series = data.datasets.filter((d) => project.datasets.includes(d.id));
   const inScope = data.selected != null && series.some((d) => d.id === data.selected);
   const detail = inScope ? data.detail : null;
-  const trainedIds = new Set(
-    runs.filter(isTrainedRun).flatMap((run) => (run.dataset ? [run.dataset] : [])),
-  );
 
   return (
     <div className="grid dsx">
@@ -80,7 +49,11 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
         trainedIds={trainedIds}
         selected={inScope ? data.selected : null}
         onSelect={data.setSelected}
-        onProjectChanged={onProjectChanged}
+        onProjectChanged={(updated) => {
+          // The new series must appear in the library without a reload.
+          onProjectChanged(updated);
+          data.refresh().catch(() => {});
+        }}
       />
 
       <div className="dsx-main">
@@ -99,6 +72,11 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
               onUpload={data.upload}
               onPreprocess={data.runPreprocess}
             />
+            {qcError && (
+              <p className="state-note error" role="alert">
+                Could not load the preprocessing QC: {qcError}
+              </p>
+            )}
             {qc && <QcPanel qc={qc} />}
             <ConditionsPanel
               datasetId={detail.id}

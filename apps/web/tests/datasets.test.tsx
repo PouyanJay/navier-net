@@ -1,7 +1,23 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { ProjectSummary } from "../src/lib/api";
 import { DatasetsView } from "../src/views/DatasetsView";
+
+/** Owns project state like App does, so attach flows re-render the view. */
+function Harness({ onProjectChanged = vi.fn() }: { onProjectChanged?: (p: ProjectSummary) => void }) {
+  const [project, setProject] = useState<ProjectSummary>(PROJECT);
+  return (
+    <DatasetsView
+      project={project}
+      onProjectChanged={(updated) => {
+        setProject(updated);
+        onProjectChanged(updated);
+      }}
+    />
+  );
+}
 
 const PROJECT = {
   id: "a".repeat(32),
@@ -98,9 +114,19 @@ function mockApi({ processed = false, holdout = 6 } = {}): Calls {
       const u = String(url);
       const post = opts?.method === "POST";
       if (u.endsWith("/api/datasets")) {
-        return json([
+        const rows = [
           { id: "sample", n_frames: 3, processed, conditions_set: false, frame_px: [16, 12] },
-        ]);
+        ];
+        if (calls.upload.includes("mid_T")) {
+          rows.push({
+            id: "mid_T",
+            n_frames: 5,
+            processed: false,
+            conditions_set: false,
+            frame_px: [16, 12],
+          });
+        }
+        return json(rows);
       }
       if (u.endsWith("/api/runs")) return json([]);
       if (u.endsWith("/groups")) return json(GROUPS);
@@ -198,7 +224,7 @@ describe("DatasetsView", () => {
   it("uploads a new series and attaches it to the project", async () => {
     const calls = mockApi();
     const onProjectChanged = vi.fn();
-    render(<DatasetsView project={PROJECT} onProjectChanged={onProjectChanged} />);
+    render(<Harness onProjectChanged={onProjectChanged} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /Upload new series/ }));
     fireEvent.change(screen.getByLabelText("Series name"), { target: { value: "mid_T" } });
@@ -215,6 +241,8 @@ describe("DatasetsView", () => {
     expect(onProjectChanged).toHaveBeenCalledWith(
       expect.objectContaining({ datasets: ["sample", "mid_T"] }),
     );
+    // The refreshed library shows the new series without a reload.
+    expect(await screen.findByRole("button", { name: /mid_T/ })).toBeInTheDocument();
   });
 
   it("starts preprocessing when the button is clicked", async () => {
@@ -253,6 +281,195 @@ describe("DatasetsView", () => {
 
     expect(await screen.findByAltText("frame 2 (holdout)")).toBeInTheDocument();
     expect(screen.getByAltText("frame 1")).toBeInTheDocument();
+  });
+});
+
+describe("DatasetsView with several series", () => {
+  it("scopes the library to the project's series and switches between them", async () => {
+    mockApi();
+    const twoSeries = { ...PROJECT, datasets: ["sample", "mid_T"] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.endsWith("/api/datasets")) {
+          return json([
+            { id: "sample", n_frames: 3, processed: true, conditions_set: true, frame_px: [16, 12] },
+            { id: "mid_T", n_frames: 2, processed: false, conditions_set: false, frame_px: [16, 12] },
+            { id: "foreign", n_frames: 9, processed: false, conditions_set: false, frame_px: null },
+          ]);
+        }
+        if (u.endsWith("/api/runs")) return json([]);
+        if (u.endsWith("/groups")) return json(GROUPS);
+        if (u.endsWith("/qc-data")) return new Response("{}", { status: 404 });
+        if (u.endsWith("/preprocess")) return json(IDLE);
+        const detail = u.match(/\/api\/datasets\/([^/]+)$/);
+        if (detail) return json({ ...DETAIL, id: detail[1], processed: false });
+        return new Response("not found", { status: 404 });
+      }),
+    );
+    render(<DatasetsView project={twoSeries} onProjectChanged={noop} />);
+
+    // Both project series are listed; the foreign dataset is not.
+    expect(await screen.findByRole("button", { name: /sample/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /mid_T/ })).toBeInTheDocument();
+    expect(screen.queryByText("foreign")).not.toBeInTheDocument();
+    // Per-series chips are independent: processed+conditions vs bare upload.
+    expect(screen.getByText("tensors ready")).toBeInTheDocument();
+    expect(screen.getByText("needs conditions")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /mid_T/ }));
+    expect(await screen.findByText(/Image sequence — mid_T/)).toBeInTheDocument();
+  });
+});
+
+describe("NewSeriesForm failure paths", () => {
+  function openFormAndFill(name = "mid_T") {
+    fireEvent.click(screen.getByRole("button", { name: /Upload new series/ }));
+    fireEvent.change(screen.getByLabelText("Series name"), { target: { value: name } });
+    const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
+      type: "image/tiff",
+    });
+    fireEvent.change(screen.getByLabelText("Frames"), { target: { files: [file] } });
+  }
+
+  it("reports a failed upload and never attempts the attach", async () => {
+    const calls = mockApi();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string | URL, opts?: RequestInit) => {
+      if (String(url).endsWith("/upload")) {
+        return new Response(JSON.stringify({ detail: "too many frames" }), { status: 400 });
+      }
+      return real(url, opts);
+    });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText("Series library");
+    openFormAndFill();
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Upload failed: too many/);
+    expect(calls.projectPatches).toEqual([]);
+  });
+
+  it("distinguishes an attach failure from an upload failure", async () => {
+    const calls = mockApi();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string | URL, opts?: RequestInit) => {
+      if (/\/api\/projects\//.test(String(url)) && opts?.method === "PATCH") {
+        return new Response(JSON.stringify({ detail: "disk full" }), { status: 500 });
+      }
+      return real(url, opts);
+    });
+    const onProjectChanged = vi.fn();
+    render(<DatasetsView project={PROJECT} onProjectChanged={onProjectChanged} />);
+    await screen.findByText("Series library");
+    openFormAndFill();
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Uploaded, but linking the series failed: disk full/,
+    );
+    expect(calls.upload).toEqual(["mid_T"]); // frames did land on disk
+    expect(onProjectChanged).not.toHaveBeenCalled();
+  });
+
+  it("rejects a duplicate series name before any request", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText("Series library");
+    openFormAndFill("sample"); // already in the project
+
+    expect(
+      screen.getByText(/A series with this name already exists/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+  });
+});
+
+describe("ConditionsPanel behavior", () => {
+  it("surfaces the API's rejection of a bad value", async () => {
+    mockApi();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const real = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string | URL, opts?: RequestInit) => {
+      if (String(url).endsWith("/conditions")) {
+        return new Response(
+          JSON.stringify({ detail: "dt_frame_ms must be a positive number" }),
+          { status: 400 },
+        );
+      }
+      return real(url, opts);
+    });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    const dt = await screen.findByLabelText(/Frame interval/);
+    fireEvent.change(dt, { target: { value: "3" } });
+    fireEvent.blur(dt);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Frame interval: dt_frame_ms must be a positive number/,
+    );
+  });
+
+  it("does not PATCH when the value is unchanged", async () => {
+    const calls = mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    const dt = await screen.findByLabelText(/Frame interval/);
+    fireEvent.change(dt, { target: { value: "0.5" } }); // same as current
+    fireEvent.blur(dt);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(calls.conditionPatches).toEqual([]);
+  });
+});
+
+describe("DatasetsView preprocess polling", () => {
+  it("polls a running job to completion and refreshes the series", async () => {
+    let started = false;
+    let polls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, opts?: RequestInit) => {
+        const u = String(url);
+        const post = opts?.method === "POST";
+        const done = polls >= 2;
+        if (u.endsWith("/api/datasets")) {
+          return json([
+            { id: "sample", n_frames: 3, processed: done, conditions_set: false, frame_px: [16, 12] },
+          ]);
+        }
+        if (u.endsWith("/api/runs")) return json([]);
+        if (u.endsWith("/groups")) return json(GROUPS);
+        if (u.endsWith("/qc-data")) {
+          return done ? json(QC) : new Response("{}", { status: 404 });
+        }
+        if (u.endsWith("/preprocess")) {
+          if (post) {
+            started = true;
+            return json({ ...IDLE, state: "running" });
+          }
+          if (!started) return json(IDLE);
+          polls += 1;
+          return json({ ...IDLE, state: polls >= 2 ? "done" : "running" });
+        }
+        if (/\/api\/datasets\/[^/]+$/.test(u)) return json({ ...DETAIL, processed: done });
+        return new Response("not found", { status: 404 });
+      }),
+    );
+
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Run preprocessing/ }));
+
+    // Real timers: the hook polls every 1s until done, then refreshes —
+    // proven by the QC panel appearing once the series reports processed.
+    await waitFor(
+      () => expect(screen.getByText("Preprocessing QC")).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    expect(polls).toBeGreaterThanOrEqual(2);
   });
 });
 

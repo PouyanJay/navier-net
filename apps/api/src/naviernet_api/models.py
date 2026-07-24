@@ -111,7 +111,6 @@ class ConditionsUpdate(BaseModel):
     """Editable per-series operating conditions; omitted fields keep their
     current (config-default or previously saved) value."""
 
-    fluid: str | None = None
     T_sat_C: float | None = None
     dt_frame_ms: float | None = None
     channel_width_um: float | None = None
@@ -119,6 +118,50 @@ class ConditionsUpdate(BaseModel):
     flow_rate_mL_hr: float | None = None
     q_wall_W_cm2: float | None = None
     U_ref: float | None = None
+
+
+class QcKinematics(BaseModel):
+    """Bubble length per frame plus the linear growth fit."""
+
+    t_ms: list[float]
+    length_um: list[float]
+    fit_slope_mm_s: float
+    fit_intercept_um: float
+
+
+class QcInterfaceFrame(BaseModel):
+    """One frame's interface contours as [x*, y*] polylines."""
+
+    index: int
+    t_ms: float
+    contours: list[list[list[float]]]
+
+
+class QcInterface(BaseModel):
+    x_pin_star: float
+    x_range: list[float]
+    y_range: list[float]
+    frames: list[QcInterfaceFrame]
+
+
+class QcSdf(BaseModel):
+    """The mid-frame signed distance field, decimated for the browser."""
+
+    frame_index: int
+    t_ms: float
+    x_range: list[float]
+    y_range: list[float]
+    values: list[list[float]]
+
+
+class QcData(BaseModel):
+    """The three preprocessing checks as chart data."""
+
+    dataset: str
+    n_frames_event: int
+    kinematics: QcKinematics
+    interface: QcInterface
+    sdf: QcSdf
 
 
 class ConditionsResponse(BaseModel):

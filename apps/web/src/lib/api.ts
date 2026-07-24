@@ -348,6 +348,5 @@ export const artifactUrl = {
   video: (id: string) => `${runPath(id)}/video`,
   checkpoint: (id: string) => `${runPath(id)}/checkpoint`,
   tensors: (id: string) => `${runPath(id)}/tensors`,
-  datasetQc: (id: string) => `${datasetPath(id)}/qc`,
   datasetFrame: (id: string, n: number) => `${datasetPath(id)}/frames/${n}`,
 };

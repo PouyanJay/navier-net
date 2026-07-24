@@ -310,12 +310,6 @@
   color: var(--ink2);
 }
 
-.qc-figure {
-  width: 100%;
-  margin-top: var(--s4);
-  border: 1px solid var(--line);
-  border-radius: var(--rs);
-}
 
 .project-grid {
   display: grid;

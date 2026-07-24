@@ -12,6 +12,7 @@ from naviernet_api.models import (
     DatasetDetail,
     DatasetSummary,
     PreprocessStatus,
+    QcData,
 )
 from naviernet_api.services import datasets as datasets_service
 from naviernet_api.services import jobs as jobs_service
@@ -74,8 +75,8 @@ def update_conditions(
     )
 
 
-@router.get("/{dataset}/qc-data")
-def get_qc_data(dataset: str, settings: Settings = Depends(get_settings)) -> dict:
+@router.get("/{dataset}/qc-data", response_model=QcData)
+def get_qc_data(dataset: str, settings: Settings = Depends(get_settings)) -> QcData:
     """The preprocessing QC checks as chart data (kinematics, interface, SDF)."""
     data = qc_service.qc_data(settings, dataset)
     if data is None:
@@ -87,7 +88,10 @@ def get_qc_data(dataset: str, settings: Settings = Depends(get_settings)) -> dic
 
 @router.get("/{dataset}/qc")
 def get_dataset_qc(dataset: str, settings: Settings = Depends(get_settings)) -> FileResponse:
-    """The preprocessing QC figure."""
+    """The pipeline's rendered QC figure, as a downloadable artifact.
+
+    The web app draws its own interactive QC from /qc-data; this stays as the
+    raw matplotlib artifact the preprocess stage writes to disk."""
     path = datasets_service.qc_path(settings, dataset)
     if path is None:
         raise HTTPException(status_code=404, detail=f"no QC figure for {dataset!r}")

@@ -2,13 +2,16 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   api,
+  ApiError,
   type ConditionsResponse,
   type DatasetDetail,
   type DatasetSummary,
   type DimensionlessGroups,
   type PreprocessStatus,
+  type QcData,
 } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
+import { isTrainedRun } from "../../lib/runs";
 
 const POLL_INTERVAL_MS = 1000;
 
@@ -25,6 +28,8 @@ export interface DatasetData {
   runPreprocess: () => Promise<void>;
   /** Fold a saved conditions round-trip into the detail + groups state. */
   applyConditions: (response: ConditionsResponse) => void;
+  /** Re-fetch the dataset list (e.g. after a new series is uploaded). */
+  refresh: () => Promise<void>;
 }
 
 /** The dataset list plus the current selection (defaulting to the first). */
@@ -165,5 +170,53 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     upload,
     runPreprocess,
     applyConditions,
+    refresh,
   };
+}
+
+/** Dataset ids with a trained run — drives the library's status chips. */
+export function useTrainedIds(): Set<string> {
+  const [ids, setIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    api
+      .listRuns()
+      .then((runs) =>
+        setIds(
+          new Set(runs.filter(isTrainedRun).flatMap((run) => (run.dataset ? [run.dataset] : []))),
+        ),
+      )
+      .catch(() => setIds(new Set())); // chips only — panels surface real errors
+  }, []);
+  return ids;
+}
+
+/** The selected series' QC chart data, refreshed after preprocessing.
+ * A 404 means "not preprocessed yet" (expected); anything else is surfaced. */
+export function useQcData(
+  selected: string | null,
+  processed: boolean,
+): { qc: QcData | null; qcError: string | null } {
+  const [qc, setQc] = useState<QcData | null>(null);
+  const [qcError, setQcError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let stale = false;
+    setQc(null);
+    setQcError(null);
+    if (!selected || !processed) return;
+    api
+      .getQcData(selected)
+      .then((payload) => {
+        if (!stale) setQc(payload);
+      })
+      .catch((err) => {
+        if (stale || (err instanceof ApiError && err.status === 404)) return;
+        setQcError(errorMessage(err));
+      });
+    return () => {
+      stale = true;
+    };
+  }, [selected, processed]);
+
+  return { qc, qcError };
 }

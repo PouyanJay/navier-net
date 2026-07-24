@@ -17,6 +17,10 @@ from naviernet.utils.paths import RunPaths
 
 log = get_logger(__name__)
 
+# Interface-evolution frame stride — shared with the platform API's qc-data
+# endpoint so the interactive chart matches this figure.
+CONTOUR_FRAME_STRIDE = 2
+
 
 def qc_figure(cfg, paths: RunPaths, alpha, sdf, xs, ys, ts, um_per_px, x_pin) -> None:
     """Growth kinematics, interface evolution, and an example SDF."""
@@ -41,7 +45,7 @@ def qc_figure(cfg, paths: RunPaths, alpha, sdf, xs, ys, ts, um_per_px, x_pin) ->
     ax.grid(alpha=0.3)
 
     ax = axes[1]
-    for i in range(0, len(ts), 2):
+    for i in range(0, len(ts), CONTOUR_FRAME_STRIDE):
         ax.contour(xs, ys, alpha[i], [0.5], linewidths=1.2)
     ax.axvline(x_pin, color="k", ls=":", label="pinned cavity")
     ax.set_aspect("equal")

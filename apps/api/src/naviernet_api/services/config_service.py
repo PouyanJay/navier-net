@@ -22,6 +22,10 @@ from naviernet.config import config_dir, register_configs
 _lock = threading.Lock()
 _registered = False
 _cache: dict[tuple[str, tuple[str, ...]], DictConfig] = {}
+# Conditions edits mint new override tuples, so the key space is no longer
+# bounded by the dataset count — cap the cache (FIFO) to keep repeated PATCHes
+# from growing it without limit (SECURITY.md §4).
+_CACHE_MAX_ENTRIES = 64
 
 
 def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
@@ -38,6 +42,8 @@ def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
         if cached is not None:
             return cached
         cfg = _compose_locked(dataset, overrides)
+        while len(_cache) >= _CACHE_MAX_ENTRIES:
+            _cache.pop(next(iter(_cache)))  # dicts iterate oldest-first
         _cache[key] = cfg
         return cfg
 
