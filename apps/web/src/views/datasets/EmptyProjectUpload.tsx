@@ -26,11 +26,18 @@ export function EmptyProjectUpload({ project, onAttached }: EmptyProjectUploadPr
     setError(null);
     try {
       await api.uploadFrames(project.id, files);
+    } catch (err) {
+      setError(`Upload failed: ${errorMessage(err)}`);
+      setBusy(false);
+      return;
+    }
+    try {
+      // Frames are on disk now — a failure past this point is only the link.
       const updated = await api.updateProject(project.id, { dataset: project.id });
       toast("Sequence uploaded", `${files.length} frames — ready to preprocess`, "ok");
       onAttached(updated);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(`Uploaded, but linking the dataset failed: ${errorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -55,7 +62,7 @@ export function EmptyProjectUpload({ project, onAttached }: EmptyProjectUploadPr
       </div>
       {error && (
         <p className="state-note error" role="alert">
-          Upload failed: {error}
+          {error}
         </p>
       )}
     </Panel>

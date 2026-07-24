@@ -13,16 +13,22 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from naviernet.utils.logging import get_logger
-from naviernet_api.models import ProjectSummary
+from naviernet_api.models import ProjectSummary, ProjectUpdate
 from naviernet_api.services import datasets as datasets_service
 from naviernet_api.settings import Settings
 
 log = get_logger(__name__)
+
+# Serializes every read-modify-write on the project files (same idiom as
+# run_manager): concurrent PATCHes must not lose edits, and concurrent lists
+# must not materialize the same legacy dataset twice.
+_lock = threading.Lock()
 
 _PROJECT_ID_RE = re.compile(r"^[0-9a-f]{32}$")  # uuid4().hex
 MAX_NAME_CHARS = 120
@@ -59,12 +65,17 @@ def _read(path: Path) -> ProjectSummary | None:
 
 def _write(settings: Settings, project: ProjectSummary) -> None:
     settings.projects_dir.mkdir(parents=True, exist_ok=True)
-    _path(settings, project.id).write_text(project.model_dump_json(indent=2))
+    # Write-then-rename so a crash mid-write can't leave a truncated file.
+    path = _path(settings, project.id)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(project.model_dump_json(indent=2))
+    tmp.replace(path)
 
 
-def _validate_metadata(name: str, description: str) -> str:
-    """Returns the normalized name, or raises ProjectError."""
+def _validate_metadata(name: str, description: str) -> tuple[str, str]:
+    """Returns the normalized (name, description), or raises ProjectError."""
     name = name.strip()
+    description = description.strip()
     if not name:
         raise ProjectError("project name must not be empty")
     if len(name) > MAX_NAME_CHARS:
@@ -73,31 +84,38 @@ def _validate_metadata(name: str, description: str) -> str:
         raise ProjectError(
             f"project description is limited to {MAX_DESCRIPTION_CHARS} characters"
         )
-    return name
+    return name, description
 
 
 def _now() -> str:
-    # Microsecond precision: creation order stays stable even for projects
-    # created back-to-back (the list endpoint sorts by this field).
-    return datetime.now(timezone.utc).isoformat()
+    # Fixed-width microseconds: isoformat() omits the field when it is zero,
+    # which would break the lexicographic "oldest first" ordering.
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def list_projects(settings: Settings) -> list[ProjectSummary]:
-    """All projects, materializing any dataset that has no project yet."""
-    projects = []
-    if settings.projects_dir.is_dir():
-        projects = [
-            p
-            for path in sorted(settings.projects_dir.glob("*.json"))
-            if (p := _read(path)) is not None
-        ]
+    """All projects, oldest first.
 
-    linked = {p.dataset for p in projects if p.dataset}
-    for dataset in datasets_service.list_datasets(settings):
-        if dataset.id not in linked:
-            projects.append(_materialize_dataset(settings, dataset.id))
+    Deliberate CQS exception: a dataset with no project yet is materialized
+    into one here (a lazy, idempotent migration of pre-projects data), so the
+    read has a write side effect. Serialized by the module lock so two
+    concurrent lists cannot mint two projects for the same dataset.
+    """
+    with _lock:
+        projects = []
+        if settings.projects_dir.is_dir():
+            projects = [
+                project
+                for path in sorted(settings.projects_dir.glob("*.json"))
+                if (project := _read(path)) is not None
+            ]
 
-    return sorted(projects, key=lambda p: (p.created_at, p.id))
+        linked = {project.dataset for project in projects if project.dataset}
+        for dataset in datasets_service.list_datasets(settings):
+            if dataset.id not in linked:
+                projects.append(_materialize_dataset(settings, dataset.id))
+
+    return sorted(projects, key=lambda project: (project.created_at, project.id))
 
 
 def _materialize_dataset(settings: Settings, dataset_id: str) -> ProjectSummary:
@@ -123,39 +141,45 @@ def get_project(settings: Settings, project_id: str) -> ProjectSummary | None:
 
 def create_project(settings: Settings, name: str, description: str = "") -> ProjectSummary:
     """A new empty project: identity + metadata, no data attached yet."""
+    name, description = _validate_metadata(name, description)
     project = ProjectSummary(
         id=uuid.uuid4().hex,
-        name=_validate_metadata(name, description),
+        name=name,
         description=description,
         created_at=_now(),
     )
-    _write(settings, project)
+    with _lock:
+        _write(settings, project)
     return project
 
 
 def update_project(
-    settings: Settings,
-    project_id: str,
-    *,
-    name: str | None = None,
-    description: str | None = None,
-    dataset: str | None = None,
+    settings: Settings, project_id: str, payload: ProjectUpdate
 ) -> ProjectSummary | None:
-    """Apply the given fields; returns None for an unknown project."""
-    project = get_project(settings, project_id)
-    if project is None:
-        return None
+    """Apply the payload's explicitly-set fields; returns None if unknown.
 
-    updated = project.model_copy(
-        update={
-            "name": name if name is not None else project.name,
-            "description": description if description is not None else project.description,
-            "dataset": dataset if dataset is not None else project.dataset,
-        }
-    )
-    updated.name = _validate_metadata(updated.name, updated.description)
+    Only fields the client actually sent change, so `{"dataset": null}`
+    detaches a dataset while an omitted field is left alone.
+    """
+    fields = payload.model_dump(exclude_unset=True)
+    if fields.get("name", "") is None:
+        raise ProjectError("project name must not be empty")
+    if fields.get("description", "") is None:
+        fields["description"] = ""  # explicit null clears the description
+
+    dataset = fields.get("dataset")
     if dataset is not None and datasets_service.get_dataset_summary(settings, dataset) is None:
         raise ProjectError(f"dataset {dataset!r} does not exist")
 
-    _write(settings, updated)
+    with _lock:
+        project = get_project(settings, project_id)
+        if project is None:
+            return None
+        name, description = _validate_metadata(
+            fields.get("name", project.name), fields.get("description", project.description)
+        )
+        updated = project.model_copy(
+            update={**fields, "name": name, "description": description}
+        )
+        _write(settings, updated)
     return updated

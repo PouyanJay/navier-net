@@ -9,6 +9,7 @@ import {
   type RunSummary,
 } from "../lib/api";
 import { errorMessage } from "../lib/errors";
+import { hasEvaluation, isTrainedRun } from "../lib/runs";
 import "./datasets/datasets.css";
 import "./runs.css";
 
@@ -21,9 +22,10 @@ interface ProjectFacts {
 /** Pipeline progress for one project: which stages have real artifacts. */
 function stageDots(facts: ProjectFacts): boolean[] {
   if (!facts.dataset) return [false, false, false, false];
-  const trained = facts.runs.some((run) => run.status === "trained");
-  const evaluated = facts.runs.some((run) => run.iou_holdout != null);
-  return [facts.dataset.processed, facts.dataset.processed, trained, evaluated];
+  const dataReady = facts.dataset.processed;
+  // The governing equations ship with the platform, so the Model stage is
+  // complete as soon as the data it binds to is (dot 2 mirrors dot 1).
+  return [dataReady, dataReady, facts.runs.some(isTrainedRun), facts.runs.some(hasEvaluation)];
 }
 
 interface ProjectsViewProps {
@@ -285,6 +287,8 @@ function ProjectMetadataForm({
           .finally(() => setBusy(false));
       }}
     >
+      {/* Limits mirror the API's MAX_NAME_CHARS / MAX_DESCRIPTION_CHARS
+          (apps/api services/projects.py) — keep the pairs in sync. */}
       <label className="pform-field">
         Name
         <input

@@ -10,6 +10,7 @@ import {
   type RunJobStatus,
   type RunSummary,
 } from "./lib/api";
+import { hasEvaluation, isTrainedRun } from "./lib/runs";
 import { DatasetsView } from "./views/DatasetsView";
 import { EmptyProjectUpload } from "./views/datasets/EmptyProjectUpload";
 import { PhysicsModelView } from "./views/PhysicsModelView";
@@ -67,14 +68,14 @@ export function App() {
       ? repo.datasets.filter((dataset) => dataset.id === project.dataset)
       : repo.datasets;
     const runs = project ? repo.runs.filter((run) => run.dataset === project.dataset) : repo.runs;
-    const trained = runs.filter((run) => run.status === "trained");
+    const trained = runs.filter(isTrainedRun);
     const latest = trained[trained.length - 1] ?? null;
     return {
       done: {
         datasets: datasets.some((dataset) => dataset.processed),
         physics: true, // the governing equations ship with the platform
         solver: trained.length > 0,
-        results: runs.some((run) => run.iou_holdout != null),
+        results: runs.some(hasEvaluation),
       },
       latestRun: latest ? { id: latest.id, steps: latest.steps } : null,
       projects: repo.projectCount,

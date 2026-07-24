@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from naviernet_api.services import projects as projects_service
 from naviernet_api.settings import Settings
 
@@ -32,10 +33,16 @@ def test_create_project_rejects_blank_name(client):
     assert "name" in r.json()["detail"]
 
 
-def test_create_project_rejects_oversized_metadata(client):
-    r = client.post("/api/projects", json={"name": "x" * 200})
-    assert r.status_code == 400
-    r = client.post("/api/projects", json={"name": "ok", "description": "y" * 3000})
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"name": "x" * 200},
+        {"name": "ok", "description": "y" * 3000},
+    ],
+    ids=["oversized-name", "oversized-description"],
+)
+def test_create_project_rejects_oversized_metadata(client, payload):
+    r = client.post("/api/projects", json=payload)
     assert r.status_code == 400
 
 
@@ -72,6 +79,50 @@ def test_patch_attaches_an_existing_dataset(client):
     assert r.json()["dataset"] == "sample"
 
 
+def test_patch_with_explicit_null_detaches_the_dataset(client):
+    project = client.post("/api/projects", json={"name": "attach me"}).json()
+    client.patch(f"/api/projects/{project['id']}", json={"dataset": "sample"})
+
+    r = client.patch(f"/api/projects/{project['id']}", json={"dataset": None})
+    assert r.status_code == 200
+    assert r.json()["dataset"] is None
+    # An omitted field must stay untouched — the name survived both patches.
+    assert r.json()["name"] == "attach me"
+
+
+def test_patch_with_explicit_null_name_is_rejected(client):
+    project = client.post("/api/projects", json={"name": "keep me"}).json()
+    r = client.patch(f"/api/projects/{project['id']}", json={"name": None})
+    assert r.status_code == 400
+    assert "name" in r.json()["detail"]
+
+
+def test_patch_with_explicit_null_description_clears_it(client):
+    project = client.post(
+        "/api/projects", json={"name": "p", "description": "to be cleared"}
+    ).json()
+    r = client.patch(f"/api/projects/{project['id']}", json={"description": None})
+    assert r.status_code == 200
+    assert r.json()["description"] == ""
+
+
+def test_metadata_whitespace_is_normalized(client):
+    r = client.post(
+        "/api/projects", json={"name": "  padded  ", "description": "  also padded  "}
+    )
+    assert r.status_code == 201
+    assert r.json()["name"] == "padded"
+    assert r.json()["description"] == "also padded"
+
+
+def test_get_project_by_id(client):
+    project = client.post("/api/projects", json={"name": "fetch me"}).json()
+    r = client.get(f"/api/projects/{project['id']}")
+    assert r.status_code == 200
+    assert r.json() == project
+    assert client.get(f"/api/projects/{'f' * 32}").status_code == 404
+
+
 def test_patch_rejects_a_missing_dataset(client):
     project = client.post("/api/projects", json={"name": "attach me"}).json()
     r = client.patch(f"/api/projects/{project['id']}", json={"dataset": "nope"})
@@ -90,7 +141,10 @@ def test_corrupt_project_file_is_skipped(client, repo_root: Path):
     (projects_dir / f"{'a' * 32}.json").write_text("{not json")
 
     r = client.get("/api/projects")
-    assert r.status_code == 200  # the bad file is logged and skipped, not fatal
+    assert r.status_code == 200
+    # The bad file is logged and dropped; the healthy projects still list.
+    assert "a" * 32 not in {p["id"] for p in r.json()}
+    assert any(p["dataset"] == "sample" for p in r.json())
 
 
 def test_materialized_project_survives_edit(client, repo_root: Path):
