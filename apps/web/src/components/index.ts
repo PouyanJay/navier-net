@@ -5,7 +5,7 @@ export { Chip } from "./Chip";
 export { Console } from "./Console";
 export { DL, type KV } from "./DL";
 export { EquationBlock } from "./EquationBlock";
-export { NumberField, SelectField, type SelectOption } from "./Field";
+export { NumberField, SelectField, TextField, type SelectOption } from "./Field";
 export { Meter } from "./Meter";
 export { Panel } from "./Panel";
 export { Stat, type Tone } from "./Stat";

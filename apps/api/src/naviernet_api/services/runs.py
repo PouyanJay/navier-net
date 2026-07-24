@@ -11,11 +11,15 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 from naviernet_api.models import ArtifactFlags, RunDetail, RunSummary
 from naviernet_api.settings import Settings
+
+if TYPE_CHECKING:
+    from omegaconf import DictConfig
 
 log = get_logger(__name__)
 
@@ -68,7 +72,9 @@ def _read_json(path: Path) -> dict | None:
         return None
     try:
         return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        # A corrupt artifact must not masquerade as an absent one silently.
+        log.warning("could not read %s: %s", path, exc)
         return None
 
 
@@ -81,8 +87,41 @@ def _read_hydra_config(run_dir: Path) -> dict | None:
 
     try:
         return OmegaConf.to_container(OmegaConf.load(snapshot), resolve=True)  # type: ignore[return-value]
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — any parse failure means "unreadable"
+        log.warning("could not read config snapshot in %s: %s", run_dir, exc)
         return None
+
+
+def run_paths_for(settings: Settings, run_id: str) -> RunPaths | None:
+    """RunPaths for a validated, existing run (None for bad/unknown ids)."""
+    return _run_paths_or_none(settings, run_id)
+
+
+def load_run_config(settings: Settings, run_id: str) -> DictConfig | None:
+    """The run's own config, schema-merged and re-pinned to this repository.
+
+    Merging the snapshot over the structured schema means unknown keys or
+    wrong types fail here instead of deep inside the pipeline. Returned
+    mutable so callers can override run-scoped values before locking it.
+    """
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        return None
+    snapshot = run_dir / ".hydra" / "config.yaml"
+    if not snapshot.is_file():
+        return None
+    from omegaconf import OmegaConf
+
+    from naviernet.config.schema import Config
+
+    try:
+        cfg = OmegaConf.merge(OmegaConf.structured(Config), OmegaConf.load(snapshot))
+    except Exception as exc:  # noqa: BLE001 — any parse/merge failure means "unreadable"
+        log.warning("could not load config snapshot for %s: %s", run_id, exc)
+        return None
+    cfg.paths.root = str(settings.repo_root)
+    cfg.training.device = "cpu"  # the server never schedules onto an accelerator
+    return cfg
 
 
 def _dataset_of(run_dir: Path, metrics: dict | None) -> str | None:
@@ -207,6 +246,14 @@ def read_groups(settings: Settings, run_id: str) -> dict | None:
         return None
     payload = _read_json(paths.groups_json)
     return payload.get("groups") if payload else None
+
+
+def read_trajectory(settings: Settings, run_id: str) -> dict | None:
+    """The growth-kinematics arrays the evaluate stage wrote, or None."""
+    paths = _run_paths_or_none(settings, run_id)
+    if paths is None:
+        return None
+    return _read_json(paths.trajectory_json)
 
 
 def read_loss_history(settings: Settings, run_id: str) -> list[dict] | None:

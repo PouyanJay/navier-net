@@ -20,7 +20,7 @@ test("renders the shell and a real run from the API", async ({ page }) => {
   await expect(page.getByText("Agreement per frame")).toBeVisible();
   await expect(page.getByText(/holdout — never supervised/)).toBeVisible();
   await expect(page.getByText("Physics validation")).toBeVisible();
-  await expect(page.getByText("177")).toBeVisible(); // inferred nose speed
+  await expect(page.getByText("177").first()).toBeVisible(); // inferred nose speed
   await expect(page.getByText("215.5")).toBeVisible(); // Reynolds
   await expect(page.getByText("training_data.npz")).toBeVisible();
 });
@@ -50,7 +50,7 @@ test("physics & model view shows equations and the live topology", async ({ page
   await expect(page.getByRole("heading", { name: "Governing equations" })).toBeVisible();
   await expect(page.locator(".katex").first()).toBeVisible(); // KaTeX rendered
   await expect(page.getByRole("heading", { name: "Model topology — live" })).toBeVisible();
-  await expect(page.getByText("phi, u, v, s")).toBeVisible(); // architecture fields
+  await expect(page.getByText("phi, u, v, s", { exact: true })).toBeVisible(); // architecture fields
 });
 
 test("theme toggle flips the document theme", async ({ page }) => {

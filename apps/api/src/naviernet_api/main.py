@@ -11,7 +11,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from naviernet_api.routes import datasets, model, runs
+from naviernet_api.routes import datasets, model, runs, sweeps
 from naviernet_api.settings import get_settings
 
 
@@ -38,6 +38,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(runs.router)
+    app.include_router(sweeps.router)
     app.include_router(datasets.router)
     app.include_router(model.router)
     return app

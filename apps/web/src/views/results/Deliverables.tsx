@@ -1,4 +1,7 @@
+import { useState } from "react";
+
 import { Panel } from "../../components";
+import { ArtifactImage } from "../../components/ArtifactImage";
 import { artifactUrl, type ArtifactFlags } from "../../lib/api";
 
 interface DeliverablesProps {
@@ -25,12 +28,7 @@ export function Deliverables({ runId, artifacts }: DeliverablesProps) {
         )}
       </div>
 
-      {artifacts.video && (
-        <video className="result-video" controls preload="metadata">
-          <source src={artifactUrl.video(runId)} type="video/mp4" />
-          Your browser cannot play this video.
-        </video>
-      )}
+      {artifacts.video && <VideoPreview runId={runId} />}
 
       {artifacts.figures.length > 0 && (
         <FigureGrid runId={runId} figures={artifacts.figures} />
@@ -53,13 +51,35 @@ function FileRow({ name, desc, href }: { name: string; desc: string; href: strin
   );
 }
 
+function VideoPreview({ runId }: { runId: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <p className="state-note error" role="alert">
+        The reconstruction video could not be loaded.
+      </p>
+    );
+  }
+  return (
+    <video
+      className="result-video"
+      controls
+      preload="metadata"
+      onError={() => setFailed(true)}
+    >
+      <source src={artifactUrl.video(runId)} type="video/mp4" />
+      Your browser cannot play this video.
+    </video>
+  );
+}
+
 function FigureGrid({ runId, figures }: { runId: string; figures: string[] }) {
   return (
     <div className="figure-grid">
       {figures.map((name) => (
         <a key={name} href={artifactUrl.figure(runId, name)} target="_blank" rel="noreferrer">
           <figure>
-            <img src={artifactUrl.figure(runId, name)} alt={name} loading="lazy" />
+            <ArtifactImage src={artifactUrl.figure(runId, name)} alt={name} loading="lazy" />
             <figcaption>{name}</figcaption>
           </figure>
         </a>

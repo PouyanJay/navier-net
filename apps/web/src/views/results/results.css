@@ -94,3 +94,264 @@
 .figure-grid figure {
   margin: 0;
 }
+
+/* Run comparison */
+.compare-picker {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-bottom: var(--s4);
+}
+.compare-choice {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: var(--s1) var(--s3);
+  border-radius: var(--rs);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink2);
+  cursor: pointer;
+}
+.compare-choice:hover {
+  border-color: var(--acc2);
+}
+.compare-choice[aria-pressed="true"] {
+  background: var(--accsoft);
+  color: var(--ink);
+  border-color: var(--acc);
+}
+.compare-choice[data-series="1"][aria-pressed="true"] {
+  border-color: var(--green);
+}
+.compare-choice[data-series="2"][aria-pressed="true"] {
+  border-color: var(--purple);
+}
+.compare-choice[data-series="3"][aria-pressed="true"] {
+  border-color: var(--amber);
+}
+.compare-grids {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+}
+.compare-chart-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-bottom: var(--s3);
+}
+.compare-chart-head .fld {
+  max-width: 260px;
+}
+.compare-h {
+  margin: 0 0 var(--s3);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.compare-chart-head .compare-h {
+  margin-bottom: 0;
+}
+
+/* Reconstruction viewport — the dark instrument panel (mockup's hero) */
+.viewport {
+  background: var(--view);
+  border: 1px solid var(--viewline);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.viewport .vhd {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--viewline);
+}
+.viewport .vt {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sidetxt);
+}
+.viewport .layerbtns {
+  display: flex;
+  gap: var(--s2);
+}
+.viewport .lbtn {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px var(--s2);
+  border-radius: var(--rs);
+  border: 1px solid var(--viewline);
+  background: transparent;
+  color: var(--sidetxt);
+  cursor: pointer;
+}
+.viewport .lbtn[aria-pressed="true"] {
+  border-color: var(--acc);
+  color: var(--acc2);
+}
+.viewport .hudright {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--acc2);
+}
+.viewport svg {
+  display: block;
+  width: 100%;
+}
+.vp-grid line {
+  stroke: var(--viewline);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.5;
+}
+.vp-wall {
+  stroke: var(--sidetxt);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.55;
+}
+.vp-interface {
+  fill: rgb(62 76 104 / 55%);
+  stroke: var(--acc2);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 6px var(--acc));
+}
+.vp-measured {
+  fill: none;
+  stroke: var(--sidehl);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+.vp-cavity {
+  fill: var(--acc);
+}
+.vp-label {
+  fill: var(--sidetxt);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.vp-label-end {
+  text-anchor: end;
+}
+.viewport .vctl {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--viewline);
+}
+.vp-play {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  border: none;
+  background: var(--acc);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vp-play svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+.viewport .vctl input[type="range"] {
+  flex: 1;
+  accent-color: var(--acc);
+}
+.viewport .tval {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--sidetxt);
+  white-space: nowrap;
+}
+
+/* Serif figure caption under the viewport (mockup's Figure 1) */
+.figcap {
+  margin: var(--s3) 0 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--ink2);
+}
+.figcap b {
+  font-family: var(--sans);
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-right: var(--s2);
+}
+
+/* Physics validation check rows */
+.checks {
+  list-style: none;
+  margin: 0 0 var(--s4);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.check {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  font-size: 13px;
+}
+.check .check-ic {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.check[data-tone="green"] .check-ic {
+  background: var(--greensoft);
+  color: var(--green);
+}
+.check[data-tone="amber"] .check-ic {
+  background: var(--ambersoft);
+  color: var(--amber);
+}
+.check b {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
+}
+.check .check-sub {
+  color: var(--ink2);
+  font-size: 12px;
+}
+
+/* Inline IoU bars in the agreement table */
+.iou-bar {
+  display: inline-block;
+  width: 96px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line2);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.iou-bar i {
+  display: block;
+  height: 100%;
+  background: var(--acc2);
+}

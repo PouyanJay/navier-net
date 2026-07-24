@@ -2,6 +2,7 @@ import * as d3 from "d3";
 import { useEffect, useRef } from "react";
 
 import type { LossRecord } from "../../lib/api";
+import { attachCrosshair } from "./crosshair";
 
 const WIDTH = 640;
 const HEIGHT = 210;
@@ -112,13 +113,18 @@ interface LossChartProps {
   rebalanceSteps?: number[];
 }
 
+/** Every loss term shown in the crosshair readout (chart lines stay the
+ * headline three, matching the mockup; src/bc appear in the readout only). */
+const READOUT_TERMS = ["data", "vof", "div", "src", "bc"] as const;
+
 /**
- * Live multi-series loss history on a log₁₀ axis. D3 owns geometry only; the
- * series colors come from CSS token classes so both themes read correctly on
- * the always-dark view canvas. Redraws in place as records stream in.
+ * Live multi-series loss history on a log₁₀ axis with a crosshair readout of
+ * all five terms. D3 owns geometry only; the series colors come from CSS token
+ * classes so both themes read correctly on the always-dark view canvas.
  */
 export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
   const ref = useRef<SVGSVGElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const svg = d3.select(ref.current);
@@ -137,15 +143,43 @@ export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
     );
     drawSeries(g, x, y, records);
     drawLegend(g);
+
+    // Crosshair: every loss term at the nearest logged step.
+    const bisect = d3.bisector((r: LossRecord) => r.step).center;
+    const hide = attachCrosshair({
+      svg,
+      g,
+      tipEl: tipRef.current,
+      width: WIDTH,
+      margin: MARGIN,
+      innerWidth: INNER_W,
+      innerHeight: INNER_H,
+      readout: (px) => {
+        const record = records[bisect(records, x.invert(px))];
+        if (!record) return null;
+        return {
+          xPix: x(record.step),
+          title: `step ${record.step}`,
+          rows: READOUT_TERMS.map((term) => ({
+            text: `${term}  ${record[term].toExponential(2)}`,
+            swatchClass: (SERIES as readonly string[]).includes(term) ? term : undefined,
+          })),
+        };
+      },
+    });
+    return hide;
   }, [records, rebalanceSteps]);
 
   return (
-    <svg
-      ref={ref}
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      preserveAspectRatio="xMidYMid meet"
-      role="img"
-      aria-label="Training loss per term over steps, on a logarithmic axis."
-    />
+    <div className="chart-wrap">
+      <svg
+        ref={ref}
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="Training loss per term over steps, on a logarithmic axis."
+      />
+      <div ref={tipRef} className="chart-tip" style={{ display: "none" }} />
+    </div>
   );
 }

@@ -11,6 +11,13 @@ import "./runs.css";
 export function DatasetsView({ datasetId }: { datasetId?: string | null }) {
   const data = useDatasetData(datasetId);
 
+  if (data.datasets === null && data.error) {
+    return (
+      <p className="state-note error" role="alert">
+        Could not load datasets: {data.error}. Is the API running on :8000?
+      </p>
+    );
+  }
   if (data.datasets === null) {
     return <p className="state-note" role="status">Loading datasets…</p>;
   }

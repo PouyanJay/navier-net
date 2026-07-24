@@ -1,4 +1,5 @@
 import { Panel } from "../../components";
+import { ArtifactImage } from "../../components/ArtifactImage";
 import { artifactUrl } from "../../lib/api";
 
 interface ImageSequenceProps {
@@ -19,7 +20,11 @@ export function ImageSequence({ datasetId, nFrames }: ImageSequenceProps) {
         <div className="sequence-grid">
           {frames.map((n) => (
             <figure key={n}>
-              <img src={artifactUrl.datasetFrame(datasetId, n)} alt={`frame ${n}`} loading="lazy" />
+              <ArtifactImage
+                src={artifactUrl.datasetFrame(datasetId, n)}
+                alt={`frame ${n}`}
+                loading="lazy"
+              />
               <figcaption>frame {n}</figcaption>
             </figure>
           ))}

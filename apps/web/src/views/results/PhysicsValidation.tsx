@@ -44,11 +44,69 @@ function NoseSpeedCompare({ v }: { v: Validation }) {
   );
 }
 
+interface Check {
+  tone: "green" | "amber";
+  title: string;
+  detail: string;
+}
+
+/** Physics checks that hold (or stay open) independently of training. */
+function checkRows(v: Validation): Check[] {
+  const checks: Check[] = [];
+  if (v.nose_speed_error_pct != null) {
+    const good = v.nose_speed_error_pct < NOSE_SPEED_ERROR_TOLERANCE_PCT;
+    checks.push({
+      tone: good ? "green" : "amber",
+      title: good ? "Nose speed agrees with measurement" : "Nose speed deviates",
+      detail: `inferred ${fmt(v.nose_speed_inferred_mm_s, 0)} vs measured ${fmt(
+        v.nose_speed_measured_mm_s,
+        0,
+      )} mm/s — neither was supervised`,
+    });
+  }
+  if (v.bretherton_film_um != null && v.capillary != null) {
+    checks.push({
+      tone: "green",
+      title: "Bretherton thin-film regime",
+      detail: `Ca = ${fmt(v.capillary, 4)} → predicted side film δ ≈ ${fmt(
+        v.bretherton_film_um,
+        1,
+      )} µm`,
+    });
+  }
+  checks.push({
+    tone: "amber",
+    title: "Global mass closure — open",
+    detail:
+      "free dilatation source not yet quantitative · resolved by the Stage-B evaporation coupling",
+  });
+  return checks;
+}
+
+function CheckRow({ check }: { check: Check }) {
+  return (
+    <li className="check" data-tone={check.tone}>
+      <span className="check-ic" aria-hidden="true">
+        {check.tone === "green" ? "✓" : "!"}
+      </span>
+      <span>
+        <b>{check.title}</b>
+        <span className="check-sub">{check.detail}</span>
+      </span>
+    </li>
+  );
+}
+
 /** Physics validation: inferred vs measured kinematics + key dimensionless groups. */
 export function PhysicsValidationPanel({ validation }: { validation: Validation }) {
   return (
-    <Panel title="Physics validation" subtitle="Inferred kinematics vs measurement">
+    <Panel title="Physics validation" subtitle="independent of training">
       <NoseSpeedCompare v={validation} />
+      <ul className="checks">
+        {checkRows(validation).map((check) => (
+          <CheckRow key={check.title} check={check} />
+        ))}
+      </ul>
       <DL items={groupRows(validation)} />
     </Panel>
   );

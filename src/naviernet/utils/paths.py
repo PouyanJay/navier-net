@@ -79,6 +79,10 @@ class RunPaths:
     def metrics_json(self) -> Path:
         return self.output_dir / "metrics.json"
 
+    @property
+    def trajectory_json(self) -> Path:
+        return self.output_dir / "trajectory.json"
+
     def ensure(self) -> RunPaths:
         """Create every writable directory. Safe to call repeatedly."""
         for d in (

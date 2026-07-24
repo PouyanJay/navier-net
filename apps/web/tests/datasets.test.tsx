@@ -43,6 +43,7 @@ function mockApi(): Calls {
       const u = String(url);
       const post = opts?.method === "POST";
       if (u.endsWith("/api/datasets")) return json([{ id: "sample", n_frames: 3, processed: false }]);
+      if (u.endsWith("/api/runs")) return json([]);
       if (u.endsWith("/groups")) return json(GROUPS);
       if (u.endsWith("/upload")) {
         calls.upload += 1;
@@ -146,5 +147,20 @@ describe("ProjectsView", () => {
     const card = await screen.findByRole("button", { name: /sample/ });
     fireEvent.click(card);
     expect(onOpen).toHaveBeenCalledWith("sample");
+  });
+});
+
+describe("DatasetsView failure paths", () => {
+  it("shows an error instead of an endless spinner when the API is down", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    render(<DatasetsView />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/Could not load datasets/);
+    expect(screen.queryByText("Loading datasets…")).not.toBeInTheDocument();
   });
 });

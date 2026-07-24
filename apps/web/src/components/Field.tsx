@@ -70,6 +70,47 @@ export function NumberField({
   );
 }
 
+interface TextFieldProps {
+  label: ReactNode;
+  hint?: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  suffix?: string;
+  disabled?: boolean;
+  invalid?: boolean;
+}
+
+/** A labeled free-text input (e.g. the sweep's comma-separated seed list). */
+export function TextField({
+  label,
+  hint,
+  value,
+  onChange,
+  placeholder,
+  suffix,
+  disabled,
+  invalid,
+}: TextFieldProps) {
+  const id = useId();
+  return (
+    <FieldShell id={id} label={label} hint={hint}>
+      <span className="ug" data-disabled={disabled || undefined}>
+        <input
+          id={id}
+          type="text"
+          value={value}
+          placeholder={placeholder}
+          disabled={disabled}
+          aria-invalid={invalid || undefined}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        {suffix && <span className="sfx">{suffix}</span>}
+      </span>
+    </FieldShell>
+  );
+}
+
 export interface SelectOption {
   value: string;
   label: string;

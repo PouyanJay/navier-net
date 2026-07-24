@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
 
-import { NumberField, Panel, SelectField, Switch, type SelectOption } from "../../components";
+import {
+  NumberField,
+  Panel,
+  SelectField,
+  Switch,
+  TextField,
+  type SelectOption,
+} from "../../components";
 import type { LossWeightsInput, RunSummary } from "../../lib/api";
 import { FORM_BOUNDS, HOLDOUT_OPTIONS, type SolverFormState } from "./form";
 
@@ -37,6 +44,11 @@ interface RunConfigPanelProps {
   resumableRuns: RunSummary[];
   resumeRunId: string;
   onResumeRunId: (id: string) => void;
+  sweepMode: boolean;
+  onSweepMode: (on: boolean) => void;
+  seedsText: string;
+  onSeedsText: (text: string) => void;
+  seedsValid: boolean;
   /** A run is in flight: the whole form is read-only. */
   locked: boolean;
 }
@@ -57,6 +69,11 @@ export function RunConfigPanel({
   resumableRuns,
   resumeRunId,
   onResumeRunId,
+  sweepMode,
+  onSweepMode,
+  seedsText,
+  onSeedsText,
+  seedsValid,
   locked,
 }: RunConfigPanelProps) {
   const fixedByResume = locked || resume; // fields the original run's config owns
@@ -103,7 +120,7 @@ export function RunConfigPanel({
           hint={resume ? resumeHint : undefined}
           checked={resume}
           onChange={onResume}
-          disabled={locked || resumableRuns.length === 0}
+          disabled={locked || sweepMode || resumableRuns.length === 0}
         />
         {resume && (
           <SelectField
@@ -118,11 +135,29 @@ export function RunConfigPanel({
           />
         )}
         <Switch
+          label="Seed sweep"
+          hint="same config · one child per seed"
+          checked={sweepMode}
+          onChange={onSweepMode}
+          disabled={locked || resume}
+        />
+        {sweepMode && (
+          <TextField
+            label="Seeds"
+            hint="1-6 unique integers"
+            value={seedsText}
+            onChange={onSeedsText}
+            placeholder="0, 1, 2"
+            invalid={!seedsValid}
+            disabled={locked}
+          />
+        )}
+        <Switch
           label="Render deliverables"
           hint="figures + growth.mp4 after evaluation"
           checked={form.render}
           onChange={(render) => onForm({ render })}
-          disabled={locked}
+          disabled={locked || sweepMode}
         />
       </div>
     </Panel>

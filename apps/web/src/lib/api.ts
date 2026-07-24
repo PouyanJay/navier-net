@@ -125,11 +125,25 @@ export interface RunLaunchRequest {
 export interface RunJobStatus {
   run_id: string;
   dataset: string | null;
-  state: "running" | "done" | "error";
+  state: "queued" | "running" | "done" | "error";
   stage: string | null;
   message: string | null;
   steps_done: number;
   steps_total: number;
+}
+
+/** A request to run the same configuration across several seeds. */
+export interface SweepLaunchRequest extends RunLaunchRequest {
+  seeds: number[];
+}
+
+export interface SweepStatus {
+  sweep_id: string;
+  dataset: string;
+  state: "running" | "done" | "error";
+  message: string | null;
+  seeds: number[];
+  children: RunJobStatus[];
 }
 
 /** One per-log-step loss record, streamed live over SSE (`hist` events). */
@@ -149,6 +163,43 @@ export interface ConsoleLine {
   tone: "ok" | "em" | "dim" | "err" | null;
 }
 
+/** One kinematics series; null marks an instant with no resolvable value
+ * (e.g. an empty predicted mask early in growth). */
+export type KinematicsSeries = (number | null)[];
+
+/** Growth kinematics written by the evaluate stage (physical units). */
+export interface Trajectory {
+  t_ms: KinematicsSeries;
+  nose_um: KinematicsSeries;
+  area_um2: KinematicsSeries;
+  measured: { t_ms: KinematicsSeries; nose_um: KinematicsSeries; area_um2: KinematicsSeries };
+}
+
+/** One reconstructed instant: interface contour polylines in µm. */
+export interface InterfaceFrame {
+  t_ms: number;
+  contours: number[][][];
+}
+
+export interface InterfaceData {
+  run_id: string;
+  domain: { x_um: [number, number]; y_um: [number, number]; x_pin_um: number };
+  frames: InterfaceFrame[];
+  measured: InterfaceFrame[];
+}
+
+/** A failed API response: the server's `detail` plus the HTTP status, so
+ * callers can distinguish "not there yet" (404) from a real failure. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 /** Fetch + shared error handling: failures throw the API's `detail` when the
  * error body carries one, so every caller surfaces the actionable reason. */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -160,7 +211,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* non-JSON error body */
     }
-    throw new Error(detail);
+    throw new ApiError(detail, response.status);
   }
   return (await response.json()) as T;
 }
@@ -191,6 +242,15 @@ export const api = {
     sendJson<RunJobStatus>("/api/runs", "POST", request),
   getRunStatus: (id: string) => getJson<RunJobStatus>(`${runPath(id)}/status`),
   getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
+  getLossHistory: (id: string) => getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
+  getTrajectory: (id: string) => getJson<Trajectory>(`${runPath(id)}/trajectory`),
+  getInterface: (id: string, frames = 48) =>
+    getJson<InterfaceData>(`${runPath(id)}/interface?frames=${frames}`),
+
+  startSweep: (request: SweepLaunchRequest) =>
+    sendJson<SweepStatus>("/api/sweeps", "POST", request),
+  getSweep: (id: string) => getJson<SweepStatus>(`/api/sweeps/${encodeURIComponent(id)}`),
+  getActiveSweep: () => getJson<SweepStatus | null>("/api/sweeps/active"),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),

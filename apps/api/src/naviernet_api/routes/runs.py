@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
@@ -18,7 +18,7 @@ from naviernet_api.models import (
     RunSummary,
 )
 from naviernet_api.services import physics as physics_service
-from naviernet_api.services import run_manager
+from naviernet_api.services import reconstruction, run_manager
 from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings, get_settings
 
@@ -113,6 +113,30 @@ def get_validation(
     dataset, metrics = result
     groups = runs_service.read_groups(settings, run_id)
     return physics_service.build_validation(dataset, metrics, groups)
+
+
+@router.get("/{run_id}/trajectory")
+def get_trajectory(run_id: str, settings: Settings = Depends(get_settings)) -> dict:
+    """Continuous + measured growth kinematics (written by the evaluate stage)."""
+    trajectory = runs_service.read_trajectory(settings, run_id)
+    if trajectory is None:
+        raise HTTPException(status_code=404, detail=f"no trajectory for run {run_id!r}")
+    return trajectory
+
+
+@router.get("/{run_id}/interface")
+def get_interface(
+    run_id: str,
+    frames: int = Query(default=40, ge=8, le=120),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Interface contours over continuous time, for the reconstruction viewport."""
+    payload = reconstruction.interface_frames(settings, run_id, frames)
+    if payload is None:
+        raise HTTPException(
+            status_code=404, detail=f"run {run_id!r} has no trained model to reconstruct from"
+        )
+    return payload
 
 
 @router.get("/{run_id}/loss-history")

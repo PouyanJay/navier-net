@@ -13,6 +13,9 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "sse-starlette>=2.1",
     "python-multipart>=0.0.9",
+    # Contour extraction for the reconstruction viewport (already a transitive
+    # dependency via matplotlib; pinned here because the API imports it).
+    "contourpy>=1.0",
 ]
 
 [project.optional-dependencies]

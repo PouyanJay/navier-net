@@ -16,7 +16,7 @@
   /* Ink */
   --ink: #1a1a2e;
   --ink2: #4a4a6a;
-  --ink3: #94919b;
+  --ink3: #6e6b7c; /* AA for small text; mockup's #94919b was 3.4:1 */
 
   /* Lines */
   --line: #e5e1d8;
@@ -46,6 +46,8 @@
   --ambersoft: #b4530914;
   --red: #ef4444;
   --redsoft: #ef444414;
+  /* Error text on paper needs more contrast than the red fill color (AA). */
+  --redtext: #b91c1c;
 
   /* Chart series — third line-series color (after --acc and --green) */
   --purple: #a855f7;
@@ -112,6 +114,7 @@
   --ambersoft: #fbbf2414;
   --red: #fb7185;
   --redsoft: #fb718516;
+  --redtext: #fb7185;
   --purple: #c084fc;
 
   --sh: 0 1px 2px #00000057, 0 1px 3px #00000040;
