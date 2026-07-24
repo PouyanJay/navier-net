@@ -28,5 +28,5 @@
   color: var(--ink2);
 }
 .state-note.error {
-  color: var(--red);
+  color: var(--redtext);
 }

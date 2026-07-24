@@ -100,7 +100,7 @@
 }
 .chip[data-tone="red"] {
   background: var(--redsoft);
-  color: var(--red);
+  color: var(--redtext);
   border-color: transparent;
 }
 
@@ -553,4 +553,20 @@
 }
 .chart-tip .tip-swatch.div {
   background: var(--purple);
+}
+
+/* Failed-artifact placeholder (replaces a broken <img>) */
+.img-fallback {
+  display: block;
+  padding: var(--s4);
+  border: 1.5px dashed var(--line);
+  border-radius: var(--rs);
+  background: var(--panel2);
+  color: var(--ink2);
+  font-size: 12px;
+}
+
+/* Tables scroll inside their own container at narrow widths */
+.tbl-wrap {
+  overflow-x: auto;
 }

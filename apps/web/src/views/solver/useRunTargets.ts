@@ -36,7 +36,8 @@ export function useRunTargets(): RunTargets {
         setResumableRuns(trained);
         setResumeRunId((cur) => cur || trained[0]?.id || "");
       })
-      .catch(() => {}); // resume stays unavailable; launching still works
+      // Launching still works without the list, but say why resume is empty.
+      .catch(() => setLoadError("Could not load existing runs — resume is unavailable."));
   }, []);
 
   useEffect(() => {

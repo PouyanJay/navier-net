@@ -18,7 +18,8 @@ interface TableProps<T> {
 /** A real semantic <table> for tabular data (enterprise-ui §3). */
 export function Table<T>({ columns, rows, rowKey, rowTone, caption }: TableProps<T>) {
   return (
-    <table className="tbl">
+    <div className="tbl-wrap">
+      <table className="tbl">
       {caption && <caption className="visually-hidden">{caption}</caption>}
       <thead>
         <tr>
@@ -40,6 +41,7 @@ export function Table<T>({ columns, rows, rowKey, rowTone, caption }: TableProps
           </tr>
         ))}
       </tbody>
-    </table>
+      </table>
+    </div>
   );
 }

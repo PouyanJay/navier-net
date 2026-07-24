@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
 import { Button, Chip, Panel, StatusDot } from "../../components";
+import { ArtifactImage } from "../../components/ArtifactImage";
 import { artifactUrl, type DatasetDetail, type PreprocessStatus } from "../../lib/api";
 
 interface UploadPreprocessProps {
@@ -69,7 +70,7 @@ export function UploadPreprocess({
 
 function QcFigure({ datasetId, cacheKey }: { datasetId: string; cacheKey: string }) {
   return (
-    <img
+    <ArtifactImage
       key={cacheKey}
       className="qc-figure"
       src={artifactUrl.datasetQc(datasetId)}

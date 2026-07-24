@@ -97,7 +97,11 @@ export function SolverView({ onRunState }: SolverViewProps) {
           Run failed: {run.status.message}
         </p>
       )}
-      {targets.loadError && <p className="state-note error">{targets.loadError}</p>}
+      {targets.loadError && (
+        <p className="state-note error" role="alert">
+          {targets.loadError}
+        </p>
+      )}
       {noDatasets && (
         <p className="state-note">
           No preprocessed dataset yet — upload and preprocess one under Datasets &amp;

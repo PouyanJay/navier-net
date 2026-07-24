@@ -149,3 +149,18 @@ describe("ProjectsView", () => {
     expect(onOpen).toHaveBeenCalledWith("sample");
   });
 });
+
+describe("DatasetsView failure paths", () => {
+  it("shows an error instead of an endless spinner when the API is down", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    render(<DatasetsView />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/Could not load datasets/);
+    expect(screen.queryByText("Loading datasets…")).not.toBeInTheDocument();
+  });
+});

@@ -177,6 +177,7 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
               key={item.id}
               type="button"
               className={item.stage ? "stage" : "homelink"}
+              aria-label={item.label}
               aria-current={item.id === active ? "page" : undefined}
               onClick={() => onNavigate(item.id)}
             >
