@@ -301,17 +301,16 @@ export function AppShell({
 
   return (
     <div className="shell">
-      <div className="brandblock">
-        <span className="mark" aria-hidden="true">
-          <BrandMark />
-        </span>
-        <div>
-          NavierNet
-          <small>PINN Solver Platform</small>
-        </div>
-      </div>
-
       <header className="topbar">
+        <div className="brandblock">
+          <span className="mark" aria-hidden="true">
+            <BrandMark />
+          </span>
+          <div>
+            NavierNet
+            <small>PINN Solver Platform</small>
+          </div>
+        </div>
         <nav className="crumb" aria-label="Breadcrumb">
           <span>Two-phase flows workspace</span>
           <span className="crumb-sep" aria-hidden="true">
