@@ -1,3 +1,4 @@
+import { Callout } from "../components";
 import { type ProjectSummary } from "../lib/api";
 import { ConditionsPanel } from "./datasets/ConditionsPanel";
 import { GroupsPanel } from "./datasets/GroupsPanel";
@@ -30,9 +31,9 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
 
   if (data.datasets === null && data.error) {
     return (
-      <p className="state-note error" role="alert">
-        Could not load datasets: {data.error}. Is the API running on :8000?
-      </p>
+      <Callout tone="error" title="Could not load datasets">
+        {data.error}. Is the API running on :8000?
+      </Callout>
     );
   }
   if (data.datasets === null) {
@@ -64,11 +65,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
       />
 
       <div className="dsx-main">
-        {data.error && (
-          <p className="state-note error" role="alert">
-            {data.error}
-          </p>
-        )}
+        {data.error && <Callout tone="error">{data.error}</Callout>}
         {detail && (
           <>
             <ImageSequence
@@ -79,9 +76,9 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
               exclusionError={data.exclusionError}
             />
             {qcError && (
-              <p className="state-note error" role="alert">
-                Could not load the preprocessing QC: {qcError}
-              </p>
+              <Callout tone="error" title="Could not load the preprocessing QC">
+                {qcError}
+              </Callout>
             )}
             {qc && <QcPanel qc={qc} />}
             <ConditionsPanel

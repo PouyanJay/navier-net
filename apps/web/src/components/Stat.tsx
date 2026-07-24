@@ -9,7 +9,13 @@ interface StatProps {
 }
 
 /** A single metric: label, a monospace value, optional unit and hint. */
-export function Stat({ label, value, unit, tone = "default", hint }: StatProps) {
+export function Stat({
+  label,
+  value,
+  unit,
+  tone = "default",
+  hint,
+}: StatProps) {
   return (
     <div className="stat" data-tone={tone}>
       <span className="lbl">{label}</span>

@@ -93,7 +93,7 @@ export function FrameLightbox({
             disabled={holdout}
             title={
               holdout
-                ? "The holdout frame is the run's only unsupervised check — move the holdout before excluding it"
+                ? "The holdout frame is the run's only unsupervised check; move the holdout before excluding it"
                 : undefined
             }
           >

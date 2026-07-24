@@ -2,7 +2,7 @@
 
 A minimal in-process job registry: one preprocess job per dataset, run on a
 daemon thread, its state polled over HTTP. Preprocess is quick (seconds), so no
-streaming is needed — this is the seed of the fuller run manager Phase 4 adds for
+streaming is needed; this is the seed of the fuller run manager Phase 4 adds for
 training.
 """
 
@@ -84,7 +84,7 @@ def _run(settings: Settings, dataset: str) -> None:
         with _lock:
             _jobs[dataset] = _Job(state="done")
         log.info("preprocess done for %s", dataset)
-    except Exception as exc:  # noqa: BLE001 — report any failure back to the client
+    except Exception as exc:  # noqa: BLE001 (report any failure back to the client)
         log.exception("preprocess failed for %s", dataset)
         with _lock:
             _jobs[dataset] = _Job(state="error", message=str(exc))

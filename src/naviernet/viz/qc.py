@@ -17,7 +17,7 @@ from naviernet.utils.paths import RunPaths
 
 log = get_logger(__name__)
 
-# Interface-evolution frame stride — shared with the platform API's qc-data
+# Interface-evolution frame stride; shared with the platform API's qc-data
 # endpoint so the interactive chart matches this figure.
 CONTOUR_FRAME_STRIDE = 2
 

@@ -14,7 +14,8 @@ import { FORM_BOUNDS, HOLDOUT_OPTIONS, type SolverFormState } from "./form";
 /** The numeric run-config fields, in display order. Each maps 1:1 onto a
  * `cfg.training` value; bounds come from FORM_BOUNDS by the same key. */
 interface NumberSpec {
-  key: "steps" | "lr" | "lr_halflife" | "n_data" | "n_coll" | "n_bc" | "log_every";
+  key:
+    "steps" | "lr" | "lr_halflife" | "n_data" | "n_coll" | "n_bc" | "log_every";
   label: string;
   hint?: string;
   suffix?: string;
@@ -26,7 +27,13 @@ interface NumberSpec {
 const NUMBER_FIELDS: NumberSpec[] = [
   { key: "steps", label: "Steps", step: 100, editableOnResume: true },
   { key: "lr", label: "Learning rate", step: 0.0005 },
-  { key: "lr_halflife", label: "LR schedule", hint: "halve every", suffix: "steps", step: 100 },
+  {
+    key: "lr_halflife",
+    label: "LR schedule",
+    hint: "halve every",
+    suffix: "steps",
+    step: 100,
+  },
   { key: "n_data", label: "Data batch", suffix: "pts", step: 512 },
   { key: "n_coll", label: "Collocation batch", suffix: "pts", step: 512 },
   { key: "n_bc", label: "Boundary batch", suffix: "pts", step: 128 },
@@ -54,7 +61,7 @@ interface RunConfigPanelProps {
 }
 
 /**
- * "Run configuration" — every field is an input to the run, mapped 1:1 onto
+ * "Run configuration": every field is an input to the run, mapped 1:1 onto
  * `cfg.training`. When resuming, only Steps applies (the rest is fixed by the
  * original run's config), so everything else locks.
  */
@@ -79,7 +86,9 @@ export function RunConfigPanel({
   const fixedByResume = locked || resume; // fields the original run's config owns
   const resumeTarget = resumableRuns.find((run) => run.id === resumeRunId);
   const resumeHint =
-    resumeTarget?.steps != null ? `ckpt.pt · step ${resumeTarget.steps}` : "ckpt.pt";
+    resumeTarget?.steps != null
+      ? `ckpt.pt · step ${resumeTarget.steps}`
+      : "ckpt.pt";
 
   return (
     <Panel title="Run configuration" subtitle="inputs to this run">
@@ -129,7 +138,8 @@ export function RunConfigPanel({
             onChange={onResumeRunId}
             options={resumableRuns.map((run) => ({
               value: run.id,
-              label: run.steps != null ? `${run.id} · step ${run.steps}` : run.id,
+              label:
+                run.steps != null ? `${run.id} · step ${run.steps}` : run.id,
             }))}
             disabled={locked}
           />
@@ -171,7 +181,7 @@ interface LossWeightsPanelProps {
   locked: boolean;
 }
 
-/** "Loss weights" — the initial per-term weights, rebalanced live by the trainer. */
+/** "Loss weights": the initial per-term weights, rebalanced live by the trainer. */
 export function LossWeightsPanel({
   weights,
   rebalanceEvery,

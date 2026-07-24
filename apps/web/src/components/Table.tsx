@@ -16,7 +16,13 @@ interface TableProps<T> {
 }
 
 /** A real semantic <table> for tabular data (enterprise-ui §3). */
-export function Table<T>({ columns, rows, rowKey, rowTone, caption }: TableProps<T>) {
+export function Table<T>({
+  columns,
+  rows,
+  rowKey,
+  rowTone,
+  caption,
+}: TableProps<T>) {
   return (
     <div className="tbl-wrap">
       <table className="tbl">
@@ -24,7 +30,11 @@ export function Table<T>({ columns, rows, rowKey, rowTone, caption }: TableProps
         <thead>
           <tr>
             {columns.map((col) => (
-              <th key={col.header} className={col.num ? "num" : undefined} scope="col">
+              <th
+                key={col.header}
+                className={col.num ? "num" : undefined}
+                scope="col"
+              >
                 {col.header}
               </th>
             ))}

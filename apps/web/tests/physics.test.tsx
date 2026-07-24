@@ -23,7 +23,8 @@ function mockApi() {
     "fetch",
     vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.endsWith("/api/datasets")) return json([{ id: "sample", n_frames: 3, processed: false }]);
+      if (u.endsWith("/api/datasets"))
+        return json([{ id: "sample", n_frames: 3, processed: false }]);
       if (u.includes("/api/model/")) return json(MODEL);
       return new Response("not found", { status: 404 });
     }),
@@ -34,7 +35,9 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("EquationBlock", () => {
   it("renders LaTeX via KaTeX", () => {
-    const { container } = render(<EquationBlock tex="\\alpha = \\sigma(\\phi/\\varepsilon)" />);
+    const { container } = render(
+      <EquationBlock tex="\\alpha = \\sigma(\\phi/\\varepsilon)" />,
+    );
     expect(container.querySelector(".katex")).toBeInTheDocument();
   });
 });
@@ -45,7 +48,9 @@ describe("TopologyChart", () => {
     // 4 field outputs are drawn as .field nodes.
     expect(container.querySelectorAll(".topo-node.field")).toHaveLength(4);
     // Edges wire the columns together (the "topology").
-    expect(container.querySelectorAll(".topo-edges line").length).toBeGreaterThan(0);
+    expect(
+      container.querySelectorAll(".topo-edges line").length,
+    ).toBeGreaterThan(0);
     // Column labels reflect the model's real dimensions.
     expect(container.textContent).toContain("hidden · 96 × 4");
     expect(container.textContent).toContain("Fourier · 128");
@@ -57,10 +62,14 @@ describe("PhysicsModelView", () => {
     mockApi();
     render(<PhysicsModelView />);
 
-    expect(screen.getByRole("heading", { name: "Governing equations" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Model topology — live" })).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Advanced — per-field architecture" }),
+      screen.getByRole("heading", { name: "Governing equations" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Model topology · live" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Advanced; per-field architecture" }),
     ).toBeInTheDocument();
     expect(screen.getByText("phi, u, v, s")).toBeInTheDocument();
     expect(screen.getByText("96")).toBeInTheDocument(); // hidden width
@@ -79,16 +88,25 @@ describe("PhysicsModelView", () => {
     );
     render(<PhysicsModelView />);
     // Equations always render; the model panels are replaced by an alert.
-    expect(screen.getByRole("heading", { name: "Governing equations" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Governing equations" }),
+    ).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
 
   it("shows only the equations when there are no datasets yet", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => json([])));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json([])),
+    );
     render(<PhysicsModelView />);
-    expect(screen.getByRole("heading", { name: "Governing equations" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Governing equations" }),
+    ).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.queryByRole("heading", { name: "Model topology — live" })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("heading", { name: "Model topology · live" }),
+      ).not.toBeInTheDocument(),
     );
   });
 });

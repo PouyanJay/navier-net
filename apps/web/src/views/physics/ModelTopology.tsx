@@ -5,7 +5,7 @@ import type { ModelArchitecture } from "../../lib/api";
 export function ModelTopology({ model }: { model: ModelArchitecture }) {
   return (
     <Panel
-      title="Model topology — live"
+      title="Model topology · live"
       subtitle="One Fourier-feature MLP per field, from the model config"
     >
       <ViewCanvas>

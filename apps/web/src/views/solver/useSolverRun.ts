@@ -13,7 +13,10 @@ import { errorMessage } from "../../lib/errors";
 import { openRunStream } from "../../lib/runStream";
 
 const IDLE_LINES: ConsoleLine[] = [
-  { line: "[naviernet] solver idle — configure a run and press Run", tone: "dim" },
+  {
+    line: "[naviernet] solver idle; configure a run and press Run",
+    tone: "dim",
+  },
 ];
 
 const SWEEP_POLL_MS = 1000;
@@ -32,7 +35,7 @@ export interface SolverRun {
 }
 
 /**
- * Owns one training run's — or one sweep's — lifecycle: launch, live SSE
+ * Owns one training run's (or one sweep's) lifecycle: launch, live SSE
  * consumption, terminal follow-up (holdout IoU), and re-attachment to work
  * still going when the view remounts (the server replays the full event
  * buffer on connect, so re-attaching reconstructs console and loss history).
@@ -62,7 +65,7 @@ export function useSolverRun(
         api
           .getRun(next.run_id)
           .then((detail) => setHoldoutIou(detail.metrics?.iou_holdout ?? null))
-          .catch(() => setHoldoutIou(null)); // metrics stay "—" if unreadable
+          .catch(() => setHoldoutIou(null)); // metrics stay "n/a" if unreadable
       }
       if (next.state !== "running") onFinished?.();
     },
@@ -80,10 +83,16 @@ export function useSolverRun(
         onInterrupted: () => {
           setLines((prev) => [
             ...prev,
-            { line: "[naviernet] live stream interrupted — status may lag", tone: "err" },
+            {
+              line: "[naviernet] live stream interrupted; status may lag",
+              tone: "err",
+            },
           ]);
           // Best-effort refresh; the interrupted banner above already told the user.
-          api.getRunStatus(runId).then(handleStatus).catch(() => {});
+          api
+            .getRunStatus(runId)
+            .then(handleStatus)
+            .catch(() => {});
         },
       });
     },
@@ -188,7 +197,7 @@ export function useSolverRun(
         if (first) onStatusChange?.(first);
         setLines([
           {
-            line: `[sweep] ${launched.sweep_id} — seeds ${launched.seeds.join(", ")}`,
+            line: `[sweep] ${launched.sweep_id}; seeds ${launched.seeds.join(", ")}`,
             tone: "dim",
           },
         ]);

@@ -2,7 +2,7 @@
 
 The same three checks the pipeline's matplotlib QC figure draws (growth
 kinematics, interface evolution, signed distance field), computed from the
-preprocessed tensors with the same arithmetic as `naviernet.viz.qc` — but
+preprocessed tensors with the same arithmetic as `naviernet.viz.qc`; but
 returned as data so the web app can render them on its own canvases.
 """
 

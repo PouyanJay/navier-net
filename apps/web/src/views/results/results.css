@@ -155,7 +155,7 @@
   margin-bottom: 0;
 }
 
-/* Reconstruction viewport — the dark instrument panel (mockup's hero) */
+/* Reconstruction viewport: the dark instrument panel (mockup's hero) */
 .viewport {
   background: var(--view);
   border: 1px solid var(--viewline);

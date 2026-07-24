@@ -44,7 +44,7 @@ class ExclusionError(ValueError):
 
 
 # Editable per-series conditions: the Hydra override path each field drives,
-# plus its accepted [min, max] (server-side bounds per SECURITY.md §4 — the
+# plus its accepted [min, max] (server-side bounds per SECURITY.md §4; the
 # ranges are generous physical sanity limits, not experiment tuning). Saved
 # values apply at every compose site for the dataset (detail, groups,
 # preprocess, run launches), so the whole pipeline sees them.
@@ -61,7 +61,7 @@ CONDITION_FIELDS: dict[str, tuple[str, float, float]] = {
 
 def is_valid_dataset_id(dataset: str) -> bool:
     # Exclude "." / ".." explicitly: they match the character class but "." would
-    # resolve to the data root itself (collapsing per-dataset scoping) — SECURITY.md §3.
+    # resolve to the data root itself (collapsing per-dataset scoping); SECURITY.md §3.
     return bool(_DATASET_RE.match(dataset)) and dataset not in {".", ".."}
 
 
@@ -121,7 +121,7 @@ def read_conditions(settings: Settings, dataset: str) -> dict[str, float]:
         log.warning("ignoring unreadable conditions for %s: %s", dataset, exc)
         return {}
     if not isinstance(saved, dict):
-        # A wrong-shaped file must degrade like a corrupt one — not take the
+        # A wrong-shaped file must degrade like a corrupt one; not take the
         # whole dataset listing down with an AttributeError.
         log.warning("ignoring non-object conditions file for %s", dataset)
         return {}
@@ -203,7 +203,7 @@ def save_excluded_frames(settings: Settings, dataset: str, frames: list[int]) ->
     holdout = int(cfg.training.holdout_frame) + 1  # config is 0-based; frames are 1-based
     if holdout > 0 and holdout in wanted:
         raise ExclusionError(
-            f"frame {holdout} is the holdout frame — the only unsupervised check on "
+            f"frame {holdout} is the holdout frame, the only unsupervised check on "
             "the model. Move the holdout before excluding this frame."
         )
     # The floor lives with the stage that enforces it, so the API cannot accept
@@ -242,7 +242,7 @@ def series_overrides(settings: Settings, dataset: str) -> list[str]:
 def exclusions_applied(settings: Settings, dataset: str) -> bool:
     """Whether the preprocessed tensors were built with the saved exclusions.
 
-    False while an edit is pending a re-run — the UI says so rather than
+    False while an edit is pending a re-run; the UI says so rather than
     implying the model already ignores the frame.
     """
     meta = tensors_meta(settings, dataset)
@@ -272,7 +272,7 @@ def _dt_frame_ms(settings: Settings, dataset: str) -> float | None:
     try:
         cfg = compose_cfg(dataset, overrides=series_overrides(settings, dataset))
         return float(cfg.experiment.dt_frame_ms)
-    except Exception as exc:  # noqa: BLE001 — a bad config must not hide the series
+    except Exception as exc:  # noqa: BLE001 (a bad config must not hide the series)
         log.warning("could not compose config for %s: %s", dataset, exc)
         return None
 
@@ -330,7 +330,7 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
         frame_px=_frame_dimensions(raw_dir),
         # Config stores the 0-based tensor index; report the 1-based camera
         # frame (f06), matching evaluation's metrics.json convention. -1 means
-        # "train on all frames" — no holdout to mark.
+        # "train on all frames"; no holdout to mark.
         holdout_frame=(
             None if int(cfg.training.holdout_frame) < 0 else int(cfg.training.holdout_frame) + 1
         ),
@@ -419,7 +419,7 @@ def _verify_tiff(data: bytes, index: int) -> None:
     try:
         with Image.open(io.BytesIO(data)) as img:
             img.verify()  # structural check; also raises on a decompression bomb
-    except Exception as exc:  # noqa: BLE001 — any decode failure is a bad upload
+    except Exception as exc:  # noqa: BLE001 (any decode failure is a bad upload)
         raise UploadError(f"frame {index} is not a decodable TIFF image") from exc
 
 
@@ -427,7 +427,7 @@ def save_frames(settings: Settings, dataset: str, frames: list[bytes]) -> int:
     """Validate and save uploaded frames as 1.tif, 2.tif, … Returns the count.
 
     Server-generated names; TIFF magic + real decode + size + count checks
-    (SECURITY.md §2). Replaces any existing sequence — never splices onto it.
+    (SECURITY.md §2). Replaces any existing sequence; never splices onto it.
     """
     raw_dir = _raw_dir(settings, dataset)
     if raw_dir is None:

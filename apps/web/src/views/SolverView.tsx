@@ -1,9 +1,23 @@
 import { useCallback, useMemo, useState } from "react";
 
-import { Button, Chip, Console, LossChart, Panel, StatusDot, ViewCanvas } from "../components";
+import {
+  Button,
+  Callout,
+  Chip,
+  Console,
+  LossChart,
+  Panel,
+  StatusDot,
+  ViewCanvas,
+} from "../components";
 import type { RunJobStatus } from "../lib/api";
 import { LossWeightsPanel, RunConfigPanel } from "./solver/ConfigPanels";
-import { FORM_DEFAULTS, parseSeeds, toLaunchRequest, type SolverFormState } from "./solver/form";
+import {
+  FORM_DEFAULTS,
+  parseSeeds,
+  toLaunchRequest,
+  type SolverFormState,
+} from "./solver/form";
 import { MonitorPanel } from "./solver/MonitorPanel";
 import { SweepPanel } from "./solver/SweepPanel";
 import { useRunTargets } from "./solver/useRunTargets";
@@ -38,7 +52,8 @@ export function SolverView({ onRunState }: SolverViewProps) {
   const run = useSolverRun(onRunState, targets.refreshRuns);
 
   const patchForm = useCallback(
-    (patch: Partial<SolverFormState>) => setForm((prev) => ({ ...prev, ...patch })),
+    (patch: Partial<SolverFormState>) =>
+      setForm((prev) => ({ ...prev, ...patch })),
     [],
   );
 
@@ -60,13 +75,16 @@ export function SolverView({ onRunState }: SolverViewProps) {
     if (run.hist.length === 0) return [];
     const last = run.hist[run.hist.length - 1].step;
     const marks: number[] = [];
-    for (let s = form.rebalance_every; s <= last; s += form.rebalance_every) marks.push(s);
+    for (let s = form.rebalance_every; s <= last; s += form.rebalance_every)
+      marks.push(s);
     return marks;
   }, [run.hist, form.rebalance_every]);
 
   const dot = statusDot(run.status);
   const latest = run.hist.length > 0 ? run.hist[run.hist.length - 1] : null;
-  const targetReady = targets.resume ? targets.resumeRunId !== "" : targets.dataset !== "";
+  const targetReady = targets.resume
+    ? targets.resumeRunId !== ""
+    : targets.dataset !== "";
   const canRun = !run.running && targetReady && (!sweepMode || seeds !== null);
   const noDatasets = targets.datasets !== null && targets.datasets.length === 0;
 
@@ -87,25 +105,17 @@ export function SolverView({ onRunState }: SolverViewProps) {
           </Button>
         </div>
       </div>
-      {run.error && (
-        <p className="state-note error" role="alert">
-          {run.error}
-        </p>
-      )}
+      {run.error && <Callout tone="error">{run.error}</Callout>}
       {run.status?.state === "error" && run.status.message && (
-        <p className="state-note error" role="alert">
-          Run failed: {run.status.message}
-        </p>
+        <Callout tone="error" title="Run failed">
+          {run.status.message}
+        </Callout>
       )}
-      {targets.loadError && (
-        <p className="state-note error" role="alert">
-          {targets.loadError}
-        </p>
-      )}
+      {targets.loadError && <Callout tone="error">{targets.loadError}</Callout>}
       {noDatasets && (
         <p className="state-note">
-          No preprocessed dataset yet — upload and preprocess one under Datasets &amp;
-          conditions to enable the solver.
+          No preprocessed dataset yet; upload and preprocess one under Datasets
+          &amp; conditions to enable the solver.
         </p>
       )}
       <div className="solx">
@@ -113,7 +123,10 @@ export function SolverView({ onRunState }: SolverViewProps) {
           <RunConfigPanel
             form={form}
             onForm={patchForm}
-            datasetOptions={(targets.datasets ?? []).map((d) => ({ value: d.id, label: d.id }))}
+            datasetOptions={(targets.datasets ?? []).map((d) => ({
+              value: d.id,
+              label: d.id,
+            }))}
             dataset={targets.dataset}
             onDataset={targets.setDataset}
             resume={targets.resume}
@@ -140,7 +153,11 @@ export function SolverView({ onRunState }: SolverViewProps) {
         </div>
         <div className="solver-col">
           {run.sweep && <SweepPanel sweep={run.sweep} />}
-          <MonitorPanel status={run.status} latest={latest} holdoutIou={run.holdoutIou} />
+          <MonitorPanel
+            status={run.status}
+            latest={latest}
+            holdoutIou={run.holdoutIou}
+          />
           <Panel title="Loss history" subtitle="log₁₀ · rebalance markers">
             <ViewCanvas>
               {run.hist.length >= 2 ? (

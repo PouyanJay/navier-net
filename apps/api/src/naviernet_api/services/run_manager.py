@@ -34,8 +34,8 @@ log = get_logger(__name__)
 # responsive and the console unambiguous.
 MAX_CONCURRENT_RUNS = 1
 
-# Finished registry entries kept for late SSE joins. Older runs are evicted —
-# their artifacts (checkpoint, metrics, solver_console.log) live on disk — which
+# Finished registry entries kept for late SSE joins. Older runs are evicted;
+# their artifacts (checkpoint, metrics, solver_console.log) live on disk. This
 # bounds the process's memory across many launches: each job's event buffer is
 # itself bounded (log_every >= 10 over steps <= 20000).
 MAX_FINISHED_JOBS = 8
@@ -145,7 +145,7 @@ def events_since(run_id: str, cursor: int) -> tuple[list[dict], int, bool] | Non
 
     A job's state only turns terminal in the same lock acquisition that appends
     its final status event (`_finish` / `abort_queued`), so ``terminal=True``
-    guarantees the final event is included in (or preceded) this batch — a
+    guarantees the final event is included in (or preceded) this batch; a
     consumer that drains until terminal never misses it.
     """
     with _lock:
@@ -173,7 +173,7 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
         if _slot_busy():
             raise LaunchRejected(409, "a training run is already in progress")
         if run_id is None:
-            # Minting stats the filesystem while holding the lock — one .exists()
+            # Minting stats the filesystem while holding the lock; one .exists()
             # per launch, accepted so id reservation and registration are atomic.
             run_id = _mint_run_id(settings)
         _jobs[run_id] = _RunJob(dataset=dataset, stage="train")
@@ -261,7 +261,7 @@ def validate_trainable_dataset(settings: Settings, dataset: str | None) -> str:
         raise LaunchRejected(404, f"unknown dataset {dataset!r}")
     if datasets_service.tensors_path(settings, dataset) is None:
         raise LaunchRejected(
-            409, f"dataset {dataset!r} is not preprocessed — run preprocessing first"
+            409, f"dataset {dataset!r} is not preprocessed; run preprocessing first"
         )
     return dataset
 
@@ -277,7 +277,7 @@ def _validate_resume(settings: Settings, request: RunLaunchRequest) -> tuple[str
     if runs_service.checkpoint_path(settings, run_id) is None:
         raise LaunchRejected(409, f"run {run_id!r} has no checkpoint to resume from")
     if not _snapshot_path(settings, run_id).is_file():
-        raise LaunchRejected(409, f"run {run_id!r} has no config snapshot — cannot resume")
+        raise LaunchRejected(409, f"run {run_id!r} has no config snapshot; cannot resume")
     with _lock:
         job = _jobs.get(run_id)
         if job is not None and job.state == "running":
@@ -330,7 +330,7 @@ def _worker(settings: Settings, run_id: str, request: RunLaunchRequest) -> None:
         _run_stages(pipeline, run_id, request)
         _finish(settings, run_id, error=None)
         log.info("run %s finished", run_id)
-    except Exception as exc:  # noqa: BLE001 — report any failure to the client
+    except Exception as exc:  # noqa: BLE001 (report any failure to the client)
         log.exception("run %s failed", run_id)
         _finish(settings, run_id, error=exc)
     finally:
@@ -377,7 +377,7 @@ def _finish(settings: Settings, run_id: str, error: Exception | None) -> None:
     event under ONE lock acquisition, so a stream that observes a terminal
     state is guaranteed to have the final status event in its buffer."""
     if error is None:
-        line = f"[naviernet] run complete — checkpoint at outputs/{run_id}/checkpoints/ckpt.pt"
+        line = f"[naviernet] run complete; checkpoint at outputs/{run_id}/checkpoints/ckpt.pt"
         tone = "ok"
     else:
         line, tone = f"[naviernet] run failed: {error}", "err"

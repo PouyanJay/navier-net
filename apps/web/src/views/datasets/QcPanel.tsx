@@ -25,7 +25,7 @@ export function QcPanel({ qc }: { qc: QcData }) {
   return (
     <Panel
       title="Preprocessing QC"
-      subtitle="computed from the training tensors — inspect before solving"
+      subtitle="computed from the training tensors; inspect before solving"
       actions={
         <div className="seg" role="tablist" aria-label="QC check">
           {CHECKS.map((c) => (
@@ -119,12 +119,19 @@ function drawFitLine(g: G, x: Linear, y: Linear, kin: QcKinematics): void {
     .text(`fit dL/dt = ${kin.fit_slope_mm_s.toFixed(0)} mm/s`);
 }
 
-function drawMeasuredSeries(g: G, x: Linear, y: Linear, kin: QcKinematics): void {
+function drawMeasuredSeries(
+  g: G,
+  x: Linear,
+  y: Linear,
+  kin: QcKinematics,
+): void {
   const line = d3
     .line<number>()
     .x((_, i) => x(kin.t_ms[i]))
     .y((d) => y(d));
-  g.append("path").attr("class", "chart-line qc-measured").attr("d", line(kin.length_um));
+  g.append("path")
+    .attr("class", "chart-line qc-measured")
+    .attr("d", line(kin.length_um));
   g.append("g")
     .selectAll("circle")
     .data(kin.length_um)
@@ -134,7 +141,7 @@ function drawMeasuredSeries(g: G, x: Linear, y: Linear, kin: QcKinematics): void
     .attr("cy", (d) => y(d))
     .attr("r", 3.5)
     .append("title")
-    .text((d, i) => `t = ${kin.t_ms[i]} ms — L = ${d.toFixed(0)} µm`);
+    .text((d, i) => `t = ${kin.t_ms[i]} ms · L = ${d.toFixed(0)} µm`);
 }
 
 /** Measured bubble length per frame with the linear growth fit. */
@@ -146,7 +153,9 @@ function KinematicsChart({ qc }: { qc: QcData }) {
     const svg = d3.select(ref.current);
     svg.selectAll("*").remove();
     if (kin.t_ms.length === 0) return;
-    const g = svg.append("g").attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
+    const g = svg
+      .append("g")
+      .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     const { x, y } = kinScales(kin);
     drawKinGridAndAxes(g, x, y);
     drawFitLine(g, x, y, kin);
@@ -181,7 +190,10 @@ function drawContourFrames(g: G, x: Linear, y: Linear, qc: QcData): void {
     .scaleLinear()
     .domain([0, Math.max(1, frames.length - 1)])
     .range([0.35, 1]);
-  const path = d3.line<number[]>().x((p) => x(p[0])).y((p) => y(p[1]));
+  const path = d3
+    .line<number[]>()
+    .x((p) => x(p[0]))
+    .y((p) => y(p[1]));
   for (const [order, frame] of frames.entries()) {
     const group = g.append("g").attr("class", "chart-line qc-contour");
     group.attr("opacity", tone(order));
@@ -202,14 +214,18 @@ function InterfaceChart({ qc }: { qc: QcData }) {
   // Equal x*/y* aspect: height follows the domain's shape.
   const innerH = Math.max(
     120,
-    Math.round((INNER_W * (y_range[1] - y_range[0])) / (x_range[1] - x_range[0])),
+    Math.round(
+      (INNER_W * (y_range[1] - y_range[0])) / (x_range[1] - x_range[0]),
+    ),
   );
   const height = innerH + MARGIN.top + MARGIN.bottom;
 
   useEffect(() => {
     const svg = d3.select(ref.current);
     svg.selectAll("*").remove();
-    const g = svg.append("g").attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
+    const g = svg
+      .append("g")
+      .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     const x = d3.scaleLinear().domain(x_range).range([0, INNER_W]);
     const y = d3.scaleLinear().domain(y_range).range([innerH, 0]);
     drawPin(g, x, x_pin_star, innerH);
@@ -219,7 +235,9 @@ function InterfaceChart({ qc }: { qc: QcData }) {
       .attr("x", INNER_W / 2)
       .attr("y", innerH + 24)
       .attr("text-anchor", "middle")
-      .text("x* (downstream) — later frames brighter · dotted line: pinned cavity");
+      .text(
+        "x* (downstream) · later frames brighter · dotted line: pinned cavity",
+      );
   }, [qc, x_range, y_range, x_pin_star, innerH]);
 
   return (

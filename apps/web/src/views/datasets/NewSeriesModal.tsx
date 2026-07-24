@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { Button } from "../../components";
+import { Button, Callout } from "../../components";
 import { useToast } from "../../components/Toast";
 import { api, type ProjectSummary } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
@@ -20,7 +20,11 @@ interface NewSeriesModalProps {
 
 /** Upload a new series and run its preprocessing in one guided flow:
  * choose frames → upload → pipeline runs (progress) → data + QC appear. */
-export function NewSeriesModal({ project, onClose, onAttached }: NewSeriesModalProps) {
+export function NewSeriesModal({
+  project,
+  onClose,
+  onAttached,
+}: NewSeriesModalProps) {
   const [name, setName] = useState("");
   const [files, setFiles] = useState<FileList | null>(null);
   const [phase, setPhase] = useState<Phase>("form");
@@ -30,7 +34,7 @@ export function NewSeriesModal({ project, onClose, onAttached }: NewSeriesModalP
 
   const validName = SERIES_ID_RE.test(name) && !project.datasets.includes(name);
 
-  // The pipeline reports states, not percentages — poll until it settles.
+  // The pipeline reports states, not percentages; poll until it settles.
   useEffect(() => {
     if (phase !== "preprocessing") return;
     const id = window.setInterval(async () => {
@@ -38,14 +42,14 @@ export function NewSeriesModal({ project, onClose, onAttached }: NewSeriesModalP
         const status = await api.getPreprocessStatus(name);
         if (status.state === "done") {
           window.clearInterval(id);
-          toast("Series ready", `${name} — tensors and QC available`, "ok");
+          toast("Series ready", `${name}: tensors and QC available`, "ok");
           onClose();
         }
         if (status.state === "error") {
           window.clearInterval(id);
           setError(
             `Preprocessing failed: ${status.message ?? "see the API log"}. ` +
-              "The frames are uploaded — you can rerun preprocessing from the sequence panel.",
+              "The frames are uploaded; you can rerun preprocessing from the sequence panel.",
           );
           setPhase("form");
         }
@@ -70,7 +74,7 @@ export function NewSeriesModal({ project, onClose, onAttached }: NewSeriesModalP
       return;
     }
     try {
-      // Frames are on disk now — a failure past this point is only the link.
+      // Frames are on disk now; a failure past this point is only the link.
       const updated = await api.updateProject(project.id, {
         datasets: [...project.datasets, name],
       });
@@ -102,7 +106,12 @@ export function NewSeriesModal({ project, onClose, onAttached }: NewSeriesModalP
         if (e.target === e.currentTarget && phase === "form") onClose();
       }}
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-label="Upload new series">
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Upload new series"
+      >
         <div className="hd">
           <h2>Upload new series</h2>
           <span className="sub">TIFF frames · preprocesses on upload</span>
@@ -119,11 +128,11 @@ export function NewSeriesModal({ project, onClose, onAttached }: NewSeriesModalP
             />
           </label>
           {name.length > 0 && !validName && (
-            <p className="state-note error">
+            <Callout tone="error">
               {project.datasets.includes(name)
                 ? "A series with this name already exists in the project."
                 : "Series names use letters, digits, dots, dashes, and underscores."}
-            </p>
+            </Callout>
           )}
           <label className="drop">
             <input
@@ -136,8 +145,8 @@ export function NewSeriesModal({ project, onClose, onAttached }: NewSeriesModalP
             />
             {files?.length ? (
               <>
-                <b>{files.length}</b> frame{files.length === 1 ? "" : "s"} selected —{" "}
-                <b>browse</b> to change
+                <b>{files.length}</b> frame{files.length === 1 ? "" : "s"}{" "}
+                selected ; <b>browse</b> to change
               </>
             ) : (
               <>
@@ -148,21 +157,21 @@ export function NewSeriesModal({ project, onClose, onAttached }: NewSeriesModalP
 
           {phase !== "form" && (
             <div className="modal-progress">
-              <div className="meter indeterminate" role="progressbar" aria-label={phase}>
+              <div
+                className="meter indeterminate"
+                role="progressbar"
+                aria-label={phase}
+              >
                 <i />
               </div>
               <p className="state-note" role="status">
                 {phase === "uploading"
                   ? `Uploading ${files?.length ?? 0} frames…`
-                  : "Preprocessing — calibrating, segmenting, building tensors…"}
+                  : "Preprocessing: calibrating, segmenting, building tensors…"}
               </p>
             </div>
           )}
-          {error && (
-            <p className="state-note error" role="alert">
-              {error}
-            </p>
-          )}
+          {error && <Callout tone="error">{error}</Callout>}
 
           <div className="pform-actions">
             <Button

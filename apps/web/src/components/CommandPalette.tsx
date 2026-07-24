@@ -14,7 +14,11 @@ interface CommandPaletteProps {
 }
 
 /** ⌘K command palette: filter, arrow-select, run. */
-export function CommandPalette({ open, onClose, actions }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  onClose,
+  actions,
+}: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -72,7 +76,9 @@ export function CommandPalette({ open, onClose, actions }: CommandPaletteProps) 
           }}
         />
         <div className="pal-list" role="listbox" aria-label="Commands">
-          {matches.length === 0 && <p className="pal-empty">No matching command.</p>}
+          {matches.length === 0 && (
+            <p className="pal-empty">No matching command.</p>
+          )}
           {matches.map((action, i) => {
             const header = action.group !== lastGroup ? action.group : null;
             lastGroup = action.group;

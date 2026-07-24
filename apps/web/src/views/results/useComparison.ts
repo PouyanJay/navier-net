@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { api, type LossRecord, type RunDetail, type RunSummary } from "../../lib/api";
+import {
+  api,
+  type LossRecord,
+  type RunDetail,
+  type RunSummary,
+} from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 
 /** Comparison is capped at the number of distinct series colors. */

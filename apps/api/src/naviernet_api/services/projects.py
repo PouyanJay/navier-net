@@ -1,6 +1,6 @@
 """Project metadata: one JSON file per project under `projects/`.
 
-A project is the platform's scoping unit — a uuid identity with an editable
+A project is the platform's scoping unit: a uuid identity with an editable
 name and description, linked to a dataset under `data/raw/` once its first
 sequence is uploaded. The file is the source of truth (no database), matching
 the platform's filesystem-first architecture.
@@ -48,7 +48,7 @@ class ProjectError(ValueError):
 
 def is_valid_project_id(project_id: str) -> bool:
     # Ids are generated as uuid4().hex; anything else is rejected before it can
-    # reach the filesystem (SECURITY.md §3 — ids become file names).
+    # reach the filesystem (SECURITY.md §3; ids become file names).
     return bool(_PROJECT_ID_RE.match(project_id))
 
 
@@ -59,7 +59,7 @@ def _path(settings: Settings, project_id: str) -> Path:
 def _read(path: Path) -> ProjectSummary | None:
     try:
         return ProjectSummary.model_validate(json.loads(path.read_text()))
-    except (OSError, ValueError) as exc:  # unreadable or malformed — surface, don't crash
+    except (OSError, ValueError) as exc:  # unreadable or malformed; surface, don't crash
         log.warning("skipping unreadable project file %s: %s", path.name, exc)
         return None
 

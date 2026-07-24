@@ -52,7 +52,14 @@ function mockApi(): Calls {
       }
       if (u.endsWith("/api/datasets")) {
         return json([
-          { id: "sample", n_frames: 3, processed: true, conditions_set: true, frame_px: [16, 12], dt_frame_ms: 0.5 },
+          {
+            id: "sample",
+            n_frames: 3,
+            processed: true,
+            conditions_set: true,
+            frame_px: [16, 12],
+            dt_frame_ms: 0.5,
+          },
         ]);
       }
       if (u.endsWith("/api/runs")) return json([]);
@@ -90,7 +97,9 @@ describe("ProjectsView", () => {
 
     await screen.findByText("Microchannel FC-72");
     fireEvent.click(screen.getAllByRole("button", { name: /Open/ })[0]);
-    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: LINKED.id }));
+    expect(onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ id: LINKED.id }),
+    );
   });
 
   it("edits a project's name and description in place", async () => {
@@ -108,7 +117,10 @@ describe("ProjectsView", () => {
       expect(calls.patched).toEqual([
         {
           id: LINKED.id,
-          body: { name: "FC-72 bubble growth", description: LINKED.description },
+          body: {
+            name: "FC-72 bubble growth",
+            description: LINKED.description,
+          },
         },
       ]),
     );
@@ -119,7 +131,11 @@ describe("ProjectsView", () => {
     const calls = mockApi();
     const onCreatingChange = vi.fn();
     render(
-      <ProjectsView onOpen={vi.fn()} creating onCreatingChange={onCreatingChange} />,
+      <ProjectsView
+        onOpen={vi.fn()}
+        creating
+        onCreatingChange={onCreatingChange}
+      />,
     );
 
     await screen.findByText("Microchannel FC-72");
@@ -149,6 +165,8 @@ describe("ProjectsView", () => {
       }),
     );
     render(<ProjectsView onOpen={vi.fn()} {...noCreate} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Is the API running/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Is the API running/,
+    );
   });
 });

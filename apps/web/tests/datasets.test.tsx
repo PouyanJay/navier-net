@@ -253,7 +253,7 @@ describe("DatasetsView", () => {
     expect(await screen.findByText("Series library")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sample/ })).toBeInTheDocument();
     expect(
-      await screen.findByText(/Image sequence — sample/),
+      await screen.findByText(/Image sequence · sample/),
     ).toBeInTheDocument();
     expect(screen.getAllByAltText(/Frame \d+ preview/).length).toBe(3);
     // Conditions are editable inputs with unit suffixes.
@@ -368,10 +368,10 @@ describe("DatasetsView", () => {
     // The tile is a toggle; its accessible name carries the state, so the
     // holdout is announced rather than only being amber.
     expect(
-      await screen.findByRole("button", { name: /Frame 2 .* holdout frame/ }),
+      await screen.findByRole("button", { name: /Frame 2,.*holdout frame/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Frame 1 — included in training$/ }),
+      screen.getByRole("button", { name: /Frame 1, included in training$/ }),
     );
   });
 });
@@ -435,7 +435,7 @@ describe("DatasetsView with several series", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /mid_T/ }));
     expect(
-      await screen.findByText(/Image sequence — mid_T/),
+      await screen.findByText(/Image sequence · mid_T/),
     ).toBeInTheDocument();
   });
 });
@@ -614,7 +614,7 @@ describe("DatasetsView preprocess polling", () => {
       await screen.findByRole("button", { name: /Run preprocessing/ }),
     );
 
-    // Real timers: the hook polls every 1s until done, then refreshes —
+    // Real timers: the hook polls every 1s until done, then refreshes ;
     // proven by the QC panel appearing once the series reports processed.
     await waitFor(
       () => expect(screen.getByText("Preprocessing QC")).toBeInTheDocument(),
@@ -642,16 +642,16 @@ describe("DatasetsView failure paths", () => {
 describe("frame exclusion", () => {
   /** The tile toggle for a 1-based camera frame. */
   const tile = (n: number) =>
-    screen.getByRole("button", { name: new RegExp(`^Frame ${n} —`) });
+    screen.getByRole("button", { name: new RegExp(`^Frame ${n},`) });
 
   it("excludes a frame on click and sends the whole new set", async () => {
     const calls = mockApi({ excluded: [1] });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText(/Image sequence — sample/);
+    await screen.findByText(/Image sequence · sample/);
 
     fireEvent.click(tile(3));
 
-    // The set is replaced, not appended to — frame 1 must survive the round trip.
+    // The set is replaced, not appended to; frame 1 must survive the round trip.
     await waitFor(() => expect(calls.exclusionPuts).toEqual([[1, 3]]));
     await waitFor(() =>
       expect(tile(3)).toHaveAttribute("aria-pressed", "true"),
@@ -662,7 +662,7 @@ describe("frame exclusion", () => {
   it("includes an excluded frame again on a second click", async () => {
     const calls = mockApi({ excluded: [3] });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText(/Image sequence — sample/);
+    await screen.findByText(/Image sequence · sample/);
     await waitFor(() =>
       expect(tile(3)).toHaveAttribute("aria-pressed", "true"),
     );
@@ -678,7 +678,7 @@ describe("frame exclusion", () => {
   it("refuses to exclude the holdout frame without calling the API", async () => {
     const calls = mockApi({ holdout: 2 });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText(/Image sequence — sample/);
+    await screen.findByText(/Image sequence · sample/);
 
     fireEvent.click(tile(2));
 
@@ -692,7 +692,7 @@ describe("frame exclusion", () => {
   it("reverts the tile and surfaces the reason when the API rejects the edit", async () => {
     mockApi({ exclusionStatus: 400 });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText(/Image sequence — sample/);
+    await screen.findByText(/Image sequence · sample/);
 
     fireEvent.click(tile(3));
 
@@ -715,15 +715,13 @@ describe("frame exclusion", () => {
         /excluded frames have changed since the tensors were built/,
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Re-run preprocessing" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Re-run" })).toBeInTheDocument();
   });
 
   it("opens the frame full size on double-click without toggling it", async () => {
     const calls = mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText(/Image sequence — sample/);
+    await screen.findByText(/Image sequence · sample/);
 
     fireEvent.doubleClick(tile(2));
 
@@ -738,7 +736,7 @@ describe("frame exclusion", () => {
   it("steps frames with the arrow keys and closes on Escape", async () => {
     mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText(/Image sequence — sample/);
+    await screen.findByText(/Image sequence · sample/);
     fireEvent.doubleClick(tile(2));
     await screen.findByRole("dialog", { name: /Frame 2 of sample/ });
 
@@ -747,7 +745,7 @@ describe("frame exclusion", () => {
       await screen.findByRole("dialog", { name: /Frame 3 of sample/ }),
     ).toBeInTheDocument();
 
-    // Frame 3 is the last of the 3-frame series — the axis must not run past it.
+    // Frame 3 is the last of the 3-frame series; the axis must not run past it.
     fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(
       await screen.findByRole("dialog", { name: /Frame 3 of sample/ }),
@@ -762,12 +760,93 @@ describe("frame exclusion", () => {
   it("offers an enlarge control so the lightbox is reachable by keyboard", async () => {
     mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText(/Image sequence — sample/);
+    await screen.findByText(/Image sequence · sample/);
 
     fireEvent.click(screen.getByRole("button", { name: "Enlarge frame 2" }));
 
     expect(
       await screen.findByRole("dialog", { name: /Frame 2 of sample/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("frame strip scrolling", () => {
+  /** jsdom lays nothing out, so the strip has to be told it overflows. */
+  function makeScrollable(width = 200, content = 1200) {
+    const strip = document.querySelector<HTMLElement>(".strip");
+    if (!strip) throw new Error("no frame strip rendered");
+    Object.defineProperty(strip, "clientWidth", {
+      value: width,
+      configurable: true,
+    });
+    Object.defineProperty(strip, "scrollWidth", {
+      value: content,
+      configurable: true,
+    });
+    fireEvent.scroll(strip); // re-measure through the component's own listener
+    return strip;
+  }
+
+  it("shows a scrollbar only when the frames overflow", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence · sample/);
+
+    // Nothing overflows by default in jsdom, so nothing to scroll.
+    expect(screen.queryByRole("scrollbar")).not.toBeInTheDocument();
+
+    makeScrollable();
+
+    const bar = await screen.findByRole("scrollbar", { name: /frame strip/i });
+    expect(bar).toHaveAttribute("aria-orientation", "horizontal");
+    expect(bar).toHaveAttribute("aria-valuenow", "0");
+  });
+
+  it("scrolls the strip horizontally from a plain vertical mouse wheel", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence · sample/);
+    const strip = makeScrollable();
+
+    // A wheel only emits deltaY; without the mapping the strip never moves and
+    // the page scrolls past it instead.
+    fireEvent.wheel(strip, { deltaY: 120, deltaX: 0 });
+
+    expect(strip.scrollLeft).toBe(120);
+  });
+
+  it("hands the wheel back to the page at the end of the strip", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence · sample/);
+    const strip = makeScrollable();
+    strip.scrollLeft = 1000; // scrollWidth - clientWidth
+
+    const event = new WheelEvent("wheel", {
+      deltaY: 120,
+      cancelable: true,
+      bubbles: true,
+    });
+    strip.dispatchEvent(event);
+
+    // Not swallowed, so the page scrolls rather than the pointer being trapped.
+    expect(event.defaultPrevented).toBe(false);
+    expect(strip.scrollLeft).toBe(1000);
+  });
+
+  it("moves the strip with the arrow keys on the scrollbar", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence · sample/);
+    const strip = makeScrollable();
+    strip.scrollBy = vi.fn(({ left }: ScrollToOptions = {}) => {
+      strip.scrollLeft += left ?? 0;
+    }) as never;
+
+    fireEvent.keyDown(await screen.findByRole("scrollbar"), {
+      key: "ArrowRight",
+    });
+
+    expect(strip.scrollLeft).toBeGreaterThan(0);
   });
 });

@@ -34,7 +34,9 @@ type G = d3.Selection<SVGGElement, unknown, null, undefined>;
 
 function makeScales(series: CompareSeries[], logY: boolean) {
   const xs = series.flatMap((s) => s.points.map((p) => p.x));
-  const ys = series.flatMap((s) => s.points.map((p) => (logY ? Math.max(p.y, FLOOR) : p.y)));
+  const ys = series.flatMap((s) =>
+    s.points.map((p) => (logY ? Math.max(p.y, FLOOR) : p.y)),
+  );
   const x = d3
     .scaleLinear()
     .domain([Math.min(...xs), Math.max(...xs)])
@@ -106,7 +108,9 @@ export function CompareChart({
     const drawable = series.filter((s) => s.points.length > 0);
     if (drawable.length === 0) return;
 
-    const g = svg.append("g").attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
+    const g = svg
+      .append("g")
+      .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     const { x, y } = makeScales(drawable, logY);
     drawAxes(g, x, y, logY);
 
@@ -132,7 +136,9 @@ export function CompareChart({
       readout: (px) => {
         const xValue = x.invert(px);
         const nearest = drawable.map((s) => {
-          const idx = d3.bisector((p: ComparePoint) => p.x).center(s.points, xValue);
+          const idx = d3
+            .bisector((p: ComparePoint) => p.x)
+            .center(s.points, xValue);
           return { id: s.id, point: s.points[idx] };
         });
         const anchor = nearest[0]?.point;

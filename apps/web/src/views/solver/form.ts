@@ -1,6 +1,6 @@
 /** The solver form's state and its mapping onto a launch request.
  *
- * Defaults mirror `configs/training/stage_a.yaml` — the form starts at the
+ * Defaults mirror `configs/training/stage_a.yaml`; the form starts at the
  * exact configuration the CLI would run.
  */
 
@@ -52,7 +52,7 @@ export const HOLDOUT_OPTIONS = [
   { value: "5", label: "frame 6 · never supervised" },
   { value: "3", label: "frame 4" },
   { value: "7", label: "frame 8" },
-  { value: "-1", label: "none — train on all frames" },
+  { value: "-1", label: "none (train on all frames)" },
 ];
 
 export function toLaunchRequest(

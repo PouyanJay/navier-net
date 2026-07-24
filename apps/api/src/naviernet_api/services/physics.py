@@ -1,7 +1,7 @@
 """Physics-validation summary.
 
-Composes the numbers the Results view compares against the physics — inferred vs
-measured nose speed, Bretherton film, and the key dimensionless groups — out of
+Composes the numbers the Results view compares against the physics; inferred vs
+measured nose speed, Bretherton film, and the key dimensionless groups; out of
 what the pipeline already wrote. The API performs no physics itself.
 """
 

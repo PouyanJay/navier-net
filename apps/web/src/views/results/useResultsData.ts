@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
-import { api, type PhysicsValidation, type RunDetail, type RunSummary } from "../../lib/api";
+import {
+  api,
+  type PhysicsValidation,
+  type RunDetail,
+  type RunSummary,
+} from "../../lib/api";
 import { errorMessage as message } from "../../lib/errors";
 
 export type RunsLoad =
@@ -32,7 +37,9 @@ export function useResultsData() {
         const trained = list.find((r) => r.status === "trained") ?? list[0];
         setSelected(trained?.id ?? null);
       })
-      .catch((err) => alive && setRuns({ status: "error", message: message(err) }));
+      .catch(
+        (err) => alive && setRuns({ status: "error", message: message(err) }),
+      );
     return () => {
       alive = false;
     };
@@ -43,8 +50,13 @@ export function useResultsData() {
     let alive = true;
     setDetail({ status: "loading" });
     Promise.all([api.getRun(selected), api.getValidation(selected)])
-      .then(([d, v]) => alive && setDetail({ status: "ready", detail: d, validation: v }))
-      .catch((err) => alive && setDetail({ status: "error", message: message(err) }));
+      .then(
+        ([d, v]) =>
+          alive && setDetail({ status: "ready", detail: d, validation: v }),
+      )
+      .catch(
+        (err) => alive && setDetail({ status: "error", message: message(err) }),
+      );
     return () => {
       alive = false;
     };

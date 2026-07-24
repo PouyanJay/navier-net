@@ -1,7 +1,7 @@
 """Reading runs from `outputs/`.
 
 A "run" is a directory under `outputs/` that the pipeline produced. This module
-locates its artifacts through the reused `RunPaths` layout (constructed directly —
+locates its artifacts through the reused `RunPaths` layout (constructed directly,
 no Hydra composition needed) and reads the JSON the pipeline already writes. It
 performs no training and never mutates a run.
 """
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 # Run ids and dataset names become directory names, so constrain both hard
-# (defense against path traversal — see SECURITY.md §3).
+# (defense against path traversal; see SECURITY.md §3).
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # Directory names under outputs/ that are not individual runs.
@@ -37,7 +37,7 @@ _FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
 def _safe_run_dir(settings: Settings, run_id: str) -> Path | None:
     """Resolve a run id to its directory, or None if invalid / missing."""
     # "." matches the character class but would resolve to outputs/ itself,
-    # collapsing per-run scoping (same guard as dataset ids — SECURITY.md §3).
+    # collapsing per-run scoping (same guard as dataset ids; SECURITY.md §3).
     if not _RUN_ID_RE.match(run_id) or run_id in {".", ".."}:
         return None
     outputs = settings.outputs_dir.resolve()
@@ -58,7 +58,7 @@ def _run_paths(settings: Settings, run_id: str, dataset: str | None) -> RunPaths
 
 
 def _run_paths_or_none(settings: Settings, run_id: str) -> RunPaths | None:
-    """RunPaths for a validated, existing run — the common preamble of the
+    """RunPaths for a validated, existing run; the common preamble of the
     artifact readers below."""
     run_dir = _safe_run_dir(settings, run_id)
     if run_dir is None:
@@ -87,7 +87,7 @@ def _read_hydra_config(run_dir: Path) -> dict | None:
 
     try:
         return OmegaConf.to_container(OmegaConf.load(snapshot), resolve=True)  # type: ignore[return-value]
-    except Exception as exc:  # noqa: BLE001 — any parse failure means "unreadable"
+    except Exception as exc:  # noqa: BLE001 (any parse failure means "unreadable")
         log.warning("could not read config snapshot in %s: %s", run_dir, exc)
         return None
 
@@ -116,7 +116,7 @@ def load_run_config(settings: Settings, run_id: str) -> DictConfig | None:
 
     try:
         cfg = OmegaConf.merge(OmegaConf.structured(Config), OmegaConf.load(snapshot))
-    except Exception as exc:  # noqa: BLE001 — any parse/merge failure means "unreadable"
+    except Exception as exc:  # noqa: BLE001 (any parse/merge failure means "unreadable")
         log.warning("could not load config snapshot for %s: %s", run_id, exc)
         return None
     cfg.paths.root = str(settings.repo_root)
@@ -197,7 +197,7 @@ def list_runs(settings: Settings) -> list[RunSummary]:
 def read_dataset_and_metrics(
     settings: Settings, run_id: str
 ) -> tuple[str | None, dict | None] | None:
-    """The run's dataset name and metrics only — cheap (no checkpoint load)."""
+    """The run's dataset name and metrics only; cheap (no checkpoint load)."""
     run_dir = _safe_run_dir(settings, run_id)
     if run_dir is None:
         return None

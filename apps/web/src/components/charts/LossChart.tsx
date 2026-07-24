@@ -23,7 +23,9 @@ type YScale = d3.ScaleLogarithmic<number, number>;
 
 function makeScales(records: LossRecord[]): { x: XScale; y: YScale } {
   const steps = records.map((r) => r.step);
-  const values = records.flatMap((r) => SERIES.map((s) => Math.max(r[s], FLOOR)));
+  const values = records.flatMap((r) =>
+    SERIES.map((s) => Math.max(r[s], FLOOR)),
+  );
   const x = d3
     .scaleLinear()
     .domain([Math.min(...steps), Math.max(...steps)])
@@ -101,8 +103,14 @@ function drawLegend(g: G): void {
     .attr("class", "chart-legend")
     .attr("transform", `translate(${INNER_W - SERIES.length * 52}, -8)`);
   SERIES.forEach((name: SeriesName, i) => {
-    const item = legend.append("g").attr("transform", `translate(${i * 52}, 0)`);
-    item.append("rect").attr("class", `chart-swatch ${name}`).attr("width", 10).attr("height", 3);
+    const item = legend
+      .append("g")
+      .attr("transform", `translate(${i * 52}, 0)`);
+    item
+      .append("rect")
+      .attr("class", `chart-swatch ${name}`)
+      .attr("width", 10)
+      .attr("height", 3);
     item.append("text").attr("x", 14).attr("y", 4).text(name);
   });
 }
@@ -131,7 +139,9 @@ export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
     svg.selectAll("*").remove();
     if (records.length < 2) return; // a line needs two points
 
-    const g = svg.append("g").attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
+    const g = svg
+      .append("g")
+      .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     const { x, y } = makeScales(records);
     const [minStep, maxStep] = x.domain();
     drawGridAndYAxis(g, y);
@@ -162,7 +172,9 @@ export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
           title: `step ${record.step}`,
           rows: READOUT_TERMS.map((term) => ({
             text: `${term}  ${record[term].toExponential(2)}`,
-            swatchClass: (SERIES as readonly string[]).includes(term) ? term : undefined,
+            swatchClass: (SERIES as readonly string[]).includes(term)
+              ? term
+              : undefined,
           })),
         };
       },

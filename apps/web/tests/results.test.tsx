@@ -24,7 +24,13 @@ const DETAIL = {
     nose_speed_mm_s: 177.3,
   },
   config: { experiment: { dt_frame_ms: 0.5 } },
-  artifacts: { checkpoint: true, metrics: true, groups: true, video: false, figures: [] },
+  artifacts: {
+    checkpoint: true,
+    metrics: true,
+    groups: true,
+    video: false,
+    figures: [],
+  },
 };
 
 const VALIDATION = {
@@ -66,11 +72,13 @@ describe("ResultsView", () => {
     mockApi();
     render(<ResultsView />);
 
-    expect(await screen.findByText("highest_t", { selector: ".id" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("highest_t", { selector: ".id" }),
+    ).toBeInTheDocument();
     // Per-frame IoU values render in the table.
     expect(await screen.findByText("0.968")).toBeInTheDocument();
     expect(screen.getByText("0.973")).toBeInTheDocument();
-    expect(screen.getByText(/holdout — never supervised/)).toBeInTheDocument();
+    expect(screen.getByText(/holdout, never supervised/)).toBeInTheDocument();
   });
 
   it("shows physics validation: inferred vs measured nose speed and groups", async () => {
@@ -97,7 +105,10 @@ describe("ResultsView", () => {
   });
 
   it("shows an empty state when there are no runs", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => json([])));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json([])),
+    );
     render(<ResultsView />);
     expect(await screen.findByText(/No runs yet/)).toBeInTheDocument();
   });
@@ -105,7 +116,10 @@ describe("ResultsView", () => {
   it("shows an error state when the run list fails to load", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response("boom", { status: 500, statusText: "Server Error" })),
+      vi.fn(
+        async () =>
+          new Response("boom", { status: 500, statusText: "Server Error" }),
+      ),
     );
     render(<ResultsView />);
     expect(await screen.findByText(/Could not load runs/)).toBeInTheDocument();
@@ -121,6 +135,8 @@ describe("ResultsView", () => {
       }),
     );
     render(<ResultsView />);
-    expect(await screen.findByText(/Could not load results/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Could not load results/),
+    ).toBeInTheDocument();
   });
 });

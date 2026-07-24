@@ -1,6 +1,13 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
-import { Button, Panel } from "../../components";
+import {
+  Button,
+  Callout,
+  Panel,
+  ScrollBar,
+  useScrollExtent,
+  useWheelToHorizontal,
+} from "../../components";
 import { ArtifactImage } from "../../components/ArtifactImage";
 import {
   artifactUrl,
@@ -24,49 +31,39 @@ const DOUBLE_CLICK_GRACE_MS = 220;
 /** The API refuses to drop the holdout; say why here rather than round-tripping
  * to an error the user could have been told about up front. */
 const HOLDOUT_BLOCKED =
-  "That is the holdout frame — the run's only unsupervised check on the model. " +
+  "That is the holdout frame, the run's only unsupervised check on the model. " +
   "Move the holdout in the run configuration before excluding it.";
-
-/** How much of a horizontal scroller is visible, and how far along it sits.
- * `visible` is 1 when everything fits — the caller hides the indicator then. */
-function useScrollExtent(
-  strip: RefObject<HTMLDivElement | null>,
-  itemCount: number,
-) {
-  const [extent, setExtent] = useState({ visible: 1, progress: 0 });
-
-  useEffect(() => {
-    const element = strip.current;
-    if (!element) return;
-    const measure = () => {
-      const scrollable = element.scrollWidth - element.clientWidth;
-      setExtent({
-        visible:
-          element.scrollWidth > 0
-            ? element.clientWidth / element.scrollWidth
-            : 1,
-        progress: scrollable > 0 ? element.scrollLeft / scrollable : 0,
-      });
-    };
-    measure();
-    element.addEventListener("scroll", measure, { passive: true });
-    const observer = new ResizeObserver(measure); // panel resize changes the fit
-    observer.observe(element);
-    return () => {
-      element.removeEventListener("scroll", measure);
-      observer.disconnect();
-    };
-  }, [strip, itemCount]);
-
-  return extent;
-}
 
 function calibrationLine(detail: DatasetDetail): string {
   if (detail.um_per_px == null || detail.frame_px == null) {
-    return `${detail.n_frames} raw frame${detail.n_frames === 1 ? "" : "s"} — preprocess to calibrate`;
+    const plural = detail.n_frames === 1 ? "" : "s";
+    return `${detail.n_frames} raw frame${plural} · preprocess to calibrate`;
   }
   const fovMm = (detail.um_per_px * detail.frame_px[0]) / 1000;
   return `auto-calibrated · ${detail.um_per_px.toFixed(3)} µm px⁻¹ · FOV ${fovMm.toFixed(2)} mm`;
+}
+
+/** Circular arrow: this rebuilds an artifact that already exists. */
+function RerunIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M13.2 8a5.2 5.2 0 1 1-1.6-3.7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M13.4 1.9v3.1h-3.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 /** The raw frames as an inline film strip; scrolls when it overflows. Clicking a
@@ -85,7 +82,9 @@ export function ImageSequence({
   const [blocked, setBlocked] = useState<string | null>(null);
   const pendingToggle = useRef<number | undefined>(undefined);
   const strip = useRef<HTMLDivElement>(null);
-  const { visible, progress } = useScrollExtent(strip, detail.n_frames);
+  const stripId = useId();
+  const extent = useScrollExtent(strip, detail.n_frames);
+  useWheelToHorizontal(strip);
 
   // A pending single-click must not fire after the strip is gone.
   useEffect(() => () => window.clearTimeout(pendingToggle.current), []);
@@ -111,23 +110,15 @@ export function ImageSequence({
   const running = preprocess?.state === "running";
   const excludedCount = detail.excluded_frames.length;
   const pendingRerun = detail.processed && !detail.exclusions_applied;
-  const showPreprocess =
-    detail.n_frames > 0 && (!detail.processed || pendingRerun);
 
   return (
     <Panel
-      title={`Image sequence — ${detail.id}`}
+      title={`Image sequence · ${detail.id}`}
       subtitle={calibrationLine(detail)}
       actions={
-        showPreprocess ? (
-          <Button variant="primary" onClick={onPreprocess} disabled={running}>
-            {running
-              ? "Preprocessing…"
-              : pendingRerun
-                ? "Re-run preprocessing"
-                : "Run preprocessing"}
-          </Button>
-        ) : undefined
+        <PreprocessAction
+          {...{ detail, running, pendingRerun, onPreprocess }}
+        />
       }
     >
       {detail.n_frames === 0 ? (
@@ -139,6 +130,7 @@ export function ImageSequence({
         <>
           <div
             ref={strip}
+            id={stripId}
             className="strip"
             role="list"
             aria-label={`${detail.n_frames} raw frames`}
@@ -146,7 +138,7 @@ export function ImageSequence({
             {frames.map((n) => {
               const holdout = n === detail.holdout_frame;
               const excluded = detail.excluded_frames.includes(n);
-              const label = `Frame ${n}`;
+              const state = excluded ? "excluded from" : "included in";
               return (
                 <figure
                   key={n}
@@ -164,13 +156,13 @@ export function ImageSequence({
                     className="fr-toggle"
                     aria-pressed={excluded}
                     title={holdout ? HOLDOUT_BLOCKED : undefined}
-                    aria-label={`${label} — ${excluded ? "excluded from" : "included in"} training${holdout ? ", holdout frame" : ""}`}
+                    aria-label={`Frame ${n}, ${state} training${holdout ? ", holdout frame" : ""}`}
                     onClick={() => handleClick(n, holdout)}
                     onDoubleClick={() => handleDoubleClick(n)}
                   >
                     <ArtifactImage
                       src={artifactUrl.datasetFrame(detail.id, n)}
-                      alt={`${label} preview`}
+                      alt={`Frame ${n} preview`}
                       loading="lazy"
                     />
                     <figcaption className="mono">
@@ -181,7 +173,7 @@ export function ImageSequence({
                   <button
                     type="button"
                     className="fr-zoom mono"
-                    aria-label={`Enlarge ${label.toLowerCase()}`}
+                    aria-label={`Enlarge frame ${n}`}
                     onClick={() => setZoomed(n)}
                   >
                     ⤢
@@ -197,16 +189,12 @@ export function ImageSequence({
               );
             })}
           </div>
-          {visible < 1 && (
-            <div className="strip-bar" aria-hidden="true">
-              <i
-                style={{
-                  width: `${visible * 100}%`,
-                  left: `${progress * (100 - visible * 100)}%`,
-                }}
-              />
-            </div>
-          )}
+          <ScrollBar
+            target={strip}
+            extent={extent}
+            controls={stripId}
+            label="Scroll the frame strip"
+          />
           <p className="fr-hint">
             Click a frame to exclude it from training · double-click to enlarge
             {excludedCount > 0 && (
@@ -222,20 +210,20 @@ export function ImageSequence({
       )}
 
       {blocked && (
-        <p className="state-note caution" role="status">
+        <Callout tone="caution" title="Holdout frame">
           {blocked}
-        </p>
+        </Callout>
       )}
       {exclusionError && (
-        <p className="state-note error" role="alert">
-          Could not change the excluded frames: {exclusionError}
-        </p>
+        <Callout tone="error" title="Could not change the excluded frames">
+          {exclusionError}
+        </Callout>
       )}
       {pendingRerun && !running && (
-        <p className="state-note caution" role="status">
-          The excluded frames have changed since the tensors were built — re-run
+        <Callout tone="caution" title="Preprocessing is out of date">
+          The excluded frames have changed since the tensors were built. Re-run
           preprocessing so the solver sees this set.
-        </p>
+        </Callout>
       )}
       {running && (
         <div className="modal-progress">
@@ -247,18 +235,18 @@ export function ImageSequence({
             <i />
           </div>
           <p className="state-note" role="status">
-            Preprocessing — calibrating, segmenting, building tensors…
+            Preprocessing: calibrating, segmenting, building tensors…
           </p>
         </div>
       )}
       {preprocess?.state === "error" && preprocess.message && (
-        <p className="state-note error" role="alert">
-          Preprocessing failed: {preprocess.message}
-        </p>
+        <Callout tone="error" title="Preprocessing failed">
+          {preprocess.message}
+        </Callout>
       )}
       {detail.notes && (
         <p className="note">
-          <b>Auto-detected:</b> {detail.notes}
+          <b>Auto-detected</b> {detail.notes}
         </p>
       )}
 
@@ -272,5 +260,42 @@ export function ImageSequence({
         />
       )}
     </Panel>
+  );
+}
+
+interface PreprocessActionProps {
+  detail: DatasetDetail;
+  running: boolean;
+  pendingRerun: boolean;
+  onPreprocess: () => void;
+}
+
+/** The first run is this panel's primary call to action and stays full size; a
+ * re-run is a small corrective action, so it does not outweigh the panel title. */
+function PreprocessAction({
+  detail,
+  running,
+  pendingRerun,
+  onPreprocess,
+}: PreprocessActionProps) {
+  if (detail.n_frames === 0 || (detail.processed && !pendingRerun)) return null;
+
+  if (pendingRerun) {
+    return (
+      <Button
+        size="sm"
+        onClick={onPreprocess}
+        disabled={running}
+        title="Rebuild the tensors so the excluded frames take effect"
+      >
+        <RerunIcon />
+        {running ? "Running…" : "Re-run"}
+      </Button>
+    );
+  }
+  return (
+    <Button variant="primary" onClick={onPreprocess} disabled={running}>
+      {running ? "Preprocessing…" : "Run preprocessing"}
+    </Button>
   );
 }

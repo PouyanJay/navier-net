@@ -16,7 +16,8 @@ interface SeriesLibraryProps {
 
 function seriesChip(summary: DatasetSummary, trained: boolean) {
   if (trained) return <Chip tone="green">trained</Chip>;
-  if (!summary.conditions_set) return <Chip tone="amber">needs conditions</Chip>;
+  if (!summary.conditions_set)
+    return <Chip tone="amber">needs conditions</Chip>;
   if (summary.processed) return <Chip tone="green">tensors ready</Chip>;
   return <Chip>uploaded</Chip>;
 }
@@ -49,8 +50,8 @@ export function SeriesLibrary({
       {series.length === 0 && (
         <div className="dsempty">
           <b>No series yet</b>
-          Upload the first high-speed sequence for this project to begin calibration and
-          segmentation.
+          Upload the first high-speed sequence for this project to begin
+          calibration and segmentation.
         </div>
       )}
       <div className="dsrows">
@@ -69,12 +70,14 @@ export function SeriesLibrary({
               <b>{summary.id}</b>
               <span className="mono">{seriesMeta(summary)}</span>
             </span>
-            <span className="st">{seriesChip(summary, trainedIds.has(summary.id))}</span>
+            <span className="st">
+              {seriesChip(summary, trainedIds.has(summary.id))}
+            </span>
           </button>
         ))}
       </div>
       <button type="button" className="addds" onClick={() => setAdding(true)}>
-        + Upload new series — TIFF frames
+        + Upload new series · TIFF frames
       </button>
       {adding && (
         <NewSeriesModal
@@ -87,8 +90,8 @@ export function SeriesLibrary({
         />
       )}
       <p className="note">
-        <b>Transfer learning:</b> once two or more series are configured, Stage B can train
-        jointly across heat-flux conditions.
+        <b>Transfer learning:</b> once two or more series are configured, Stage
+        B can train jointly across heat-flux conditions.
       </p>
     </Panel>
   );

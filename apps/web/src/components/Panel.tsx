@@ -8,7 +8,7 @@ interface PanelProps {
 }
 
 /** A card grouping one concern: header (title left, mono subtitle right,
- * optional actions) and body — the mockup's card/hd/sub vocabulary. */
+ * optional actions) and body, matching the mockup's card/hd/sub vocabulary. */
 export function Panel({ title, subtitle, actions, children }: PanelProps) {
   return (
     <section className="card">

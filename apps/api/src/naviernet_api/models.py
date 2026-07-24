@@ -222,7 +222,7 @@ class RunLaunchRequest(BaseModel):
     Every numeric field maps 1:1 onto `cfg.training`; the bounds exist because
     the Hydra schema types but does not range-check its values, and these come
     from the network (SECURITY.md §4). On resume only `steps` and `render`
-    apply — the rest of the configuration is fixed by the original run's own
+    apply; the rest of the configuration is fixed by the original run's own
     config snapshot, and any other values sent here are ignored.
     """
 
@@ -266,7 +266,7 @@ class RunJobStatus(BaseModel):
 class SweepLaunchRequest(RunLaunchRequest):
     """A request to run the same configuration across several seeds.
 
-    Children are ordinary runs (train + evaluate; rendering defaults off — a
+    Children are ordinary runs (train + evaluate; rendering defaults off; a
     sweep is for comparison, not deliverables). `seed` is ignored; `seeds`
     drives the children. Sweeps never resume.
     """

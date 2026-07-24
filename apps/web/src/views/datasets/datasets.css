@@ -12,7 +12,7 @@
   min-width: 0;
 }
 /* Cards must be able to shrink below their content's intrinsic width
-   (the frame strip scrolls instead) — the mockup's `.grid > *` rule. */
+   (the frame strip scrolls instead); the mockup's `.grid > *` rule. */
 .dsx > *,
 .dsx-main > * {
   min-width: 0;
@@ -133,27 +133,6 @@
   display: none;
 }
 
-/* Scroll indicator: a hairline track whose thumb is the visible fraction of the
-   strip, positioned by how far it has scrolled. Rendered only on overflow. */
-.strip-bar {
-  position: relative;
-  height: 3px;
-  margin-top: var(--s2);
-  border-radius: 999px;
-  background: var(--line2);
-}
-.strip-bar i {
-  position: absolute;
-  inset-block: 0;
-  min-width: var(--s5);
-  border-radius: inherit;
-  background: var(--line);
-  transition: background 150ms ease;
-}
-.strip:hover + .strip-bar i,
-.strip:focus-within + .strip-bar i {
-  background: var(--ink3);
-}
 .fr {
   flex: none;
   width: 96px;
@@ -211,11 +190,11 @@
   text-decoration: line-through;
 }
 
-/* Holdout: amber, the caution role — never supervised, never excludable. */
+/* Holdout: amber, the caution role; never supervised, never excludable. */
 .fr.hold {
   border-color: var(--amber);
 }
-/* The tag sits over the frame, whose brightness varies per dataset — a backing
+/* The tag sits over the frame, whose brightness varies per dataset; a backing
    chip keeps it readable instead of relying on the image behind it. */
 .fr-tag {
   position: absolute;

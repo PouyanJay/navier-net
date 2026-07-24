@@ -24,7 +24,13 @@ const TILES: Tile[] = [
   { key: "hele_shaw", label: "HELE-SHAW", digits: 3, unit: "drag" },
   { key: "U_in_m_s", label: "U_IN", digits: 1, unit: "mm/s", scale: 1000 },
   { key: "Dh_um", label: "D_H", digits: 0, unit: "µm" },
-  { key: "bretherton_film_um", label: "Δ FILM", digits: 1, unit: "µm", hot: true },
+  {
+    key: "bretherton_film_um",
+    label: "Δ FILM",
+    digits: 1,
+    unit: "µm",
+    hot: true,
+  },
   { key: "t_ref_ms", label: "T_REF", digits: 2, unit: "ms" },
 ];
 
@@ -33,7 +39,7 @@ function regimeReadback(groups: DimensionlessGroups): string | null {
   if ([Re, We, Ca, Bond, film].some((value) => value == null)) return null;
   const flow = Re < 2300 ? "laminar" : "turbulent";
   const interfaceRegime =
-    We < 10 ? "surface-tension–dominated caps" : "inertia-dominated interface";
+    We < 10 ? "surface-tension-dominated caps" : "inertia-dominated interface";
   const gravity = Bond < 0.1 ? "negligible" : "relevant";
   return (
     `${flow} (Re ${Re.toFixed(0)}), ${interfaceRegime} (We ${We.toFixed(1)}), ` +
@@ -52,7 +58,10 @@ export function GroupsPanel({
 }) {
   const readback = regimeReadback(groups);
   return (
-    <Panel title="Derived dimensionless groups" subtitle={`dataset: ${datasetId}`}>
+    <Panel
+      title="Derived dimensionless groups"
+      subtitle={`dataset: ${datasetId}`}
+    >
       <div className="groups">
         {TILES.filter((tile) => groups[tile.key] != null).map((tile) => (
           <div className={tile.hot ? "gtile hot" : "gtile"} key={tile.key}>

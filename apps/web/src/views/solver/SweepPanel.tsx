@@ -13,7 +13,11 @@ const seedOf = (runId: string) => runId.split("-s").pop() ?? runId;
 /** Live sweep overview: one chip per child, in execution order. */
 export function SweepPanel({ sweep }: { sweep: SweepStatus }) {
   const tone =
-    sweep.state === "running" ? "accent" : sweep.state === "done" ? "green" : "red";
+    sweep.state === "running"
+      ? "accent"
+      : sweep.state === "done"
+        ? "green"
+        : "red";
   return (
     <Panel title="Seed sweep" subtitle={sweep.sweep_id}>
       <div className="sweep-row">
@@ -28,8 +32,8 @@ export function SweepPanel({ sweep }: { sweep: SweepStatus }) {
       </div>
       {sweep.state === "done" && (
         <p className="state-note">
-          Sweep complete — select its children under Results &amp; validation to compare
-          seeds side by side.
+          Sweep complete; select its children under Results &amp; validation to
+          compare seeds side by side.
         </p>
       )}
     </Panel>

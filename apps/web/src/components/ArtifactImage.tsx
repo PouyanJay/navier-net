@@ -14,7 +14,7 @@ export function ArtifactImage({ alt, ...img }: ArtifactImageProps) {
   if (failed) {
     return (
       <span className="img-fallback" role="img" aria-label={alt}>
-        {alt} — could not be loaded
+        {alt} could not be loaded
       </span>
     );
   }

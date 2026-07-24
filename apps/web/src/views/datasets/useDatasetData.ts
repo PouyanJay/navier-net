@@ -210,7 +210,7 @@ export function useDatasetData(focusId?: string | null): DatasetData {
   };
 }
 
-/** Dataset ids with a trained run — drives the library's status chips. */
+/** Dataset ids with a trained run; drives the library's status chips. */
 export function useTrainedIds(): Set<string> {
   const [ids, setIds] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -225,7 +225,7 @@ export function useTrainedIds(): Set<string> {
           ),
         ),
       )
-      .catch(() => setIds(new Set())); // chips only — panels surface real errors
+      .catch(() => setIds(new Set())); // chips only; panels surface real errors
   }, []);
   return ids;
 }

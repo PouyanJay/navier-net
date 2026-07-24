@@ -38,6 +38,104 @@
   padding: var(--s5);
 }
 
+/* Horizontal scrollbar for a scroller whose native bar is hidden. Slim enough
+   to sit under content without competing, but a real control: the thumb drags,
+   the track pages, and it takes focus for the arrow keys. */
+.hbar {
+  position: relative;
+  height: 8px;
+  margin-top: var(--s2);
+  padding: 2px 0;
+  border-radius: 999px;
+  background: var(--line2);
+  background-clip: content-box;
+  cursor: pointer;
+  touch-action: none;
+}
+.hbar-thumb {
+  position: absolute;
+  inset-block: 2px;
+  min-width: var(--s5);
+  border-radius: 999px;
+  /* Muted, but far enough from the track to read as a separate object; at
+     --line the two were indistinguishable and the bar looked full width. */
+  background: color-mix(in srgb, var(--ink3) 55%, transparent);
+  transition: background 0.12s ease;
+}
+.hbar:hover .hbar-thumb,
+.hbar:focus-visible .hbar-thumb {
+  background: var(--ink3);
+}
+.hbar-thumb:active {
+  background: var(--acc);
+}
+
+/* Callout: a message that must be read: failure, caution, or a state needing
+   action. Tinted block + icon so it reads as a distinct object, not body copy. */
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 1px solid;
+  border-radius: var(--rs);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.callout + .callout {
+  margin-top: var(--s2);
+}
+.callout p {
+  margin: 0;
+  min-width: 0;
+}
+.callout b {
+  font-weight: 600;
+}
+/* A title runs into the body on one line; without one the body stands alone. */
+.callout b::after {
+  content: ": ";
+}
+.callout svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+.callout.error {
+  color: var(--redtext);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  background: var(--redsoft);
+}
+.callout.caution {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+  background: var(--ambersoft);
+}
+.callout.info {
+  color: var(--ink2);
+  border-color: color-mix(in srgb, var(--acc) 30%, transparent);
+  background: var(--accsoft);
+}
+.callout.info svg {
+  color: var(--acc);
+}
+
+/* Note: an explanatory aside (provenance, guidance), not a state. Quieter than
+   a callout: a rule in the margin rather than a filled block (mockup `.note`). */
+.note {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink3);
+  border-left: 2px solid var(--line);
+  padding: 2px 0 2px var(--s3);
+  margin: var(--s3) 0 0;
+}
+.note b {
+  color: var(--ink2);
+  font-weight: 600;
+}
+
 /* Stat */
 .stat {
   display: flex;
@@ -78,7 +176,7 @@
   color: var(--ink3);
 }
 
-/* Chip — every status chip carries the mockup's leading dot */
+/* Chip; every status chip carries the mockup's leading dot */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -159,7 +257,9 @@
   background: var(--panel);
   color: var(--ink);
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 .btn:hover {
   background: var(--panel2);
@@ -186,6 +286,19 @@
 .btn.primary:hover {
   background: var(--acc2);
   border-color: var(--acc2);
+}
+/* Compact form for a secondary action in a panel header, where a full-size
+   button would outweigh the panel's own title. */
+.btn.sm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: 11.5px;
+  padding: var(--s1) var(--s2);
+}
+.btn.sm svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* Definition list (key -> value) */
@@ -247,7 +360,7 @@
 }
 
 /* Dark visualization canvas (D3 lives here) */
-/* Segmented control (mockup .seg/.segb) — switches between sibling views */
+/* Segmented control (mockup .seg/.segb); switches between sibling views */
 .seg {
   display: flex;
   gap: var(--s1);
@@ -432,14 +545,18 @@
   padding: 1px;
   cursor: pointer;
   display: inline-flex;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 .sw .knob {
   width: 14px;
   height: 14px;
   border-radius: 50%;
   background: var(--ink3);
-  transition: transform 0.15s ease, background 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease;
 }
 .sw[aria-checked="true"] {
   background: var(--acc);
@@ -631,7 +748,7 @@
   overflow-x: auto;
 }
 
-/* Modal — one focused task over the workspace (command-palette overlay kin) */
+/* Modal; one focused task over the workspace (command-palette overlay kin) */
 .modal-ov {
   position: fixed;
   inset: 0;
@@ -674,7 +791,7 @@
   gap: var(--s3);
 }
 
-/* File drop target (mockup .drop) — wraps a hidden file input */
+/* File drop target (mockup .drop); wraps a hidden file input */
 .drop {
   display: block;
   border: 1.5px dashed var(--line);

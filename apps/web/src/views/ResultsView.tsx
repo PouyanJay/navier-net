@@ -1,4 +1,4 @@
-import { Chip, StatusDot } from "../components";
+import { Callout, Chip, StatusDot } from "../components";
 import type { RunDetail, RunSummary } from "../lib/api";
 import { AgreementPerFrame } from "./results/AgreementPerFrame";
 import { ComparePanel } from "./results/ComparePanel";
@@ -14,17 +14,25 @@ export function ResultsView() {
   const { runs, selected, setSelected, detail } = useResultsData();
 
   if (runs.status === "loading") {
-    return <p className="state-note" role="status">Loading runs…</p>;
-  }
-  if (runs.status === "error") {
     return (
-      <p className="state-note error" role="alert">
-        Could not load runs: {runs.message}. Is the API running on :8000?
+      <p className="state-note" role="status">
+        Loading runs…
       </p>
     );
   }
+  if (runs.status === "error") {
+    return (
+      <Callout tone="error" title="Could not load runs">
+        {runs.message}. Is the API running on :8000?
+      </Callout>
+    );
+  }
   if (runs.runs.length === 0 || !selected) {
-    return <p className="state-note">No runs yet. Train a model to see results here.</p>;
+    return (
+      <p className="state-note">
+        No runs yet. Train a model to see results here.
+      </p>
+    );
   }
 
   return (
@@ -37,12 +45,14 @@ export function ResultsView() {
       />
 
       {detail.status === "loading" && (
-        <p className="state-note" role="status">Loading results…</p>
+        <p className="state-note" role="status">
+          Loading results…
+        </p>
       )}
       {detail.status === "error" && (
-        <p className="state-note error" role="alert">
-          Could not load results: {detail.message}
-        </p>
+        <Callout tone="error" title="Could not load results">
+          {detail.message}
+        </Callout>
       )}
       {detail.status === "ready" && (
         <>
@@ -50,11 +60,16 @@ export function ResultsView() {
           <AgreementPerFrame detail={detail.detail} />
           <PhysicsValidationPanel validation={detail.validation} />
           <GrowthKinematics runId={detail.detail.id} />
-          <Deliverables runId={detail.detail.id} artifacts={detail.detail.artifacts} />
+          <Deliverables
+            runId={detail.detail.id}
+            artifacts={detail.detail.artifacts}
+          />
         </>
       )}
       {runs.runs.filter((run) => run.status === "trained").length >= 2 && (
-        <ComparePanel candidates={runs.runs.filter((run) => run.status === "trained")} />
+        <ComparePanel
+          candidates={runs.runs.filter((run) => run.status === "trained")}
+        />
       )}
     </div>
   );
@@ -75,9 +90,15 @@ function RunHeader({ runs, selected, onSelect, detail }: RunHeaderProps) {
       <span className="id">{selected}</span>
       {current?.dataset && <Chip tone="accent">{current.dataset}</Chip>}
       {current && <StatusDot tone={statusTone} label={current.status} />}
-      {detail?.steps != null && <span className="mono steps">{detail.steps} steps</span>}
+      {detail?.steps != null && (
+        <span className="mono steps">{detail.steps} steps</span>
+      )}
       {runs.length > 1 && (
-        <select aria-label="Select run" value={selected} onChange={(e) => onSelect(e.target.value)}>
+        <select
+          aria-label="Select run"
+          value={selected}
+          onChange={(e) => onSelect(e.target.value)}
+        >
           {runs.map((r) => (
             <option key={r.id} value={r.id}>
               {r.id}

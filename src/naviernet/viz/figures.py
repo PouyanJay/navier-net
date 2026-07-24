@@ -83,7 +83,7 @@ def frames_matching(cfg, model, data, paths: RunPaths) -> None:
         )
         ax.set_aspect("equal")
 
-    axes[0].set_title("Measured (black) vs PINN (red dashed) — flow left to right")
+    axes[0].set_title("Measured (black) vs PINN (red dashed); flow left to right")
     axes[-1].set_xlabel("x* (downstream)")
     fig.tight_layout()
     _save(fig, paths.figures_dir / "frames_matching.png", dpi=120)

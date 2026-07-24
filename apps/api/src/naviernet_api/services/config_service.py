@@ -2,7 +2,7 @@
 
 Reuses the pipeline's own config schema and groups so the API never re-implements
 any physics. Hydra keeps global state, so composition is serialized behind a lock
-and the global instance is cleared each time — safe for the API's occasional,
+and the global instance is cleared each time; safe for the API's occasional,
 low-frequency use (operating conditions, live groups, driving preprocess).
 """
 
@@ -23,7 +23,7 @@ _lock = threading.Lock()
 _registered = False
 _cache: dict[tuple[str, tuple[str, ...]], DictConfig] = {}
 # Conditions edits mint new override tuples, so the key space is no longer
-# bounded by the dataset count — cap the cache (FIFO) to keep repeated PATCHes
+# bounded by the dataset count; cap the cache (FIFO) to keep repeated PATCHes
 # from growing it without limit (SECURITY.md §4).
 _CACHE_MAX_ENTRIES = 64
 
@@ -49,7 +49,7 @@ def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
 
 
 def compose_cfg_once(dataset: str, overrides: list[str] | None = None) -> DictConfig:
-    """Compose without memoizing — for overrides unique per call (a run launch
+    """Compose without memoizing; for overrides unique per call (a run launch
     carries a freshly minted ``run_name``, so caching would only grow)."""
     with _lock:
         return _compose_locked(dataset, overrides)

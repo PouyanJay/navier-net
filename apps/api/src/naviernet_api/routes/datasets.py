@@ -83,7 +83,7 @@ def set_excluded_frames(
     settings: Settings = Depends(get_settings),
 ) -> DatasetDetail:
     """Replace the frames held out of the tensors. Takes effect on the next
-    preprocessing run — the returned detail says whether one is still pending."""
+    preprocessing run; the returned detail says whether one is still pending."""
     if datasets_service.get_dataset_summary(settings, dataset) is None:
         raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
     try:
@@ -92,7 +92,7 @@ def set_excluded_frames(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     detail = datasets_service.get_dataset(settings, dataset)
-    if detail is None:  # saved but not found — should not happen
+    if detail is None:  # saved but not found; should not happen
         raise HTTPException(status_code=500, detail="exclusions saved but dataset not found")
     return detail
 
@@ -151,7 +151,7 @@ async def upload_frames(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     summary = datasets_service.get_dataset_summary(settings, dataset)
-    if summary is None:  # saved but not found — should not happen
+    if summary is None:  # saved but not found; should not happen
         raise HTTPException(status_code=500, detail="upload saved but dataset not found")
     return summary
 

@@ -1,13 +1,20 @@
 import "./components.css";
 
 export { Button } from "./Button";
+export { Callout, type CalloutTone } from "./Callout";
 export { Chip } from "./Chip";
 export { Console } from "./Console";
 export { DL, type KV } from "./DL";
 export { EquationBlock } from "./EquationBlock";
-export { NumberField, SelectField, TextField, type SelectOption } from "./Field";
+export {
+  NumberField,
+  SelectField,
+  TextField,
+  type SelectOption,
+} from "./Field";
 export { Meter } from "./Meter";
 export { Panel } from "./Panel";
+export { ScrollBar, useScrollExtent, useWheelToHorizontal } from "./ScrollBar";
 export { Stat, type Tone } from "./Stat";
 export { StatusDot } from "./StatusDot";
 export { Switch } from "./Switch";

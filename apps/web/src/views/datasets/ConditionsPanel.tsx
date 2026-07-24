@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { Panel } from "../../components";
+import { Callout, Panel } from "../../components";
 import {
   api,
   type ConditionsResponse,
@@ -87,7 +87,11 @@ interface ConditionsPanelProps {
 }
 
 /** Editable per-series operating conditions; groups recompute on save. */
-export function ConditionsPanel({ datasetId, conditions, onSaved }: ConditionsPanelProps) {
+export function ConditionsPanel({
+  datasetId,
+  conditions,
+  onSaved,
+}: ConditionsPanelProps) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -107,7 +111,7 @@ export function ConditionsPanel({ datasetId, conditions, onSaved }: ConditionsPa
       setError(`${spec.label}: enter a number to save this condition.`);
       return;
     }
-    if (parsed === spec.value(conditions)) return; // unchanged — nothing to save
+    if (parsed === spec.value(conditions)) return; // unchanged; nothing to save
     setSaving(true);
     setError(null);
     try {
@@ -126,7 +130,7 @@ export function ConditionsPanel({ datasetId, conditions, onSaved }: ConditionsPa
 
   return (
     <Panel
-      title={`Operating conditions — ${datasetId}`}
+      title={`Operating conditions · ${datasetId}`}
       subtitle="saved per series · groups recompute live"
     >
       <div className="frm">
@@ -155,7 +159,10 @@ export function ConditionsPanel({ datasetId, conditions, onSaved }: ConditionsPa
                 value={drafts[spec.field] ?? spec.value(conditions) ?? ""}
                 disabled={saving}
                 onChange={(e) =>
-                  setDrafts((current) => ({ ...current, [spec.field]: e.target.value }))
+                  setDrafts((current) => ({
+                    ...current,
+                    [spec.field]: e.target.value,
+                  }))
                 }
                 onBlur={() => void commit(spec)}
                 onKeyDown={(e) => {
@@ -175,7 +182,7 @@ export function ConditionsPanel({ datasetId, conditions, onSaved }: ConditionsPa
             <input
               id="cond-superheat"
               type="text"
-              value="—"
+              value="n/a"
               disabled
               title="Inferred by Stage B, which is not configured yet"
             />
@@ -183,11 +190,7 @@ export function ConditionsPanel({ datasetId, conditions, onSaved }: ConditionsPa
           </div>
         </div>
       </div>
-      {error && (
-        <p className="state-note error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <Callout tone="error">{error}</Callout>}
     </Panel>
   );
 }

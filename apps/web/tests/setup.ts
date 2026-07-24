@@ -6,7 +6,7 @@ import { vi } from "vitest";
 HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never;
 
 // jsdom has no ResizeObserver either (every target browser does). Components
-// that measure themselves — the frame strip's scroll indicator — need it to
+// that measure themselves, such as the frame strip's scrollbar, need it to
 // exist; jsdom reports zero sizes anyway, so a no-op is the honest stub.
 globalThis.ResizeObserver = class {
   observe() {}

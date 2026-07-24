@@ -106,7 +106,7 @@ def get_validation(
     run_id: str, settings: Settings = Depends(get_settings)
 ) -> PhysicsValidation:
     """Physics-validation summary (nose speed, Bretherton, key groups, IoU)."""
-    # Read only dataset + metrics (no checkpoint load — validation never uses it).
+    # Read only dataset + metrics (no checkpoint load; validation never uses it).
     result = runs_service.read_dataset_and_metrics(settings, run_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
