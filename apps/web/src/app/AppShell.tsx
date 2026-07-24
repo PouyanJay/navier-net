@@ -159,7 +159,9 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
         <span className="chip" data-tone={trained ? "green" : undefined}>
           Stage A · {trained ? "trained" : "untrained"}
         </span>
-        <span className="chip">Stage B · not configured</span>
+        <span className="chip" data-tone="amber">
+          Stage B · not configured
+        </span>
         <button
           type="button"
           className="thbtn"
@@ -201,8 +203,8 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
             <span className="mono">{status.latestRun ? "ckpt.pt" : "—"}</span>
           </div>
           <div className="kv">
-            <span>Steps</span>
-            <span className="mono">{status.latestRun?.steps ?? "—"}</span>
+            <span>Run</span>
+            <span className="mono">{status.latestRun?.id ?? "—"}</span>
           </div>
           <div className="kv">
             <span>Backend</span>
