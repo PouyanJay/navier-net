@@ -65,6 +65,14 @@ export interface OperatingConditions {
   n_frames_event: number;
 }
 
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  description: string;
+  dataset: string | null;
+  created_at: string;
+}
+
 export interface DatasetSummary {
   id: string;
   n_frames: number;
@@ -251,6 +259,14 @@ export const api = {
     sendJson<SweepStatus>("/api/sweeps", "POST", request),
   getSweep: (id: string) => getJson<SweepStatus>(`/api/sweeps/${encodeURIComponent(id)}`),
   getActiveSweep: () => getJson<SweepStatus | null>("/api/sweeps/active"),
+
+  listProjects: () => getJson<ProjectSummary[]>("/api/projects"),
+  createProject: (name: string, description: string) =>
+    sendJson<ProjectSummary>("/api/projects", "POST", { name, description }),
+  updateProject: (
+    id: string,
+    fields: Partial<Pick<ProjectSummary, "name" | "description" | "dataset">>,
+  ) => sendJson<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`, "PATCH", fields),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),

@@ -1,12 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppShell, NAV_ITEMS, type PlatformStatus } from "./app/AppShell";
 import { Button } from "./components";
 import { useToast } from "./components/Toast";
-import { api, type RunJobStatus } from "./lib/api";
+import {
+  api,
+  type DatasetSummary,
+  type ProjectSummary,
+  type RunJobStatus,
+  type RunSummary,
+} from "./lib/api";
 import { DatasetsView } from "./views/DatasetsView";
+import { EmptyProjectUpload } from "./views/datasets/EmptyProjectUpload";
 import { PhysicsModelView } from "./views/PhysicsModelView";
-import { notifyProjectCreationUnavailable, ProjectsView } from "./views/ProjectsView";
+import { ProjectsView } from "./views/ProjectsView";
 import { ResultsView } from "./views/ResultsView";
 import { SolverView } from "./views/SolverView";
 
@@ -29,33 +36,50 @@ const PAGE_INTRO: Record<string, string> = {
 
 const IDLE_STATUS: PlatformStatus = { done: { physics: true }, latestRun: null, projects: 0 };
 
+interface RepoFacts {
+  datasets: DatasetSummary[];
+  runs: RunSummary[];
+  projectCount: number;
+}
+
 export function App() {
   const [active, setActive] = useState("projects");
-  const [datasetId, setDatasetId] = useState<string | null>(null);
+  const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [creatingProject, setCreatingProject] = useState(false);
   const [activeRun, setActiveRun] = useState<RunJobStatus | null>(null);
-  const [status, setStatus] = useState<PlatformStatus>(IDLE_STATUS);
+  const [repo, setRepo] = useState<RepoFacts | null>(null);
   const previousRun = useRef<RunJobStatus | null>(null);
   const toast = useToast();
 
   const refreshStatus = useCallback(() => {
-    Promise.all([api.listDatasets(), api.listRuns()])
-      .then(([datasets, runs]) => {
-        const trained = runs.filter((run) => run.status === "trained");
-        const evaluated = runs.filter((run) => run.iou_holdout != null);
-        const latest = trained[trained.length - 1] ?? null;
-        setStatus({
-          done: {
-            datasets: datasets.some((dataset) => dataset.processed),
-            physics: true, // the governing equations ship with the platform
-            solver: trained.length > 0,
-            results: evaluated.length > 0,
-          },
-          latestRun: latest ? { id: latest.id, steps: latest.steps } : null,
-          projects: datasets.length,
-        });
-      })
-      .catch(() => setStatus(IDLE_STATUS)); // chrome only — views surface real errors
+    Promise.all([api.listDatasets(), api.listRuns(), api.listProjects()])
+      .then(([datasets, runs, projects]) =>
+        setRepo({ datasets, runs, projectCount: projects.length }),
+      )
+      .catch(() => setRepo(null)); // chrome only — views surface real errors
   }, []);
+
+  // Stage flags are scoped to the open project: an empty project shows an
+  // untouched pipeline even when other projects have trained runs.
+  const status = useMemo<PlatformStatus>(() => {
+    if (!repo) return IDLE_STATUS;
+    const datasets = project
+      ? repo.datasets.filter((dataset) => dataset.id === project.dataset)
+      : repo.datasets;
+    const runs = project ? repo.runs.filter((run) => run.dataset === project.dataset) : repo.runs;
+    const trained = runs.filter((run) => run.status === "trained");
+    const latest = trained[trained.length - 1] ?? null;
+    return {
+      done: {
+        datasets: datasets.some((dataset) => dataset.processed),
+        physics: true, // the governing equations ship with the platform
+        solver: trained.length > 0,
+        results: runs.some((run) => run.iou_holdout != null),
+      },
+      latestRun: latest ? { id: latest.id, steps: latest.steps } : null,
+      projects: repo.projectCount,
+    };
+  }, [repo, project]);
 
   // Pick up a run already in flight (e.g. after a page reload mid-training).
   useEffect(() => {
@@ -82,16 +106,25 @@ export function App() {
     [toast, refreshStatus],
   );
 
-  const openDataset = useCallback((id: string) => {
-    setDatasetId(id);
+  const openProject = useCallback((selected: ProjectSummary) => {
+    setProject(selected);
     setActive("datasets");
   }, []);
 
   // Stable identity: AppShell memoizes its palette actions on this callback.
   const goHome = useCallback(() => {
-    setDatasetId(null);
+    setProject(null);
     setActive("projects");
   }, []);
+
+  // The first upload attaches the dataset; the pipeline unlocks from there.
+  const attachDataset = useCallback(
+    (updated: ProjectSummary) => {
+      setProject(updated);
+      refreshStatus();
+    },
+    [refreshStatus],
+  );
 
   return (
     <AppShell
@@ -99,7 +132,7 @@ export function App() {
       onNavigate={setActive}
       activeRun={activeRun}
       status={status}
-      project={datasetId}
+      project={project?.name ?? null}
       onHome={goHome}
     >
       <header className="pagehead">
@@ -108,15 +141,27 @@ export function App() {
           {PAGE_INTRO[active] && <p>{PAGE_INTRO[active]}</p>}
         </div>
         {active === "projects" && (
-          <Button variant="primary" onClick={() => notifyProjectCreationUnavailable(toast)}>
+          <Button variant="primary" onClick={() => setCreatingProject(true)}>
             ＋ New project
           </Button>
         )}
       </header>
       <div className="stack">
         {active === "results" && <ResultsView />}
-        {active === "projects" && <ProjectsView onOpen={openDataset} />}
-        {active === "datasets" && <DatasetsView datasetId={datasetId} />}
+        {active === "projects" && (
+          <ProjectsView
+            onOpen={openProject}
+            creating={creatingProject}
+            onCreatingChange={setCreatingProject}
+            onChanged={refreshStatus}
+          />
+        )}
+        {active === "datasets" &&
+          (project && !project.dataset ? (
+            <EmptyProjectUpload project={project} onAttached={attachDataset} />
+          ) : (
+            <DatasetsView datasetId={project?.dataset} />
+          ))}
         {active === "physics" && <PhysicsModelView />}
         {active === "solver" && <SolverView onRunState={handleRunState} />}
       </div>

@@ -1,39 +1,56 @@
 import { Fragment, useEffect, useState } from "react";
 
-import { Chip } from "../components";
+import { Button, Chip } from "../components";
 import { useToast } from "../components/Toast";
-import { api, type DatasetSummary, type RunSummary } from "../lib/api";
+import {
+  api,
+  type DatasetSummary,
+  type ProjectSummary,
+  type RunSummary,
+} from "../lib/api";
 import { errorMessage } from "../lib/errors";
 import "./datasets/datasets.css";
 import "./runs.css";
 
 interface ProjectFacts {
-  dataset: DatasetSummary;
+  project: ProjectSummary;
+  dataset: DatasetSummary | null;
   runs: RunSummary[];
 }
 
-/** One toast for every "create a project" affordance, so the copy can't drift. */
-export function notifyProjectCreationUnavailable(toast: ReturnType<typeof useToast>) {
-  toast("Project creation is not available yet", "this workspace currently scopes one repository");
-}
-
-/** Pipeline progress for one dataset-project: which stages have real artifacts. */
+/** Pipeline progress for one project: which stages have real artifacts. */
 function stageDots(facts: ProjectFacts): boolean[] {
+  if (!facts.dataset) return [false, false, false, false];
   const trained = facts.runs.some((run) => run.status === "trained");
   const evaluated = facts.runs.some((run) => run.iou_holdout != null);
   return [facts.dataset.processed, facts.dataset.processed, trained, evaluated];
 }
 
-/** A grid of dataset-projects; opening one jumps into its pipeline. */
-export function ProjectsView({ onOpen }: { onOpen: (id: string) => void }) {
-  const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
+interface ProjectsViewProps {
+  onOpen: (project: ProjectSummary) => void;
+  /** The "+ New project" form is controlled so the page header can open it. */
+  creating: boolean;
+  onCreatingChange: (open: boolean) => void;
+  /** Fired after any create/edit, so the shell's counts stay fresh. */
+  onChanged?: () => void;
+}
+
+/** The workspace home: every project, editable in place, plus creation. */
+export function ProjectsView({
+  onOpen,
+  creating,
+  onCreatingChange,
+  onChanged,
+}: ProjectsViewProps) {
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const toast = useToast();
 
   useEffect(() => {
-    Promise.all([api.listDatasets(), api.listRuns()])
-      .then(([ds, rs]) => {
+    Promise.all([api.listProjects(), api.listDatasets(), api.listRuns()])
+      .then(([ps, ds, rs]) => {
+        setProjects(ps);
         setDatasets(ds);
         setRuns(rs);
       })
@@ -47,36 +64,50 @@ export function ProjectsView({ onOpen }: { onOpen: (id: string) => void }) {
       </p>
     );
   }
-  if (datasets === null) {
+  if (projects === null) {
     return (
       <p className="state-note" role="status">
         Loading projects…
       </p>
     );
   }
-  if (datasets.length === 0) {
-    return <p className="state-note">No datasets yet. Drop image sequences into data/raw/.</p>;
-  }
+
+  const replaceProject = (updated: ProjectSummary) => {
+    setProjects((current) => (current ?? []).map((p) => (p.id === updated.id ? updated : p)));
+    onChanged?.();
+  };
 
   return (
     <div className="project-grid">
-      {datasets.map((dataset) => (
+      {projects.map((project) => (
         <ProjectCard
-          key={dataset.id}
-          facts={{ dataset, runs: runs.filter((run) => run.dataset === dataset.id) }}
+          key={project.id}
+          facts={{
+            project,
+            dataset: datasets.find((d) => d.id === project.dataset) ?? null,
+            runs: runs.filter((run) => run.dataset === project.dataset),
+          }}
           onOpen={onOpen}
+          onSaved={replaceProject}
         />
       ))}
-      <button
-        type="button"
-        className="newproj"
-        onClick={() => notifyProjectCreationUnavailable(toast)}
-      >
-        <span className="plus" aria-hidden="true">
-          ＋
-        </span>
-        New project
-      </button>
+      {creating ? (
+        <NewProjectForm
+          onCreated={(project) => {
+            setProjects((current) => [...(current ?? []), project]);
+            onCreatingChange(false);
+            onChanged?.();
+          }}
+          onCancel={() => onCreatingChange(false)}
+        />
+      ) : (
+        <button type="button" className="newproj" onClick={() => onCreatingChange(true)}>
+          <span className="plus" aria-hidden="true">
+            ＋
+          </span>
+          New project
+        </button>
+      )}
     </div>
   );
 }
@@ -84,9 +115,10 @@ export function ProjectsView({ onOpen }: { onOpen: (id: string) => void }) {
 // Short stage names for the progress label, matching the mockup's pipe copy.
 const STAGE_NAMES = ["Data", "Model", "Solve", "Results"];
 
-function statusChip(trained: boolean, processed: boolean) {
+function statusChip(facts: ProjectFacts, trained: boolean) {
+  if (!facts.dataset) return <Chip>Awaiting data</Chip>;
   if (trained) return <Chip tone="green">Stage A · trained</Chip>;
-  if (!processed) return <Chip tone="amber">needs preprocess</Chip>;
+  if (!facts.dataset.processed) return <Chip tone="amber">needs preprocess</Chip>;
   return <Chip>No runs yet</Chip>;
 }
 
@@ -117,25 +149,47 @@ function StagePipe({ dots }: { dots: boolean[] }) {
 function ProjectCard({
   facts,
   onOpen,
+  onSaved,
 }: {
   facts: ProjectFacts;
-  onOpen: (id: string) => void;
+  onOpen: (project: ProjectSummary) => void;
+  onSaved: (project: ProjectSummary) => void;
 }) {
-  const { dataset } = facts;
+  const { project, dataset } = facts;
+  const [editing, setEditing] = useState(false);
   const dots = stageDots(facts);
-  return (
-    <button type="button" className="pcard" onClick={() => onOpen(dataset.id)}>
-      <div className="pcard-top">
-        <h3>{dataset.id}</h3>
-        {statusChip(dots[2], dataset.processed)}
+
+  if (editing) {
+    return (
+      <div className="pcard">
+        <ProjectMetadataForm
+          heading={`Edit ${project.name}`}
+          initialName={project.name}
+          initialDescription={project.description}
+          submitLabel="Save"
+          onSubmit={async (name, description) => {
+            const updated = await api.updateProject(project.id, { name, description });
+            onSaved(updated);
+            setEditing(false);
+          }}
+          onCancel={() => setEditing(false)}
+        />
       </div>
-      <p className="purpose">
-        Reconstruct the hidden velocity and volume-fraction fields of a confined vapor slug
-        from its high-speed image sequence.
-      </p>
+    );
+  }
+
+  return (
+    // The whole card is a mouse shortcut for its Open button; keyboard and
+    // assistive tech use the real buttons inside.
+    <div className="pcard pcard-clickable" onClick={() => onOpen(project)}>
+      <div className="pcard-top">
+        <h3>{project.name}</h3>
+        {statusChip(facts, dots[2])}
+      </div>
+      <p className="purpose">{project.description || "No description yet."}</p>
       <div className="pmeta mono">
         <span>
-          <b>{dataset.n_frames}</b> frames
+          <b>{dataset?.n_frames ?? 0}</b> frames
         </span>
         <span>
           <b>{facts.runs.length}</b> runs
@@ -143,9 +197,126 @@ function ProjectCard({
       </div>
       <StagePipe dots={dots} />
       <div className="pfoot">
-        <span className="mono">naviernet://{dataset.id}</span>
-        <span className="popen">Open →</span>
+        <span className="mono">naviernet://{dataset?.id ?? project.id.slice(0, 8)}</span>
+        <span className="pfoot-actions">
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditing(true);
+            }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen(project);
+            }}
+          >
+            Open →
+          </button>
+        </span>
       </div>
-    </button>
+    </div>
+  );
+}
+
+function NewProjectForm({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: (project: ProjectSummary) => void;
+  onCancel: () => void;
+}) {
+  const toast = useToast();
+  return (
+    <div className="pcard">
+      <ProjectMetadataForm
+        heading="New project"
+        initialName=""
+        initialDescription=""
+        submitLabel="Create"
+        onSubmit={async (name, description) => {
+          const project = await api.createProject(name, description);
+          toast("Project created", project.name, "ok");
+          onCreated(project);
+        }}
+        onCancel={onCancel}
+      />
+    </div>
+  );
+}
+
+/** Name + description form shared by "create" and "edit in place". */
+function ProjectMetadataForm({
+  heading,
+  initialName,
+  initialDescription,
+  submitLabel,
+  onSubmit,
+  onCancel,
+}: {
+  heading: string;
+  initialName: string;
+  initialDescription: string;
+  submitLabel: string;
+  onSubmit: (name: string, description: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <form
+      className="pform"
+      aria-label={heading}
+      onSubmit={(e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        onSubmit(name, description)
+          .catch((err) => setError(errorMessage(err)))
+          .finally(() => setBusy(false));
+      }}
+    >
+      <label className="pform-field">
+        Name
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          maxLength={120}
+          autoFocus
+        />
+      </label>
+      <label className="pform-field">
+        Description
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={3}
+          maxLength={2000}
+        />
+      </label>
+      {error && (
+        <p className="state-note error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="pform-actions">
+        <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
+          {busy ? "Saving…" : submitLabel}
+        </Button>
+        <Button type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }

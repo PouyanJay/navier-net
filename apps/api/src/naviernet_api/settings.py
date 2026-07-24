@@ -46,6 +46,10 @@ class Settings:
         return self.repo_root / "data" / "raw"
 
     @property
+    def projects_dir(self) -> Path:
+        return self.repo_root / "projects"
+
+    @property
     def web_dist_dir(self) -> Path:
         return self.repo_root / "apps" / "web" / "dist"
 
