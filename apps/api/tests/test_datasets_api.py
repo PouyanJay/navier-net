@@ -255,7 +255,12 @@ def test_qc_data_has_all_three_checks(client):
     # The synthetic bubble only grows, so the fitted growth rate is positive.
     assert kin["fit_slope_mm_s"] > 0
     assert len(qc["interface"]["frames"]) == 6  # every 2nd of 11 frames
-    assert qc["interface"]["frames"][0]["contours"]  # real polylines
+    first = qc["interface"]["frames"][0]["rings"]
+    assert first, "a frame with a bubble must produce at least one ring"
+    # Closed, not an open arc: the bubble spans the channel, so its contour line
+    # is cut at the imaged band's edges and would come back as loose pieces.
+    assert all(ring[0] == ring[-1] for ring in first)
+    assert qc["interface"]["l_ref_um"] > 0  # axes are labelled in µm from this
     sdf = qc["sdf"]
     assert sdf["frame_index"] == 5
     assert len(sdf["values"]) > 0 and len(sdf["values"][0]) > 0

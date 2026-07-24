@@ -421,10 +421,21 @@
   stroke: var(--viewline);
   stroke-width: 1;
 }
-.chart-axis text {
+/* Both forms: the class sits on a <g> wrapping ticks, or directly on a single
+   <text>. Matching only the descendant left standalone labels with SVG's
+   default fill, i.e. black on the dark canvas. */
+.chart-axis text,
+text.chart-axis {
   fill: var(--sidetxt);
   font-family: var(--mono);
   font-size: 11px;
+}
+/* Axis titles name the quantity and its unit; quieter than the tick values. */
+text.chart-axis-title {
+  fill: var(--console-dim);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
 }
 .chart-baseline {
   stroke: var(--viewline);

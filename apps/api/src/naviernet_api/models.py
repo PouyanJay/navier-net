@@ -131,17 +131,23 @@ class QcKinematics(BaseModel):
 
 
 class QcInterfaceFrame(BaseModel):
-    """One frame's interface contours as [x*, y*] polylines."""
+    """One frame's bubble silhouette as closed [x*, y*] rings.
+
+    Closed, not open polylines: the bubble spans the channel, so its α = 0.5
+    contour runs into the top and bottom of the imaged band. Rings carry the
+    boundary segments too, giving a complete outline instead of two loose arcs.
+    """
 
     index: int
     t_ms: float
-    contours: list[list[list[float]]]
+    rings: list[list[list[float]]]
 
 
 class QcInterface(BaseModel):
     x_pin_star: float
     x_range: list[float]
     y_range: list[float]
+    l_ref_um: float  # x* · l_ref_um = µm, for physical axis labels
     frames: list[QcInterfaceFrame]
 
 

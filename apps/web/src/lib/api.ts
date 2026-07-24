@@ -109,7 +109,8 @@ export interface QcKinematics {
 export interface QcInterfaceFrame {
   index: number;
   t_ms: number;
-  contours: number[][][];
+  /** Closed [x*, y*] rings: the outer silhouette first, then any holes. */
+  rings: number[][][];
 }
 
 export interface QcData {
@@ -120,6 +121,8 @@ export interface QcData {
     x_pin_star: number;
     x_range: [number, number];
     y_range: [number, number];
+    /** x* · l_ref_um = µm; the charts label their axes in physical units. */
+    l_ref_um: number;
     frames: QcInterfaceFrame[];
   };
   sdf: {

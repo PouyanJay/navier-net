@@ -408,33 +408,93 @@
 .qc-dot {
   fill: var(--acc2);
 }
-.qc-contour path {
-  fill: none;
-  stroke: var(--acc2);
-  stroke-width: 1.2;
+/* One frame's bubble outline. Translucent so the stack of frames reads as
+   growth; even-odd so a ring inside a ring stays a hole. */
+.qc-silhouette {
+  fill-opacity: 0.1;
+  fill-rule: evenodd;
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+}
+.qc-silhouette:hover {
+  fill-opacity: 0.24;
 }
 .qc-pin {
-  stroke: var(--ink3);
+  stroke: var(--console-dim);
   stroke-dasharray: 2 4;
+}
+.qc-annotation {
+  fill: var(--console-dim);
+  font-family: var(--mono);
+  font-size: 10px;
 }
 .qc-fit-label {
   fill: var(--amber);
+  font-family: var(--mono);
+  font-size: 11px;
 }
+
+/* SDF heatmap with its axis labels pinned around the canvas. */
 .qc-sdf {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  grid-template-rows: auto auto auto;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  margin: 0;
   padding: var(--s3);
+  font-size: 10px;
+  color: var(--console-text);
 }
 .qc-sdf canvas {
+  grid-column: 3 / 5;
+  grid-row: 1;
   display: block;
   width: 100%;
   image-rendering: auto;
   border-radius: var(--rs);
 }
+.qc-sdf-ytitle {
+  grid-column: 1;
+  grid-row: 1;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  justify-self: center;
+  color: var(--console-dim);
+}
+.qc-sdf-ymax {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+}
+.qc-sdf-ymin {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+}
+.qc-sdf-xmin {
+  grid-column: 3;
+  grid-row: 2;
+  justify-self: start;
+}
+.qc-sdf-xmax {
+  grid-column: 4;
+  grid-row: 2;
+  justify-self: end;
+}
+.qc-sdf-xtitle {
+  grid-column: 3 / 5;
+  grid-row: 3;
+  text-align: center;
+  color: var(--console-dim);
+}
 .qc-sdf-legend {
+  grid-column: 3 / 5;
+  grid-row: 4;
   display: flex;
   align-items: center;
   gap: var(--s2);
   margin-top: var(--s2);
-  font-size: 10px;
   color: var(--console-text);
 }
 .qc-sdf-bar {

@@ -87,14 +87,18 @@ const QC = {
     x_pin_star: 0.1,
     x_range: [0, 5.7] as [number, number],
     y_range: [0, 1] as [number, number],
+    l_ref_um: 300,
     frames: [
       {
         index: 0,
         t_ms: 0,
-        contours: [
+        rings: [
           [
             [0.2, 0.3],
+            [0.4, 0.3],
             [0.4, 0.5],
+            [0.2, 0.5],
+            [0.2, 0.3],
           ],
         ],
       },
@@ -360,12 +364,14 @@ describe("DatasetsView", () => {
       screen.getByRole("tab", { name: /Growth kinematics/ }),
     ).toHaveAttribute("aria-selected", "true");
     expect(
-      screen.getByRole("img", { name: /Bubble length per frame/ }),
+      screen.getByRole("img", {
+        name: /Bubble length in micrometres against time/,
+      }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /Interface evolution/ }));
     expect(
-      screen.getByRole("img", { name: /Interface contours/ }),
+      screen.getByRole("img", { name: /Bubble outline for \d+ frames/ }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /Signed distance/ }));
@@ -1007,5 +1013,61 @@ describe("new series conditions", () => {
     // Silently preprocessing with another series' values is the failure mode
     // this whole flow exists to prevent.
     expect(calls.startPreprocess).toEqual([]);
+  });
+});
+
+describe("QC chart axes", () => {
+  async function showCheck(name: RegExp) {
+    mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText("Preprocessing QC");
+    fireEvent.click(screen.getByRole("tab", { name }));
+  }
+
+  it("names the quantity and unit on both axes of the kinematics chart", async () => {
+    mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText("Preprocessing QC");
+
+    // Tick numbers alone do not say what is being measured.
+    expect(screen.getByText(/t \(ms\)/)).toBeInTheDocument();
+    expect(screen.getByText(/L \(µm\)/)).toBeInTheDocument();
+  });
+
+  it("names both axes of the interface chart in physical units", async () => {
+    await showCheck(/Interface evolution/);
+
+    expect(screen.getByText(/x \(µm\), downstream/)).toBeInTheDocument();
+    expect(screen.getByText(/y \(µm\), across channel/)).toBeInTheDocument();
+  });
+
+  it("names both axes of the signed-distance chart", async () => {
+    await showCheck(/Signed distance/);
+
+    expect(screen.getByText(/x \(µm\), downstream/)).toBeInTheDocument();
+    expect(screen.getByText("y (µm)")).toBeInTheDocument();
+  });
+
+  it("draws each frame as one closed silhouette, not loose arcs", async () => {
+    await showCheck(/Interface evolution/);
+
+    const shapes = document.querySelectorAll(".qc-silhouette");
+    expect(shapes).toHaveLength(1); // the fixture has one frame
+    // A ring that does not close leaves the bubble looking broken.
+    expect(shapes[0].getAttribute("d")).toMatch(/Z$/);
+    expect(shapes[0].getAttribute("fill")).toBeTruthy();
+  });
+
+  it("keeps chart text off SVG's black default on the dark canvas", async () => {
+    await showCheck(/Interface evolution/);
+
+    // The class has to land where the CSS can reach it; a bare <text> with a
+    // descendant-only rule falls back to black and is invisible here.
+    for (const label of document.querySelectorAll("text.chart-axis-title")) {
+      expect(label.classList.contains("chart-axis-title")).toBe(true);
+    }
+    expect(
+      document.querySelectorAll("text.chart-axis-title").length,
+    ).toBeGreaterThan(0);
   });
 });

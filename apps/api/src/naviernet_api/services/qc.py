@@ -32,6 +32,7 @@ class _Tensors(NamedTuple):
     ys: np.ndarray
     t_ms: np.ndarray
     um_per_px: float
+    l_ref_um: float
     x_pin_star: float
     n_event: int
 
@@ -66,6 +67,7 @@ def _load(settings: Settings, dataset: str) -> _Tensors | None:
             ys=data["y_star"],
             t_ms=ts * float(meta["t_ref_ms"]),
             um_per_px=float(meta["um_per_px"]),
+            l_ref_um=float(meta["L_ref_um"]),
             x_pin_star=float(meta.get("x_pin_star", 0.0)),
             n_event=int(meta.get("n_frames_event", len(ts))),
         )
@@ -93,23 +95,38 @@ def _interface_payload(tensors: _Tensors) -> QcInterface:
         x_pin_star=tensors.x_pin_star,
         x_range=[float(tensors.xs[0]), float(tensors.xs[-1])],
         y_range=[float(tensors.ys[0]), float(tensors.ys[-1])],
+        l_ref_um=tensors.l_ref_um,
         frames=[
             QcInterfaceFrame(
                 index=i,
                 t_ms=round(float(tensors.t_ms[i]), 2),
-                contours=_contours(tensors.xs, tensors.ys, tensors.alpha[i]),
+                rings=_rings(tensors.xs, tensors.ys, tensors.alpha[i]),
             )
             for i in range(0, len(tensors.t_ms), CONTOUR_FRAME_STRIDE)
         ],
     )
 
 
-def _contours(xs: np.ndarray, ys: np.ndarray, field: np.ndarray) -> list[list[list[float]]]:
-    """The α = 0.5 interface polylines, rounded [x*, y*] pairs."""
-    from contourpy import contour_generator
+def _rings(xs: np.ndarray, ys: np.ndarray, field: np.ndarray) -> list[list[list[float]]]:
+    """The α > 0.5 region as closed [x*, y*] rings.
 
-    generator = contour_generator(x=xs, y=ys, z=field)
-    return [np.round(line, 4).tolist() for line in generator.lines(0.5)]
+    Filled regions rather than contour lines: the bubble touches the top and
+    bottom of the imaged band, so its α = 0.5 *line* is cut there and comes back
+    as two open arcs (nose and tail) with the wall-adjacent stretches missing.
+    Filling closes the outline along the domain edge, which both completes the
+    silhouette and collapses those arcs back into one ring per bubble.
+    """
+    from contourpy import FillType, contour_generator
+
+    generator = contour_generator(x=xs, y=ys, z=field, fill_type=FillType.OuterOffset)
+    points, offsets = generator.filled(0.5, 1.5)
+    rings: list[list[list[float]]] = []
+    for polygon, boundaries in zip(points, offsets, strict=True):
+        # A polygon is an outer ring followed by any holes; each is emitted
+        # separately and drawn with an even-odd fill, so holes stay holes.
+        for start, end in zip(boundaries[:-1], boundaries[1:], strict=True):
+            rings.append(np.round(polygon[start:end], 4).tolist())
+    return rings
 
 
 def _sdf_payload(tensors: _Tensors) -> QcSdf:
