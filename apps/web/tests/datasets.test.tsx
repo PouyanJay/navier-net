@@ -115,7 +115,7 @@ function mockApi({ processed = false, holdout = 6 } = {}): Calls {
       const post = opts?.method === "POST";
       if (u.endsWith("/api/datasets")) {
         const rows = [
-          { id: "sample", n_frames: 3, processed, conditions_set: false, frame_px: [16, 12] },
+          { id: "sample", n_frames: 3, processed, conditions_set: false, frame_px: [16, 12], dt_frame_ms: 0.5 },
         ];
         if (calls.upload.includes("mid_T")) {
           rows.push({
@@ -124,6 +124,7 @@ function mockApi({ processed = false, holdout = 6 } = {}): Calls {
             processed: false,
             conditions_set: false,
             frame_px: [16, 12],
+            dt_frame_ms: 0.5,
           });
         }
         return json(rows);
@@ -294,9 +295,9 @@ describe("DatasetsView with several series", () => {
         const u = String(url);
         if (u.endsWith("/api/datasets")) {
           return json([
-            { id: "sample", n_frames: 3, processed: true, conditions_set: true, frame_px: [16, 12] },
-            { id: "mid_T", n_frames: 2, processed: false, conditions_set: false, frame_px: [16, 12] },
-            { id: "foreign", n_frames: 9, processed: false, conditions_set: false, frame_px: null },
+            { id: "sample", n_frames: 3, processed: true, conditions_set: true, frame_px: [16, 12], dt_frame_ms: 0.5 },
+            { id: "mid_T", n_frames: 2, processed: false, conditions_set: false, frame_px: [16, 12], dt_frame_ms: 0.5 },
+            { id: "foreign", n_frames: 9, processed: false, conditions_set: false, frame_px: null, dt_frame_ms: null },
           ]);
         }
         if (u.endsWith("/api/runs")) return json([]);
@@ -438,7 +439,7 @@ describe("DatasetsView preprocess polling", () => {
         const done = polls >= 2;
         if (u.endsWith("/api/datasets")) {
           return json([
-            { id: "sample", n_frames: 3, processed: done, conditions_set: false, frame_px: [16, 12] },
+            { id: "sample", n_frames: 3, processed: done, conditions_set: false, frame_px: [16, 12], dt_frame_ms: 0.5 },
           ]);
         }
         if (u.endsWith("/api/runs")) return json([]);

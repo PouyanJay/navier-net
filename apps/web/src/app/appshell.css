@@ -101,15 +101,8 @@
   background: var(--panel);
   color: var(--ink2);
 }
-/* Status dot inside topbar chips (mockup's chip .dot) */
 .topbar .chip {
   white-space: nowrap;
-}
-.topbar .cdot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
 }
 
 .thbtn {

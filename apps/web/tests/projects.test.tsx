@@ -52,7 +52,7 @@ function mockApi(): Calls {
       }
       if (u.endsWith("/api/datasets")) {
         return json([
-          { id: "sample", n_frames: 3, processed: true, conditions_set: true, frame_px: [16, 12] },
+          { id: "sample", n_frames: 3, processed: true, conditions_set: true, frame_px: [16, 12], dt_frame_ms: 0.5 },
         ]);
       }
       if (u.endsWith("/api/runs")) return json([]);

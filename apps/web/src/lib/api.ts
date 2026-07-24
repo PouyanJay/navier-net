@@ -80,6 +80,7 @@ export interface DatasetSummary {
   processed: boolean;
   conditions_set: boolean;
   frame_px: [number, number] | null;
+  dt_frame_ms: number | null;
 }
 
 /** Editable per-series conditions (subset of OperatingConditions). */

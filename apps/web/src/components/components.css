@@ -9,22 +9,30 @@
 }
 .card > .hd {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--s3);
-  padding: var(--s4) var(--s5);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s3);
+  padding: var(--s3) var(--s4);
   border-bottom: 1px solid var(--line2);
 }
 .card > .hd h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ink);
+  white-space: nowrap;
 }
+/* The mockup's right-aligned mono context line */
 .card > .hd .sub {
-  margin: 0;
-  font-size: 12px;
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 10.5px;
   color: var(--ink3);
+  text-align: right;
 }
 .card > .body {
   padding: var(--s5);
@@ -70,7 +78,7 @@
   color: var(--ink3);
 }
 
-/* Chip */
+/* Chip — every status chip carries the mockup's leading dot */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -82,6 +90,14 @@
   background: var(--panel2);
   color: var(--ink2);
   border: 1px solid var(--line);
+}
+.chip::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
 }
 .chip[data-tone="accent"] {
   background: var(--accsoft);

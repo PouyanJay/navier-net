@@ -169,6 +169,16 @@ def tensors_meta(settings: Settings, dataset: str) -> dict:
         return {}
 
 
+def _dt_frame_ms(settings: Settings, dataset: str) -> float | None:
+    """The series' frame interval (with its saved overrides); None on failure."""
+    try:
+        cfg = compose_cfg(dataset, overrides=conditions_overrides(settings, dataset))
+        return float(cfg.experiment.dt_frame_ms)
+    except Exception as exc:  # noqa: BLE001 — a bad config must not hide the series
+        log.warning("could not compose config for %s: %s", dataset, exc)
+        return None
+
+
 def _frame_dimensions(raw_dir: Path) -> tuple[int, int] | None:
     """(width, height) of the first raw frame, or None if unreadable."""
     first = raw_dir / "1.tif"
@@ -199,6 +209,7 @@ def list_datasets(settings: Settings) -> list[DatasetSummary]:
                 processed=_is_processed(settings, entry.name),
                 conditions_set=bool(read_conditions(settings, entry.name)),
                 frame_px=_frame_dimensions(entry),
+                dt_frame_ms=_dt_frame_ms(settings, entry.name),
             )
         )
     return summaries
@@ -260,6 +271,7 @@ def get_dataset_summary(settings: Settings, dataset: str) -> DatasetSummary | No
         processed=_is_processed(settings, dataset),
         conditions_set=bool(read_conditions(settings, dataset)),
         frame_px=_frame_dimensions(raw_dir),
+        dt_frame_ms=_dt_frame_ms(settings, dataset),
     )
 
 

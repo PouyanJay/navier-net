@@ -122,7 +122,7 @@
 }
 .fr {
   flex: none;
-  width: 104px;
+  width: 96px;
   margin: 0;
   border: 1px solid var(--viewline);
   border-radius: var(--rs);
@@ -133,8 +133,10 @@
 .fr img {
   display: block;
   width: 100%;
-  height: 72px;
-  object-fit: contain;
+  height: 44px;
+  /* Cover keeps the aspect ratio (no distortion) and centers on the
+     channel band, matching the mockup's wide tiles. */
+  object-fit: cover;
 }
 .fr figcaption {
   font-size: 9.5px;
@@ -248,6 +250,13 @@
   font-size: 10px;
   color: var(--ink3);
   margin-left: var(--s1);
+}
+.gtile.hot {
+  border-color: var(--acc2);
+  background: var(--accsoft);
+}
+.gtile.hot .v {
+  color: var(--acc);
 }
 
 /* QC chart styling (on the dark view canvas) */

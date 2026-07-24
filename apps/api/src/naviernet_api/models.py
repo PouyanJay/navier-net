@@ -105,6 +105,7 @@ class DatasetSummary(BaseModel):
     processed: bool  # preprocessed tensors exist
     conditions_set: bool = False  # per-series conditions.json saved
     frame_px: tuple[int, int] | None = None  # (width, height) of the raw frames
+    dt_frame_ms: float | None = None  # frame interval, from the series' config
 
 
 class ConditionsUpdate(BaseModel):

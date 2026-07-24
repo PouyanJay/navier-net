@@ -23,11 +23,15 @@ function seriesChip(summary: DatasetSummary, trained: boolean) {
 }
 
 function seriesMeta(summary: DatasetSummary): string {
-  const frames = `${summary.n_frames}`;
-  if (!summary.frame_px) return `${frames} frames`;
-  const [width, height] = summary.frame_px;
-  const size = width === height ? `${width}²` : `${width}×${height}`;
-  return `${frames} × ${size} px`;
+  const parts = [`${summary.n_frames}`];
+  if (summary.frame_px) {
+    const [width, height] = summary.frame_px;
+    parts.push(`× ${width === height ? `${width}²` : `${width}×${height}`}`);
+  } else {
+    parts.push("frames");
+  }
+  if (summary.dt_frame_ms != null) parts.push(`· Δt ${summary.dt_frame_ms} ms`);
+  return parts.join(" ");
 }
 
 /** The project's uploaded series; select one to edit it, or add another. */

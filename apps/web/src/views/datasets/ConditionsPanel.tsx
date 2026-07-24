@@ -166,6 +166,22 @@ export function ConditionsPanel({ datasetId, conditions, onSaved }: ConditionsPa
             </div>
           </div>
         ))}
+        <div className="fld">
+          <label htmlFor="cond-superheat">
+            Wall superheat
+            <span className="hint">estimate · Stage-B inverse</span>
+          </label>
+          <div className="ug">
+            <input
+              id="cond-superheat"
+              type="text"
+              value="—"
+              disabled
+              title="Inferred by Stage B, which is not configured yet"
+            />
+            <span className="sfx">K</span>
+          </div>
+        </div>
       </div>
       {error && (
         <p className="state-note error" role="alert">

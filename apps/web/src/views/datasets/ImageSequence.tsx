@@ -40,7 +40,7 @@ export function ImageSequence({ detail }: { detail: DatasetDetail }) {
       )}
       {detail.notes && (
         <p className="note">
-          <b>Frame usage:</b> {detail.notes}
+          <b>Auto-detected:</b> {detail.notes}
         </p>
       )}
     </Panel>

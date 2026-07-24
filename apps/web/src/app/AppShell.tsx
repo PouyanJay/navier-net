@@ -140,11 +140,9 @@ function StatusChips({
     return (
       <>
         <span className="chip" data-tone={trained ? "green" : undefined}>
-          <span className="cdot" aria-hidden="true" />
           Stage A · {trained ? "trained" : "untrained"}
         </span>
         <span className="chip" data-tone="amber">
-          <span className="cdot" aria-hidden="true" />
           Stage B · not configured
         </span>
       </>
@@ -153,13 +151,9 @@ function StatusChips({
   return (
     <>
       <span className="chip">
-        <span className="cdot" aria-hidden="true" />
         {projectCount} project{projectCount === 1 ? "" : "s"}
       </span>
-      <span className="chip">
-        <span className="cdot" aria-hidden="true" />
-        {running ? "1 active" : "0 active"}
-      </span>
+      <span className="chip">{running ? "1 active" : "0 active"}</span>
     </>
   );
 }
