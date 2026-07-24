@@ -44,6 +44,26 @@ naviernet stage=figures
 naviernet stage=video video.n_timesteps=200
 ```
 
+## The platform (web UI)
+
+The same pipeline is drivable from the browser — upload/preprocess, live
+governing equations and model topology, a solver with a streaming loss
+console, seed sweeps, run comparison, and an interactive interface
+reconstruction.
+
+```bash
+pip install -e apps/api                       # once
+(cd apps/web && npm ci && npm run build)      # build the UI
+.venv/bin/python -m naviernet_api             # serve everything on :8000
+```
+
+One process serves the whole platform at http://127.0.0.1:8000 (the API under
+`/api`, the built UI everywhere else). For development, run
+`npm run dev` in `apps/web` instead — Vite serves the UI on :5173 and proxies
+`/api`. The server is **local/trusted-network only**: it has no
+authentication and can start training jobs and write under the repository, so
+do not expose it to the public internet as-is.
+
 ## Configuration
 
 Configuration is [Hydra](https://hydra.cc)-composed from typed dataclasses, so

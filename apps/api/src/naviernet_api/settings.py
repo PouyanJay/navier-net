@@ -45,6 +45,10 @@ class Settings:
     def data_raw_dir(self) -> Path:
         return self.repo_root / "data" / "raw"
 
+    @property
+    def web_dist_dir(self) -> Path:
+        return self.repo_root / "apps" / "web" / "dist"
+
 
 @lru_cache
 def get_settings() -> Settings:
