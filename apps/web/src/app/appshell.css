@@ -107,9 +107,6 @@
 }
 /* Status dot inside topbar chips (mockup's chip .dot) */
 .topbar .chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s1);
   white-space: nowrap;
 }
 .topbar .cdot {

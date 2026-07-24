@@ -85,6 +85,166 @@ function ThemeIcon({ theme }: { theme: Theme }) {
   );
 }
 
+/** Avatar trigger + dismissible account panel (outside click / Escape). */
+function AccountMenu() {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (event: MouseEvent) => {
+      if (!(event.target as Element).closest(".uwrap")) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="uwrap">
+      <button
+        type="button"
+        className="avatar"
+        aria-label="Account menu"
+        aria-expanded={open}
+        aria-controls="account-menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        PJ
+      </button>
+      {open && (
+        <div className="umenu" id="account-menu">
+          <div className="uh">
+            <b>Pouyan Jahangiri</b>
+            <span>local workspace</span>
+          </div>
+          <a
+            className="uitem"
+            href="https://github.com/PouyanJay/naviernet"
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => setOpen(false)}
+          >
+            Documentation
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Topbar status chips: workspace counts at home, stage status in a project. */
+function StatusChips({
+  project,
+  trained,
+  projectCount,
+  running,
+}: {
+  project: string | null;
+  trained: boolean;
+  projectCount: number;
+  running: boolean;
+}) {
+  if (project) {
+    return (
+      <>
+        <span className="chip" data-tone={trained ? "green" : undefined}>
+          <span className="cdot" aria-hidden="true" />
+          Stage A · {trained ? "trained" : "untrained"}
+        </span>
+        <span className="chip" data-tone="amber">
+          <span className="cdot" aria-hidden="true" />
+          Stage B · not configured
+        </span>
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="chip">
+        <span className="cdot" aria-hidden="true" />
+        {projectCount} project{projectCount === 1 ? "" : "s"}
+      </span>
+      <span className="chip">
+        <span className="cdot" aria-hidden="true" />
+        {running ? "1 active" : "0 active"}
+      </span>
+    </>
+  );
+}
+
+/** Dark rail: "← All projects" always; pipeline stages only inside a project. */
+function Sidebar({
+  project,
+  active,
+  status,
+  onNavigate,
+  onHome,
+}: {
+  project: string | null;
+  active: string;
+  status: PlatformStatus;
+  onNavigate: (id: string) => void;
+  onHome: () => void;
+}) {
+  return (
+    <nav className="sidebar" aria-label="Primary">
+      <button type="button" className="backhome" onClick={onHome} aria-label="All projects">
+        <span aria-hidden="true">←</span>
+        <span className="backhome-label">All projects</span>
+      </button>
+      {project ? (
+        <>
+          <div className="raillbl">Reconstruction pipeline</div>
+          <div className="nav">
+            {NAV_ITEMS.filter((item) => item.stage).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="stage"
+                aria-label={item.label}
+                aria-current={item.id === active ? "page" : undefined}
+                onClick={() => onNavigate(item.id)}
+              >
+                <span className="node" data-done={status.done[item.id] || undefined}>
+                  {status.done[item.id] ? "✓" : item.stage}
+                </span>
+                <span className="txt">
+                  <b>{item.label}</b>
+                  <span>{item.sub}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="spacer" />
+          <div className="railfoot">
+            <div className="raillbl">Run metadata</div>
+            <div className="kv">
+              <span>Checkpoint</span>
+              <span className="mono">{status.latestRun ? "ckpt.pt" : "—"}</span>
+            </div>
+            <div className="kv">
+              <span>Run</span>
+              <span className="mono">{status.latestRun?.id ?? "—"}</span>
+            </div>
+            <div className="kv">
+              <span>Backend</span>
+              <span className="mono">PyTorch CPU</span>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="raillbl">Workspace</div>
+      )}
+    </nav>
+  );
+}
+
 /** Fixed dark chrome (brand + rail) and top bar around the paper workspace. */
 export function AppShell({
   active,
@@ -97,7 +257,6 @@ export function AppShell({
 }: AppShellProps) {
   const [theme, setTheme] = useState<Theme>(() => initialTheme());
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const toast = useToast();
 
   const toggleTheme = useCallback(() => {
@@ -118,21 +277,10 @@ export function AppShell({
         event.preventDefault();
         toggleTheme();
       }
-      if (event.key === "Escape") setMenuOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleTheme]);
-
-  // Close the account menu when clicking anywhere outside it.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onClick = (event: MouseEvent) => {
-      if (!(event.target as Element).closest(".uwrap")) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [menuOpen]);
 
   const paletteActions = useMemo<PaletteAction[]>(
     () => [
@@ -150,8 +298,6 @@ export function AppShell({
     ],
     [onNavigate, toggleTheme, project, onHome, toast],
   );
-
-  const trained = status.done.solver;
 
   return (
     <div className="shell">
@@ -195,29 +341,12 @@ export function AppShell({
             Training · <span className="mono">{activeRun.run_id}</span>
           </button>
         )}
-        {project ? (
-          <>
-            <span className="chip" data-tone={trained ? "green" : undefined}>
-              <span className="cdot" aria-hidden="true" />
-              Stage A · {trained ? "trained" : "untrained"}
-            </span>
-            <span className="chip" data-tone="amber">
-              <span className="cdot" aria-hidden="true" />
-              Stage B · not configured
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="chip">
-              <span className="cdot" aria-hidden="true" />
-              {status.projects} project{status.projects === 1 ? "" : "s"}
-            </span>
-            <span className="chip">
-              <span className="cdot" aria-hidden="true" />
-              {activeRun?.state === "running" ? "1 active" : "0 active"}
-            </span>
-          </>
-        )}
+        <StatusChips
+          project={project}
+          trained={Boolean(status.done.solver)}
+          projectCount={status.projects}
+          running={activeRun?.state === "running"}
+        />
         <button
           type="button"
           className="thbtn"
@@ -244,86 +373,16 @@ export function AppShell({
         >
           Export report
         </button>
-        <div className="uwrap">
-          <button
-            type="button"
-            className="avatar"
-            aria-label="Account menu"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
-          >
-            PJ
-          </button>
-          {menuOpen && (
-            <div className="umenu" role="menu">
-              <div className="uh">
-                <b>Pouyan Jahangiri</b>
-                <span>local workspace</span>
-              </div>
-              <a
-                className="uitem"
-                role="menuitem"
-                href="https://github.com/PouyanJay/naviernet"
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => setMenuOpen(false)}
-              >
-                Documentation
-              </a>
-            </div>
-          )}
-        </div>
+        <AccountMenu />
       </header>
 
-      <nav className="sidebar" aria-label="Primary">
-        <button type="button" className="backhome" onClick={onHome} aria-label="All projects">
-          <span aria-hidden="true">←</span>
-          <span className="backhome-label">All projects</span>
-        </button>
-        {project ? (
-          <>
-            <div className="raillbl">Reconstruction pipeline</div>
-            <div className="nav">
-              {NAV_ITEMS.filter((item) => item.stage).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="stage"
-                  aria-label={item.label}
-                  aria-current={item.id === active ? "page" : undefined}
-                  onClick={() => onNavigate(item.id)}
-                >
-                  <span className="node" data-done={status.done[item.id] || undefined}>
-                    {status.done[item.id] ? "✓" : item.stage}
-                  </span>
-                  <span className="txt">
-                    <b>{item.label}</b>
-                    <span>{item.sub}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div className="spacer" />
-            <div className="railfoot">
-              <div className="raillbl">Run metadata</div>
-              <div className="kv">
-                <span>Checkpoint</span>
-                <span className="mono">{status.latestRun ? "ckpt.pt" : "—"}</span>
-              </div>
-              <div className="kv">
-                <span>Run</span>
-                <span className="mono">{status.latestRun?.id ?? "—"}</span>
-              </div>
-              <div className="kv">
-                <span>Backend</span>
-                <span className="mono">PyTorch CPU</span>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="raillbl">Workspace</div>
-        )}
-      </nav>
+      <Sidebar
+        project={project}
+        active={active}
+        status={status}
+        onNavigate={onNavigate}
+        onHome={onHome}
+      />
 
       <main className="workspace">
         <div className="page">{children}</div>

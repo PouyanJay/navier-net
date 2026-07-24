@@ -6,7 +6,7 @@ import { useToast } from "./components/Toast";
 import { api, type RunJobStatus } from "./lib/api";
 import { DatasetsView } from "./views/DatasetsView";
 import { PhysicsModelView } from "./views/PhysicsModelView";
-import { ProjectsView } from "./views/ProjectsView";
+import { notifyProjectCreationUnavailable, ProjectsView } from "./views/ProjectsView";
 import { ResultsView } from "./views/ResultsView";
 import { SolverView } from "./views/SolverView";
 
@@ -82,15 +82,16 @@ export function App() {
     [toast, refreshStatus],
   );
 
-  function openDataset(id: string) {
+  const openDataset = useCallback((id: string) => {
     setDatasetId(id);
     setActive("datasets");
-  }
+  }, []);
 
-  function goHome() {
+  // Stable identity: AppShell memoizes its palette actions on this callback.
+  const goHome = useCallback(() => {
     setDatasetId(null);
     setActive("projects");
-  }
+  }, []);
 
   return (
     <AppShell
@@ -107,15 +108,7 @@ export function App() {
           {PAGE_INTRO[active] && <p>{PAGE_INTRO[active]}</p>}
         </div>
         {active === "projects" && (
-          <Button
-            variant="primary"
-            onClick={() =>
-              toast(
-                "Project creation is not available yet",
-                "this workspace currently scopes one repository",
-              )
-            }
-          >
+          <Button variant="primary" onClick={() => notifyProjectCreationUnavailable(toast)}>
             ＋ New project
           </Button>
         )}
