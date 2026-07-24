@@ -43,6 +43,7 @@ function mockApi(): Calls {
       const u = String(url);
       const post = opts?.method === "POST";
       if (u.endsWith("/api/datasets")) return json([{ id: "sample", n_frames: 3, processed: false }]);
+      if (u.endsWith("/api/runs")) return json([]);
       if (u.endsWith("/groups")) return json(GROUPS);
       if (u.endsWith("/upload")) {
         calls.upload += 1;

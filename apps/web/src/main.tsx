@@ -14,6 +14,7 @@ import "katex/dist/katex.min.css";
 
 import "./tokens.css";
 import { App } from "./App";
+import { ToastProvider } from "./components/Toast";
 import { applyTheme, initialTheme } from "./theme";
 
 // Set the theme before first paint to avoid a flash.
@@ -21,6 +22,8 @@ applyTheme(initialTheme());
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <ToastProvider>
+      <App />
+    </ToastProvider>
   </StrictMode>,
 );
