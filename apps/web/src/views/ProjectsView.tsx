@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 import { Chip } from "../components";
 import { useToast } from "../components/Toast";
@@ -10,6 +10,11 @@ import "./runs.css";
 interface ProjectFacts {
   dataset: DatasetSummary;
   runs: RunSummary[];
+}
+
+/** One toast for every "create a project" affordance, so the copy can't drift. */
+export function notifyProjectCreationUnavailable(toast: ReturnType<typeof useToast>) {
+  toast("Project creation is not available yet", "this workspace currently scopes one repository");
 }
 
 /** Pipeline progress for one dataset-project: which stages have real artifacts. */
@@ -65,15 +70,10 @@ export function ProjectsView({ onOpen }: { onOpen: (id: string) => void }) {
       <button
         type="button"
         className="newproj"
-        onClick={() =>
-          toast(
-            "Project creation is not available yet",
-            "this workspace currently scopes one repository",
-          )
-        }
+        onClick={() => notifyProjectCreationUnavailable(toast)}
       >
         <span className="plus" aria-hidden="true">
-          +
+          ＋
         </span>
         New project
       </button>
@@ -81,7 +81,38 @@ export function ProjectsView({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-const STAGE_NAMES = ["Datasets", "Physics", "Solver", "Results"];
+// Short stage names for the progress label, matching the mockup's pipe copy.
+const STAGE_NAMES = ["Data", "Model", "Solve", "Results"];
+
+function statusChip(trained: boolean, processed: boolean) {
+  if (trained) return <Chip tone="green">Stage A · trained</Chip>;
+  if (!processed) return <Chip tone="amber">needs preprocess</Chip>;
+  return <Chip>No runs yet</Chip>;
+}
+
+/** Progress dots with connectors, labelled by the stage currently in progress. */
+function StagePipe({ dots }: { dots: boolean[] }) {
+  const doneCount = dots.filter(Boolean).length;
+  const stageLabel =
+    doneCount === 0
+      ? "not started"
+      : `${STAGE_NAMES[Math.min(doneCount, STAGE_NAMES.length - 1)]} stage`;
+  return (
+    <div className="pipe" aria-label={`Pipeline progress: ${stageLabel}`}>
+      {dots.map((done, i) => (
+        <Fragment key={STAGE_NAMES[i]}>
+          <span
+            className="pd"
+            data-done={done || undefined}
+            data-act={(!done && i === doneCount) || undefined}
+          />
+          {i < dots.length - 1 && <span className="pl" aria-hidden="true" />}
+        </Fragment>
+      ))}
+      <span className="plbl">{stageLabel}</span>
+    </div>
+  );
+}
 
 function ProjectCard({
   facts,
@@ -92,17 +123,11 @@ function ProjectCard({
 }) {
   const { dataset } = facts;
   const dots = stageDots(facts);
-  const doneCount = dots.filter(Boolean).length;
-  const stageLabel = doneCount === 0 ? "not started" : `${STAGE_NAMES[doneCount - 1]} stage`;
   return (
     <button type="button" className="pcard" onClick={() => onOpen(dataset.id)}>
       <div className="pcard-top">
         <h3>{dataset.id}</h3>
-        {dataset.processed ? (
-          <Chip tone="green">processed</Chip>
-        ) : (
-          <Chip tone="amber">needs preprocess</Chip>
-        )}
+        {statusChip(dots[2], dataset.processed)}
       </div>
       <p className="purpose">
         Reconstruct the hidden velocity and volume-fraction fields of a confined vapor slug
@@ -116,12 +141,7 @@ function ProjectCard({
           <b>{facts.runs.length}</b> runs
         </span>
       </div>
-      <div className="pipe" aria-label={`Pipeline progress: ${stageLabel}`}>
-        {dots.map((done, i) => (
-          <span key={STAGE_NAMES[i]} className="pd" data-done={done || undefined} />
-        ))}
-        <span className="plbl">{stageLabel}</span>
-      </div>
+      <StagePipe dots={dots} />
       <div className="pfoot">
         <span className="mono">naviernet://{dataset.id}</span>
         <span className="popen">Open →</span>

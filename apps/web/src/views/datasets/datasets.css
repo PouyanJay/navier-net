@@ -59,31 +59,8 @@
 
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: var(--s4);
-}
-.project-card {
-  text-align: left;
-  padding: var(--s4);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  box-shadow: var(--sh);
-  cursor: pointer;
-  font: inherit;
-}
-.project-card:hover {
-  border-color: var(--acc);
-}
-.project-card .name {
-  font-family: var(--mono);
-  font-weight: 600;
-  margin-bottom: var(--s2);
-}
-.project-card .meta {
-  display: flex;
-  gap: var(--s2);
-  align-items: center;
 }
 
 /* Project cards (mockup's pcard vocabulary) */
@@ -138,22 +115,33 @@
 .pcard .pipe {
   display: flex;
   align-items: center;
-  gap: var(--s2);
 }
 .pcard .pd {
+  flex: none;
   width: 9px;
   height: 9px;
   border-radius: 50%;
   border: 1.5px solid var(--line);
-  background: var(--panel2);
+  background: var(--line);
 }
 .pcard .pd[data-done] {
   background: var(--green);
   border-color: var(--green);
 }
+.pcard .pd[data-act] {
+  background: var(--panel);
+  border-color: var(--acc);
+}
+.pcard .pl {
+  flex: 1;
+  max-width: 34px;
+  height: 1.5px;
+  background: var(--line);
+}
 .pcard .plbl {
-  margin-left: var(--s2);
-  font-size: 11px;
+  margin-left: var(--s3);
+  font-family: var(--mono);
+  font-size: 10px;
   color: var(--ink3);
 }
 .pcard .pfoot {
@@ -179,15 +167,16 @@
   min-height: 196px;
   border: 1.5px dashed var(--line);
   border-radius: var(--r);
-  background: transparent;
+  background: var(--panel2);
   color: var(--ink3);
   font: inherit;
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 .newproj:hover {
   border-color: var(--acc2);
-  color: var(--ink2);
+  color: var(--acc);
 }
 .newproj .plus {
   font-size: 22px;

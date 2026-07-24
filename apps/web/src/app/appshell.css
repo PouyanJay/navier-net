@@ -1,4 +1,4 @@
-/* App chrome: brand + top bar + stage rail around the paper workspace. */
+/* App chrome: one full-width top bar over the stage rail + paper workspace. */
 .shell {
   display: grid;
   grid-template-columns: 248px 1fr;
@@ -6,34 +6,28 @@
   height: 100%;
 }
 
-/* Brand block (dark, above the rail) */
+/* Brand, inside the top bar. Its width mirrors the rail below so the
+   breadcrumb starts exactly where the workspace column begins. */
 .brandblock {
-  background: var(--side);
-  border-right: 1px solid var(--sideline);
-  border-bottom: 1px solid var(--sideline);
+  width: 248px;
+  flex: none;
   display: flex;
   align-items: center;
   gap: var(--s3);
+  margin: 0 0 0 calc(-1 * var(--s5));
   padding: 0 var(--s4);
-  color: var(--sidehl);
+  align-self: stretch;
+  color: var(--ink);
   font-weight: 700;
   font-size: 15px;
   letter-spacing: -0.01em;
 }
+/* 40px is the logo kit's minimum size for the full mark (mesh legibility). */
 .brandblock .mark {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--rs);
-  background: var(--acc);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  width: 40px;
+  height: 40px;
   flex: none;
-}
-.brandblock .mark svg {
-  width: 16px;
-  height: 16px;
+  object-fit: contain;
 }
 .brandblock small {
   display: block;
@@ -42,11 +36,13 @@
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--sidetxt);
+  color: var(--ink3);
 }
 
-/* Top bar */
+/* Top bar — spans the full width, brand included */
 .topbar {
+  grid-column: 1 / 3;
+  grid-row: 1;
   display: flex;
   align-items: center;
   gap: var(--s4);
@@ -79,7 +75,7 @@
   min-width: 230px;
   padding: var(--s1) var(--s2) var(--s1) var(--s3);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--rs);
   background: var(--panel2);
   color: var(--ink3);
   font: inherit;
@@ -105,6 +101,17 @@
   background: var(--panel);
   color: var(--ink2);
 }
+/* Status dot inside topbar chips (mockup's chip .dot) */
+.topbar .chip {
+  white-space: nowrap;
+}
+.topbar .cdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .thbtn {
   width: 32px;
   height: 32px;
@@ -127,8 +134,74 @@
   height: 16px;
 }
 
+/* Avatar + account menu */
+.uwrap {
+  position: relative;
+  flex: none;
+}
+.avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--side);
+  color: var(--sidehl);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.umenu {
+  position: absolute;
+  top: calc(100% + var(--s2));
+  right: 0;
+  width: 230px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--sh);
+  padding: var(--s1);
+  z-index: 40;
+}
+.umenu .uh {
+  padding: var(--s2) var(--s2) var(--s2);
+  border-bottom: 1px solid var(--line2);
+  margin-bottom: var(--s1);
+}
+.umenu .uh b {
+  display: block;
+  font-size: 13px;
+}
+.umenu .uh span {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+.uitem {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: var(--s2);
+  border: 0;
+  border-radius: var(--rs);
+  background: none;
+  color: var(--ink2);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.uitem:hover {
+  background: var(--panel2);
+  color: var(--ink);
+}
+
 /* Sidebar rail — dark navy chrome */
 .sidebar {
+  grid-column: 1;
+  grid-row: 2;
   background: var(--side);
   border-right: 1px solid var(--sideline);
   display: flex;
@@ -178,7 +251,39 @@
   color: var(--sidetxt);
   opacity: 0.75;
 }
-.nav .homelink {
+
+/* "← All projects" — the way back to the workspace home */
+.backhome {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  margin-bottom: var(--s3);
+  background: var(--side2);
+  border: 1px solid var(--sideline);
+  border-radius: var(--rs);
+  color: var(--sidetxt);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.backhome:hover {
+  color: var(--sidehl);
+  border-color: var(--acc2);
+}
+
+/* Section labels in the rail (mono uppercase, mockup's .lbl) */
+.raillbl {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sidetxt);
+  opacity: 0.75;
+  padding: 0 var(--s2);
   margin-bottom: var(--s2);
 }
 
@@ -230,13 +335,6 @@
   flex-direction: column;
   gap: var(--s2);
 }
-.railfoot .lbl {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--sidetxt);
-  opacity: 0.75;
-}
 .railfoot .kv {
   display: flex;
   justify-content: space-between;
@@ -248,21 +346,29 @@
   font-size: 11px;
 }
 
-/* Workspace — paper */
+/* Workspace — paper. Content is capped so wide monitors don't stretch it. */
 .workspace {
+  grid-column: 2;
+  grid-row: 2;
   overflow-y: auto;
   padding: var(--s6) var(--s7);
+}
+.workspace .page {
+  max-width: 1220px;
+  margin: 0 auto;
 }
 .pagehead {
   margin-bottom: var(--s5);
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-between;
   gap: var(--s5);
+  flex-wrap: wrap;
 }
 .pagehead h1 {
   margin: 0 0 var(--s1);
-  font-size: 20px;
+  font-family: var(--serif);
+  font-size: 24px;
   font-weight: 600;
 }
 .pagehead p {
@@ -426,12 +532,20 @@
   .shell {
     grid-template-columns: 64px 1fr;
   }
+  .brandblock {
+    width: 64px;
+  }
   .brandblock div,
   .nav .txt,
   .railfoot,
+  .raillbl,
   .search,
-  .crumb {
+  .crumb,
+  .backhome-label {
     display: none;
+  }
+  .backhome {
+    justify-content: center;
   }
 }
 @media (max-width: 720px) {
@@ -439,14 +553,22 @@
     grid-template-columns: 1fr;
     grid-template-rows: 56px auto 1fr;
   }
+  .topbar {
+    grid-column: 1;
+  }
   .brandblock {
     display: none;
   }
   .sidebar {
+    grid-column: 1;
     flex-direction: row;
     align-items: center;
     overflow-x: auto;
     padding: var(--s2) var(--s3);
+  }
+  .workspace {
+    grid-column: 1;
+    grid-row: 3;
   }
   .sidebar .spacer {
     display: none;

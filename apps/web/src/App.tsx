@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AppShell, NAV_ITEMS, type PlatformStatus } from "./app/AppShell";
+import { Button } from "./components";
 import { useToast } from "./components/Toast";
 import { api, type RunJobStatus } from "./lib/api";
 import { DatasetsView } from "./views/DatasetsView";
 import { PhysicsModelView } from "./views/PhysicsModelView";
-import { ProjectsView } from "./views/ProjectsView";
+import { notifyProjectCreationUnavailable, ProjectsView } from "./views/ProjectsView";
 import { ResultsView } from "./views/ResultsView";
 import { SolverView } from "./views/SolverView";
 
@@ -15,7 +16,7 @@ const PAGE_TITLE: Record<string, string> = Object.fromEntries(
 
 const PAGE_INTRO: Record<string, string> = {
   projects:
-    "Each imaged dataset is a project. Open one to inspect its conditions, upload frames, and preprocess.",
+    "Each project scopes its own datasets, physics configuration, runs, and results. Open a project to enter its reconstruction pipeline.",
   datasets:
     "Operating conditions, derived dimensionless groups, the raw image sequence, and calibration/segmentation.",
   physics:
@@ -26,10 +27,10 @@ const PAGE_INTRO: Record<string, string> = {
     "Solver runs and their validation against the measured bubble. Every number is read live from the pipeline's own artifacts.",
 };
 
-const IDLE_STATUS: PlatformStatus = { done: { physics: true }, latestRun: null };
+const IDLE_STATUS: PlatformStatus = { done: { physics: true }, latestRun: null, projects: 0 };
 
 export function App() {
-  const [active, setActive] = useState("results");
+  const [active, setActive] = useState("projects");
   const [datasetId, setDatasetId] = useState<string | null>(null);
   const [activeRun, setActiveRun] = useState<RunJobStatus | null>(null);
   const [status, setStatus] = useState<PlatformStatus>(IDLE_STATUS);
@@ -50,6 +51,7 @@ export function App() {
             results: evaluated.length > 0,
           },
           latestRun: latest ? { id: latest.id, steps: latest.steps } : null,
+          projects: datasets.length,
         });
       })
       .catch(() => setStatus(IDLE_STATUS)); // chrome only — views surface real errors
@@ -80,18 +82,36 @@ export function App() {
     [toast, refreshStatus],
   );
 
-  function openDataset(id: string) {
+  const openDataset = useCallback((id: string) => {
     setDatasetId(id);
     setActive("datasets");
-  }
+  }, []);
+
+  // Stable identity: AppShell memoizes its palette actions on this callback.
+  const goHome = useCallback(() => {
+    setDatasetId(null);
+    setActive("projects");
+  }, []);
 
   return (
-    <AppShell active={active} onNavigate={setActive} activeRun={activeRun} status={status}>
+    <AppShell
+      active={active}
+      onNavigate={setActive}
+      activeRun={activeRun}
+      status={status}
+      project={datasetId}
+      onHome={goHome}
+    >
       <header className="pagehead">
         <div>
           <h1>{PAGE_TITLE[active]}</h1>
           {PAGE_INTRO[active] && <p>{PAGE_INTRO[active]}</p>}
         </div>
+        {active === "projects" && (
+          <Button variant="primary" onClick={() => notifyProjectCreationUnavailable(toast)}>
+            ＋ New project
+          </Button>
+        )}
       </header>
       <div className="stack">
         {active === "results" && <ResultsView />}
