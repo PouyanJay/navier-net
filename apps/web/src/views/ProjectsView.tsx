@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 import { Chip } from "../components";
 import { useToast } from "../components/Toast";
@@ -81,7 +81,15 @@ export function ProjectsView({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-const STAGE_NAMES = ["Datasets", "Physics", "Solver", "Results"];
+// Short stage names for the progress label, matching the mockup's pipe copy.
+const STAGE_NAMES = ["Data", "Model", "Solve", "Results"];
+
+function statusChip(facts: ProjectFacts) {
+  const trained = facts.runs.some((run) => run.status === "trained");
+  if (trained) return <Chip tone="green">Stage A · trained</Chip>;
+  if (!facts.dataset.processed) return <Chip tone="amber">needs preprocess</Chip>;
+  return <Chip>No runs yet</Chip>;
+}
 
 function ProjectCard({
   facts,
@@ -93,16 +101,13 @@ function ProjectCard({
   const { dataset } = facts;
   const dots = stageDots(facts);
   const doneCount = dots.filter(Boolean).length;
-  const stageLabel = doneCount === 0 ? "not started" : `${STAGE_NAMES[doneCount - 1]} stage`;
+  const stageLabel =
+    doneCount === 0 ? "not started" : `${STAGE_NAMES[Math.min(doneCount, 3)]} stage`;
   return (
     <button type="button" className="pcard" onClick={() => onOpen(dataset.id)}>
       <div className="pcard-top">
         <h3>{dataset.id}</h3>
-        {dataset.processed ? (
-          <Chip tone="green">processed</Chip>
-        ) : (
-          <Chip tone="amber">needs preprocess</Chip>
-        )}
+        {statusChip(facts)}
       </div>
       <p className="purpose">
         Reconstruct the hidden velocity and volume-fraction fields of a confined vapor slug
@@ -118,7 +123,14 @@ function ProjectCard({
       </div>
       <div className="pipe" aria-label={`Pipeline progress: ${stageLabel}`}>
         {dots.map((done, i) => (
-          <span key={STAGE_NAMES[i]} className="pd" data-done={done || undefined} />
+          <Fragment key={STAGE_NAMES[i]}>
+            <span
+              className="pd"
+              data-done={done || undefined}
+              data-act={(!done && i === doneCount) || undefined}
+            />
+            {i < dots.length - 1 && <span className="pl" aria-hidden="true" />}
+          </Fragment>
         ))}
         <span className="plbl">{stageLabel}</span>
       </div>

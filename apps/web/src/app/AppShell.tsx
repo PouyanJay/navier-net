@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { CommandPalette, type PaletteAction } from "../components/CommandPalette";
+import { useToast } from "../components/Toast";
 import type { RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
 import "./appshell.css";
@@ -28,6 +29,8 @@ export interface PlatformStatus {
   done: Record<string, boolean>;
   /** Latest trained run, for the sidebar's run metadata. */
   latestRun: { id: string; steps: number | null } | null;
+  /** Number of projects in the workspace (home-mode chip). */
+  projects: number;
 }
 
 interface AppShellProps {
@@ -35,6 +38,9 @@ interface AppShellProps {
   onNavigate: (id: string) => void;
   activeRun: RunJobStatus | null;
   status: PlatformStatus;
+  /** Open project id, or null on the workspace home. Drives the rail mode. */
+  project: string | null;
+  onHome: () => void;
   children: ReactNode;
 }
 
@@ -80,9 +86,19 @@ function ThemeIcon({ theme }: { theme: Theme }) {
 }
 
 /** Fixed dark chrome (brand + rail) and top bar around the paper workspace. */
-export function AppShell({ active, onNavigate, activeRun, status, children }: AppShellProps) {
+export function AppShell({
+  active,
+  onNavigate,
+  activeRun,
+  status,
+  project,
+  onHome,
+  children,
+}: AppShellProps) {
   const [theme, setTheme] = useState<Theme>(() => initialTheme());
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const toast = useToast();
 
   const toggleTheme = useCallback(() => {
     setTheme((current) => {
@@ -102,25 +118,39 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
         event.preventDefault();
         toggleTheme();
       }
+      if (event.key === "Escape") setMenuOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleTheme]);
 
+  // Close the account menu when clicking anywhere outside it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (event: MouseEvent) => {
+      if (!(event.target as Element).closest(".uwrap")) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [menuOpen]);
+
   const paletteActions = useMemo<PaletteAction[]>(
     () => [
-      ...NAV_ITEMS.map((item, i) => ({
+      { group: "Navigate", label: "All projects", shortcut: "0", run: onHome },
+      ...NAV_ITEMS.filter((item) => item.stage).map((item) => ({
         group: "Navigate",
-        label: `Open ${item.label}`,
-        shortcut: String(i),
-        run: () => onNavigate(item.id),
+        label: item.label,
+        shortcut: String(item.stage),
+        run: () =>
+          project
+            ? onNavigate(item.id)
+            : toast("Open a project first", "pipeline stages are project-scoped"),
       })),
       { group: "Appearance", label: "Toggle dark mode", shortcut: "⌘J", run: toggleTheme },
     ],
-    [onNavigate, toggleTheme],
+    [onNavigate, toggleTheme, project, onHome, toast],
   );
 
-  const activeLabel = NAV_ITEMS.find((item) => item.id === active)?.label ?? "";
   const trained = status.done.solver;
 
   return (
@@ -141,8 +171,17 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
           <span className="crumb-sep" aria-hidden="true">
             /
           </span>
-          <b>{activeLabel}</b>
+          <b>{project ?? "Projects"}</b>
+          {project && status.latestRun && status.latestRun.id !== project && (
+            <>
+              <span className="crumb-sep" aria-hidden="true">
+                /
+              </span>
+              <span className="mono">{status.latestRun.id}</span>
+            </>
+          )}
         </nav>
+        <div className="topbar-spacer" />
         <button type="button" className="search" onClick={() => setPaletteOpen(true)}>
           <span>Search or run a command…</span>
           <span className="kbds" aria-hidden="true">
@@ -150,19 +189,35 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
             <kbd>K</kbd>
           </span>
         </button>
-        <div className="topbar-spacer" />
         {activeRun?.state === "running" && (
           <button type="button" className="runpill" onClick={() => onNavigate("solver")}>
             <span className="pdot" aria-hidden="true" />
             Training · <span className="mono">{activeRun.run_id}</span>
           </button>
         )}
-        <span className="chip" data-tone={trained ? "green" : undefined}>
-          Stage A · {trained ? "trained" : "untrained"}
-        </span>
-        <span className="chip" data-tone="amber">
-          Stage B · not configured
-        </span>
+        {project ? (
+          <>
+            <span className="chip" data-tone={trained ? "green" : undefined}>
+              <span className="cdot" aria-hidden="true" />
+              Stage A · {trained ? "trained" : "untrained"}
+            </span>
+            <span className="chip" data-tone="amber">
+              <span className="cdot" aria-hidden="true" />
+              Stage B · not configured
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="chip">
+              <span className="cdot" aria-hidden="true" />
+              {status.projects} project{status.projects === 1 ? "" : "s"}
+            </span>
+            <span className="chip">
+              <span className="cdot" aria-hidden="true" />
+              {activeRun?.state === "running" ? "1 active" : "0 active"}
+            </span>
+          </>
+        )}
         <button
           type="button"
           className="thbtn"
@@ -171,50 +226,108 @@ export function AppShell({ active, onNavigate, activeRun, status, children }: Ap
         >
           <ThemeIcon theme={theme} />
         </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() =>
+            toast("Sharing is not available yet", "this workspace is local to your machine")
+          }
+        >
+          Share
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          onClick={() =>
+            toast("Report export is not available yet", "planned: PDF with config + figures")
+          }
+        >
+          Export report
+        </button>
+        <div className="uwrap">
+          <button
+            type="button"
+            className="avatar"
+            aria-label="Account menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            PJ
+          </button>
+          {menuOpen && (
+            <div className="umenu" role="menu">
+              <div className="uh">
+                <b>Pouyan Jahangiri</b>
+                <span>local workspace</span>
+              </div>
+              <a
+                className="uitem"
+                role="menuitem"
+                href="https://github.com/PouyanJay/naviernet"
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setMenuOpen(false)}
+              >
+                Documentation
+              </a>
+            </div>
+          )}
+        </div>
       </header>
 
       <nav className="sidebar" aria-label="Primary">
-        <div className="nav">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={item.stage ? "stage" : "homelink"}
-              aria-label={item.label}
-              aria-current={item.id === active ? "page" : undefined}
-              onClick={() => onNavigate(item.id)}
-            >
-              {item.stage && (
-                <span className="node" data-done={status.done[item.id] || undefined}>
-                  {status.done[item.id] ? "✓" : item.stage}
-                </span>
-              )}
-              <span className="txt">
-                <b>{item.label}</b>
-                <span>{item.sub}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="spacer" />
-        <div className="railfoot">
-          <div className="lbl">Run metadata</div>
-          <div className="kv">
-            <span>Checkpoint</span>
-            <span className="mono">{status.latestRun ? "ckpt.pt" : "—"}</span>
-          </div>
-          <div className="kv">
-            <span>Run</span>
-            <span className="mono">{status.latestRun?.id ?? "—"}</span>
-          </div>
-          <div className="kv">
-            <span>Backend</span>
-            <span className="mono">PyTorch CPU</span>
-          </div>
-        </div>
+        <button type="button" className="backhome" onClick={onHome} aria-label="All projects">
+          <span aria-hidden="true">←</span>
+          <span className="backhome-label">All projects</span>
+        </button>
+        {project ? (
+          <>
+            <div className="raillbl">Reconstruction pipeline</div>
+            <div className="nav">
+              {NAV_ITEMS.filter((item) => item.stage).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="stage"
+                  aria-label={item.label}
+                  aria-current={item.id === active ? "page" : undefined}
+                  onClick={() => onNavigate(item.id)}
+                >
+                  <span className="node" data-done={status.done[item.id] || undefined}>
+                    {status.done[item.id] ? "✓" : item.stage}
+                  </span>
+                  <span className="txt">
+                    <b>{item.label}</b>
+                    <span>{item.sub}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="spacer" />
+            <div className="railfoot">
+              <div className="raillbl">Run metadata</div>
+              <div className="kv">
+                <span>Checkpoint</span>
+                <span className="mono">{status.latestRun ? "ckpt.pt" : "—"}</span>
+              </div>
+              <div className="kv">
+                <span>Run</span>
+                <span className="mono">{status.latestRun?.id ?? "—"}</span>
+              </div>
+              <div className="kv">
+                <span>Backend</span>
+                <span className="mono">PyTorch CPU</span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="raillbl">Workspace</div>
+        )}
       </nav>
 
-      <main className="workspace">{children}</main>
+      <main className="workspace">
+        <div className="page">{children}</div>
+      </main>
 
       <CommandPalette
         open={paletteOpen}
