@@ -7,6 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=scripts/lib/ui.sh
 source "$ROOT/scripts/lib/ui.sh"
+# shellcheck source=scripts/lib/checks.sh
+source "$ROOT/scripts/lib/checks.sh"
 cd "$ROOT"
 
 usage() {
@@ -78,7 +80,7 @@ run_suite() { # <label> <command> [args...]
 ui::banner "naviernet tests" "$TOTAL suite(s)"
 
 if [ "$RUN_PYTHON" -eq 1 ]; then
-  [ -x .venv/bin/pytest ] || ui::die "pytest is not installed" "make setup"
+  require_venv_tool pytest
   if [ "$FULL" -eq 1 ]; then
     run_suite "Python (full, incl. slow + needs_data)" .venv/bin/pytest
   else
@@ -87,12 +89,12 @@ if [ "$RUN_PYTHON" -eq 1 ]; then
 fi
 
 if [ "$RUN_WEB" -eq 1 ]; then
-  [ -d apps/web/node_modules ] || ui::die "Web dependencies are not installed" "make setup"
+  require_web_env
   run_suite "Web unit (vitest)" bash -c 'cd apps/web && npm test'
 fi
 
 if [ "$RUN_E2E" -eq 1 ]; then
-  [ -d apps/web/node_modules ] || ui::die "Web dependencies are not installed" "make setup"
+  require_web_env
   # Idempotent: a cached chromium makes this a fast no-op.
   ui::run "Ensuring playwright chromium" bash -c 'cd apps/web && npx playwright install chromium' \
     || ui::warn "Chromium install failed — e2e will likely fail"

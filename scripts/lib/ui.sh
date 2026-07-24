@@ -132,18 +132,22 @@ ui::summary_row() { # <label> <value> <ok|warn|fail|skip>
 }
 
 ui::summary() { # [title]
-  local i icon colour
+  local i icon colour n=${#UI_SUMMARY_LABELS[@]}
   printf '\n%s%s%s\n' "$UI_BOLD" "${1:-Summary}" "$UI_RESET"
-  for i in $(seq 0 $((${#UI_SUMMARY_LABELS[@]} - 1))); do
-    case "${UI_SUMMARY_STATUSES[$i]}" in
-      ok) icon="$UI_ICON_OK" colour="$UI_SUCCESS" ;;
-      warn) icon="$UI_ICON_WARN" colour="$UI_WARN" ;;
-      fail) icon="$UI_ICON_FAIL" colour="$UI_ERROR" ;;
-      *) icon="$UI_ICON_SKIP" colour="$UI_DIM" ;;
-    esac
-    printf '  %s%s%s %-22s %s%s%s\n' \
-      "$colour" "$icon" "$UI_RESET" "${UI_SUMMARY_LABELS[$i]}" \
-      "$UI_DIM" "${UI_SUMMARY_VALUES[$i]}" "$UI_RESET"
-  done
+  # Guard the empty case: on bash 3.2, `seq 0 -1` emits 0 and -1 instead of
+  # an empty range, so the loop would touch unset array slots under set -u.
+  if [ "$n" -gt 0 ]; then
+    for i in $(seq 0 $((n - 1))); do
+      case "${UI_SUMMARY_STATUSES[$i]}" in
+        ok) icon="$UI_ICON_OK" colour="$UI_SUCCESS" ;;
+        warn) icon="$UI_ICON_WARN" colour="$UI_WARN" ;;
+        fail) icon="$UI_ICON_FAIL" colour="$UI_ERROR" ;;
+        *) icon="$UI_ICON_SKIP" colour="$UI_DIM" ;;
+      esac
+      printf '  %s%s%s %-22s %s%s%s\n' \
+        "$colour" "$icon" "$UI_RESET" "${UI_SUMMARY_LABELS[$i]}" \
+        "$UI_DIM" "${UI_SUMMARY_VALUES[$i]}" "$UI_RESET"
+    done
+  fi
   printf '%s%ss elapsed%s\n' "$UI_DIM" "$SECONDS" "$UI_RESET"
 }

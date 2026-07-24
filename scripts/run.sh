@@ -11,9 +11,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=scripts/lib/ui.sh
 source "$ROOT/scripts/lib/ui.sh"
+# shellcheck source=scripts/lib/checks.sh
+source "$ROOT/scripts/lib/checks.sh"
 cd "$ROOT"
 
 STATE_DIR="$ROOT/.run-state"
+DEFAULT_API_PORT=8000
+DEFAULT_WEB_PORT=5173
 API_READY_TIMEOUT=60 # first boot imports torch; generous on purpose
 WEB_READY_TIMEOUT=30
 PORT_SCAN_SPAN=20 # how far above the preferred port to look for a free one
@@ -70,6 +74,10 @@ case "${1:-}" in
     ui::die "Unknown flag: $1"
     ;;
 esac
+if [ "$#" -gt 1 ]; then
+  usage >&2
+  ui::die "Unexpected extra arguments: ${*:2} (modes are mutually exclusive)"
+fi
 
 # ── Port helpers ─────────────────────────────────────────────────────────────
 
@@ -149,12 +157,20 @@ die_with_log() { # <name> — readiness failed; show the evidence
   ui::die "$1 failed to start" "tail -f .run-state/$1.log"
 }
 
+# Mode-aware: an --api-only/--web-only session must never tear down the
+# other service — it may belong to a second terminal.
 on_interrupt() {
   ui::spinner_stop 2>/dev/null || true
   printf '\n'
   ui::warn "Interrupted — stopping services"
-  stop_service api api_pids || true
-  stop_service web web_pids || true
+  case "$MODE" in
+    api | prod) stop_service api api_pids || true ;;
+    web) stop_service web web_pids || true ;;
+    *)
+      stop_service api api_pids || true
+      stop_service web web_pids || true
+      ;;
+  esac
   exit 130
 }
 
@@ -164,10 +180,10 @@ API_PORT=''
 WEB_PORT=''
 
 start_api() {
-  API_PORT="$(allocate_port "${NAVIERNET_API_PORT:-8000}" API)"
+  API_PORT="$(allocate_port "${NAVIERNET_API_PORT:-$DEFAULT_API_PORT}" API)"
   # CORS list covers the web port even though the dev proxy makes it same-origin.
   NAVIERNET_API_PORT="$API_PORT" \
-    NAVIERNET_CORS_ORIGINS="http://localhost:${WEB_PORT:-5173},http://127.0.0.1:${WEB_PORT:-5173}" \
+    NAVIERNET_CORS_ORIGINS="http://localhost:${WEB_PORT:-$DEFAULT_WEB_PORT},http://127.0.0.1:${WEB_PORT:-$DEFAULT_WEB_PORT}" \
     nohup .venv/bin/python -m naviernet_api >"$STATE_DIR/api.log" 2>&1 &
   echo $! >"$STATE_DIR/api.pid"
   echo "$API_PORT" >"$STATE_DIR/api.port"
@@ -182,14 +198,14 @@ start_api() {
 
 start_web() {
   # In `all` mode the port was already reserved (the API's CORS list names it).
-  [ -n "$WEB_PORT" ] || WEB_PORT="$(allocate_port "${NAVIERNET_WEB_PORT:-5173}" web)"
+  [ -n "$WEB_PORT" ] || WEB_PORT="$(allocate_port "${NAVIERNET_WEB_PORT:-$DEFAULT_WEB_PORT}" web)"
   # NAVIERNET_API_PORT tells vite.config.ts where to proxy /api; --strictPort
   # because the port was just verified free — silent drift would desync state.
   # Absolute vite path: the orphan sweep recognises our processes by the
   # $ROOT-anchored command line, so a relative argv would make them invisible.
   (
     cd apps/web \
-      && NAVIERNET_API_PORT="${API_PORT:-$(cat "$STATE_DIR/api.port" 2>/dev/null || echo 8000)}" \
+      && NAVIERNET_API_PORT="${API_PORT:-$(cat "$STATE_DIR/api.port" 2>/dev/null || echo "$DEFAULT_API_PORT")}" \
         exec nohup "$ROOT/apps/web/node_modules/.bin/vite" --port "$WEB_PORT" --strictPort
   ) >"$STATE_DIR/web.log" 2>&1 &
   echo $! >"$STATE_DIR/web.pid"
@@ -206,18 +222,6 @@ start_web() {
 build_web() {
   ui::run "Building web app (tsc + vite build)" bash -c 'cd apps/web && npm run build' \
     || ui::die "Web build failed" "cd apps/web && npm run build"
-}
-
-# ── Preconditions ────────────────────────────────────────────────────────────
-
-require_python_env() {
-  if ! { [ -x .venv/bin/python ] && .venv/bin/python -c "import naviernet_api" 2>/dev/null; }; then
-    ui::die "The API is not installed" "make setup"
-  fi
-}
-
-require_web_env() {
-  [ -x apps/web/node_modules/.bin/vite ] || ui::die "Web dependencies are not installed" "make setup"
 }
 
 # ── Modes ────────────────────────────────────────────────────────────────────
@@ -268,14 +272,14 @@ ui::banner "naviernet" "starting: $MODE"
 
 case "$MODE" in
   all)
-    require_python_env
+    require_api_env
     require_web_env
     ui::step 1 3 "Cleaning up previous instances"
     stop_service api api_pids || ui::skip "No stale API instance"
     stop_service web web_pids || ui::skip "No stale web instance"
     ui::step 2 3 "Starting API"
     # Reserve the web port first so the API's CORS list can name it.
-    WEB_PORT="$(allocate_port "${NAVIERNET_WEB_PORT:-5173}" web)"
+    WEB_PORT="$(allocate_port "${NAVIERNET_WEB_PORT:-$DEFAULT_WEB_PORT}" web)"
     start_api
     ui::step 3 3 "Starting web dev server"
     start_web
@@ -285,7 +289,7 @@ case "$MODE" in
     ui::summary "Platform is up"
     ;;
   api)
-    require_python_env
+    require_api_env
     stop_service api api_pids || true
     start_api
     ui::summary_row "API" "http://127.0.0.1:$API_PORT (docs: /docs)" ok
@@ -295,7 +299,7 @@ case "$MODE" in
   web)
     require_web_env
     stop_service web web_pids || true
-    curl -sf -o /dev/null "http://127.0.0.1:$(cat "$STATE_DIR/api.port" 2>/dev/null || echo 8000)/healthz" \
+    curl -sf -o /dev/null "http://127.0.0.1:$(cat "$STATE_DIR/api.port" 2>/dev/null || echo "$DEFAULT_API_PORT")/healthz" \
       || ui::warn "API is not responding — /api requests will fail (make start)"
     start_web
     ui::summary_row "Web UI" "http://127.0.0.1:$WEB_PORT" ok
@@ -303,7 +307,7 @@ case "$MODE" in
     ui::summary "Web is up"
     ;;
   prod)
-    require_python_env
+    require_api_env
     require_web_env
     ui::step 1 3 "Building web app"
     build_web

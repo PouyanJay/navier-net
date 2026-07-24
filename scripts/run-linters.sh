@@ -7,6 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=scripts/lib/ui.sh
 source "$ROOT/scripts/lib/ui.sh"
+# shellcheck source=scripts/lib/checks.sh
+source "$ROOT/scripts/lib/checks.sh"
 cd "$ROOT"
 
 usage() {
@@ -88,7 +90,7 @@ ui::banner "naviernet lint" "$([ "$FIX" -eq 1 ] && echo 'fix + check' || echo ch
 if [ "$RUN_PYTHON" -eq 1 ]; then
   STEP=$((STEP + 1))
   ui::step "$STEP" "$TOTAL" "Python"
-  [ -x .venv/bin/ruff ] || ui::die "ruff is not installed" "make setup"
+  require_venv_tool ruff
   if [ "$FIX" -eq 1 ]; then
     fix "ruff check --fix" .venv/bin/ruff check --fix "${PY_PATHS[@]}"
     fix "ruff format" .venv/bin/ruff format "${PY_PATHS[@]}"
@@ -100,7 +102,7 @@ fi
 if [ "$RUN_WEB" -eq 1 ]; then
   STEP=$((STEP + 1))
   ui::step "$STEP" "$TOTAL" "Web"
-  [ -d apps/web/node_modules ] || ui::die "Web dependencies are not installed" "make setup"
+  require_web_env
   if [ "$FIX" -eq 1 ]; then
     fix "eslint --fix" bash -c 'cd apps/web && npx eslint . --fix'
   fi

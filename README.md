@@ -69,9 +69,10 @@ make serve        # production mode: build the UI, serve everything on one port
 ```
 
 In production mode one process serves the whole platform (the API under
-`/api`, the built UI everywhere else). Preferred ports can be pinned in a
-local `.env` (`NAVIERNET_API_PORT`, `NAVIERNET_WEB_PORT`); otherwise busy
-ports fall through to the next free one automatically.
+`/api`, the built UI everywhere else) on the API port — pin it in a local
+`.env` via `NAVIERNET_API_PORT`. In development, `NAVIERNET_WEB_PORT` pins
+the Vite port the same way. Busy ports fall through to the next free one
+automatically.
 The server is **local/trusted-network only**: it has no
 authentication and can start training jobs and write under the repository, so
 do not expose it to the public internet as-is.
@@ -215,7 +216,7 @@ make help        # all targets
 ```
 
 The Makefile is a thin dispatcher — each target calls a script under
-`scripts/` (all of them take `--help` for finer-grained flags).
+`scripts/` (the runner scripts take `--help` for finer-grained flags).
 
 The fast suite covers the config schema, the dimensionless groups (pinned to the
 published values above), autodiff gradients against analytic derivatives, the

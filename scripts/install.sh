@@ -43,9 +43,14 @@ for arg in "$@"; do
 done
 
 # Hash of the files that define a dependency set; when it matches the stored
-# stamp, the corresponding install step is skipped.
+# stamp, the corresponding install step is skipped. Inputs are validated
+# first: under pipefail a missing file would otherwise abort with no message.
 fingerprint() { # <file...>
-  cat "$@" 2>/dev/null | shasum | cut -d' ' -f1
+  local f
+  for f in "$@"; do
+    [ -f "$f" ] || ui::die "Missing dependency manifest: $f" "git checkout -- $f"
+  done
+  cat "$@" | shasum | cut -d' ' -f1
 }
 
 stamp_fresh() { # <stamp-file> <fingerprint>
@@ -100,7 +105,8 @@ if stamp_fresh "$PY_STAMP" "$PY_FP"; then
 else
   ui::run "Installing naviernet + naviernet-api (editable, dev extras)" \
     uv pip install --python .venv/bin/python -e ".[dev]" -e "./apps/api[dev]" \
-    || ui::die "Python package installation failed"
+    || ui::die "Python package installation failed" \
+      "uv pip install --python .venv/bin/python -e '.[dev]' -e './apps/api[dev]'"
   printf '%s\n' "$PY_FP" >"$PY_STAMP"
 fi
 
@@ -118,7 +124,7 @@ if [ -d apps/web/node_modules ] && stamp_fresh "$WEB_STAMP" "$WEB_FP"; then
   ui::skip "apps/web dependencies unchanged since last install"
 else
   ui::run "npm ci (apps/web)" bash -c 'cd apps/web && npm ci' \
-    || ui::die "npm ci failed"
+    || ui::die "npm ci failed" "cd apps/web && npm ci"
   printf '%s\n' "$WEB_FP" >"$WEB_STAMP"
 fi
 
