@@ -231,6 +231,40 @@
 }
 
 /* Dark visualization canvas (D3 lives here) */
+/* Segmented control (mockup .seg/.segb) — switches between sibling views */
+.seg {
+  display: flex;
+  gap: var(--s1);
+  background: var(--panel2);
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  padding: var(--s1);
+}
+.segb {
+  border: 1px solid transparent;
+  background: none;
+  border-radius: var(--rs);
+  padding: var(--s1) var(--s2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink3);
+  cursor: pointer;
+}
+.segb span {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 400;
+  color: var(--ink3);
+}
+.segb.on {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+  box-shadow: var(--sh);
+}
+
 .view-canvas {
   background: var(--view);
   border: 1px solid var(--viewline);

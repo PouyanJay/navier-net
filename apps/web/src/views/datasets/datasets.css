@@ -1,40 +1,300 @@
-.dataset-head {
+/* Two-column datasets stage: series library | selected-series detail */
+.dsx {
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  align-items: start;
+}
+.dsx-main {
+  display: grid;
+  gap: var(--s4);
+  align-content: start;
+  min-width: 0;
+}
+@media (max-width: 1080px) {
+  .dsx {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Series library rows */
+.dsrows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.dsrow {
   display: flex;
   align-items: center;
   gap: var(--s3);
-  margin-bottom: var(--s5);
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--rs);
+  padding: var(--s2) var(--s3);
+  color: var(--ink2);
+  font: inherit;
+  cursor: pointer;
 }
-.dataset-head .id {
-  font-family: var(--mono);
+.dsrow:hover {
+  background: var(--panel2);
+}
+.dsrow.sel {
+  border-color: var(--acc);
+  background: var(--accsoft);
+  color: var(--ink);
+}
+.dsrow .ic {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--rs);
+  background: var(--view);
+  color: var(--acc2);
+  font-size: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.dsrow .m {
+  min-width: 0;
+}
+.dsrow .m b {
+  display: block;
+  font-size: 13px;
   font-weight: 600;
-  font-size: 15px;
 }
-.dataset-head select {
+.dsrow .m span {
+  font-size: 11px;
+  color: var(--ink3);
+}
+.dsrow .st {
   margin-left: auto;
+  flex: none;
 }
 
-.sequence-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: var(--s3);
+/* "+ Upload new series" tile and the no-series empty state */
+.addds {
+  width: 100%;
+  border: 1.5px dashed var(--line);
+  background: var(--panel2);
+  color: var(--ink3);
+  border-radius: var(--rs);
+  padding: var(--s3);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: var(--s2);
+  cursor: pointer;
 }
-.sequence-grid figure {
+.addds:hover {
+  color: var(--acc);
+  border-color: var(--acc2);
+}
+.addds-form {
+  margin-top: var(--s2);
+  min-height: 0;
+}
+.dsempty {
+  border: 1.5px dashed var(--line);
+  border-radius: var(--rs);
+  padding: var(--s5) var(--s4);
+  text-align: center;
+  color: var(--ink3);
+  font-size: 12px;
+  margin-bottom: var(--s2);
+}
+.dsempty b {
+  display: block;
+  color: var(--ink2);
+  margin-bottom: var(--s1);
+}
+
+/* Frame strip: inline thumbnails, aspect preserved, scrollbar hidden */
+.strip {
+  display: flex;
+  gap: var(--s2);
+  overflow-x: auto;
+  padding-bottom: var(--s1);
+  scrollbar-width: none;
+}
+.strip::-webkit-scrollbar {
+  display: none;
+}
+.fr {
+  flex: none;
+  width: 104px;
   margin: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--viewline);
   border-radius: var(--rs);
   overflow: hidden;
   background: var(--view);
+  position: relative;
 }
-.sequence-grid img {
+.fr img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 72px;
+  object-fit: contain;
 }
-.sequence-grid figcaption {
-  font-family: var(--mono);
-  font-size: 11px;
+.fr figcaption {
+  font-size: 9.5px;
   color: var(--ink3);
   padding: var(--s1) var(--s2);
+  border-top: 1px solid var(--viewline);
+}
+.fr.hold {
+  outline: 2px solid var(--acc);
+}
+.fr.hold::after {
+  content: "HOLDOUT";
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font-family: var(--mono);
+  font-size: 7.5px;
+  letter-spacing: 0.08em;
+  color: var(--acc2);
+}
+
+/* Conditions form: label + input-with-unit groups (mockup .frm/.fld/.ug) */
+.frm {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: var(--s3) var(--s4);
+}
+.fld label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s1);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink2);
+  margin-bottom: var(--s1);
+  white-space: nowrap;
+}
+.fld .hint {
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ug {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+  background: var(--panel);
+  overflow: hidden;
+}
+.ug:focus-within {
+  border-color: var(--acc);
+}
+.ug input,
+.ug select {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  padding: var(--s2) var(--s3);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  background: transparent;
+}
+.ug input:focus,
+.ug select:focus {
+  outline: none;
+}
+.ug .sfx {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--s2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+  background: var(--panel2);
+  border-left: 1px solid var(--line2);
+  white-space: nowrap;
+}
+
+/* Dimensionless group tiles (mockup .groups/.gtile) */
+.groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: var(--s2);
+}
+.gtile {
+  background: var(--panel2);
+  border: 1px solid var(--line2);
+  border-radius: var(--rs);
+  padding: var(--s2) var(--s3);
+}
+.gtile .k {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink3);
+  text-transform: uppercase;
+}
+.gtile .v {
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.gtile .v em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--ink3);
+  margin-left: var(--s1);
+}
+
+/* QC chart styling (on the dark view canvas) */
+.qc-fit {
+  stroke-dasharray: 6 4;
+  stroke: var(--amber);
+}
+.qc-measured {
+  stroke: var(--acc2);
+}
+.qc-dot {
+  fill: var(--acc2);
+}
+.qc-contour path {
+  fill: none;
+  stroke: var(--acc2);
+  stroke-width: 1.2;
+}
+.qc-pin {
+  stroke: var(--ink3);
+  stroke-dasharray: 2 4;
+}
+.qc-fit-label {
+  fill: var(--amber);
+}
+.qc-sdf {
+  padding: var(--s3);
+}
+.qc-sdf canvas {
+  display: block;
+  width: 100%;
+  image-rendering: auto;
+  border-radius: var(--rs);
+}
+.qc-sdf-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  font-size: 10px;
+  color: var(--console-text);
+}
+.qc-sdf-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #67001f, #f7f7f7, #053061);
 }
 
 .upload-row {

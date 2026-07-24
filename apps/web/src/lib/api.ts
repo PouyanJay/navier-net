@@ -63,13 +63,14 @@ export interface OperatingConditions {
   n_frames_raw: number;
   n_frames_usable: number;
   n_frames_event: number;
+  U_ref_m_s: number | null;
 }
 
 export interface ProjectSummary {
   id: string;
   name: string;
   description: string;
-  dataset: string | null;
+  datasets: string[];
   created_at: string;
 }
 
@@ -77,11 +78,64 @@ export interface DatasetSummary {
   id: string;
   n_frames: number;
   processed: boolean;
+  conditions_set: boolean;
+  frame_px: [number, number] | null;
+}
+
+/** Editable per-series conditions (subset of OperatingConditions). */
+export interface ConditionsUpdate {
+  T_sat_C?: number;
+  dt_frame_ms?: number;
+  channel_width_um?: number;
+  channel_height_um?: number;
+  flow_rate_mL_hr?: number;
+  q_wall_W_cm2?: number;
+  U_ref?: number;
+}
+
+export interface ConditionsResponse {
+  conditions: OperatingConditions;
+  groups: DimensionlessGroups;
+}
+
+export interface QcKinematics {
+  t_ms: number[];
+  length_um: number[];
+  fit_slope_mm_s: number;
+  fit_intercept_um: number;
+}
+
+export interface QcInterfaceFrame {
+  index: number;
+  t_ms: number;
+  contours: number[][][];
+}
+
+export interface QcData {
+  dataset: string;
+  n_frames_event: number;
+  kinematics: QcKinematics;
+  interface: {
+    x_pin_star: number;
+    x_range: [number, number];
+    y_range: [number, number];
+    frames: QcInterfaceFrame[];
+  };
+  sdf: {
+    frame_index: number;
+    t_ms: number;
+    x_range: [number, number];
+    y_range: [number, number];
+    values: number[][];
+  };
 }
 
 export interface DatasetDetail extends DatasetSummary {
   has_qc: boolean;
   conditions: OperatingConditions;
+  holdout_frame: number | null;
+  um_per_px: number | null;
+  notes: string | null;
 }
 
 export type DimensionlessGroups = Record<string, number>;
@@ -265,12 +319,15 @@ export const api = {
     sendJson<ProjectSummary>("/api/projects", "POST", { name, description }),
   updateProject: (
     id: string,
-    fields: Partial<Pick<ProjectSummary, "name" | "description" | "dataset">>,
+    fields: Partial<Pick<ProjectSummary, "name" | "description" | "datasets">>,
   ) => sendJson<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`, "PATCH", fields),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),
   getDatasetGroups: (id: string) => getJson<DimensionlessGroups>(`${datasetPath(id)}/groups`),
+  updateConditions: (id: string, fields: ConditionsUpdate) =>
+    sendJson<ConditionsResponse>(`${datasetPath(id)}/conditions`, "PATCH", fields),
+  getQcData: (id: string) => getJson<QcData>(`${datasetPath(id)}/qc-data`),
   getPreprocessStatus: (id: string) =>
     getJson<PreprocessStatus>(`${datasetPath(id)}/preprocess`),
   startPreprocess: (id: string) =>

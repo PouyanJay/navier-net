@@ -1,26 +1,45 @@
-import { DL, type KV, Panel } from "../../components";
+import { Panel } from "../../components";
 import type { DimensionlessGroups } from "../../lib/api";
 
-const fmt = (v: number | undefined, digits = 3) => (v != null ? v.toFixed(digits) : "—");
-
-function rows(g: DimensionlessGroups): KV[] {
-  return [
-    { label: "Reynolds (Re)", value: fmt(g.Re, 1) },
-    { label: "Weber (We)", value: fmt(g.We) },
-    { label: "Capillary (Ca)", value: fmt(g.Ca, 4) },
-    { label: "Prandtl (Pr)", value: fmt(g.Pr, 2) },
-    { label: "Bond", value: fmt(g.Bond, 4) },
-    { label: "Hele-Shaw drag", value: fmt(g.hele_shaw) },
-    { label: "Bretherton film", value: fmt(g.bretherton_film_um, 2), hint: "µm" },
-    { label: "Hydraulic diameter", value: fmt(g.Dh_um, 0), hint: "µm" },
-  ];
+interface Tile {
+  key: string;
+  label: string;
+  digits: number;
+  unit?: string;
 }
 
-/** Dimensionless groups, computed live from the dataset's config. */
-export function GroupsPanel({ groups }: { groups: DimensionlessGroups }) {
+const TILES: Tile[] = [
+  { key: "Re", label: "RE", digits: 1 },
+  { key: "We", label: "WE", digits: 2 },
+  { key: "Ca", label: "CA", digits: 4 },
+  { key: "Pr", label: "PR", digits: 2 },
+  { key: "Bond", label: "BOND", digits: 3 },
+  { key: "hele_shaw", label: "HELE-SHAW", digits: 3 },
+  { key: "bretherton_film_um", label: "Δ FILM", digits: 1, unit: "µm" },
+  { key: "Dh_um", label: "D_H", digits: 0, unit: "µm" },
+];
+
+/** Dimensionless groups as mono stat tiles, recomputed with the conditions. */
+export function GroupsPanel({
+  datasetId,
+  groups,
+}: {
+  datasetId: string;
+  groups: DimensionlessGroups;
+}) {
   return (
-    <Panel title="Derived dimensionless groups" subtitle="Computed from the operating conditions">
-      <DL items={rows(groups)} />
+    <Panel title="Derived dimensionless groups" subtitle={`dataset: ${datasetId}`}>
+      <div className="groups">
+        {TILES.filter((tile) => groups[tile.key] != null).map((tile) => (
+          <div className="gtile" key={tile.key}>
+            <div className="k mono">{tile.label}</div>
+            <div className="v mono">
+              {groups[tile.key].toFixed(tile.digits)}
+              {tile.unit && <em>{tile.unit}</em>}
+            </div>
+          </div>
+        ))}
+      </div>
     </Panel>
   );
 }

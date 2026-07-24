@@ -1,21 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EmptyProjectUpload } from "../src/views/datasets/EmptyProjectUpload";
 import { ProjectsView } from "../src/views/ProjectsView";
 
 const LINKED = {
   id: "a".repeat(32),
   name: "Microchannel FC-72",
   description: "Reconstruct hidden fields from high-speed imaging.",
-  dataset: "sample",
+  datasets: ["sample"],
   created_at: "2026-07-24T00:00:00+00:00",
 };
 const EMPTY = {
   id: "b".repeat(32),
   name: "Film boiling sweep",
   description: "",
-  dataset: null,
+  datasets: [],
   created_at: "2026-07-24T00:01:00+00:00",
 };
 
@@ -52,7 +51,9 @@ function mockApi(): Calls {
         return json({ ...base, ...body });
       }
       if (u.endsWith("/api/datasets")) {
-        return json([{ id: "sample", n_frames: 3, processed: true }]);
+        return json([
+          { id: "sample", n_frames: 3, processed: true, conditions_set: true, frame_px: [16, 12] },
+        ]);
       }
       if (u.endsWith("/api/runs")) return json([]);
       const upload = u.match(/\/api\/datasets\/([^/]+)\/upload$/);
@@ -149,70 +150,5 @@ describe("ProjectsView", () => {
     );
     render(<ProjectsView onOpen={vi.fn()} {...noCreate} />);
     expect(await screen.findByRole("alert")).toHaveTextContent(/Is the API running/);
-  });
-});
-
-function chooseTiffAndUpload() {
-  const input = screen.getByLabelText(/Image sequence/) as HTMLInputElement;
-  const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
-    type: "image/tiff",
-  });
-  fireEvent.change(input, { target: { files: [file] } });
-  fireEvent.click(screen.getByRole("button", { name: /Upload sequence/ }));
-}
-
-describe("EmptyProjectUpload", () => {
-  it("uploads to the project's own dataset id, then attaches it", async () => {
-    const calls = mockApi();
-    const onAttached = vi.fn();
-    render(<EmptyProjectUpload project={EMPTY} onAttached={onAttached} />);
-
-    chooseTiffAndUpload();
-
-    await waitFor(() => expect(onAttached).toHaveBeenCalled());
-    expect(calls.uploads).toEqual([EMPTY.id]); // dataset id := project uuid
-    expect(calls.patched).toEqual([{ id: EMPTY.id, body: { dataset: EMPTY.id } }]);
-  });
-
-  it("reports a failed upload and never attempts the attach", async () => {
-    const calls = mockApi();
-    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
-    const realFetch = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (url: string | URL, opts?: RequestInit) => {
-      if (String(url).endsWith("/upload")) {
-        return new Response(JSON.stringify({ detail: "too many frames" }), { status: 400 });
-      }
-      return realFetch(url, opts);
-    });
-    const onAttached = vi.fn();
-    render(<EmptyProjectUpload project={EMPTY} onAttached={onAttached} />);
-
-    chooseTiffAndUpload();
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Upload failed: too many/);
-    expect(calls.patched).toEqual([]); // no link attempt after a failed upload
-    expect(onAttached).not.toHaveBeenCalled();
-  });
-
-  it("distinguishes an attach failure from an upload failure", async () => {
-    const calls = mockApi();
-    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
-    const realFetch = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (url: string | URL, opts?: RequestInit) => {
-      if (opts?.method === "PATCH") {
-        return new Response(JSON.stringify({ detail: "disk full" }), { status: 500 });
-      }
-      return realFetch(url, opts);
-    });
-    const onAttached = vi.fn();
-    render(<EmptyProjectUpload project={EMPTY} onAttached={onAttached} />);
-
-    chooseTiffAndUpload();
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      /Uploaded, but linking the dataset failed: disk full/,
-    );
-    expect(calls.uploads).toEqual([EMPTY.id]); // frames did land on disk
-    expect(onAttached).not.toHaveBeenCalled();
   });
 });

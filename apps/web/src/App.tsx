@@ -12,7 +12,6 @@ import {
 } from "./lib/api";
 import { hasEvaluation, isTrainedRun } from "./lib/runs";
 import { DatasetsView } from "./views/DatasetsView";
-import { EmptyProjectUpload } from "./views/datasets/EmptyProjectUpload";
 import { PhysicsModelView } from "./views/PhysicsModelView";
 import { ProjectsView } from "./views/ProjectsView";
 import { ResultsView } from "./views/ResultsView";
@@ -65,9 +64,11 @@ export function App() {
   const status = useMemo<PlatformStatus>(() => {
     if (!repo) return IDLE_STATUS;
     const datasets = project
-      ? repo.datasets.filter((dataset) => dataset.id === project.dataset)
+      ? repo.datasets.filter((dataset) => project.datasets.includes(dataset.id))
       : repo.datasets;
-    const runs = project ? repo.runs.filter((run) => run.dataset === project.dataset) : repo.runs;
+    const runs = project
+      ? repo.runs.filter((run) => run.dataset != null && project.datasets.includes(run.dataset))
+      : repo.runs;
     const trained = runs.filter(isTrainedRun);
     const latest = trained[trained.length - 1] ?? null;
     return {
@@ -118,8 +119,8 @@ export function App() {
     setActive("projects");
   }, []);
 
-  // The first upload attaches the dataset; the pipeline unlocks from there.
-  const attachDataset = useCallback(
+  // Series uploads update the project's dataset list; stage flags follow.
+  const handleProjectChanged = useCallback(
     (updated: ProjectSummary) => {
       setProject(updated);
       refreshStatus();
@@ -157,12 +158,9 @@ export function App() {
             onChanged={refreshStatus}
           />
         )}
-        {active === "datasets" &&
-          (project && !project.dataset ? (
-            <EmptyProjectUpload project={project} onAttached={attachDataset} />
-          ) : (
-            <DatasetsView datasetId={project?.dataset} />
-          ))}
+        {active === "datasets" && project && (
+          <DatasetsView project={project} onProjectChanged={handleProjectChanged} />
+        )}
         {active === "physics" && <PhysicsModelView />}
         {active === "solver" && <SolverView onRunState={handleRunState} />}
       </div>

@@ -1,8 +1,7 @@
 import { useRef } from "react";
 
 import { Button, Chip, Panel, StatusDot } from "../../components";
-import { ArtifactImage } from "../../components/ArtifactImage";
-import { artifactUrl, type DatasetDetail, type PreprocessStatus } from "../../lib/api";
+import type { DatasetDetail, PreprocessStatus } from "../../lib/api";
 
 interface UploadPreprocessProps {
   detail: DatasetDetail;
@@ -30,7 +29,6 @@ export function UploadPreprocess({
   const fileInput = useRef<HTMLInputElement>(null);
   const state = preprocess?.state ?? "idle";
   const running = state === "running";
-  const hasQc = preprocess?.has_qc ?? detail.has_qc;
 
   return (
     <Panel
@@ -62,19 +60,6 @@ export function UploadPreprocess({
           Preprocessing failed: {preprocess.message}
         </p>
       )}
-
-      {hasQc && <QcFigure datasetId={detail.id} cacheKey={state} />}
     </Panel>
-  );
-}
-
-function QcFigure({ datasetId, cacheKey }: { datasetId: string; cacheKey: string }) {
-  return (
-    <ArtifactImage
-      key={cacheKey}
-      className="qc-figure"
-      src={artifactUrl.datasetQc(datasetId)}
-      alt="Preprocessing quality-control: growth curve, interface evolution, signed distance"
-    />
   );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   api,
+  type ConditionsResponse,
   type DatasetDetail,
   type DatasetSummary,
   type DimensionlessGroups,
@@ -22,6 +23,8 @@ export interface DatasetData {
   busy: boolean;
   upload: (files: FileList | File[]) => Promise<void>;
   runPreprocess: () => Promise<void>;
+  /** Fold a saved conditions round-trip into the detail + groups state. */
+  applyConditions: (response: ConditionsResponse) => void;
 }
 
 /** The dataset list plus the current selection (defaulting to the first). */
@@ -139,5 +142,28 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     }
   }, [selected, setError]);
 
-  return { datasets, selected, setSelected, detail, groups, preprocess, error, busy, upload, runPreprocess };
+  const applyConditions = useCallback(
+    (response: ConditionsResponse) => {
+      setDetail((current) =>
+        current ? { ...current, conditions: response.conditions, conditions_set: true } : current,
+      );
+      setGroups(response.groups);
+      refresh().catch(() => {}); // library chips ("needs conditions") follow
+    },
+    [refresh],
+  );
+
+  return {
+    datasets,
+    selected,
+    setSelected,
+    detail,
+    groups,
+    preprocess,
+    error,
+    busy,
+    upload,
+    runPreprocess,
+    applyConditions,
+  };
 }

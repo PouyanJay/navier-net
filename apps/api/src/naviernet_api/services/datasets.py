@@ -207,7 +207,9 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
         conditions=conditions_from_cfg(cfg),
         conditions_set=bool(read_conditions(settings, dataset)),
         frame_px=_frame_dimensions(raw_dir),
-        holdout_frame=int(cfg.training.holdout_frame),
+        # Config stores the 0-based tensor index; report the 1-based camera
+        # frame (f06), matching evaluation's metrics.json convention.
+        holdout_frame=int(cfg.training.holdout_frame) + 1,
         um_per_px=meta.get("um_per_px"),
         notes=(cfg.experiment.notes or None),
     )

@@ -137,7 +137,7 @@ class DatasetDetail(BaseModel):
     has_qc: bool  # a preprocessing QC figure exists
     conditions_set: bool = False
     frame_px: tuple[int, int] | None = None
-    holdout_frame: int | None = None  # the never-supervised frame (from config)
+    holdout_frame: int | None = None  # 1-based camera frame that is never supervised
     um_per_px: float | None = None  # calibration, once preprocessed
     notes: str | None = None  # the experiment's frame-usage story
     conditions: OperatingConditions

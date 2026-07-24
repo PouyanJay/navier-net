@@ -28,6 +28,8 @@ def test_dataset_detail_has_operating_conditions(client):
     # Conditions come from the composed (default experiment) config.
     assert detail["conditions"]["fluid"] == "FC-72"
     assert detail["conditions"]["channel_width_um"] == pytest.approx(300.0)
+    # Config holds the 0-based tensor index (5); the API reports camera frame 6.
+    assert detail["holdout_frame"] == 6
 
 
 def test_live_groups_are_computed(client):
