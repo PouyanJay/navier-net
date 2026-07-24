@@ -42,7 +42,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   const detail = inScope ? data.detail : null;
 
   return (
-    <div className="grid dsx">
+    <div className="dsx">
       <SeriesLibrary
         project={project}
         series={series}

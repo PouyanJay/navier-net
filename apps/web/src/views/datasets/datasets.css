@@ -1,5 +1,7 @@
 /* Two-column datasets stage: series library | selected-series detail */
 .dsx {
+  display: grid;
+  gap: var(--s4);
   grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
   align-items: start;
 }
@@ -7,6 +9,12 @@
   display: grid;
   gap: var(--s4);
   align-content: start;
+  min-width: 0;
+}
+/* Cards must be able to shrink below their content's intrinsic width
+   (the frame strip scrolls instead) — the mockup's `.grid > *` rule. */
+.dsx > *,
+.dsx-main > * {
   min-width: 0;
 }
 @media (max-width: 1080px) {
@@ -134,9 +142,10 @@
   display: block;
   width: 100%;
   height: 44px;
-  /* Cover keeps the aspect ratio (no distortion) and centers on the
-     channel band, matching the mockup's wide tiles. */
+  /* Cover keeps the aspect ratio (no distortion); the position biases
+     the crop onto the channel band, matching the mockup's wide tiles. */
   object-fit: cover;
+  object-position: center 62%;
 }
 .fr figcaption {
   font-size: 9.5px;
