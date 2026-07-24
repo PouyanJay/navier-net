@@ -8,6 +8,8 @@ preprocess lives in :mod:`naviernet_api.services.jobs`.
 from __future__ import annotations
 
 import io
+import json
+import math
 import re
 from pathlib import Path
 
@@ -29,6 +31,24 @@ MAX_FRAMES = 200
 
 class UploadError(ValueError):
     """A rejected upload (bad type, too large, too many, bad id)."""
+
+
+class ConditionsError(ValueError):
+    """A rejected conditions edit (unknown field, non-physical value)."""
+
+
+# Editable per-series conditions → the Hydra override path each one drives.
+# Saved values are applied at every compose site for the dataset (detail,
+# groups, preprocess, run launches), so the whole pipeline sees them.
+CONDITION_OVERRIDE_PATHS = {
+    "T_sat_C": "experiment.T_sat_C",
+    "dt_frame_ms": "experiment.dt_frame_ms",
+    "channel_width_um": "experiment.channel_width_um",
+    "channel_height_um": "experiment.channel_height_um",
+    "flow_rate_mL_hr": "experiment.flow_rate_mL_hr",
+    "q_wall_W_cm2": "experiment.q_wall_W_cm2",
+    "U_ref": "scales.U_ref",
+}
 
 
 def is_valid_dataset_id(dataset: str) -> bool:
@@ -74,6 +94,83 @@ def _is_processed(settings: Settings, dataset: str) -> bool:
     return tensors_path(settings, dataset) is not None
 
 
+# ── Per-series operating conditions ──────────────────────────────────────────
+
+
+def _conditions_path(settings: Settings, dataset: str) -> Path | None:
+    raw_dir = _raw_dir(settings, dataset)
+    return None if raw_dir is None else raw_dir / "conditions.json"
+
+
+def read_conditions(settings: Settings, dataset: str) -> dict[str, float]:
+    """The series' saved condition values ({} when none have been saved)."""
+    path = _conditions_path(settings, dataset)
+    if path is None or not path.is_file():
+        return {}
+    try:
+        saved = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        log.warning("ignoring unreadable conditions for %s: %s", dataset, exc)
+        return {}
+    return {k: v for k, v in saved.items() if k in CONDITION_OVERRIDE_PATHS}
+
+
+def conditions_overrides(settings: Settings, dataset: str) -> list[str]:
+    """Saved conditions as Hydra overrides, for compose sites of this dataset."""
+    saved = read_conditions(settings, dataset)
+    return [f"{CONDITION_OVERRIDE_PATHS[key]}={value}" for key, value in sorted(saved.items())]
+
+
+def save_conditions(
+    settings: Settings, dataset: str, updates: dict[str, float]
+) -> dict[str, float]:
+    """Merge validated condition edits into the series' file; returns the set."""
+    path = _conditions_path(settings, dataset)
+    if path is None or not path.parent.is_dir():
+        raise ConditionsError(f"dataset {dataset!r} not found")
+    for key, value in updates.items():
+        if key not in CONDITION_OVERRIDE_PATHS:
+            raise ConditionsError(f"unknown condition field {key!r}")
+        if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ConditionsError(f"{key} must be a positive number, got {value!r}")
+
+    merged = {**read_conditions(settings, dataset), **updates}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(merged, indent=2))
+    tmp.replace(path)
+    log.info("saved conditions for %s: %s", dataset, sorted(updates))
+    return merged
+
+
+def tensors_meta(settings: Settings, dataset: str) -> dict:
+    """The meta record inside tensors.npz ({} when not preprocessed)."""
+    path = tensors_path(settings, dataset)
+    if path is None:
+        return {}
+    import numpy as np
+
+    try:
+        with np.load(path) as data:
+            return json.loads(str(data["meta"]))
+    except (OSError, ValueError, KeyError) as exc:
+        log.warning("could not read tensors meta for %s: %s", dataset, exc)
+        return {}
+
+
+def _frame_dimensions(raw_dir: Path) -> tuple[int, int] | None:
+    """(width, height) of the first raw frame, or None if unreadable."""
+    first = raw_dir / "1.tif"
+    if not first.is_file():
+        return None
+    from PIL import Image
+
+    try:
+        with Image.open(first) as img:
+            return (img.width, img.height)
+    except OSError:
+        return None
+
+
 def list_datasets(settings: Settings) -> list[DatasetSummary]:
     """Every dataset directory under `data/raw/`."""
     raw_root = settings.data_raw_dir
@@ -88,6 +185,8 @@ def list_datasets(settings: Settings) -> list[DatasetSummary]:
                 id=entry.name,
                 n_frames=_count_frames(entry),
                 processed=_is_processed(settings, entry.name),
+                conditions_set=bool(read_conditions(settings, entry.name)),
+                frame_px=_frame_dimensions(entry),
             )
         )
     return summaries
@@ -98,8 +197,26 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
     raw_dir = _raw_dir(settings, dataset)
     if raw_dir is None or not raw_dir.is_dir():
         return None
-    exp = compose_cfg(dataset).experiment
-    conditions = OperatingConditions(
+    cfg = compose_cfg(dataset, overrides=conditions_overrides(settings, dataset))
+    meta = tensors_meta(settings, dataset)
+    return DatasetDetail(
+        id=dataset,
+        n_frames=_count_frames(raw_dir),
+        processed=_is_processed(settings, dataset),
+        has_qc=qc_path(settings, dataset) is not None,
+        conditions=conditions_from_cfg(cfg),
+        conditions_set=bool(read_conditions(settings, dataset)),
+        frame_px=_frame_dimensions(raw_dir),
+        holdout_frame=int(cfg.training.holdout_frame),
+        um_per_px=meta.get("um_per_px"),
+        notes=(cfg.experiment.notes or None),
+    )
+
+
+def conditions_from_cfg(cfg) -> OperatingConditions:
+    """The response model's view of a composed config's operating conditions."""
+    exp = cfg.experiment
+    return OperatingConditions(
         fluid=exp.fluid,
         T_sat_C=exp.T_sat_C,
         q_wall_W_cm2=exp.q_wall_W_cm2,
@@ -111,13 +228,7 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
         n_frames_raw=exp.n_frames_raw,
         n_frames_usable=exp.n_frames_usable,
         n_frames_event=exp.n_frames_event,
-    )
-    return DatasetDetail(
-        id=dataset,
-        n_frames=_count_frames(raw_dir),
-        processed=_is_processed(settings, dataset),
-        has_qc=qc_path(settings, dataset) is not None,
-        conditions=conditions,
+        U_ref_m_s=cfg.scales.U_ref,
     )
 
 
@@ -130,6 +241,8 @@ def get_dataset_summary(settings: Settings, dataset: str) -> DatasetSummary | No
         id=dataset,
         n_frames=_count_frames(raw_dir),
         processed=_is_processed(settings, dataset),
+        conditions_set=bool(read_conditions(settings, dataset)),
+        frame_px=_frame_dimensions(raw_dir),
     )
 
 

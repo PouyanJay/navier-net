@@ -65,8 +65,9 @@ def _compose_locked(dataset: str, overrides: list[str] | None) -> DictConfig:
     return cfg
 
 
-def compute_groups_for(dataset: str) -> dict[str, float]:
-    """Live dimensionless groups for a dataset, computed from its config."""
+def compute_groups_for(dataset: str, overrides: list[str] | None = None) -> dict[str, float]:
+    """Live dimensionless groups for a dataset, computed from its config
+    (plus the series' saved condition overrides, when given)."""
     from naviernet.physics.groups import compute_groups
 
-    return compute_groups(compose_cfg(dataset))
+    return compute_groups(compose_cfg(dataset, overrides=overrides))

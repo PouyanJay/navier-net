@@ -67,10 +67,18 @@ def _run(settings: Settings, dataset: str) -> None:
     try:
         from naviernet.pipeline import Pipeline
         from naviernet_api.services.config_service import compose_cfg
+        from naviernet_api.services.datasets import conditions_overrides
 
         # paths.root is pinned to the repo so data/ and outputs/ resolve
-        # regardless of the server's working directory.
-        cfg = compose_cfg(dataset, overrides=[f"paths.root={settings.repo_root}"])
+        # regardless of the server's working directory. The series' saved
+        # conditions apply here too, so preprocessing sees its real Δt etc.
+        cfg = compose_cfg(
+            dataset,
+            overrides=[
+                f"paths.root={settings.repo_root}",
+                *conditions_overrides(settings, dataset),
+            ],
+        )
         Pipeline(cfg).preprocess()
         with _lock:
             _jobs[dataset] = _Job(state="done")

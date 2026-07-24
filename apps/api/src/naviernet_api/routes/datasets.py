@@ -7,14 +7,17 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from naviernet_api.models import (
+    ConditionsResponse,
+    ConditionsUpdate,
     DatasetDetail,
     DatasetSummary,
     PreprocessStatus,
 )
 from naviernet_api.services import datasets as datasets_service
 from naviernet_api.services import jobs as jobs_service
-from naviernet_api.services.config_service import compute_groups_for
-from naviernet_api.services.datasets import UploadError
+from naviernet_api.services import qc as qc_service
+from naviernet_api.services.config_service import compose_cfg, compute_groups_for
+from naviernet_api.services.datasets import ConditionsError, UploadError
 from naviernet_api.settings import Settings, get_settings
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -39,10 +42,47 @@ def get_dataset(dataset: str, settings: Settings = Depends(get_settings)) -> Dat
 def get_dataset_groups(
     dataset: str, settings: Settings = Depends(get_settings)
 ) -> dict[str, float]:
-    """Live dimensionless groups, computed from the dataset's config."""
+    """Live dimensionless groups, computed from the dataset's config plus its
+    saved per-series conditions."""
     if datasets_service.get_dataset(settings, dataset) is None:
         raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
-    return compute_groups_for(dataset)
+    return compute_groups_for(
+        dataset, overrides=datasets_service.conditions_overrides(settings, dataset)
+    )
+
+
+@router.patch("/{dataset}/conditions", response_model=ConditionsResponse)
+def update_conditions(
+    dataset: str,
+    payload: ConditionsUpdate,
+    settings: Settings = Depends(get_settings),
+) -> ConditionsResponse:
+    """Save per-series operating conditions; groups recompute immediately."""
+    if datasets_service.get_dataset_summary(settings, dataset) is None:
+        raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
+    updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+    try:
+        datasets_service.save_conditions(settings, dataset, updates)
+    except ConditionsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    overrides = datasets_service.conditions_overrides(settings, dataset)
+    cfg = compose_cfg(dataset, overrides=overrides)
+    return ConditionsResponse(
+        conditions=datasets_service.conditions_from_cfg(cfg),
+        groups=compute_groups_for(dataset, overrides=overrides),
+    )
+
+
+@router.get("/{dataset}/qc-data")
+def get_qc_data(dataset: str, settings: Settings = Depends(get_settings)) -> dict:
+    """The preprocessing QC checks as chart data (kinematics, interface, SDF)."""
+    data = qc_service.qc_data(settings, dataset)
+    if data is None:
+        raise HTTPException(
+            status_code=404, detail=f"dataset {dataset!r} has not been preprocessed"
+        )
+    return data
 
 
 @router.get("/{dataset}/qc")

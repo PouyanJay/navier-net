@@ -110,7 +110,7 @@ def list_projects(settings: Settings) -> list[ProjectSummary]:
                 if (project := _read(path)) is not None
             ]
 
-        linked = {project.dataset for project in projects if project.dataset}
+        linked = {ds for project in projects for ds in project.datasets}
         for dataset in datasets_service.list_datasets(settings):
             if dataset.id not in linked:
                 projects.append(_materialize_dataset(settings, dataset.id))
@@ -124,7 +124,7 @@ def _materialize_dataset(settings: Settings, dataset_id: str) -> ProjectSummary:
         id=uuid.uuid4().hex,
         name=dataset_id,
         description=_LEGACY_DESCRIPTION,
-        dataset=dataset_id,
+        datasets=[dataset_id],
         created_at=_now(),
     )
     _write(settings, project)
@@ -158,18 +158,20 @@ def update_project(
 ) -> ProjectSummary | None:
     """Apply the payload's explicitly-set fields; returns None if unknown.
 
-    Only fields the client actually sent change, so `{"dataset": null}`
-    detaches a dataset while an omitted field is left alone.
+    Only fields the client actually sent change, so `{"datasets": null}`
+    clears the series list while an omitted field is left alone.
     """
     fields = payload.model_dump(exclude_unset=True)
     if fields.get("name", "") is None:
         raise ProjectError("project name must not be empty")
     if fields.get("description", "") is None:
         fields["description"] = ""  # explicit null clears the description
+    if "datasets" in fields and fields["datasets"] is None:
+        fields["datasets"] = []  # explicit null clears the series list
 
-    dataset = fields.get("dataset")
-    if dataset is not None and datasets_service.get_dataset_summary(settings, dataset) is None:
-        raise ProjectError(f"dataset {dataset!r} does not exist")
+    for dataset in fields.get("datasets") or []:
+        if datasets_service.get_dataset_summary(settings, dataset) is None:
+            raise ProjectError(f"dataset {dataset!r} does not exist")
 
     with _lock:
         project = get_project(settings, project_id)

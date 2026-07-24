@@ -450,7 +450,10 @@ def _configure(
         f"training.weights.bc={request.weights.bc}",
     ]
     from naviernet_api.services.config_service import compose_cfg_once
+    from naviernet_api.services.datasets import conditions_overrides
 
+    # The series' saved operating conditions travel with every run of it.
+    overrides.extend(conditions_overrides(settings, dataset))
     return compose_cfg_once(dataset, overrides=overrides), 0
 
 

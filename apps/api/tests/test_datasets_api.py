@@ -194,3 +194,68 @@ def test_preprocess_write_path_end_to_end(tmp_path, monkeypatch):
     assert status.state == "done", status.message
     assert (tmp_path / "data" / "processed" / "highest_t" / "tensors.npz").is_file()
     assert status.has_qc
+
+
+def test_patch_conditions_saves_and_recomputes_groups(client):
+    baseline = client.get("/api/datasets/sample/groups").json()
+
+    r = client.patch("/api/datasets/sample/conditions", json={"U_ref": 0.4})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["conditions"]["U_ref_m_s"] == pytest.approx(0.4)
+    # Re scales with the reference velocity — doubling U_ref must double it.
+    assert body["groups"]["Re"] == pytest.approx(2 * baseline["Re"], rel=1e-6)
+
+    # The edit persists into the detail + groups endpoints (and is flagged).
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["conditions"]["U_ref_m_s"] == pytest.approx(0.4)
+    assert detail["conditions_set"] is True
+    assert client.get("/api/datasets/sample/groups").json()["Re"] == pytest.approx(
+        body["groups"]["Re"]
+    )
+
+
+def test_patch_conditions_rejects_non_physical_values(client):
+    r = client.patch("/api/datasets/sample/conditions", json={"dt_frame_ms": -1})
+    assert r.status_code == 400
+    assert "dt_frame_ms" in r.json()["detail"]
+
+
+def test_patch_conditions_unknown_dataset_is_404(client):
+    assert (
+        client.patch("/api/datasets/nope/conditions", json={"dt_frame_ms": 1}).status_code
+        == 404
+    )
+
+
+def test_conditions_overrides_reach_the_run_config(repo_root, tiff_bytes):
+    settings = Settings(repo_root=repo_root)
+    datasets_service.save_conditions(settings, "sample", {"U_ref": 0.5})
+    overrides = datasets_service.conditions_overrides(settings, "sample")
+    assert overrides == ["scales.U_ref=0.5"]
+
+
+def test_dataset_summary_carries_frame_size(client):
+    ids = {d["id"]: d for d in client.get("/api/datasets").json()}
+    # The fixture writes small real TIFFs; their true size must be reported.
+    assert ids["sample"]["frame_px"] is not None
+    width, height = ids["sample"]["frame_px"]
+    assert width > 0 and height > 0
+
+
+def test_qc_data_has_all_three_checks(client):
+    r = client.get("/api/datasets/highest_t/qc-data")
+    assert r.status_code == 200
+    qc = r.json()
+    kin = qc["kinematics"]
+    assert len(kin["t_ms"]) == len(kin["length_um"]) == 11
+    assert isinstance(kin["fit_slope_mm_s"], (int, float))
+    assert len(qc["interface"]["frames"]) == 6  # every 2nd of 11 frames
+    assert qc["interface"]["frames"][0]["contours"]  # real polylines
+    sdf = qc["sdf"]
+    assert sdf["frame_index"] == 5
+    assert len(sdf["values"]) > 0 and len(sdf["values"][0]) > 0
+
+
+def test_qc_data_before_preprocessing_is_404(client):
+    assert client.get("/api/datasets/sample/qc-data").status_code == 404
