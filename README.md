@@ -24,7 +24,19 @@ withheld from supervision entirely, and the model is asked to predict it.
 ## Quick start
 
 ```bash
-make install                  # venv + editable install with dev tooling
+make run                      # everything: install deps, then start the platform
+```
+
+One command installs the toolchain ([uv](https://docs.astral.sh/uv/)-managed
+Python pinned by `.python-version`, both editable packages, npm dependencies)
+and boots the API plus the web dev server, allocating free ports automatically
+(defaults 8000/5173; if a port is taken the next free one is used and printed).
+`make stop` tears everything down; `make status` shows what is running.
+
+For the solver pipeline only:
+
+```bash
+make setup                    # install dependencies (idempotent)
 naviernet stage=all           # preprocess -> train -> evaluate -> figures -> video
 ```
 
@@ -52,15 +64,16 @@ console, seed sweeps, run comparison, and an interactive interface
 reconstruction.
 
 ```bash
-pip install -e apps/api                       # once
-(cd apps/web && npm ci && npm run build)      # build the UI
-.venv/bin/python -m naviernet_api             # serve everything on :8000
+make run          # development: API + Vite dev server (hot reload, /api proxied)
+make serve        # production mode: build the UI, serve everything on one port
 ```
 
-One process serves the whole platform at http://127.0.0.1:8000 (the API under
-`/api`, the built UI everywhere else). For development, run
-`npm run dev` in `apps/web` instead — Vite serves the UI on :5173 and proxies
-`/api`. The server is **local/trusted-network only**: it has no
+In production mode one process serves the whole platform (the API under
+`/api`, the built UI everywhere else) on the API port — pin it in a local
+`.env` via `NAVIERNET_API_PORT`. In development, `NAVIERNET_WEB_PORT` pins
+the Vite port the same way. Busy ports fall through to the next free one
+automatically.
+The server is **local/trusted-network only**: it has no
 authentication and can start training jobs and write under the repository, so
 do not expose it to the public internet as-is.
 
@@ -195,12 +208,15 @@ Stage-B fields are already wired: list them in `model.fields` and
 ## Development
 
 ```bash
-make test        # fast unit tests (no data or checkpoint needed)
-make test-all    # including integration tests against the real dataset
-make lint        # ruff check + format check
-make format      # apply fixes
+make test        # fast Python suite + web unit tests
+make test-all    # everything: slow + data-dependent tests, web, e2e
+make lint        # ruff, eslint, tsc (mirrors the CI lint jobs)
+make lint-fix    # apply autofixes, then re-check
 make help        # all targets
 ```
+
+The Makefile is a thin dispatcher — each target calls a script under
+`scripts/` (the runner scripts take `--help` for finer-grained flags).
 
 The fast suite covers the config schema, the dimensionless groups (pinned to the
 published values above), autodiff gradients against analytic derivatives, the

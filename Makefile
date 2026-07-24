@@ -1,34 +1,72 @@
+# Thin dispatch layer only — all logic lives in scripts/ (see scripts/*.sh
+# --help for flags). Solver pipeline targets call the venv CLI directly.
+SHELL := /bin/bash
 .DEFAULT_GOAL := help
-PY ?= python
-VENV := .venv
-BIN := $(VENV)/bin
+BIN := .venv/bin
 
-.PHONY: help venv install lint format test test-all preprocess train evaluate figures video all clean clean-runs
+# ── Setup & orchestration ────────────────────────────────────────────
+.PHONY: help setup install run start start-api start-web serve stop status
 
-help:  ## Show this help
-	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
-		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+help:  ## Show the command reference
+	@./scripts/help.sh
 
-venv:  ## Create the virtual environment
-	$(PY) -m venv $(VENV)
+setup:  ## Install all dev dependencies (uv + npm; idempotent)
+	@./scripts/install.sh
 
-install: venv  ## Install the package and dev tooling (editable)
-	$(BIN)/pip install --upgrade pip
-	$(BIN)/pip install -e ".[dev]"
+install: setup  ## Alias for setup (back-compat)
 
-lint:  ## Check style and import order
-	$(BIN)/ruff check src tests
-	$(BIN)/ruff format --check src tests
+run: setup  ## Everything end to end: install, then start the full stack
+	@./scripts/run.sh
 
-format:  ## Apply formatting and autofixes
-	$(BIN)/ruff check --fix src tests
-	$(BIN)/ruff format src tests
+start:  ## Start API + web dev server (auto-allocates ports)
+	@./scripts/run.sh
 
-test:  ## Run the fast test suite
-	$(BIN)/pytest -m "not slow and not needs_data"
+start-api:  ## Start only the API
+	@./scripts/run.sh --api-only
 
-test-all:  ## Run every test, including slow and data-dependent ones
-	$(BIN)/pytest
+start-web:  ## Start only the web dev server
+	@./scripts/run.sh --web-only
+
+serve:  ## Production mode: build the UI, serve everything on one port
+	@./scripts/run.sh --prod
+
+stop:  ## Stop all services, including orphans
+	@./scripts/run.sh --stop
+
+status:  ## Show what is running and where
+	@./scripts/run.sh --status
+
+# ── Testing ──────────────────────────────────────────────────────────
+.PHONY: test test-python test-web test-e2e test-all
+
+test:  ## Fast Python suite + web unit tests
+	@./scripts/run-tests.sh --all
+
+test-python:  ## Python tests only
+	@./scripts/run-tests.sh --python
+
+test-web:  ## Web unit tests only
+	@./scripts/run-tests.sh --web
+
+test-e2e:  ## Browser end-to-end tests
+	@./scripts/run-tests.sh --e2e
+
+test-all:  ## Everything: slow + data-dependent Python tests, web, e2e
+	@./scripts/run-tests.sh --all --full --e2e
+
+# ── Linting ──────────────────────────────────────────────────────────
+.PHONY: lint lint-fix format
+
+lint:  ## All CI linters: ruff, eslint, tsc
+	@./scripts/run-linters.sh --all
+
+lint-fix:  ## Apply autofixes, then re-check
+	@./scripts/run-linters.sh --all --fix
+
+format: lint-fix  ## Alias for lint-fix (back-compat)
+
+# ── Solver pipeline ──────────────────────────────────────────────────
+.PHONY: preprocess train evaluate figures video pipeline all
 
 preprocess:  ## Raw TIFFs -> tensors + QC figure
 	$(BIN)/naviernet stage=preprocess
@@ -45,11 +83,16 @@ figures:  ## All result figures
 video:  ## Slow-motion MP4
 	$(BIN)/naviernet stage=video
 
-all:  ## Every stage in order
+pipeline:  ## Every stage in order
 	$(BIN)/naviernet stage=all
 
+all: pipeline  ## Alias for pipeline (back-compat)
+
+# ── Housekeeping ─────────────────────────────────────────────────────
+.PHONY: clean clean-runs
+
 clean:  ## Remove caches and build artefacts
-	rm -rf build dist .pytest_cache .ruff_cache **/__pycache__ src/*.egg-info
+	rm -rf build dist .pytest_cache .ruff_cache src/*.egg-info
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 clean-runs:  ## Delete every generated run output (keeps raw and processed data)
