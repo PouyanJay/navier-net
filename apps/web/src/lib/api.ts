@@ -163,6 +163,27 @@ export interface ConsoleLine {
   tone: "ok" | "em" | "dim" | "err" | null;
 }
 
+/** Growth kinematics written by the evaluate stage (physical units). */
+export interface Trajectory {
+  t_ms: number[];
+  nose_um: number[];
+  area_um2: number[];
+  measured: { t_ms: number[]; nose_um: number[]; area_um2: number[] };
+}
+
+/** One reconstructed instant: interface contour polylines in µm. */
+export interface InterfaceFrame {
+  t_ms: number;
+  contours: number[][][];
+}
+
+export interface InterfaceData {
+  run_id: string;
+  domain: { x_um: [number, number]; y_um: [number, number]; x_pin_um: number };
+  frames: InterfaceFrame[];
+  measured: InterfaceFrame[];
+}
+
 /** Fetch + shared error handling: failures throw the API's `detail` when the
  * error body carries one, so every caller surfaces the actionable reason. */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -206,6 +227,9 @@ export const api = {
   getRunStatus: (id: string) => getJson<RunJobStatus>(`${runPath(id)}/status`),
   getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
   getLossHistory: (id: string) => getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
+  getTrajectory: (id: string) => getJson<Trajectory>(`${runPath(id)}/trajectory`),
+  getInterface: (id: string, frames = 48) =>
+    getJson<InterfaceData>(`${runPath(id)}/interface?frames=${frames}`),
 
   startSweep: (request: SweepLaunchRequest) =>
     sendJson<SweepStatus>("/api/sweeps", "POST", request),

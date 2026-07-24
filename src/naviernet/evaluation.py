@@ -101,7 +101,8 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     # Keyed by 1-based physical frame number, matching the TIFF filenames.
     ious = {frame + 1: frame_iou(cfg, model, data, frame) for frame in range(n_event)}
 
-    times, nose, _ = nose_trajectory(cfg, model, data)
+    times, nose, area = nose_trajectory(cfg, model, data)
+    _write_trajectory(cfg, data, paths, times, nose, area)
     speed = np.gradient(nose, times)
     # Trim the ends, where one-sided differences and the pinned start distort
     # the estimate, and average over the steady middle of the growth.
@@ -132,3 +133,26 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     paths.metrics_json.write_text(json.dumps(report, indent=2))
     log.info("metrics written to %s", paths.metrics_json)
     return report
+
+
+def _write_trajectory(cfg, data, paths: RunPaths, times, nose, area) -> None:
+    """Persist the continuous and measured growth kinematics as data.
+
+    The same arrays the trajectory figure plots, in physical units, so the
+    platform can chart them interactively instead of reading a rendered PNG.
+    """
+    l_ref = float(cfg.scales.L_ref_um)
+    t_ref_ms = float(data.meta["t_ref_ms"])
+    t_meas, nose_meas, area_meas = measured_trajectory(cfg, data)
+    payload = {
+        "t_ms": [round(float(t) * t_ref_ms, 4) for t in times],
+        "nose_um": [round(float(x) * l_ref, 2) for x in nose],
+        "area_um2": [round(float(a) * l_ref * l_ref, 1) for a in area],
+        "measured": {
+            "t_ms": [round(float(t), 4) for t in t_meas],
+            "nose_um": [round(float(x) * l_ref, 2) for x in nose_meas],
+            "area_um2": [round(float(a) * l_ref * l_ref, 1) for a in area_meas],
+        },
+    }
+    paths.trajectory_json.write_text(json.dumps(payload))
+    log.info("trajectory written to %s", paths.trajectory_json)

@@ -461,17 +461,12 @@ def _resume_config(
     import torch
     from omegaconf import OmegaConf
 
-    from naviernet.config.schema import Config
-
-    # Merge the snapshot over the structured schema: unknown keys or wrong
-    # types in a (possibly hand-edited) snapshot fail here, not mid-training.
-    snapshot = OmegaConf.load(_snapshot_path(settings, run_id))
-    cfg = OmegaConf.merge(OmegaConf.structured(Config), snapshot)
-    # Re-pin what must reflect *this* launch: the repo location, the requested
-    # extra steps, and the server-side device policy.
-    cfg.paths.root = str(settings.repo_root)
-    cfg.training.steps = request.steps
-    cfg.training.device = "cpu"
+    # Schema-merged and re-pinned to this repo; unreadable snapshots fail
+    # loudly here, not mid-training.
+    cfg = runs_service.load_run_config(settings, run_id)
+    if cfg is None:
+        raise RuntimeError(f"run {run_id!r} has no readable config snapshot")
+    cfg.training.steps = request.steps  # the one value a resume overrides
     OmegaConf.set_readonly(cfg, True)  # match compose_cfg's contract
 
     checkpoint = settings.outputs_dir / run_id / "checkpoints" / "ckpt.pt"

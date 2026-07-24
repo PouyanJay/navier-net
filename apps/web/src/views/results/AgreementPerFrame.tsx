@@ -6,10 +6,23 @@ interface FrameRow extends FramePoint {
   tMs: number | null;
 }
 
+// Inline bars span the interesting IoU range, like the mockup's agreement table.
+const BAR_MIN = 0.85;
+
+function IouBar({ iou }: { iou: number }) {
+  const pct = Math.max(0, Math.min(1, (iou - BAR_MIN) / (1 - BAR_MIN))) * 100;
+  return (
+    <span className="iou-bar" aria-hidden="true">
+      <i style={{ width: `${pct}%` }} />
+    </span>
+  );
+}
+
 const COLUMNS: Column<FrameRow>[] = [
   { header: "Frame", cell: (r) => r.frame, num: true },
   { header: "t (ms)", cell: (r) => (r.tMs != null ? r.tMs.toFixed(1) : "—"), num: true },
   { header: "IoU", cell: (r) => r.iou.toFixed(3), num: true },
+  { header: "", cell: (r) => <IouBar iou={r.iou} /> },
   {
     header: "",
     cell: (r) => (r.holdout ? <Chip tone="amber">holdout — never supervised</Chip> : null),

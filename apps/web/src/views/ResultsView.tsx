@@ -3,7 +3,9 @@ import type { RunDetail, RunSummary } from "../lib/api";
 import { AgreementPerFrame } from "./results/AgreementPerFrame";
 import { ComparePanel } from "./results/ComparePanel";
 import { Deliverables } from "./results/Deliverables";
+import { GrowthKinematics } from "./results/GrowthKinematics";
 import { PhysicsValidationPanel } from "./results/PhysicsValidation";
+import { ReconstructionPanel } from "./results/ReconstructionPanel";
 import { useResultsData } from "./results/useResultsData";
 import "./results/results.css";
 import "./runs.css";
@@ -44,8 +46,10 @@ export function ResultsView() {
       )}
       {detail.status === "ready" && (
         <>
+          <ReconstructionPanel runId={detail.detail.id} />
           <AgreementPerFrame detail={detail.detail} />
           <PhysicsValidationPanel validation={detail.validation} />
+          <GrowthKinematics runId={detail.detail.id} />
           <Deliverables runId={detail.detail.id} artifacts={detail.detail.artifacts} />
         </>
       )}
