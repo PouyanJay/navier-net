@@ -6,7 +6,11 @@ import type { ProjectSummary } from "../src/lib/api";
 import { DatasetsView } from "../src/views/DatasetsView";
 
 /** Owns project state like App does, so attach flows re-render the view. */
-function Harness({ onProjectChanged = vi.fn() }: { onProjectChanged?: (p: ProjectSummary) => void }) {
+function Harness({
+  onProjectChanged = vi.fn(),
+}: {
+  onProjectChanged?: (p: ProjectSummary) => void;
+}) {
   const [project, setProject] = useState<ProjectSummary>(PROJECT);
   return (
     <DatasetsView
@@ -37,6 +41,8 @@ const DETAIL = {
   holdout_frame: 6,
   um_per_px: null,
   notes: "Frames 1-10 continuous growth.",
+  excluded_frames: [] as number[],
+  exclusions_applied: false,
   conditions: {
     fluid: "FC-72",
     T_sat_C: 56.6,
@@ -75,7 +81,18 @@ const QC = {
     x_pin_star: 0.1,
     x_range: [0, 5.7] as [number, number],
     y_range: [0, 1] as [number, number],
-    frames: [{ index: 0, t_ms: 0, contours: [[[0.2, 0.3], [0.4, 0.5]]] }],
+    frames: [
+      {
+        index: 0,
+        t_ms: 0,
+        contours: [
+          [
+            [0.2, 0.3],
+            [0.4, 0.5],
+          ],
+        ],
+      },
+    ],
   },
   sdf: {
     frame_index: 1,
@@ -99,15 +116,24 @@ interface Calls {
   startPreprocess: string[];
   conditionPatches: Record<string, unknown>[];
   projectPatches: Record<string, unknown>[];
+  exclusionPuts: number[][];
 }
 
-function mockApi({ processed = false, holdout = 6 } = {}): Calls {
+function mockApi({
+  processed = false,
+  holdout = 6,
+  excluded = [] as number[],
+  exclusionStatus = 200,
+} = {}): Calls {
   const calls: Calls = {
     upload: [],
     startPreprocess: [],
     conditionPatches: [],
     projectPatches: [],
+    exclusionPuts: [],
   };
+  // The endpoint replaces the set, so the mock keeps the series' current one.
+  let excludedFrames = excluded;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string | URL, opts?: RequestInit) => {
@@ -115,7 +141,14 @@ function mockApi({ processed = false, holdout = 6 } = {}): Calls {
       const post = opts?.method === "POST";
       if (u.endsWith("/api/datasets")) {
         const rows = [
-          { id: "sample", n_frames: 3, processed, conditions_set: false, frame_px: [16, 12], dt_frame_ms: 0.5 },
+          {
+            id: "sample",
+            n_frames: 3,
+            processed,
+            conditions_set: false,
+            frame_px: [16, 12],
+            dt_frame_ms: 0.5,
+          },
         ];
         if (calls.upload.includes("mid_T")) {
           rows.push({
@@ -161,7 +194,11 @@ function mockApi({ processed = false, holdout = 6 } = {}): Calls {
         }
         // Once started, the job settles immediately so polling flows finish.
         const done = calls.startPreprocess.includes(pre[1]);
-        return json({ ...IDLE, dataset: pre[1], state: done ? "done" : "idle" });
+        return json({
+          ...IDLE,
+          dataset: pre[1],
+          state: done ? "done" : "idle",
+        });
       }
       const patch = u.match(/\/api\/projects\/([0-9a-f]{32})$/);
       if (patch && opts?.method === "PATCH") {
@@ -169,8 +206,34 @@ function mockApi({ processed = false, holdout = 6 } = {}): Calls {
         calls.projectPatches.push(body);
         return json({ ...PROJECT, ...body });
       }
+      if (u.endsWith("/excluded-frames") && opts?.method === "PUT") {
+        const body = JSON.parse(String(opts.body)) as {
+          excluded_frames: number[];
+        };
+        calls.exclusionPuts.push(body.excluded_frames);
+        if (exclusionStatus !== 200) {
+          return new Response(
+            JSON.stringify({ detail: "frame 9 is outside the sequence" }),
+            {
+              status: exclusionStatus,
+            },
+          );
+        }
+        excludedFrames = body.excluded_frames;
+        return json({
+          ...DETAIL,
+          processed,
+          holdout_frame: holdout,
+          excluded_frames: excludedFrames,
+        });
+      }
       if (/\/api\/datasets\/[^/]+$/.test(u)) {
-        return json({ ...DETAIL, processed, holdout_frame: holdout });
+        return json({
+          ...DETAIL,
+          processed,
+          holdout_frame: holdout,
+          excluded_frames: excludedFrames,
+        });
       }
       return new Response("not found", { status: 404 });
     }),
@@ -189,8 +252,10 @@ describe("DatasetsView", () => {
 
     expect(await screen.findByText("Series library")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sample/ })).toBeInTheDocument();
-    expect(await screen.findByText(/Image sequence — sample/)).toBeInTheDocument();
-    expect(screen.getAllByAltText(/frame \d+/).length).toBe(3);
+    expect(
+      await screen.findByText(/Image sequence — sample/),
+    ).toBeInTheDocument();
+    expect(screen.getAllByAltText(/Frame \d+ preview/).length).toBe(3);
     // Conditions are editable inputs with unit suffixes.
     expect(screen.getByLabelText(/Frame interval/)).toHaveValue(0.5);
     expect(screen.getByLabelText(/Reference velocity/)).toHaveValue(0.2);
@@ -206,7 +271,9 @@ describe("DatasetsView", () => {
     fireEvent.change(dt, { target: { value: "0.4" } });
     fireEvent.blur(dt);
 
-    await waitFor(() => expect(calls.conditionPatches).toEqual([{ dt_frame_ms: 0.4 }]));
+    await waitFor(() =>
+      expect(calls.conditionPatches).toEqual([{ dt_frame_ms: 0.4 }]),
+    );
     expect(await screen.findByText("431.0")).toBeInTheDocument(); // live Re
   });
 
@@ -215,16 +282,26 @@ describe("DatasetsView", () => {
     const onProjectChanged = vi.fn();
     render(<Harness onProjectChanged={onProjectChanged} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Upload new series/ }));
-    const dialog = await screen.findByRole("dialog", { name: "Upload new series" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Upload new series/ }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Upload new series",
+    });
     expect(dialog).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Series name"), { target: { value: "mid_T" } });
+    fireEvent.change(screen.getByLabelText("Series name"), {
+      target: { value: "mid_T" },
+    });
     const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
       type: "image/tiff",
     });
-    fireEvent.change(screen.getByLabelText(/Image sequence/), { target: { files: [file] } });
-    fireEvent.click(screen.getByRole("button", { name: "Upload & preprocess" }));
+    fireEvent.change(screen.getByLabelText(/Image sequence/), {
+      target: { files: [file] },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Upload & preprocess" }),
+    );
 
     await waitFor(() =>
       expect(calls.projectPatches).toEqual([{ datasets: ["sample", "mid_T"] }]),
@@ -234,20 +311,27 @@ describe("DatasetsView", () => {
     await waitFor(() => expect(calls.startPreprocess).toEqual(["mid_T"]));
     // …and the modal closes on completion (polling saw state: done).
     await waitFor(
-      () => expect(screen.queryByRole("dialog", { name: "Upload new series" })).toBeNull(),
+      () =>
+        expect(
+          screen.queryByRole("dialog", { name: "Upload new series" }),
+        ).toBeNull(),
       { timeout: 4000 },
     );
     expect(onProjectChanged).toHaveBeenCalledWith(
       expect.objectContaining({ datasets: ["sample", "mid_T"] }),
     );
     // The refreshed library shows the new series without a reload.
-    expect(await screen.findByRole("button", { name: /mid_T/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /mid_T/ }),
+    ).toBeInTheDocument();
   });
 
   it("starts preprocessing when the button is clicked", async () => {
     const calls = mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    const button = await screen.findByRole("button", { name: /Run preprocessing/ });
+    const button = await screen.findByRole("button", {
+      name: /Run preprocessing/,
+    });
 
     fireEvent.click(button);
     await waitFor(() => expect(calls.startPreprocess).toEqual(["sample"]));
@@ -259,27 +343,36 @@ describe("DatasetsView", () => {
 
     expect(await screen.findByText("Preprocessing QC")).toBeInTheDocument();
     // Three checks behind one switch; kinematics is the default tab.
-    expect(screen.getByRole("tab", { name: /Growth kinematics/ })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(
+      screen.getByRole("tab", { name: /Growth kinematics/ }),
+    ).toHaveAttribute("aria-selected", "true");
     expect(
       screen.getByRole("img", { name: /Bubble length per frame/ }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /Interface evolution/ }));
-    expect(screen.getByRole("img", { name: /Interface contours/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Interface contours/ }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /Signed distance/ }));
-    expect(screen.getByRole("img", { name: /Signed distance field/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Signed distance field/ }),
+    ).toBeInTheDocument();
   });
 
   it("marks the holdout frame in the strip", async () => {
     mockApi({ holdout: 2 });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    expect(await screen.findByAltText("frame 2 (holdout)")).toBeInTheDocument();
-    expect(screen.getByAltText("frame 1")).toBeInTheDocument();
+    // The tile is a toggle; its accessible name carries the state, so the
+    // holdout is announced rather than only being amber.
+    expect(
+      await screen.findByRole("button", { name: /Frame 2 .* holdout frame/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Frame 1 — included in training$/ }),
+    );
   });
 });
 
@@ -293,9 +386,30 @@ describe("DatasetsView with several series", () => {
         const u = String(url);
         if (u.endsWith("/api/datasets")) {
           return json([
-            { id: "sample", n_frames: 3, processed: true, conditions_set: true, frame_px: [16, 12], dt_frame_ms: 0.5 },
-            { id: "mid_T", n_frames: 2, processed: false, conditions_set: false, frame_px: [16, 12], dt_frame_ms: 0.5 },
-            { id: "foreign", n_frames: 9, processed: false, conditions_set: false, frame_px: null, dt_frame_ms: null },
+            {
+              id: "sample",
+              n_frames: 3,
+              processed: true,
+              conditions_set: true,
+              frame_px: [16, 12],
+              dt_frame_ms: 0.5,
+            },
+            {
+              id: "mid_T",
+              n_frames: 2,
+              processed: false,
+              conditions_set: false,
+              frame_px: [16, 12],
+              dt_frame_ms: 0.5,
+            },
+            {
+              id: "foreign",
+              n_frames: 9,
+              processed: false,
+              conditions_set: false,
+              frame_px: null,
+              dt_frame_ms: null,
+            },
           ]);
         }
         if (u.endsWith("/api/runs")) return json([]);
@@ -310,7 +424,9 @@ describe("DatasetsView with several series", () => {
     render(<DatasetsView project={twoSeries} onProjectChanged={noop} />);
 
     // Both project series are listed; the foreign dataset is not.
-    expect(await screen.findByRole("button", { name: /sample/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /sample/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /mid_T/ })).toBeInTheDocument();
     expect(screen.queryByText("foreign")).not.toBeInTheDocument();
     // Per-series chips are independent: processed+conditions vs bare upload.
@@ -318,36 +434,50 @@ describe("DatasetsView with several series", () => {
     expect(screen.getByText("needs conditions")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /mid_T/ }));
-    expect(await screen.findByText(/Image sequence — mid_T/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Image sequence — mid_T/),
+    ).toBeInTheDocument();
   });
 });
 
 describe("NewSeriesModal failure paths", () => {
   function openFormAndFill(name = "mid_T") {
     fireEvent.click(screen.getByRole("button", { name: /Upload new series/ }));
-    fireEvent.change(screen.getByLabelText("Series name"), { target: { value: name } });
+    fireEvent.change(screen.getByLabelText("Series name"), {
+      target: { value: name },
+    });
     const file = new File([new Uint8Array([0x49, 0x49, 0x2a, 0x00])], "1.tif", {
       type: "image/tiff",
     });
-    fireEvent.change(screen.getByLabelText(/Image sequence/), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText(/Image sequence/), {
+      target: { files: [file] },
+    });
   }
 
   it("reports a failed upload and never attempts the attach", async () => {
     const calls = mockApi();
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
     const real = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (url: string | URL, opts?: RequestInit) => {
-      if (String(url).endsWith("/upload")) {
-        return new Response(JSON.stringify({ detail: "too many frames" }), { status: 400 });
-      }
-      return real(url, opts);
-    });
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/upload")) {
+          return new Response(JSON.stringify({ detail: "too many frames" }), {
+            status: 400,
+          });
+        }
+        return real(url, opts);
+      },
+    );
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText("Series library");
     openFormAndFill();
-    fireEvent.click(screen.getByRole("button", { name: "Upload & preprocess" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Upload & preprocess" }),
+    );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Upload failed: too many/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Upload failed: too many/,
+    );
     expect(calls.projectPatches).toEqual([]);
   });
 
@@ -355,17 +485,25 @@ describe("NewSeriesModal failure paths", () => {
     const calls = mockApi();
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
     const real = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (url: string | URL, opts?: RequestInit) => {
-      if (/\/api\/projects\//.test(String(url)) && opts?.method === "PATCH") {
-        return new Response(JSON.stringify({ detail: "disk full" }), { status: 500 });
-      }
-      return real(url, opts);
-    });
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (/\/api\/projects\//.test(String(url)) && opts?.method === "PATCH") {
+          return new Response(JSON.stringify({ detail: "disk full" }), {
+            status: 500,
+          });
+        }
+        return real(url, opts);
+      },
+    );
     const onProjectChanged = vi.fn();
-    render(<DatasetsView project={PROJECT} onProjectChanged={onProjectChanged} />);
+    render(
+      <DatasetsView project={PROJECT} onProjectChanged={onProjectChanged} />,
+    );
     await screen.findByText("Series library");
     openFormAndFill();
-    fireEvent.click(screen.getByRole("button", { name: "Upload & preprocess" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Upload & preprocess" }),
+    );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /Uploaded, but linking the series failed: disk full/,
@@ -383,7 +521,9 @@ describe("NewSeriesModal failure paths", () => {
     expect(
       screen.getByText(/A series with this name already exists/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Upload & preprocess" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Upload & preprocess" }),
+    ).toBeDisabled();
   });
 });
 
@@ -392,15 +532,17 @@ describe("ConditionsPanel behavior", () => {
     mockApi();
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
     const real = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (url: string | URL, opts?: RequestInit) => {
-      if (String(url).endsWith("/conditions")) {
-        return new Response(
-          JSON.stringify({ detail: "dt_frame_ms must be a positive number" }),
-          { status: 400 },
-        );
-      }
-      return real(url, opts);
-    });
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/conditions")) {
+          return new Response(
+            JSON.stringify({ detail: "dt_frame_ms must be a positive number" }),
+            { status: 400 },
+          );
+        }
+        return real(url, opts);
+      },
+    );
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     const dt = await screen.findByLabelText(/Frame interval/);
@@ -437,7 +579,14 @@ describe("DatasetsView preprocess polling", () => {
         const done = polls >= 2;
         if (u.endsWith("/api/datasets")) {
           return json([
-            { id: "sample", n_frames: 3, processed: done, conditions_set: false, frame_px: [16, 12], dt_frame_ms: 0.5 },
+            {
+              id: "sample",
+              n_frames: 3,
+              processed: done,
+              conditions_set: false,
+              frame_px: [16, 12],
+              dt_frame_ms: 0.5,
+            },
           ]);
         }
         if (u.endsWith("/api/runs")) return json([]);
@@ -454,13 +603,16 @@ describe("DatasetsView preprocess polling", () => {
           polls += 1;
           return json({ ...IDLE, state: polls >= 2 ? "done" : "running" });
         }
-        if (/\/api\/datasets\/[^/]+$/.test(u)) return json({ ...DETAIL, processed: done });
+        if (/\/api\/datasets\/[^/]+$/.test(u))
+          return json({ ...DETAIL, processed: done });
         return new Response("not found", { status: 404 });
       }),
     );
 
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Run preprocessing/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Run preprocessing/ }),
+    );
 
     // Real timers: the hook polls every 1s until done, then refreshes —
     // proven by the QC panel appearing once the series reports processed.
@@ -484,5 +636,138 @@ describe("DatasetsView failure paths", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(/Could not load datasets/);
     expect(screen.queryByText("Loading datasets…")).not.toBeInTheDocument();
+  });
+});
+
+describe("frame exclusion", () => {
+  /** The tile toggle for a 1-based camera frame. */
+  const tile = (n: number) =>
+    screen.getByRole("button", { name: new RegExp(`^Frame ${n} —`) });
+
+  it("excludes a frame on click and sends the whole new set", async () => {
+    const calls = mockApi({ excluded: [1] });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence — sample/);
+
+    fireEvent.click(tile(3));
+
+    // The set is replaced, not appended to — frame 1 must survive the round trip.
+    await waitFor(() => expect(calls.exclusionPuts).toEqual([[1, 3]]));
+    await waitFor(() =>
+      expect(tile(3)).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(await screen.findByText(/2 excluded \(1, 3\)/)).toBeInTheDocument();
+  });
+
+  it("includes an excluded frame again on a second click", async () => {
+    const calls = mockApi({ excluded: [3] });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence — sample/);
+    await waitFor(() =>
+      expect(tile(3)).toHaveAttribute("aria-pressed", "true"),
+    );
+
+    fireEvent.click(tile(3));
+
+    await waitFor(() => expect(calls.exclusionPuts).toEqual([[]]));
+    await waitFor(() =>
+      expect(tile(3)).toHaveAttribute("aria-pressed", "false"),
+    );
+  });
+
+  it("refuses to exclude the holdout frame without calling the API", async () => {
+    const calls = mockApi({ holdout: 2 });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence — sample/);
+
+    fireEvent.click(tile(2));
+
+    expect(
+      await screen.findByText(/only unsupervised check/),
+    ).toBeInTheDocument();
+    expect(calls.exclusionPuts).toEqual([]);
+    expect(tile(2)).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("reverts the tile and surfaces the reason when the API rejects the edit", async () => {
+    mockApi({ exclusionStatus: 400 });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence — sample/);
+
+    fireEvent.click(tile(3));
+
+    // The border must never claim an exclusion the server did not accept.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /outside the sequence/,
+    );
+    await waitFor(() =>
+      expect(tile(3)).toHaveAttribute("aria-pressed", "false"),
+    );
+  });
+
+  it("warns that saved exclusions need a preprocessing re-run", async () => {
+    mockApi({ processed: true, excluded: [3] });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // DETAIL carries exclusions_applied: false, so the tensors are out of date.
+    expect(
+      await screen.findByText(
+        /excluded frames have changed since the tensors were built/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Re-run preprocessing" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the frame full size on double-click without toggling it", async () => {
+    const calls = mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence — sample/);
+
+    fireEvent.doubleClick(tile(2));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: /Frame 2 of sample/,
+    });
+    expect(dialog).toBeInTheDocument();
+    // The two clicks a double-click also delivers must not have excluded it.
+    await waitFor(() => expect(calls.exclusionPuts).toEqual([]));
+  });
+
+  it("steps frames with the arrow keys and closes on Escape", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence — sample/);
+    fireEvent.doubleClick(tile(2));
+    await screen.findByRole("dialog", { name: /Frame 2 of sample/ });
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(
+      await screen.findByRole("dialog", { name: /Frame 3 of sample/ }),
+    ).toBeInTheDocument();
+
+    // Frame 3 is the last of the 3-frame series — the axis must not run past it.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(
+      await screen.findByRole("dialog", { name: /Frame 3 of sample/ }),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("offers an enlarge control so the lightbox is reachable by keyboard", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence — sample/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Enlarge frame 2" }));
+
+    expect(
+      await screen.findByRole("dialog", { name: /Frame 2 of sample/ }),
+    ).toBeInTheDocument();
   });
 });

@@ -185,6 +185,16 @@ class DatasetDetail(BaseModel):
     um_per_px: float | None = None  # calibration, once preprocessed
     notes: str | None = None  # the experiment's frame-usage story
     conditions: OperatingConditions
+    excluded_frames: list[int] = []  # 1-based camera frames kept out of the tensors
+    # Whether the preprocessed tensors were built with the exclusions above; false
+    # means an edit is pending a preprocessing re-run.
+    exclusions_applied: bool = False
+
+
+class ExclusionsUpdate(BaseModel):
+    """Full replacement of a series' excluded camera frames (1-based)."""
+
+    excluded_frames: list[int]
 
 
 class PreprocessStatus(BaseModel):

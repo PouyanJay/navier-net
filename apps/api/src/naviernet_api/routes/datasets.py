@@ -11,6 +11,7 @@ from naviernet_api.models import (
     ConditionsUpdate,
     DatasetDetail,
     DatasetSummary,
+    ExclusionsUpdate,
     PreprocessStatus,
     QcData,
 )
@@ -18,7 +19,7 @@ from naviernet_api.services import datasets as datasets_service
 from naviernet_api.services import jobs as jobs_service
 from naviernet_api.services import qc as qc_service
 from naviernet_api.services.config_service import compose_cfg, compute_groups_for
-from naviernet_api.services.datasets import ConditionsError, UploadError
+from naviernet_api.services.datasets import ConditionsError, ExclusionError, UploadError
 from naviernet_api.settings import Settings, get_settings
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -48,7 +49,7 @@ def get_dataset_groups(
     if datasets_service.get_dataset(settings, dataset) is None:
         raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
     return compute_groups_for(
-        dataset, overrides=datasets_service.conditions_overrides(settings, dataset)
+        dataset, overrides=datasets_service.series_overrides(settings, dataset)
     )
 
 
@@ -67,12 +68,33 @@ def update_conditions(
     except ConditionsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    overrides = datasets_service.conditions_overrides(settings, dataset)
+    overrides = datasets_service.series_overrides(settings, dataset)
     cfg = compose_cfg(dataset, overrides=overrides)
     return ConditionsResponse(
         conditions=datasets_service.conditions_from_cfg(cfg),
         groups=compute_groups_for(dataset, overrides=overrides),
     )
+
+
+@router.put("/{dataset}/excluded-frames", response_model=DatasetDetail)
+def set_excluded_frames(
+    dataset: str,
+    payload: ExclusionsUpdate,
+    settings: Settings = Depends(get_settings),
+) -> DatasetDetail:
+    """Replace the frames held out of the tensors. Takes effect on the next
+    preprocessing run — the returned detail says whether one is still pending."""
+    if datasets_service.get_dataset_summary(settings, dataset) is None:
+        raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
+    try:
+        datasets_service.save_excluded_frames(settings, dataset, payload.excluded_frames)
+    except ExclusionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    detail = datasets_service.get_dataset(settings, dataset)
+    if detail is None:  # saved but not found — should not happen
+        raise HTTPException(status_code=500, detail="exclusions saved but dataset not found")
+    return detail
 
 
 @router.get("/{dataset}/qc-data", response_model=QcData)

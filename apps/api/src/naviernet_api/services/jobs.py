@@ -67,16 +67,17 @@ def _run(settings: Settings, dataset: str) -> None:
     try:
         from naviernet.pipeline import Pipeline
         from naviernet_api.services.config_service import compose_cfg
-        from naviernet_api.services.datasets import conditions_overrides
+        from naviernet_api.services.datasets import series_overrides
 
         # paths.root is pinned to the repo so data/ and outputs/ resolve
         # regardless of the server's working directory. The series' saved
-        # conditions apply here too, so preprocessing sees its real Δt etc.
+        # conditions and frame exclusions apply here too, so preprocessing sees
+        # its real Δt and drops the frames the user marked.
         cfg = compose_cfg(
             dataset,
             overrides=[
                 f"paths.root={settings.repo_root}",
-                *conditions_overrides(settings, dataset),
+                *series_overrides(settings, dataset),
             ],
         )
         Pipeline(cfg).preprocess()

@@ -4,7 +4,11 @@ import { GroupsPanel } from "./datasets/GroupsPanel";
 import { ImageSequence } from "./datasets/ImageSequence";
 import { QcPanel } from "./datasets/QcPanel";
 import { SeriesLibrary } from "./datasets/SeriesLibrary";
-import { useDatasetData, useQcData, useTrainedIds } from "./datasets/useDatasetData";
+import {
+  useDatasetData,
+  useQcData,
+  useTrainedIds,
+} from "./datasets/useDatasetData";
 import "./datasets/datasets.css";
 import "./runs.css";
 
@@ -19,7 +23,10 @@ interface DatasetsViewProps {
 export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   const data = useDatasetData(project.datasets[0] ?? null);
   const trainedIds = useTrainedIds();
-  const { qc, qcError } = useQcData(data.selected, data.detail?.processed ?? false);
+  const { qc, qcError } = useQcData(
+    data.selected,
+    data.detail?.processed ?? false,
+  );
 
   if (data.datasets === null && data.error) {
     return (
@@ -37,7 +44,8 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   }
 
   const series = data.datasets.filter((d) => project.datasets.includes(d.id));
-  const inScope = data.selected != null && series.some((d) => d.id === data.selected);
+  const inScope =
+    data.selected != null && series.some((d) => d.id === data.selected);
   const detail = inScope ? data.detail : null;
 
   return (
@@ -67,6 +75,8 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
               detail={detail}
               preprocess={data.preprocess}
               onPreprocess={data.runPreprocess}
+              onToggleExcluded={(frame) => void data.toggleExcludedFrame(frame)}
+              exclusionError={data.exclusionError}
             />
             {qcError && (
               <p className="state-note error" role="alert">
@@ -79,7 +89,9 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
               conditions={detail.conditions}
               onSaved={data.applyConditions}
             />
-            {data.groups && <GroupsPanel datasetId={detail.id} groups={data.groups} />}
+            {data.groups && (
+              <GroupsPanel datasetId={detail.id} groups={data.groups} />
+            )}
           </>
         )}
       </div>

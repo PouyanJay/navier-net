@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 from naviernet_api.services import datasets as datasets_service
 from naviernet_api.services import jobs as jobs_service
+from naviernet_api.services.config_service import compose_cfg
 from naviernet_api.settings import Settings
+
+from naviernet.data.preprocess import usable_frame_numbers
 
 
 def test_list_datasets(client):
@@ -277,3 +280,109 @@ def test_conditions_bounds_are_per_field(client):
         ).status_code
         == 400
     )
+
+
+# --- frame exclusion ---------------------------------------------------------
+
+
+@pytest.fixture
+def long_series(client, tiff_bytes) -> str:
+    """A 12-frame series, so the whole usable window can be addressed."""
+    files = [("files", (f"f{i}.tif", tiff_bytes, "image/tiff")) for i in range(12)]
+    assert client.post("/api/datasets/longseries/upload", files=files).status_code == 200
+    return "longseries"
+
+
+def test_excluded_frames_start_empty(client):
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["excluded_frames"] == []
+    assert detail["exclusions_applied"] is False  # nothing preprocessed yet
+
+
+def test_put_excluded_frames_saves_and_round_trips(client, long_series):
+    r = client.put(
+        f"/api/datasets/{long_series}/excluded-frames", json={"excluded_frames": [7, 3, 3]}
+    )
+    assert r.status_code == 200
+    assert r.json()["excluded_frames"] == [3, 7]  # sorted and de-duplicated
+
+    assert client.get(f"/api/datasets/{long_series}").json()["excluded_frames"] == [3, 7]
+
+
+def test_put_excluded_frames_clears_with_an_empty_list(client, long_series):
+    client.put(f"/api/datasets/{long_series}/excluded-frames", json={"excluded_frames": [3]})
+
+    r = client.put(f"/api/datasets/{long_series}/excluded-frames", json={"excluded_frames": []})
+
+    assert r.status_code == 200
+    assert r.json()["excluded_frames"] == []
+    assert client.get(f"/api/datasets/{long_series}").json()["excluded_frames"] == []
+
+
+@pytest.mark.parametrize("frame", [0, -1, 99])
+def test_excluding_a_frame_outside_the_sequence_is_rejected(client, long_series, frame):
+    r = client.put(
+        f"/api/datasets/{long_series}/excluded-frames", json={"excluded_frames": [frame]}
+    )
+    assert r.status_code == 400
+    assert "outside the sequence" in r.json()["detail"]
+
+
+def test_excluding_the_holdout_frame_is_rejected(client, long_series):
+    """The holdout is the only unsupervised check; dropping it silently would
+    leave the headline IoU measuring nothing."""
+    holdout = client.get(f"/api/datasets/{long_series}").json()["holdout_frame"]
+
+    r = client.put(
+        f"/api/datasets/{long_series}/excluded-frames", json={"excluded_frames": [holdout]}
+    )
+
+    assert r.status_code == 400
+    assert "holdout" in r.json()["detail"]
+    assert client.get(f"/api/datasets/{long_series}").json()["excluded_frames"] == []
+
+
+def test_excluding_almost_every_frame_is_rejected(client, long_series):
+    holdout = client.get(f"/api/datasets/{long_series}").json()["holdout_frame"]
+    nearly_all = [n for n in range(1, 11) if n != holdout]
+
+    r = client.put(
+        f"/api/datasets/{long_series}/excluded-frames", json={"excluded_frames": nearly_all}
+    )
+
+    assert r.status_code == 400
+    assert "must remain" in r.json()["detail"]
+
+
+def test_excluded_frames_of_unknown_dataset_is_404(client):
+    r = client.put("/api/datasets/nope/excluded-frames", json={"excluded_frames": [1]})
+    assert r.status_code == 404
+
+
+def test_exclusions_reach_the_composed_config(repo_root):
+    """The override is what makes preprocessing and every run drop the frame."""
+    settings = Settings(repo_root=repo_root)
+    datasets_service.save_excluded_frames(settings, "sample", [2])
+
+    overrides = datasets_service.series_overrides(settings, "sample")
+
+    assert "experiment.excluded_frames=[2]" in overrides
+    cfg = compose_cfg("sample", overrides=overrides)
+    assert list(cfg.experiment.excluded_frames) == [2]
+    assert 2 not in usable_frame_numbers(cfg)
+
+
+def test_exclusions_are_flagged_unapplied_until_preprocessing_reruns(client, repo_root):
+    """Tensors built without the new exclusion must not read as up to date."""
+    settings = Settings(repo_root=repo_root)
+    processed = repo_root / "data" / "processed" / "sample"
+    processed.mkdir(parents=True)
+    from conftest import write_synthetic_tensors
+
+    write_synthetic_tensors(processed / "tensors.npz")  # meta has no exclusions
+
+    assert client.get("/api/datasets/sample").json()["exclusions_applied"] is True
+
+    datasets_service.save_excluded_frames(settings, "sample", [2])
+
+    assert client.get("/api/datasets/sample").json()["exclusions_applied"] is False

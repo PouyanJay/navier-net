@@ -36,6 +36,10 @@ from naviernet.utils.paths import RunPaths
 
 log = get_logger(__name__)
 
+# Below this the time axis degenerates: the trajectory span runs t[0]..t[-2],
+# and a continuous reconstruction of one instant is not a reconstruction.
+MIN_USABLE_FRAMES = 3
+
 
 @dataclass(frozen=True)
 class Calibration:
@@ -117,16 +121,33 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
     return best
 
 
+def usable_frame_numbers(cfg) -> list[int]:
+    """The 1-based camera frames that become tensor rows, in order.
+
+    The usable window (``1..n_frames_usable``) minus the frames excluded for
+    this series. Row ``i`` of every tensor is camera frame ``result[i]``; the
+    mapping is written into the archive's meta so downstream stages resolve
+    frame numbers instead of assuming a contiguous run.
+    """
+    excluded = {int(n) for n in cfg.experiment.excluded_frames}
+    kept = [n for n in range(1, int(cfg.experiment.n_frames_usable) + 1) if n not in excluded]
+    if len(kept) < MIN_USABLE_FRAMES:
+        raise ValueError(
+            f"only {len(kept)} usable frame(s) left after excluding "
+            f"{sorted(excluded)}; at least {MIN_USABLE_FRAMES} are needed"
+        )
+    return kept
+
+
 def preprocess(cfg, paths: RunPaths) -> dict:
     """Run the full preprocessing pipeline and write the tensor archive."""
     paths.ensure()
     calibration = detect_walls(cfg, paths)
     um_per_px = calibration.um_per_px
-    n_usable = cfg.experiment.n_frames_usable
+    frame_numbers = usable_frame_numbers(cfg)
+    n_usable = len(frame_numbers)
 
-    masks = np.stack(
-        [segment_frame(cfg, paths, n, calibration.roi) for n in range(1, n_usable + 1)]
-    )
+    masks = np.stack([segment_frame(cfg, paths, n, calibration.roi) for n in frame_numbers])
     # Flip x so downstream is +x; the raw camera sees flow right to left.
     alpha = masks.astype(np.float32)[:, :, ::-1].copy()
 
@@ -138,10 +159,13 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         inside = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
         sdf[i] = (outside - inside) * um_per_px / l_ref  # negative inside vapour
 
-    # Mask the field-of-view cut on the final usable frame.
+    # Mask the field-of-view cut on the final usable frame -- unless that frame
+    # was excluded, in which case there is no truncated row to mask.
     valid = np.ones_like(alpha, dtype=np.uint8)
-    if cfg.imaging.truncated_cols > 0:
-        valid[n_usable - 1, :, -cfg.imaging.truncated_cols :] = 0
+    last_usable = int(cfg.experiment.n_frames_usable)
+    if cfg.imaging.truncated_cols > 0 and last_usable in frame_numbers:
+        truncated_row = frame_numbers.index(last_usable)
+        valid[truncated_row, :, -cfg.imaging.truncated_cols :] = 0
 
     height_px, width_px = alpha.shape[1:]
     from naviernet.physics.groups import reference_time_ms
@@ -149,13 +173,17 @@ def preprocess(cfg, paths: RunPaths) -> dict:
     t_ref_ms = reference_time_ms(cfg.scales)
     x_star = (np.arange(width_px) + 0.5) * um_per_px / l_ref
     y_star = (np.arange(height_px) + 0.5) * um_per_px / l_ref
-    t_star = np.arange(n_usable) * cfg.experiment.dt_frame_ms / t_ref_ms
+    # Real acquisition times: an excluded frame leaves a gap on the time axis
+    # rather than pulling every later frame earlier.
+    t_star = (np.asarray(frame_numbers) - 1) * cfg.experiment.dt_frame_ms / t_ref_ms
+
+    # Rows (not camera frames) belonging to the growth event -- what downstream
+    # stages index with.
+    n_event = sum(1 for n in frame_numbers if n <= int(cfg.experiment.n_frames_event))
 
     # The nucleation cavity pins the bubble's upstream end: in flipped
     # coordinates that is the (near-stationary) right edge of the raw mask.
-    right_ends = [
-        np.nonzero(m.any(axis=0))[0].max() for m in masks[: cfg.experiment.n_frames_event]
-    ]
+    right_ends = [np.nonzero(m.any(axis=0))[0].max() for m in masks[:n_event]]
     x_pin = (width_px - float(np.median(right_ends))) * um_per_px / l_ref
 
     meta = {
@@ -168,8 +196,12 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         "t_ref_ms": t_ref_ms,
         "x_pin_star": x_pin,
         "n_frames_usable": n_usable,
-        "n_frames_event": cfg.experiment.n_frames_event,
-        "frames_used": f"1-{n_usable} of {cfg.experiment.n_frames_raw}",
+        "n_frames_event": n_event,
+        # Row -> camera frame. Downstream reads this rather than assuming
+        # row i is frame i+1, which stops holding once frames are excluded.
+        "frame_numbers": frame_numbers,
+        "excluded_frames": sorted({int(n) for n in cfg.experiment.excluded_frames}),
+        "frames_used": _frames_used(cfg, frame_numbers),
         "x_convention": "x* runs downstream; raw camera flow is right to left",
     }
 
@@ -188,5 +220,14 @@ def preprocess(cfg, paths: RunPaths) -> dict:
 
     from naviernet.viz.qc import qc_figure
 
-    qc_figure(cfg, paths, alpha, sdf, x_star, y_star, t_star, um_per_px, x_pin)
+    qc_figure(cfg, paths, alpha, sdf, x_star, y_star, t_star, um_per_px, x_pin, n_event)
     return meta
+
+
+def _frames_used(cfg, frame_numbers: list[int]) -> str:
+    """Human-readable provenance for the archive's meta record."""
+    window = f"1-{cfg.experiment.n_frames_usable} of {cfg.experiment.n_frames_raw}"
+    dropped = sorted(
+        set(range(1, int(cfg.experiment.n_frames_usable) + 1)) - set(frame_numbers)
+    )
+    return window if not dropped else f"{window}, excluding {dropped}"

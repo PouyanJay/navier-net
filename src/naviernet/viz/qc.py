@@ -22,9 +22,13 @@ log = get_logger(__name__)
 CONTOUR_FRAME_STRIDE = 2
 
 
-def qc_figure(cfg, paths: RunPaths, alpha, sdf, xs, ys, ts, um_per_px, x_pin) -> None:
-    """Growth kinematics, interface evolution, and an example SDF."""
-    n_event = cfg.experiment.n_frames_event
+def qc_figure(cfg, paths: RunPaths, alpha, sdf, xs, ys, ts, um_per_px, x_pin, n_event) -> None:
+    """Growth kinematics, interface evolution, and an example SDF.
+
+    ``n_event`` counts *rows* of the growth event, not camera frames: excluded
+    frames are absent from ``alpha``/``ts``, so the config's frame count would
+    over-slice them.
+    """
     t_ms = ts * reference_time_ms(cfg.scales)
 
     # Bubble length in um: streamwise extent of the mask, frame by frame.

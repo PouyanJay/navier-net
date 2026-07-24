@@ -39,6 +39,10 @@ class ConditionsError(ValueError):
     """A rejected conditions edit (unknown field, non-physical value)."""
 
 
+class ExclusionError(ValueError):
+    """A rejected frame-exclusion edit (out of range, holdout, too few left)."""
+
+
 # Editable per-series conditions: the Hydra override path each field drives,
 # plus its accepted [min, max] (server-side bounds per SECURITY.md §4 — the
 # ranges are generous physical sanity limits, not experiment tuning). Saved
@@ -154,6 +158,100 @@ def save_conditions(
     return merged
 
 
+# ── Per-series frame exclusions ──────────────────────────────────────────────
+
+
+def _exclusions_path(settings: Settings, dataset: str) -> Path | None:
+    raw_dir = _raw_dir(settings, dataset)
+    return None if raw_dir is None else raw_dir / "excluded_frames.json"
+
+
+def read_excluded_frames(settings: Settings, dataset: str) -> list[int]:
+    """The series' excluded camera frames, sorted ([] when none are saved)."""
+    path = _exclusions_path(settings, dataset)
+    if path is None or not path.is_file():
+        return []
+    try:
+        saved = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        log.warning("ignoring unreadable exclusions for %s: %s", dataset, exc)
+        return []
+    if not isinstance(saved, list):
+        # Degrade like a corrupt file rather than taking the listing down.
+        log.warning("ignoring non-list exclusions file for %s", dataset)
+        return []
+    return sorted({int(n) for n in saved if isinstance(n, int) and not isinstance(n, bool)})
+
+
+def save_excluded_frames(settings: Settings, dataset: str, frames: list[int]) -> list[int]:
+    """Replace the series' exclusion set with a validated one; returns it.
+
+    The set is a full replacement, not a merge: the client sends the frames it
+    wants excluded, so unchecking one is expressible.
+    """
+    path = _exclusions_path(settings, dataset)
+    if path is None or not path.parent.is_dir():
+        raise ExclusionError(f"dataset {dataset!r} not found")
+
+    n_raw = _count_frames(path.parent)
+    wanted = sorted({int(n) for n in frames})
+    for frame in wanted:
+        if not 1 <= frame <= n_raw:
+            raise ExclusionError(f"frame {frame} is outside the sequence (1-{n_raw})")
+
+    cfg = compose_cfg(dataset, overrides=conditions_overrides(settings, dataset))
+    holdout = int(cfg.training.holdout_frame) + 1  # config is 0-based; frames are 1-based
+    if holdout > 0 and holdout in wanted:
+        raise ExclusionError(
+            f"frame {holdout} is the holdout frame — the only unsupervised check on "
+            "the model. Move the holdout before excluding this frame."
+        )
+    # The floor lives with the stage that enforces it, so the API cannot accept
+    # a set preprocessing would then reject.
+    from naviernet.data.preprocess import MIN_USABLE_FRAMES
+
+    n_usable = int(cfg.experiment.n_frames_usable)
+    kept = [n for n in range(1, n_usable + 1) if n not in set(wanted)]
+    if len(kept) < MIN_USABLE_FRAMES:
+        raise ExclusionError(
+            f"at least {MIN_USABLE_FRAMES} usable frames must remain; this would leave "
+            f"{len(kept)}"
+        )
+
+    if wanted:
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(wanted, indent=2))
+        tmp.replace(path)
+    else:
+        path.unlink(missing_ok=True)  # no file == no exclusions
+    log.info("saved excluded frames for %s: %s", dataset, wanted)
+    return wanted
+
+
+def series_overrides(settings: Settings, dataset: str) -> list[str]:
+    """Everything saved for this series as Hydra overrides: its conditions plus
+    its excluded frames. Every compose site for the dataset uses this, so the
+    detail view, the groups, preprocessing, and run launches see one series."""
+    overrides = conditions_overrides(settings, dataset)
+    excluded = read_excluded_frames(settings, dataset)
+    if excluded:
+        overrides.append(f"experiment.excluded_frames=[{','.join(map(str, excluded))}]")
+    return overrides
+
+
+def exclusions_applied(settings: Settings, dataset: str) -> bool:
+    """Whether the preprocessed tensors were built with the saved exclusions.
+
+    False while an edit is pending a re-run — the UI says so rather than
+    implying the model already ignores the frame.
+    """
+    meta = tensors_meta(settings, dataset)
+    if not meta:
+        return False
+    applied = meta.get("excluded_frames", [])
+    return sorted(int(n) for n in applied) == read_excluded_frames(settings, dataset)
+
+
 def tensors_meta(settings: Settings, dataset: str) -> dict:
     """The meta record inside tensors.npz ({} when not preprocessed)."""
     path = tensors_path(settings, dataset)
@@ -172,7 +270,7 @@ def tensors_meta(settings: Settings, dataset: str) -> dict:
 def _dt_frame_ms(settings: Settings, dataset: str) -> float | None:
     """The series' frame interval (with its saved overrides); None on failure."""
     try:
-        cfg = compose_cfg(dataset, overrides=conditions_overrides(settings, dataset))
+        cfg = compose_cfg(dataset, overrides=series_overrides(settings, dataset))
         return float(cfg.experiment.dt_frame_ms)
     except Exception as exc:  # noqa: BLE001 — a bad config must not hide the series
         log.warning("could not compose config for %s: %s", dataset, exc)
@@ -220,7 +318,7 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
     raw_dir = _raw_dir(settings, dataset)
     if raw_dir is None or not raw_dir.is_dir():
         return None
-    cfg = compose_cfg(dataset, overrides=conditions_overrides(settings, dataset))
+    cfg = compose_cfg(dataset, overrides=series_overrides(settings, dataset))
     meta = tensors_meta(settings, dataset)
     return DatasetDetail(
         id=dataset,
@@ -238,6 +336,8 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
         ),
         um_per_px=meta.get("um_per_px"),
         notes=(cfg.experiment.notes or None),
+        excluded_frames=read_excluded_frames(settings, dataset),
+        exclusions_applied=exclusions_applied(settings, dataset),
     )
 
 

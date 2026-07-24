@@ -92,7 +92,9 @@ def render_video(cfg, model, data, paths: RunPaths, n_t: int | None = None) -> P
     um_per_px = data.meta["um_per_px"]
     t_ref_ms = reference_time_ms(cfg.scales)
     dt_frame_ms = cfg.experiment.dt_frame_ms
-    n_event = cfg.experiment.n_frames_event
+    # Camera frame -> tensor row, for the event frames only. Excluded frames are
+    # absent, so the clock passes their instant without a measured contour to flash.
+    event_rows = {frame: row for row, frame in enumerate(data.event_frames)}
 
     times = np.linspace(data.t[0], data.t[-2], n_t)
     # Real time between rendered frames, versus the wall-clock time each frame
@@ -136,9 +138,10 @@ def render_video(cfg, model, data, paths: RunPaths, n_t: int | None = None) -> P
 
         # Flash the measured contour as the clock passes each camera instant.
         k = round(t_ms / dt_frame_ms)
-        if k < n_event and abs(t_ms - k * dt_frame_ms) < FLASH_TOLERANCE_MS:
+        row = event_rows.get(k + 1)  # k is 0-based camera time; frames are 1-based
+        if row is not None and abs(t_ms - k * dt_frame_ms) < FLASH_TOLERANCE_MS:
             measured, _ = cv2.findContours(
-                data.masks_camera[k], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+                data.masks_camera[row], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
             )
             cv2.drawContours(canvas[y0:y1, :], measured, -1, (255, 255, 255), 1)
 

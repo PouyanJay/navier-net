@@ -137,6 +137,10 @@ export interface DatasetDetail extends DatasetSummary {
   holdout_frame: number | null;
   um_per_px: number | null;
   notes: string | null;
+  /** 1-based camera frames kept out of the tensors the model trains on. */
+  excluded_frames: number[];
+  /** False when the exclusions above still need a preprocessing re-run. */
+  exclusions_applied: boolean;
 }
 
 export type DimensionlessGroups = Record<string, number>;
@@ -235,7 +239,11 @@ export interface Trajectory {
   t_ms: KinematicsSeries;
   nose_um: KinematicsSeries;
   area_um2: KinematicsSeries;
-  measured: { t_ms: KinematicsSeries; nose_um: KinematicsSeries; area_um2: KinematicsSeries };
+  measured: {
+    t_ms: KinematicsSeries;
+    nose_um: KinematicsSeries;
+    area_um2: KinematicsSeries;
+  };
 }
 
 /** One reconstructed instant: interface contour polylines in µm. */
@@ -270,7 +278,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try {
-      detail = ((await response.json()) as { detail?: string }).detail ?? detail;
+      detail =
+        ((await response.json()) as { detail?: string }).detail ?? detail;
     } catch {
       /* non-JSON error body */
     }
@@ -279,13 +288,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
-const getJson = <T,>(path: string) =>
+const getJson = <T>(path: string) =>
   request<T>(path, { headers: { Accept: "application/json" } });
 
-const send = <T,>(path: string, method: string, body?: BodyInit) =>
+const send = <T>(path: string, method: string, body?: BodyInit) =>
   request<T>(path, { method, body });
 
-const sendJson = <T,>(path: string, method: string, payload: unknown) =>
+const sendJson = <T>(path: string, method: string, payload: unknown) =>
   request<T>(path, {
     method,
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -299,20 +308,24 @@ const datasetPath = (id: string) => `/api/datasets/${encodeURIComponent(id)}`;
 export const api = {
   listRuns: () => getJson<RunSummary[]>("/api/runs"),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
-  getValidation: (id: string) => getJson<PhysicsValidation>(`${runPath(id)}/validation`),
+  getValidation: (id: string) =>
+    getJson<PhysicsValidation>(`${runPath(id)}/validation`),
 
   startRun: (request: RunLaunchRequest) =>
     sendJson<RunJobStatus>("/api/runs", "POST", request),
   getRunStatus: (id: string) => getJson<RunJobStatus>(`${runPath(id)}/status`),
   getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
-  getLossHistory: (id: string) => getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
-  getTrajectory: (id: string) => getJson<Trajectory>(`${runPath(id)}/trajectory`),
+  getLossHistory: (id: string) =>
+    getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
+  getTrajectory: (id: string) =>
+    getJson<Trajectory>(`${runPath(id)}/trajectory`),
   getInterface: (id: string, frames = 48) =>
     getJson<InterfaceData>(`${runPath(id)}/interface?frames=${frames}`),
 
   startSweep: (request: SweepLaunchRequest) =>
     sendJson<SweepStatus>("/api/sweeps", "POST", request),
-  getSweep: (id: string) => getJson<SweepStatus>(`/api/sweeps/${encodeURIComponent(id)}`),
+  getSweep: (id: string) =>
+    getJson<SweepStatus>(`/api/sweeps/${encodeURIComponent(id)}`),
   getActiveSweep: () => getJson<SweepStatus | null>("/api/sweeps/active"),
 
   listProjects: () => getJson<ProjectSummary[]>("/api/projects"),
@@ -321,13 +334,28 @@ export const api = {
   updateProject: (
     id: string,
     fields: Partial<Pick<ProjectSummary, "name" | "description" | "datasets">>,
-  ) => sendJson<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`, "PATCH", fields),
+  ) =>
+    sendJson<ProjectSummary>(
+      `/api/projects/${encodeURIComponent(id)}`,
+      "PATCH",
+      fields,
+    ),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),
-  getDatasetGroups: (id: string) => getJson<DimensionlessGroups>(`${datasetPath(id)}/groups`),
+  getDatasetGroups: (id: string) =>
+    getJson<DimensionlessGroups>(`${datasetPath(id)}/groups`),
   updateConditions: (id: string, fields: ConditionsUpdate) =>
-    sendJson<ConditionsResponse>(`${datasetPath(id)}/conditions`, "PATCH", fields),
+    sendJson<ConditionsResponse>(
+      `${datasetPath(id)}/conditions`,
+      "PATCH",
+      fields,
+    ),
+  /** Replace the series' excluded frames (full set, not a delta). */
+  setExcludedFrames: (id: string, frames: number[]) =>
+    sendJson<DatasetDetail>(`${datasetPath(id)}/excluded-frames`, "PUT", {
+      excluded_frames: frames,
+    }),
   getQcData: (id: string) => getJson<QcData>(`${datasetPath(id)}/qc-data`),
   getPreprocessStatus: (id: string) =>
     getJson<PreprocessStatus>(`${datasetPath(id)}/preprocess`),
@@ -339,7 +367,8 @@ export const api = {
     return send<DatasetSummary>(`${datasetPath(id)}/upload`, "POST", form);
   },
 
-  getModel: (id: string) => getJson<ModelArchitecture>(`/api/model/${encodeURIComponent(id)}`),
+  getModel: (id: string) =>
+    getJson<ModelArchitecture>(`/api/model/${encodeURIComponent(id)}`),
 };
 
 /** Direct artifact URLs (used as href / img src / video src, not fetched as JSON). */

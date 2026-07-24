@@ -5,9 +5,12 @@ from __future__ import annotations
 import pytest
 import torch
 
+from naviernet.data.preprocess import MIN_USABLE_FRAMES, usable_frame_numbers
 from naviernet.pipeline import Pipeline
 from naviernet.training import REBALANCED_TERMS, _rebalance
 from naviernet.utils.paths import RunPaths
+
+from .conftest import make_config
 
 
 def test_rebalance_equalises_gradient_contributions():
@@ -49,6 +52,116 @@ def test_pipeline_creates_the_run_directories(tiny_cfg):
     assert paths.output_dir.is_dir() and paths.figures_dir.is_dir()
 
 
+# --- frame exclusion --------------------------------------------------------
+
+
+def test_usable_frames_are_the_window_when_nothing_is_excluded(cfg):
+    assert usable_frame_numbers(cfg) == list(range(1, cfg.experiment.n_frames_usable + 1))
+
+
+def test_excluded_frames_are_dropped_from_the_usable_window():
+    cfg = make_config(["experiment.excluded_frames=[3,7]"])
+
+    kept = usable_frame_numbers(cfg)
+
+    assert 3 not in kept and 7 not in kept
+    assert kept == [n for n in range(1, cfg.experiment.n_frames_usable + 1) if n not in (3, 7)]
+
+
+def test_excluding_frames_outside_the_window_changes_nothing(cfg):
+    """Frames past `n_frames_usable` were never fed to the model to begin with."""
+    beyond = cfg.experiment.n_frames_usable + 1
+    excluded = make_config([f"experiment.excluded_frames=[{beyond}]"])
+
+    assert usable_frame_numbers(excluded) == usable_frame_numbers(cfg)
+
+
+def test_excluding_almost_everything_is_rejected(cfg):
+    survivors = list(range(1, MIN_USABLE_FRAMES))  # one short of the floor
+    excluded = [n for n in range(1, cfg.experiment.n_frames_usable + 1) if n not in survivors]
+    too_few = make_config([f"experiment.excluded_frames=[{','.join(map(str, excluded))}]"])
+
+    with pytest.raises(ValueError, match="at least"):
+        usable_frame_numbers(too_few)
+
+
+def _write_tensors(path, frame_numbers: list[int], n_event: int) -> None:
+    """A minimal archive: only the keys BubbleDataset reads on construction."""
+    import json
+
+    import numpy as np
+
+    n_t = len(frame_numbers)
+    alpha = np.zeros((n_t, 4, 5), dtype=np.float32)
+    alpha[:, 1:3, 1:3] = 1.0
+    np.savez_compressed(
+        path,
+        alpha=alpha,
+        sdf=((0.5 - alpha) * 0.1).astype(np.float32),
+        valid=np.ones_like(alpha),
+        masks_camera=(alpha > 0.5).astype(np.uint8),
+        x_star=np.linspace(0, 1, 5, dtype=np.float32),
+        y_star=np.linspace(0, 1, 4, dtype=np.float32),
+        t_star=((np.asarray(frame_numbers) - 1) * 0.1).astype(np.float32),
+        meta=json.dumps(
+            {
+                "x_pin_star": 0.5,
+                "t_ref_ms": 1.5,
+                "n_frames_usable": n_t,
+                "n_frames_event": n_event,
+                "frame_numbers": frame_numbers,
+            }
+        ),
+    )
+
+
+def test_holdout_resolves_to_a_row_when_earlier_frames_are_excluded(tiny_cfg):
+    """Camera frame 6 sits at row 4 once frame 3 is gone — supervising row 5
+    would train on the holdout while still reporting it as held out."""
+    from naviernet.data.dataset import BubbleDataset
+
+    paths = RunPaths.from_config(tiny_cfg)
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    kept = [1, 2, 4, 5, 6, 7, 8]
+    _write_tensors(paths.tensors, kept, n_event=len(kept))
+
+    data = BubbleDataset(tiny_cfg, paths)  # tiny_cfg holds the default holdout
+
+    assert tiny_cfg.training.holdout_frame == 5, "fixture assumes camera frame 6"
+    assert data.frame_numbers == kept
+    assert data.holdout_row == kept.index(6) == 4
+    assert data.holdout_row not in data._ti[data._train_idx], "the holdout row is supervised"
+
+
+def test_an_excluded_holdout_leaves_no_holdout_row(tiny_cfg):
+    from naviernet.data.dataset import BubbleDataset
+
+    paths = RunPaths.from_config(tiny_cfg)
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    _write_tensors(paths.tensors, [1, 2, 3, 4, 5, 7, 8], n_event=7)
+
+    data = BubbleDataset(tiny_cfg, paths)
+
+    assert data.holdout_row == -1
+    assert len(data._train_idx) > 0, "every row is trainable when none is held out"
+
+
+def test_event_frames_are_camera_numbers_not_row_indices(tiny_cfg):
+    from naviernet.data.dataset import BubbleDataset
+
+    paths = RunPaths.from_config(tiny_cfg)
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    _write_tensors(paths.tensors, [1, 2, 4, 5, 6, 7, 11], n_event=6)
+
+    data = BubbleDataset(tiny_cfg, paths)
+
+    assert data.n_event == 6
+    assert data.event_frames == [1, 2, 4, 5, 6, 7]
+
+
 # --- tests below need the real dataset -------------------------------------
 
 
@@ -70,7 +183,11 @@ def test_holdout_frame_is_never_sampled(trained, cfg):
     rng = np.random.default_rng(0)
     _, _ = data.sample_supervised(4096, rng)
 
-    assert cfg.training.holdout_frame not in data._ti[data._train_idx]
+    # The row is resolved from the archive, not assumed to be the config index:
+    # excluding an earlier frame shifts it, and supervising the shifted row
+    # would train on the very frame the headline IoU calls unseen.
+    assert data.frame_numbers[data.holdout_row] == cfg.training.holdout_frame + 1
+    assert data.holdout_row not in data._ti[data._train_idx]
 
 
 @pytest.mark.needs_data
@@ -101,7 +218,7 @@ def test_holdout_iou_meets_the_published_figure(trained, cfg):
     from naviernet.evaluation import frame_iou
 
     model, data = trained
-    iou = frame_iou(cfg, model, data, cfg.training.holdout_frame)
+    iou = frame_iou(cfg, model, data, data.holdout_row)
     assert iou > 0.95
 
 

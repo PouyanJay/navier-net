@@ -150,7 +150,7 @@ def _measured_frames(scene: _Scene) -> list[dict]:
                 scene, scene.data.alpha[frame, :: scene.stride, :: scene.stride]
             ),
         }
-        for frame in range(int(scene.cfg.experiment.n_frames_event))
+        for frame in range(int(scene.data.n_event))
     ]
 
 

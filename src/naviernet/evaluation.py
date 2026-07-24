@@ -96,9 +96,11 @@ def nose_trajectory(cfg, model, data) -> GrowthTrajectory:
 
 def measured_trajectory(cfg, data) -> GrowthTrajectory:
     """The same quantities read straight off the segmented camera frames (ms)."""
-    n_event = cfg.experiment.n_frames_event
+    n_event = data.n_event
     threshold = cfg.evaluation.threshold
-    times = np.arange(n_event) * cfg.experiment.dt_frame_ms
+    # Each row's own acquisition time, so an excluded frame leaves a gap on the
+    # axis instead of shifting every later measurement earlier.
+    times = np.asarray(data.t[:n_event]) * float(data.meta["t_ref_ms"])
 
     nose, area = [], []
     for i in range(n_event):
@@ -112,11 +114,12 @@ def measured_trajectory(cfg, data) -> GrowthTrajectory:
 def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     """Full evaluation report; also written to ``metrics.json`` in the run dir."""
     paths.ensure()  # artifacts below need the run directory to exist
-    n_event = cfg.experiment.n_frames_event
-    holdout = int(cfg.training.holdout_frame)
+    n_event = data.n_event
+    holdout_row = data.holdout_row
+    holdout = data.frame_numbers[holdout_row] if holdout_row >= 0 else None
 
     # Keyed by 1-based physical frame number, matching the TIFF filenames.
-    ious = {frame + 1: frame_iou(cfg, model, data, frame) for frame in range(n_event)}
+    ious = {data.frame_numbers[row]: frame_iou(cfg, model, data, row) for row in range(n_event)}
 
     predicted = nose_trajectory(cfg, model, data)
     _write_trajectory(cfg, data, paths, predicted)
@@ -131,8 +134,8 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
         "dataset": cfg.dataset,
         "iou_per_frame": ious,
         "iou_mean": float(np.mean(list(ious.values()))),
-        "iou_holdout": ious[holdout + 1] if holdout >= 0 else None,
-        "holdout_frame": holdout + 1 if holdout >= 0 else None,
+        "iou_holdout": ious.get(holdout) if holdout is not None else None,
+        "holdout_frame": holdout,
         "nose_speed_star": mean_speed_star,
         "nose_speed_mm_s": mean_speed_star * cfg.scales.U_ref * 1e3,
     }

@@ -41,8 +41,13 @@ class ExperimentConfig:
     flow_direction: str = MISSING  # direction of flow in the raw camera frames
 
     n_frames_raw: int = MISSING  # TIFFs present on disk
-    n_frames_usable: int = MISSING  # frames fed to the model
+    n_frames_usable: int = MISSING  # end of the usable window (1..n)
     n_frames_event: int = MISSING  # frames of one continuous growth event
+
+    # 1-based camera frames dropped from the usable window (a mis-segmented
+    # frame, a stray reflection). Absolute frame times are preserved, so the
+    # frames that remain keep their true t* -- only tensor rows disappear.
+    excluded_frames: list[int] = field(default_factory=list)
 
     notes: str = ""
 
