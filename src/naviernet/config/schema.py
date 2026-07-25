@@ -84,9 +84,9 @@ class ImagingConfig:
     # its centreline. Below this interior-hole fraction the rim has no enclosed
     # interior to centre in, so the filled outline is used instead.
     min_rim_hole_fraction: float = 0.05
-    # Arc-length length scale (pixels) for smoothing the interface into a clean
-    # closed curve: detail finer than this is treated as segmentation noise, the
-    # bubble's actual curvature is followed. 0 disables smoothing.
+    # Pixel scale that seeds the active contour (blur on the medial field it
+    # starts from) and smooths the solid-nucleus fallback. The interface's own
+    # smoothness comes from the contour's rigidity, not this. 0 disables the blur.
     contour_smooth_px: float = 5.0
     # Columns masked out on the last usable frame, where the bubble leaves the
     # field of view (expressed in flipped, downstream-positive coordinates).

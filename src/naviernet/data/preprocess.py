@@ -10,13 +10,13 @@ The pipeline, in order:
 2. **Segmentation.** Threshold the dark structure, then open with a large
    kernel (erasing the thin heater traces that would otherwise merge with the
    bubble) and close to seal gaps in the bubble's dark ring. The largest
-   connected component is the bubble's meniscus band. That band is a thick dark
-   rim, not a line -- its outer edge over-reads the vapour and its inner edge
-   under-reads it -- so the interface is taken at the rim's centreline, the
-   zero-crossing of a distance-transform medial field that is blurred first to
-   round off the cusp where the edges converge. That curve is then low-passed
-   along its arc length, replacing the pixel staircase with the smooth closed
-   curve a bubble interface is, while hugging the shape.
+   connected component is the bubble's meniscus band -- a thick dark rim, not a
+   line. Rather than extract a centreline from that discrete band (which fights
+   the pixel grid and kinks), an **active contour** is evolved onto it: a closed
+   curve seeded near the rim centre that settles onto the centre-line while a
+   rigidity term keeps it smooth. Smoothness is intrinsic to the model -- the
+   curve cannot bend sharply -- which is also physical, rigidity standing in for
+   the surface tension that keeps real bubbles smooth.
 
 3. **Tensor assembly.** Volume fraction, signed distance (negative inside the
    vapour), and a validity mask. The x axis is flipped so that downstream is
@@ -35,6 +35,7 @@ import cv2
 import numpy as np
 import scipy.signal as ss
 from PIL import Image
+from scipy.ndimage import gaussian_filter, map_coordinates
 
 from naviernet.data.contour import smooth_closed_contour
 from naviernet.utils.logging import get_logger
@@ -127,42 +128,94 @@ def _resample_closed(points: np.ndarray, n: int) -> np.ndarray:
     return np.column_stack([xs, ys])
 
 
-def _meniscus_midline(band: np.ndarray, min_hole_fraction: float, field_blur_px: float) -> np.ndarray:
-    """The interface contour: the centreline of the meniscus rim.
+# Active-contour parameters. Tension keeps the points evenly spread; rigidity
+# is the smoothness (higher = smoother); the rest are the solver's step and the
+# number of points evolved before the curve is resampled for storage.
+_SNAKE_TENSION = 0.05
+_SNAKE_RIGIDITY = 6.0
+_SNAKE_STEP = 1.0
+_SNAKE_ITERATIONS = 250
+_SNAKE_POINTS = 200
 
-    The imaged edge is a thick dark rim, so its outer contour over-reads the
-    vapour and its inner contour under-reads it. The centre is the zero-crossing
-    of ``distance-to-outer-edge − distance-to-inner-edge`` (zero exactly midway
-    across the rim). That medial field is Gaussian-blurred *before* the crossing
-    is taken, which rounds off the cusp a raw medial axis forms where the edges
-    converge at the nose, and the jitter a thick rim gives -- so the curve is
-    smooth and never self-intersects, by construction rather than by post-hoc
-    fitting.
+
+def _snake_internal_inverse(n: int, tension: float, rigidity: float) -> np.ndarray:
+    """Inverse of the closed active contour's internal-energy matrix ``(A + I)``.
+
+    ``A`` is the circulant pentadiagonal from the tension (2nd-difference) and
+    rigidity (4th-difference) terms; the ``+ I`` is the implicit time step. One
+    inverse drives every iteration, so the evolution is a stable linear solve.
+    """
+    diag = 2 * tension + 6 * rigidity + 1.0  # + I (unit time step)
+    off1 = -(tension + 4 * rigidity)
+    off2 = rigidity
+    row = np.zeros(n)
+    row[0] = diag
+    row[1] = row[-1] = off1
+    row[2] = row[-2] = off2
+    return np.linalg.inv(np.stack([np.roll(row, i) for i in range(n)]))
+
+
+def _snake_centreline(signed: np.ndarray, init: np.ndarray) -> np.ndarray:
+    """Evolve a closed active contour onto the meniscus centreline.
+
+    ``signed`` is ``distance-to-outer-edge − distance-to-inner-edge``: zero
+    exactly midway across the rim, negative toward the outer edge, positive
+    toward the interior. The external force is a *unit* vector down that field
+    toward the zero level-set (normalising it keeps the evolution stable), and
+    the internal energy smooths the curve each step, so it can neither overshoot
+    nor kink.
+    """
+    field = gaussian_filter(signed, 2)  # stable gradients
+    grad_y, grad_x = np.gradient(field)
+    inverse = _snake_internal_inverse(len(init), _SNAKE_TENSION, _SNAKE_RIGIDITY)
+    x, y = init[:, 0].copy(), init[:, 1].copy()
+    for _ in range(_SNAKE_ITERATIONS):
+        here = map_coordinates(field, [y, x], order=1, mode="nearest")
+        gx = map_coordinates(grad_x, [y, x], order=1, mode="nearest")
+        gy = map_coordinates(grad_y, [y, x], order=1, mode="nearest")
+        magnitude = np.hypot(gx, gy) + 1e-6
+        step = _SNAKE_STEP * np.sign(here) / magnitude
+        x = inverse @ (x - step * gx)
+        y = inverse @ (y - step * gy)
+    return np.column_stack([x, y])
+
+
+def _meniscus_interface(
+    band: np.ndarray, min_hole_fraction: float, seed_blur_px: float
+) -> np.ndarray:
+    """The interface: a smooth closed curve on the meniscus rim's centreline.
+
+    The rim centre is the zero level-set of a medial field (distance to the outer
+    edge minus distance to the inner edge). An active contour, seeded from the
+    blurred level-set, settles onto it and stays smooth by its own rigidity --
+    where a discrete centreline would kink or self-intersect.
 
     Falls back to the outer edge when there is no enclosed interior to bound the
-    rim: a near-solid nucleus, or a bubble cut open by the field-of-view edge.
+    rim (a near-solid nucleus): there is no rim to centre in.
     """
     filled = _fill_holes(band)
     hole = (filled & (1 - band)).astype(np.uint8)
-    cut_by_fov = bool(band[:, 0].any() or band[:, -1].any())
-    if int(hole.sum()) < min_hole_fraction * int(filled.sum()) or cut_by_fov:
-        return _outer_contour(filled)
+    if int(hole.sum()) < min_hole_fraction * int(filled.sum()):
+        return smooth_closed_contour(_outer_contour(filled), seed_blur_px, _INTERFACE_POINTS)
 
     to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge
     to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
-    field = (to_outer - to_inner).astype(np.float32)
-    if field_blur_px > 0:
-        field = cv2.GaussianBlur(field, (0, 0), field_blur_px)
-    centre = _largest_component((field >= 0).astype(np.uint8))
-    return _outer_contour(_fill_holes(centre)) if centre is not None else _outer_contour(filled)
+    signed = (to_outer - to_inner).astype(np.float32)
+
+    seed_field = cv2.GaussianBlur(signed, (0, 0), seed_blur_px) if seed_blur_px > 0 else signed
+    seed = _largest_component((seed_field >= 0).astype(np.uint8))
+    if seed is None:  # no interior half survived the blur; take the outer edge
+        return smooth_closed_contour(_outer_contour(filled), seed_blur_px, _INTERFACE_POINTS)
+    init = _resample_closed(_outer_contour(_fill_holes(seed)), _SNAKE_POINTS)
+    return _resample_closed(_snake_centreline(signed, init), _INTERFACE_POINTS)
 
 
 def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
     """Smooth closed interface contour for raw frame ``n`` (1-based), in ROI
     pixel coordinates.
 
-    The contour is the meniscus centreline low-passed into the clean closed curve
-    a bubble interface is. The same curve is rasterised into the training tensors
+    The contour is an active contour settled onto the meniscus centreline -- a
+    smooth closed curve. The same curve is rasterised into the training tensors
     and, converted to ``x*``, drawn on the QC overlay -- one curve, so the model
     and the picture never disagree.
     """
@@ -184,10 +237,7 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
             f"(currently {imaging.dark_thresh})"
         )
 
-    interface = _meniscus_midline(band, imaging.min_rim_hole_fraction, imaging.contour_smooth_px)
-    if imaging.contour_smooth_px > 0:
-        return smooth_closed_contour(interface, imaging.contour_smooth_px, n_points=_INTERFACE_POINTS)
-    return _resample_closed(interface, _INTERFACE_POINTS)
+    return _meniscus_interface(band, imaging.min_rim_hole_fraction, imaging.contour_smooth_px)
 
 
 def _fill_interface(interface: np.ndarray, shape: tuple[int, int]) -> np.ndarray:

@@ -14,7 +14,7 @@ from PIL import Image
 from naviernet.data.contour import smooth_closed_contour
 from naviernet.data.preprocess import (
     _largest_component,
-    _meniscus_midline,
+    _meniscus_interface,
     segment_frame,
 )
 from naviernet.utils.paths import RunPaths
@@ -22,16 +22,17 @@ from naviernet.utils.paths import RunPaths
 from .conftest import make_config
 
 
+def _max_turn_deg(curve: np.ndarray) -> float:
+    """Largest turning angle between consecutive segments of a closed curve."""
+    d = np.diff(curve, axis=0, prepend=curve[-1:])
+    ang = np.arctan2(d[:, 1], d[:, 0])
+    turn = np.abs((np.diff(ang, prepend=ang[-1:]) + np.pi) % (2 * np.pi) - np.pi)
+    return float(np.degrees(turn).max())
+
+
 def _ellipse(shape, cy, cx, ay, ax) -> np.ndarray:
     yy, xx = np.ogrid[: shape[0], : shape[1]]
     return (((yy - cy) / ay) ** 2 + ((xx - cx) / ax) ** 2 <= 1.0).astype(np.uint8)
-
-
-def _outer_extent(mask: np.ndarray) -> tuple[int, int]:
-    """Half-height and half-width of a mask's bounding box, in pixels."""
-    rows = np.nonzero(mask.any(axis=1))[0]
-    cols = np.nonzero(mask.any(axis=0))[0]
-    return (rows[-1] - rows[0]) // 2, (cols[-1] - cols[0]) // 2
 
 
 def _radius(polygon: np.ndarray, cy: float, cx: float) -> np.ndarray:
@@ -52,41 +53,38 @@ def test_largest_component_is_none_on_an_empty_mask():
     assert _largest_component(np.zeros((10, 10), np.uint8)) is None
 
 
-def test_midline_sits_between_the_rim_edges_without_spiking():
+def test_interface_settles_on_the_rim_centreline():
     # A thick annular rim: inner edge at ~20 px, outer edge at ~40 px.
     shape = (200, 200)
     outer = _ellipse(shape, 100, 100, 40, 40)
     inner = _ellipse(shape, 100, 100, 20, 20)
     band = (outer & (1 - inner)).astype(np.uint8)
 
-    mid = _meniscus_midline(band, min_hole_fraction=0.05, field_blur_px=5.0)
-    radius = _radius(mid, 100, 100)
-    # The interface lands near the band centre (~30 px), between inner and outer,
-    # and is a clean ring: a small radius spread, no medial-axis spike.
+    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    radius = _radius(curve, 100, 100)
+    # The active contour lands near the band centre (~30 px), a clean ring.
     assert 27 <= radius.mean() <= 33
     assert radius.std() < 2.0
 
 
-def test_midline_falls_back_to_the_outer_edge_for_a_solid_nucleus():
+def test_interface_stays_smooth_on_a_jagged_band():
+    # A rim whose outer edge wobbles fast with angle: a discrete centreline
+    # would kink, but the active contour's rigidity smooths it out.
+    yy, xx = np.ogrid[:200, :200]
+    ang = np.arctan2(yy - 100, xx - 100)
+    r = np.hypot(yy - 100, xx - 100)
+    band = ((r <= 40 + 4 * np.sin(17 * ang)) & (r >= 20)).astype(np.uint8)
+
+    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    assert _max_turn_deg(curve) < 25  # smooth despite the jagged rim
+    assert 26 <= _radius(curve, 100, 100).mean() <= 34  # still on the centre
+
+
+def test_interface_falls_back_to_the_outer_edge_for_a_solid_nucleus():
     # A small dark blob with no enclosed interior: nothing to centre in.
     band = _ellipse((200, 200), 100, 100, 15, 15)
-    mid = _meniscus_midline(band, min_hole_fraction=0.05, field_blur_px=5.0)
-    assert 13 <= _radius(mid, 100, 100).mean() <= 16  # the outer edge itself
-
-
-def test_midline_falls_back_when_the_rim_is_cut_by_the_frame_edge():
-    # A rim running off the left edge is not a closed ring; centring is unsafe.
-    shape = (200, 200)
-    outer = _ellipse(shape, 100, 40, 40, 60)
-    inner = _ellipse(shape, 100, 40, 20, 40)
-    band = (outer & (1 - inner)).astype(np.uint8)
-    band[:, 0] = band[:, 0] | outer[:, 0]  # touches the left border
-    assert band[:, 0].any()
-
-    mid = _meniscus_midline(band, min_hole_fraction=0.05, field_blur_px=5.0)
-    # Fallback traces the outer edge, reaching ~col 100, not the ~col 80 inner.
-    assert mid.ndim == 2 and mid.shape[1] == 2
-    assert mid[:, 0].max() >= 95
+    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    assert 13 <= _radius(curve, 100, 100).mean() <= 16  # the outer edge itself
 
 
 def test_smoothing_a_noisy_circle_recovers_the_circle():
