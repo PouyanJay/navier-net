@@ -1,0 +1,27 @@
+# 3M Novec 649 (FK-5-1-12, C6F12O), saturated at T_sat = 49 C, 1 atm.
+# Source: 3M Novec 649 product datasheet; saturated liquid/vapour values
+# cross-checked against dielectric-fluid boiling literature (e.g. Cardin/Bar-Cohen).
+# NOTE: property values are a first-pass sourcing and should be reviewed against a
+# primary reference before production use (see PR).
+
+defaults:
+  - base_fluid
+
+name: Novec 649
+
+T_sat_C: 49.0 # boiling point at 1 atm
+
+rho_l: 1530.0 # kg/m^3  (saturated liquid)
+rho_v: 13.4
+
+mu_l: 4.5e-4 # Pa.s
+mu_v: 1.1e-5
+
+k_l: 0.054 # W/m/K
+k_v: 0.012
+
+cp_l: 1150.0 # J/kg/K
+cp_v: 891.0
+
+sigma: 1.08e-2 # N/m
+h_lv: 88.0e3 # J/kg  (latent heat at the boiling point)

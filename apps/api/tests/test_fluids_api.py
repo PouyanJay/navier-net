@@ -24,6 +24,22 @@ def test_lists_available_fluids(client):
         assert isinstance(fc72[key], (int, float))
 
 
+def test_all_characterised_fluids_are_offered(client):
+    """The five characterised fluids are all selectable, with their T_sat."""
+    by_id = {f["id"]: f for f in client.get("/api/fluids").json()}
+    expected = {
+        "fc72": ("FC-72", 56.6),
+        "fc77": ("FC-77", 97.0),
+        "hfe7100": ("HFE-7100", 61.0),
+        "novec649": ("Novec 649", 49.0),
+        "water": ("Water", 100.0),
+    }
+    assert set(expected) <= set(by_id)
+    for fluid_id, (name, t_sat) in expected.items():
+        assert by_id[fluid_id]["name"] == name
+        assert by_id[fluid_id]["T_sat_C"] == t_sat
+
+
 def test_base_fluid_template_is_not_listed(client):
     """The abstract ``base_fluid`` schema node is not a selectable fluid."""
     ids = {f["id"] for f in client.get("/api/fluids").json()}

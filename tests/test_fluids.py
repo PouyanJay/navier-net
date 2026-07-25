@@ -22,6 +22,39 @@ def test_experiment_saturation_temperature_derives_from_fluid(cfg):
     assert cfg.experiment.T_sat_C == pytest.approx(cfg.fluid.T_sat_C)
 
 
+# (id, display name, atmospheric saturation temperature in C)
+EXPECTED_FLUIDS = [
+    ("fc72", "FC-72", 56.6),
+    ("fc77", "FC-77", 97.0),
+    ("hfe7100", "HFE-7100", 61.0),
+    ("novec649", "Novec 649", 49.0),
+    ("water", "Water", 100.0),
+]
+
+
+@pytest.mark.parametrize(("fluid_id", "name", "t_sat"), EXPECTED_FLUIDS)
+def test_each_fluid_composes_with_its_saturation_temperature(fluid_id, name, t_sat):
+    cfg = make_config([f"fluid={fluid_id}"])
+    assert cfg.fluid.name == name
+    assert cfg.fluid.T_sat_C == pytest.approx(t_sat)
+    assert cfg.experiment.T_sat_C == pytest.approx(t_sat)
+
+
+@pytest.mark.parametrize("fluid_id", [f[0] for f in EXPECTED_FLUIDS])
+def test_dimensionless_groups_are_finite_for_every_fluid(fluid_id):
+    """Every characterised fluid yields physically sane (finite, positive)
+    dimensionless groups, not NaN/inf from a missing or zero property."""
+    import math
+
+    from naviernet.physics.groups import compute_groups
+
+    groups = compute_groups(make_config([f"fluid={fluid_id}"]))
+    for key, value in groups.items():
+        assert math.isfinite(value), f"{fluid_id}: {key} is not finite"
+    for key in ("Re", "We", "Pr", "Ca", "rho_ratio", "mu_ratio"):
+        assert groups[key] > 0, f"{fluid_id}: {key} must be positive"
+
+
 def test_selecting_a_fluid_updates_the_derived_saturation_temperature():
     """Overriding the fluid group flows through to the experiment's T_sat."""
     cfg = make_config(["fluid=water"])

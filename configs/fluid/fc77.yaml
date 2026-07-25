@@ -1,0 +1,28 @@
+# 3M Fluorinert FC-77, saturated at T_sat = 97 C, 1 atm.
+# Source: 3M Fluorinert FC-77 product datasheet; saturated liquid transport
+# properties (mu, sigma, rho) are temperature-corrected to T_sat from the 25 C
+# datasheet nominal values, cross-checked against Mudawar et al.
+# NOTE: property values are a first-pass sourcing and should be reviewed against a
+# primary reference before production use (see PR).
+
+defaults:
+  - base_fluid
+
+name: FC-77
+
+T_sat_C: 97.0 # boiling point at 1 atm
+
+rho_l: 1600.0 # kg/m^3  (saturated liquid)
+rho_v: 13.9
+
+mu_l: 5.0e-4 # Pa.s
+mu_v: 1.2e-5
+
+k_l: 0.057 # W/m/K
+k_v: 0.013
+
+cp_l: 1130.0 # J/kg/K
+cp_v: 895.0
+
+sigma: 8.0e-3 # N/m
+h_lv: 89.0e3 # J/kg  (latent heat at the boiling point)
