@@ -388,19 +388,34 @@
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
   gap: var(--s2);
 }
+/* Each tile is a button: select it to define the group below. */
 .gtile {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
   background: var(--panel2);
   border: 1px solid var(--line2);
   border-radius: var(--rs);
   padding: var(--s2) var(--s3);
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease;
+}
+.gtile:hover {
+  border-color: var(--ink3);
 }
 .gtile .k {
+  display: block;
   font-size: 10px;
   letter-spacing: 0.08em;
   color: var(--ink3);
   text-transform: uppercase;
 }
 .gtile .v {
+  display: block;
   font-size: 16px;
   font-weight: 600;
   margin-top: 2px;
@@ -411,12 +426,54 @@
   color: var(--ink3);
   margin-left: var(--s1);
 }
-.gtile.hot {
-  border-color: var(--acc2);
+/* Selected: the accent highlight now means "this is the one being explained". */
+.gtile.sel {
+  border-color: var(--acc);
   background: var(--accsoft);
 }
-.gtile.hot .v {
+.gtile.sel .v {
   color: var(--acc);
+}
+
+/* Definition of the selected group + what its value means for this run. */
+.gdetail {
+  margin-top: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  background: var(--panel2);
+  display: grid;
+  gap: var(--s1);
+}
+.gdetail-hd {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.gdetail-hd b {
+  font-size: 13px;
+  color: var(--ink);
+}
+.gdetail-val {
+  margin-left: auto;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--acc);
+}
+.gdetail-val em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--ink3);
+  margin-left: var(--s1);
+}
+.gdetail p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink2);
+}
+.gdetail-read {
+  color: var(--ink) !important;
 }
 
 /* QC chart styling (on the dark view canvas) */

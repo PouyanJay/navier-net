@@ -298,6 +298,27 @@ describe("DatasetsView", () => {
     expect(inputs.getByText("Reference velocity (m·s⁻¹)")).toBeInTheDocument();
   });
 
+  it("defines a dimensionless group and reads back its value on selection", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // Capillary number is the default selection: it explains the group and the
+    // regime its value puts the run in.
+    const ca = within(
+      await screen.findByRole("region", { name: /Capillary number definition/ }),
+    );
+    expect(ca.getByText(/Viscous drag ÷ surface tension/)).toBeInTheDocument();
+    expect(ca.getByText(/Bretherton film/)).toBeInTheDocument();
+
+    // Selecting the Reynolds tile switches the definition and read-back.
+    fireEvent.click(screen.getByRole("button", { name: /RE 215\.5/ }));
+    const re = within(
+      await screen.findByRole("region", { name: /Reynolds number definition/ }),
+    );
+    expect(re.getByText(/Inertial forces ÷ viscous forces/)).toBeInTheDocument();
+    expect(re.getByText(/Laminar/)).toBeInTheDocument();
+  });
+
   it("uploads a new series through the modal and preprocesses it", async () => {
     const calls = mockApi();
     const onProjectChanged = vi.fn();
