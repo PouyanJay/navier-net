@@ -278,20 +278,71 @@ def test_qc_data_before_preprocessing_is_404(client):
 
 
 def test_conditions_bounds_are_per_field(client):
-    # Temperatures may be legitimately negative (within physical range)...
-    r = client.patch("/api/datasets/sample/conditions", json={"T_sat_C": -40})
-    assert r.status_code == 200
-    # ...but not below absolute zero, and lengths must stay positive.
+    # A valid heat-flux setpoint is accepted...
     assert (
-        client.patch("/api/datasets/sample/conditions", json={"T_sat_C": -300}).status_code
-        == 400
+        client.patch(
+            "/api/datasets/sample/conditions", json={"q_wall_W_cm2": 3.0}
+        ).status_code
+        == 200
     )
+    # ...but lengths must stay positive.
     assert (
         client.patch(
             "/api/datasets/sample/conditions", json={"channel_width_um": 0}
         ).status_code
         == 400
     )
+
+
+def test_saturation_temperature_is_not_an_editable_condition(client):
+    """T_sat is derived from the fluid, not typed; editing it is rejected."""
+    r = client.patch("/api/datasets/sample/conditions", json={"T_sat_C": 40})
+    assert r.status_code == 422  # unknown field on the request model
+
+
+# --- fluid selection ---------------------------------------------------------
+
+
+def test_selecting_a_fluid_updates_conditions_and_groups(client):
+    baseline = client.get("/api/datasets/sample/groups").json()
+
+    r = client.patch("/api/datasets/sample/conditions", json={"fluid": "water"})
+    assert r.status_code == 200
+    conditions = r.json()["conditions"]
+    # The label and the derived saturation temperature both follow the fluid.
+    assert conditions["fluid"] == "Water"
+    assert conditions["T_sat_C"] == pytest.approx(100.0)
+    # Water's far larger density ratio changes the physics: Re moves off baseline.
+    assert r.json()["groups"]["Re"] != pytest.approx(baseline["Re"])
+
+    # The choice persists into the detail view.
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["conditions"]["fluid"] == "Water"
+    assert detail["conditions"]["T_sat_C"] == pytest.approx(100.0)
+
+
+def test_unknown_fluid_is_rejected(client):
+    r = client.patch(
+        "/api/datasets/sample/conditions", json={"fluid": "unobtanium"}
+    )
+    assert r.status_code == 400
+    assert "unobtanium" in r.json()["detail"]
+
+
+def test_fluid_choice_survives_a_later_scalar_edit(client):
+    client.patch("/api/datasets/sample/conditions", json={"fluid": "novec649"})
+    # A subsequent unrelated edit must not erase the saved fluid.
+    client.patch("/api/datasets/sample/conditions", json={"q_wall_W_cm2": 4.0})
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["conditions"]["fluid"] == "Novec 649"
+    assert detail["conditions"]["q_wall_W_cm2"] == pytest.approx(4.0)
+
+
+def test_fluid_choice_reaches_the_run_config(repo_root):
+    settings = Settings(repo_root=repo_root)
+    datasets_service.save_conditions(settings, "sample", {"fluid": "hfe7100"})
+    overrides = datasets_service.series_overrides(settings, "sample")
+    assert "fluid=hfe7100" in overrides
 
 
 # --- frame exclusion ---------------------------------------------------------

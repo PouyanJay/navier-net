@@ -130,14 +130,18 @@ class DatasetSummary(BaseModel):
 
 class ConditionsUpdate(BaseModel):
     """Editable per-series operating conditions; omitted fields keep their
-    current (config-default or previously saved) value."""
+    current (config-default or previously saved) value. Unknown fields are
+    rejected (T_sat is not here: it is derived from the selected fluid)."""
 
-    T_sat_C: float | None = None
+    model_config = {"extra": "forbid"}
+
+    fluid: str | None = None  # fluid config-group id, e.g. "water" (allow-listed)
     dt_frame_ms: float | None = None
     channel_width_um: float | None = None
     channel_height_um: float | None = None
     flow_rate_mL_hr: float | None = None
     q_wall_W_cm2: float | None = None
+    U_ref: float | None = None  # reference velocity (scales.U_ref)
     U_ref: float | None = None
 
 
