@@ -186,6 +186,21 @@ def _snake_centreline(signed: np.ndarray, init: np.ndarray) -> np.ndarray:
     return np.column_stack([x, y])
 
 
+def _seal_fov_cut(band: np.ndarray) -> np.ndarray:
+    """Close the rim across a field-of-view edge the bubble runs off.
+
+    The bubble is capped at the image edge -- all that is seen of it -- so its
+    off-frame lobe's interior becomes enclosed and the centreline extraction can
+    treat the whole visible bubble like any other.
+    """
+    sealed = band.copy()
+    for col in (0, -1):
+        rows = np.nonzero(band[:, col])[0]
+        if rows.size:
+            sealed[rows.min() : rows.max() + 1, col] = 1
+    return sealed
+
+
 def _meniscus_interface(
     band: np.ndarray, min_hole_fraction: float, seed_blur_px: float
 ) -> np.ndarray:
@@ -197,15 +212,19 @@ def _meniscus_interface(
     where a discrete centreline would kink or self-intersect. A final fairing
     band-limits the curve so its curvature varies smoothly, with no sudden jumps.
 
-    Falls back to the whole outer outline when the rim has no enclosed interior
-    to centre in: a near-solid nucleus, or a bubble cut by the field-of-view edge
-    (a pinching bubble at critical tension, whose off-frame lobe cannot be
-    enclosed -- centring on the enclosed lobe alone would drop the rest).
+    A bubble cut by the field-of-view edge (a pinching bubble at critical
+    tension) is first sealed across the cut so its off-frame lobe's interior is
+    enclosed and the same centreline snake can run -- reconstructing the
+    interface across the truncation rather than tracing only the enclosed lobe.
+
+    Falls back to the whole outer outline only when there is no enclosed interior
+    at all to centre in: a near-solid nucleus.
     """
+    if band[:, 0].any() or band[:, -1].any():
+        band = _seal_fov_cut(band)
     filled = _fill_holes(band)
     hole = (filled & (1 - band)).astype(np.uint8)
-    cut_by_fov = bool(band[:, 0].any() or band[:, -1].any())
-    if int(hole.sum()) < min_hole_fraction * int(filled.sum()) or cut_by_fov:
+    if int(hole.sum()) < min_hole_fraction * int(filled.sum()):
         return fair_closed_contour(_outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS)
 
     to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge
