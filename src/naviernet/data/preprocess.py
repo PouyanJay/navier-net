@@ -133,10 +133,10 @@ def _resample_closed(points: np.ndarray, n: int) -> np.ndarray:
 # the target so the curve does not chase them; the rest are the max per-step move
 # and the number of points evolved before the curve is resampled for storage.
 _SNAKE_TENSION = 0.05
-_SNAKE_RIGIDITY = 12.0
-_SNAKE_FIELD_BLUR = 6.0
+_SNAKE_RIGIDITY = 40.0
+_SNAKE_FIELD_BLUR = 8.0
 _SNAKE_STEP = 1.5
-_SNAKE_ITERATIONS = 300
+_SNAKE_ITERATIONS = 400
 _SNAKE_POINTS = 200
 
 
