@@ -1119,6 +1119,89 @@ describe("new series conditions", () => {
     // this whole flow exists to prevent.
     expect(calls.startPreprocess).toEqual([]);
   });
+
+  it("surfaces a failed fluid-catalogue load and blocks upload", async () => {
+    mockApi();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/api/fluids")) {
+          return new Response("upstream down", { status: 503 });
+        }
+        return original(url, opts);
+      },
+    );
+
+    render(<Harness />);
+    // Open the modal directly (openModal waits on the fluid selector, which
+    // never enables here) and fill the measurements.
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Upload new series/ }),
+    );
+    const form = within(
+      await screen.findByRole("dialog", { name: "Upload new series" }),
+    );
+    fireEvent.change(form.getByLabelText("Series name"), {
+      target: { value: "mid_T" },
+    });
+    fireEvent.change(form.getByLabelText(/Image sequence/), {
+      target: { files: [tiff()] },
+    });
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel height/), {
+      target: { value: "150" },
+    });
+
+    // The failure is shown, not swallowed, and upload stays blocked.
+    expect(await form.findByRole("alert")).toHaveTextContent(
+      /Could not load the fluid catalogue/,
+    );
+    expect(submit()).toBeDisabled();
+  });
+
+  it("blocks upload when no fluids are characterised", async () => {
+    mockApi();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/api/fluids")) return json([]);
+        return original(url, opts);
+      },
+    );
+
+    render(<Harness />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Upload new series/ }),
+    );
+    const form = within(
+      await screen.findByRole("dialog", { name: "Upload new series" }),
+    );
+    fireEvent.change(form.getByLabelText("Series name"), {
+      target: { value: "mid_T" },
+    });
+    fireEvent.change(form.getByLabelText(/Image sequence/), {
+      target: { files: [tiff()] },
+    });
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel height/), {
+      target: { value: "150" },
+    });
+
+    // No fluid to commit to → the flow cannot proceed (no silent default).
+    expect(submit()).toBeDisabled();
+  });
 });
 
 describe("QC chart axes", () => {

@@ -345,6 +345,15 @@ def test_fluid_choice_reaches_the_run_config(repo_root):
     assert "fluid=hfe7100" in overrides
 
 
+def test_fluid_id_is_allow_listed_not_a_path(client):
+    """A traversal-style fluid id is rejected by the allow-list, never used to
+    reach a config outside configs/fluid/ (SECURITY.md §3, §4)."""
+    r = client.patch(
+        "/api/datasets/sample/conditions", json={"fluid": "../model/stage_a"}
+    )
+    assert r.status_code == 400
+
+
 # --- frame exclusion ---------------------------------------------------------
 
 
