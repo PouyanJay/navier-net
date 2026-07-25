@@ -108,6 +108,9 @@ def _largest_component(mask: np.ndarray) -> np.ndarray | None:
 
 # Samples per rim edge when averaging the two edges into the centreline.
 _MIDLINE_POINTS = 400
+# Points on the stored interface curve (rasterised into alpha, drawn on the QC
+# overlay). Enough to draw as a smooth polyline without a heavy payload.
+_INTERFACE_POINTS = 480
 
 
 def _outer_contour(mask: np.ndarray) -> np.ndarray:
@@ -153,10 +156,13 @@ def _meniscus_midline(band: np.ndarray, min_hole_fraction: float) -> np.ndarray:
 
 
 def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
-    """Binary bubble mask for raw frame ``n`` (1-based), cropped to the ROI.
+    """Smooth closed interface contour for raw frame ``n`` (1-based), in ROI
+    pixel coordinates.
 
-    The mask is filled to the meniscus centreline, so its boundary is the
-    interface itself rather than the outer edge of the dark rim.
+    The contour is the meniscus centreline low-passed into the clean closed curve
+    a bubble interface is. The same curve is rasterised into the training tensors
+    and, converted to ``x*``, drawn on the QC overlay -- one curve, so the model
+    and the picture never disagree.
     """
     imaging = cfg.imaging
     y0, y1 = roi
@@ -177,16 +183,28 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
         )
 
     interface = _meniscus_midline(band, imaging.min_rim_hole_fraction)
-    return _rasterise(interface, dark.shape, imaging.contour_smooth_px)
+    if imaging.contour_smooth_px > 0:
+        return smooth_closed_contour(interface, imaging.contour_smooth_px, n_points=_INTERFACE_POINTS)
+    return _resample_closed(interface, _INTERFACE_POINTS)
 
 
-def _rasterise(interface: np.ndarray, shape: tuple[int, int], sigma_px: float) -> np.ndarray:
-    """Smooth a closed interface contour and fill it into a binary bubble mask."""
-    if sigma_px > 0:
-        interface = smooth_closed_contour(interface, sigma_px, n_points=720)
+def _fill_interface(interface: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Rasterise a closed interface contour into a binary bubble mask."""
     mask = np.zeros(shape, dtype=np.uint8)
     cv2.fillPoly(mask, [np.round(interface).astype(np.int32)], 1)
     return mask
+
+
+def _interface_to_star(interface: np.ndarray, width_px: int, um_per_px: float, l_ref: float) -> np.ndarray:
+    """Interface polygon (ROI pixels) → non-dimensional ``[x*, y*]``.
+
+    Undoes the x-flip and the ROI offset exactly as the tensors' ``x_star`` /
+    ``y_star`` axes do, so the QC overlay draws the interface where alpha carries
+    it. ``x* = (W - 0.5 - col)·µm/px / L_ref``; ``y* = (row + 0.5)·µm/px / L_ref``.
+    """
+    xs = (width_px - 0.5 - interface[:, 0]) * um_per_px / l_ref
+    ys = (interface[:, 1] + 0.5) * um_per_px / l_ref
+    return np.column_stack([xs, ys])
 
 
 def usable_frame_numbers(cfg) -> list[int]:
@@ -215,11 +233,20 @@ def preprocess(cfg, paths: RunPaths) -> dict:
     frame_numbers = usable_frame_numbers(cfg)
     n_usable = len(frame_numbers)
 
-    masks = np.stack([segment_frame(cfg, paths, n, calibration.roi) for n in frame_numbers])
+    interfaces = [segment_frame(cfg, paths, n, calibration.roi) for n in frame_numbers]
+    width_px = np.asarray(Image.open(paths.raw_frame(frame_numbers[0])).convert("L")).shape[1]
+    roi_shape = (calibration.roi[1] - calibration.roi[0], width_px)
+    masks = np.stack([_fill_interface(curve, roi_shape) for curve in interfaces])
     # Flip x so downstream is +x; the raw camera sees flow right to left.
     alpha = masks.astype(np.float32)[:, :, ::-1].copy()
 
     l_ref = cfg.scales.L_ref_um
+    # The same interface curves in x* coordinates, for the QC overlay to draw
+    # directly -- no re-tracing of the alpha raster, which would re-quantise the
+    # smooth curve back onto the pixel grid.
+    interface_star = np.stack(
+        [_interface_to_star(curve, width_px, um_per_px, l_ref) for curve in interfaces]
+    ).astype(np.float32)
     sdf = np.zeros_like(alpha)
     for i in range(n_usable):
         binary = (alpha[i] > 0.5).astype(np.uint8)
@@ -235,7 +262,7 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         truncated_row = frame_numbers.index(last_usable)
         valid[truncated_row, :, -cfg.imaging.truncated_cols :] = 0
 
-    height_px, width_px = alpha.shape[1:]
+    height_px = alpha.shape[1]
     from naviernet.physics.groups import reference_time_ms
 
     t_ref_ms = reference_time_ms(cfg.scales)
@@ -265,8 +292,6 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         "x_pin_star": x_pin,
         "n_frames_usable": n_usable,
         "n_frames_event": n_event,
-        # Interface-smoothing scale, so the QC overlay smooths its rings to match.
-        "contour_smooth_px": float(cfg.imaging.contour_smooth_px),
         # Row -> camera frame. Downstream reads this rather than assuming
         # row i is frame i+1, which stops holding once frames are excluded.
         "frame_numbers": frame_numbers,
@@ -284,6 +309,7 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         y_star=y_star.astype(np.float32),
         t_star=t_star.astype(np.float32),
         masks_camera=masks,
+        interface_star=interface_star,
         meta=json.dumps(meta),
     )
     log.info("wrote %s  alpha%s", paths.tensors, alpha.shape)

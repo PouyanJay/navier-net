@@ -145,15 +145,14 @@ def test_segment_frame_traces_the_meniscus_and_ignores_traces(tmp_path):
     cfg = make_config([f"paths.raw_dir={raw}"])
     paths = RunPaths.from_config(cfg)
 
-    mask = segment_frame(cfg, paths, 1, roi=(0, 200))
+    interface = segment_frame(cfg, paths, 1, roi=(0, 200))
 
-    # One clean blob: the thin verticals were opened away, not captured.
-    assert _largest_component(mask) is not None
-    n_components, _ = __import__("cv2").connectedComponents(mask)
-    assert n_components == 2  # background + the single bubble
+    # A smooth closed [x, y] contour, not a mask.
+    assert interface.ndim == 2 and interface.shape[1] == 2
     # The boundary sits at the rim centre: between the inner (26/80) and outer
     # (50/120) edges, not on the outer edge.
-    ry, rx = _outer_extent(mask)
+    ry = (interface[:, 1].max() - interface[:, 1].min()) / 2
+    rx = (interface[:, 0].max() - interface[:, 0].min()) / 2
     assert 34 <= ry <= 44 and 92 <= rx <= 108
-    # It does not bleed out to the microchannel traces at the frame edges.
-    assert not mask[:, 0].any() and not mask[:, -1].any()
+    # It does not bleed out to the thin microchannel traces at the frame edges.
+    assert interface[:, 0].min() > 2 and interface[:, 0].max() < 398

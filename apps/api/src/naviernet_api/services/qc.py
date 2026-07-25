@@ -12,7 +12,6 @@ from typing import NamedTuple
 
 import numpy as np
 
-from naviernet.data.contour import DEFAULT_SMOOTH_PX, smooth_closed_contour
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import QcData, QcInterface, QcInterfaceFrame, QcKinematics, QcSdf
 from naviernet_api.services.datasets import tensors_meta, tensors_path
@@ -39,7 +38,9 @@ class _Tensors(NamedTuple):
     # raw frame image, and the top ROI row that the rings' y* = 0 sits at.
     frame_numbers: list[int]
     y_roi_top: int
-    contour_smooth_px: float  # interface-smoothing scale used at preprocess time
+    # Per-frame smooth interface curve in [x*, y*], (rows, points, 2), drawn on
+    # the overlay directly so it is not re-quantised off the alpha raster.
+    interface_star: np.ndarray
 
 
 def qc_data(settings: Settings, dataset: str) -> QcData | None:
@@ -78,7 +79,7 @@ def _load(settings: Settings, dataset: str) -> _Tensors | None:
             n_event=int(meta.get("n_frames_event", len(ts))),
             frame_numbers=frame_numbers,
             y_roi_top=int(meta.get("y_roi", [0, 0])[0]),
-            contour_smooth_px=float(meta.get("contour_smooth_px", DEFAULT_SMOOTH_PX)),
+            interface_star=data["interface_star"],
         )
 
 
@@ -103,8 +104,6 @@ def _interface_payload(tensors: _Tensors) -> QcInterface:
     # Every frame, not every other: the web app overlays a silhouette on each
     # raw frame in the lightbox, so a gap would leave frames with no boundary.
     # (The matplotlib QC figure still strides; this is the interactive path.)
-    # Smoothing runs in x* space, so convert the preprocess pixel scale to match.
-    sigma_star = tensors.contour_smooth_px * tensors.um_per_px / tensors.l_ref_um
     return QcInterface(
         x_pin_star=tensors.x_pin_star,
         x_range=[float(tensors.xs[0]), float(tensors.xs[-1])],
@@ -116,40 +115,19 @@ def _interface_payload(tensors: _Tensors) -> QcInterface:
                 index=i,
                 camera_frame=tensors.frame_numbers[i],
                 t_ms=round(float(tensors.t_ms[i]), 2),
-                rings=_rings(tensors.xs, tensors.ys, tensors.alpha[i], sigma_star),
+                rings=[_closed_ring(tensors.interface_star[i])],
             )
             for i in range(len(tensors.t_ms))
         ],
     )
 
 
-def _rings(
-    xs: np.ndarray, ys: np.ndarray, field: np.ndarray, sigma_star: float
-) -> list[list[list[float]]]:
-    """The α > 0.5 region as closed [x*, y*] rings.
-
-    Filled regions rather than contour lines: the bubble touches the top and
-    bottom of the imaged band, so its α = 0.5 *line* is cut there and comes back
-    as two open arcs (nose and tail) with the wall-adjacent stretches missing.
-    Filling closes the outline along the domain edge, which both completes the
-    silhouette and collapses those arcs back into one ring per bubble.
-    """
-    from contourpy import FillType, contour_generator
-
-    generator = contour_generator(x=xs, y=ys, z=field, fill_type=FillType.OuterOffset)
-    points, offsets = generator.filled(0.5, 1.5)
-    rings: list[list[list[float]]] = []
-    for polygon, boundaries in zip(points, offsets, strict=True):
-        # A polygon is an outer ring followed by any holes; each is emitted
-        # separately and drawn with an even-odd fill, so holes stay holes.
-        for start, end in zip(boundaries[:-1], boundaries[1:], strict=True):
-            # Low-pass the traced ring so the overlay reads as the smooth curve a
-            # bubble interface is, not the mask's pixel staircase; close the loop
-            # so the ring is a proper polygon (first point repeated at the end).
-            ring = smooth_closed_contour(polygon[start:end], sigma_star, n_points=480)
-            closed = np.vstack([ring, ring[:1]])
-            rings.append(np.round(closed, 4).tolist())
-    return rings
+def _closed_ring(curve: np.ndarray) -> list[list[float]]:
+    """The stored interface curve as one closed [x*, y*] ring (loop repeats the
+    first point at the end so it is a proper polygon). It is already the smooth
+    interface the tensors were built from -- drawn as-is, not re-traced."""
+    ring = np.round(curve, 4)
+    return np.vstack([ring, ring[:1]]).tolist()
 
 
 def _sdf_payload(tensors: _Tensors) -> QcSdf:

@@ -33,6 +33,22 @@ def write_synthetic_tensors(path: Path) -> None:
     x_star = ((np.arange(width) + 0.5) / width).astype(np.float32)
     y_star = ((np.arange(height) + 0.5) / height).astype(np.float32)
     t_star = (np.arange(n_t) * 0.1).astype(np.float32)
+    # The smooth interface curve the QC overlay draws: a box round each frame's
+    # bubble, growing downstream. [x*, y*] per point, one closed loop per frame.
+    interface_star = np.stack(
+        [
+            np.array(
+                [
+                    [x_star[0], y_star[3]],
+                    [x_star[min(width - 1, 2 + i)], y_star[3]],
+                    [x_star[min(width - 1, 2 + i)], y_star[8]],
+                    [x_star[0], y_star[8]],
+                ],
+                dtype=np.float32,
+            )
+            for i in range(n_t)
+        ]
+    )
     meta = {
         "dataset": "highest_t",
         "um_per_px": 4.3,
@@ -52,6 +68,7 @@ def write_synthetic_tensors(path: Path) -> None:
         y_star=y_star,
         t_star=t_star,
         masks_camera=(alpha > 0.5).astype(np.uint8),
+        interface_star=interface_star,
         meta=json.dumps(meta),
     )
 
