@@ -129,12 +129,14 @@ def _resample_closed(points: np.ndarray, n: int) -> np.ndarray:
 
 
 # Active-contour parameters. Tension keeps the points evenly spread; rigidity
-# is the smoothness (higher = smoother); the rest are the solver's step and the
-# number of points evolved before the curve is resampled for storage.
+# is the smoothness (higher ignores local band defects); the field blur smooths
+# the target so the curve does not chase them; the rest are the max per-step move
+# and the number of points evolved before the curve is resampled for storage.
 _SNAKE_TENSION = 0.05
-_SNAKE_RIGIDITY = 6.0
-_SNAKE_STEP = 1.0
-_SNAKE_ITERATIONS = 250
+_SNAKE_RIGIDITY = 12.0
+_SNAKE_FIELD_BLUR = 6.0
+_SNAKE_STEP = 1.5
+_SNAKE_ITERATIONS = 300
 _SNAKE_POINTS = 200
 
 
@@ -160,12 +162,14 @@ def _snake_centreline(signed: np.ndarray, init: np.ndarray) -> np.ndarray:
 
     ``signed`` is ``distance-to-outer-edge − distance-to-inner-edge``: zero
     exactly midway across the rim, negative toward the outer edge, positive
-    toward the interior. The external force is a *unit* vector down that field
-    toward the zero level-set (normalising it keeps the evolution stable), and
-    the internal energy smooths the curve each step, so it can neither overshoot
-    nor kink.
+    toward the interior. It is blurred first so the curve settles on the rim's
+    overall centre rather than chasing local band defects (a notch where a
+    microchannel grazes the rim). The external force is a Newton step toward the
+    zero level-set -- proportional to the distance still to go, so it shrinks to
+    nothing as the curve arrives and never oscillates -- and the internal energy
+    smooths the curve each step, so it can neither overshoot nor kink.
     """
-    field = gaussian_filter(signed, 2)  # stable gradients
+    field = gaussian_filter(signed, _SNAKE_FIELD_BLUR)
     grad_y, grad_x = np.gradient(field)
     inverse = _snake_internal_inverse(len(init), _SNAKE_TENSION, _SNAKE_RIGIDITY)
     x, y = init[:, 0].copy(), init[:, 1].copy()
@@ -173,8 +177,9 @@ def _snake_centreline(signed: np.ndarray, init: np.ndarray) -> np.ndarray:
         here = map_coordinates(field, [y, x], order=1, mode="nearest")
         gx = map_coordinates(grad_x, [y, x], order=1, mode="nearest")
         gy = map_coordinates(grad_y, [y, x], order=1, mode="nearest")
-        magnitude = np.hypot(gx, gy) + 1e-6
-        step = _SNAKE_STEP * np.sign(here) / magnitude
+        # Newton step h·∇/|∇|² lands on the zero level-set; clip so a flat spot
+        # (tiny gradient) cannot fling a point away.
+        step = np.clip(here / (gx * gx + gy * gy + 1e-6), -_SNAKE_STEP, _SNAKE_STEP)
         x = inverse @ (x - step * gx)
         y = inverse @ (y - step * gy)
     return np.column_stack([x, y])
