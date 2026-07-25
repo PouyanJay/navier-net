@@ -74,6 +74,39 @@ const GROUPS = {
   bretherton_film_um: 4.875,
   Dh_um: 200,
 };
+
+const FLUIDS = [
+  {
+    id: "fc72",
+    name: "FC-72",
+    T_sat_C: 56.6,
+    rho_l: 1601.6,
+    rho_v: 13.39,
+    mu_l: 4.46e-4,
+    mu_v: 1.2e-5,
+    k_l: 0.0522,
+    k_v: 0.0124,
+    cp_l: 1101.5,
+    cp_v: 885,
+    sigma: 8.35e-3,
+    h_lv: 84500,
+  },
+  {
+    id: "water",
+    name: "Water",
+    T_sat_C: 100,
+    rho_l: 958.4,
+    rho_v: 0.5982,
+    mu_l: 2.82e-4,
+    mu_v: 1.23e-5,
+    k_l: 0.679,
+    k_v: 0.0251,
+    cp_l: 4217,
+    cp_v: 2080,
+    sigma: 5.89e-2,
+    h_lv: 2.257e6,
+  },
+];
 const QC = {
   dataset: "sample",
   n_frames_event: 3,
@@ -176,6 +209,7 @@ function mockApi({
         return json(rows);
       }
       if (u.endsWith("/api/runs")) return json([]);
+      if (u.endsWith("/api/fluids")) return json(FLUIDS);
       if (u.endsWith("/groups")) return json(GROUPS);
       if (u.endsWith("/qc-data")) {
         return processed ? json(QC) : new Response("{}", { status: 404 });
@@ -469,6 +503,7 @@ describe("DatasetsView with several series", () => {
           ]);
         }
         if (u.endsWith("/api/runs")) return json([]);
+        if (u.endsWith("/api/fluids")) return json(FLUIDS);
         if (u.endsWith("/groups")) return json(GROUPS);
         if (u.endsWith("/qc-data")) return new Response("{}", { status: 404 });
         if (u.endsWith("/preprocess")) return json(IDLE);
@@ -497,7 +532,7 @@ describe("DatasetsView with several series", () => {
 });
 
 describe("NewSeriesModal failure paths", () => {
-  function openFormAndFill(name = "mid_T") {
+  async function openFormAndFill(name = "mid_T") {
     fireEvent.click(screen.getByRole("button", { name: /Upload new series/ }));
     // Scope to the dialog so the query is unambiguous.
     const form = within(
@@ -521,6 +556,11 @@ describe("NewSeriesModal failure paths", () => {
     fireEvent.change(form.getByLabelText(/Channel height/), {
       target: { value: "150" },
     });
+    // Submit is gated on the fluid catalogue; wait for it to load (the selector
+    // enables once the fetch resolves), independent of name validity.
+    await waitFor(() =>
+      expect(form.getByLabelText("Working fluid")).toBeEnabled(),
+    );
   }
 
   it("reports a failed upload and never attempts the attach", async () => {
@@ -539,7 +579,7 @@ describe("NewSeriesModal failure paths", () => {
     );
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText("Series library");
-    openFormAndFill();
+    await openFormAndFill();
     fireEvent.click(
       screen.getByRole("button", { name: "Upload & preprocess" }),
     );
@@ -569,7 +609,7 @@ describe("NewSeriesModal failure paths", () => {
       <DatasetsView project={PROJECT} onProjectChanged={onProjectChanged} />,
     );
     await screen.findByText("Series library");
-    openFormAndFill();
+    await openFormAndFill();
     fireEvent.click(
       screen.getByRole("button", { name: "Upload & preprocess" }),
     );
@@ -585,7 +625,7 @@ describe("NewSeriesModal failure paths", () => {
     mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText("Series library");
-    openFormAndFill("sample"); // already in the project
+    await openFormAndFill("sample"); // already in the project
 
     expect(
       screen.getByText(/A series with this name already exists/),
@@ -991,12 +1031,54 @@ describe("new series conditions", () => {
         dt_frame_ms: 0.25,
         channel_width_um: 400,
         channel_height_um: 150,
-        T_sat_C: 56.6,
+        fluid: "fc72",
         q_wall_W_cm2: 2,
         flow_rate_mL_hr: 5,
         U_ref: 0.2,
       },
     ]);
+  });
+
+  it("derives the saturation temperature from the fluid, read-only", async () => {
+    mockApi();
+    render(<Harness />);
+    const form = await openModal();
+
+    // FC-72 is the default; its saturation temperature is shown, not typed.
+    const fluid = await form.findByLabelText("Working fluid");
+    expect(form.getByText(/56\.6/)).toBeInTheDocument();
+    // There is no editable T_sat field any more.
+    expect(
+      form.queryByRole("spinbutton", { name: /saturation/i }),
+    ).toBeNull();
+
+    // Choosing water updates the read-only saturation temperature.
+    fireEvent.change(fluid, { target: { value: "water" } });
+    expect(await form.findByText(/100/)).toBeInTheDocument();
+  });
+
+  it("sends the chosen fluid with the conditions", async () => {
+    const calls = mockApi();
+    render(<Harness />);
+    const form = await openModal();
+    fireEvent.change(await form.findByLabelText("Working fluid"), {
+      target: { value: "water" },
+    });
+    fireEvent.change(form.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel width/), {
+      target: { value: "400" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel height/), {
+      target: { value: "150" },
+    });
+    fireEvent.click(submit());
+
+    await waitFor(() => expect(calls.conditionPatches).toHaveLength(1));
+    const patch = calls.conditionPatches[0] as Record<string, unknown>;
+    expect(patch.fluid).toBe("water");
+    expect(patch).not.toHaveProperty("T_sat_C");
   });
 
   it("does not preprocess when the conditions could not be saved", async () => {

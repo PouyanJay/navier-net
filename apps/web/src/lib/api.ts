@@ -83,9 +83,28 @@ export interface DatasetSummary {
   dt_frame_ms: number | null;
 }
 
-/** Editable per-series conditions (subset of OperatingConditions). */
+/** A selectable working fluid with its atmospheric T_sat and saturated
+ * properties (mirrors the `configs/fluid/<id>.yaml` group). */
+export interface Fluid {
+  id: string; // config-group id and the fluid= override value, e.g. "fc72"
+  name: string; // display label, e.g. "FC-72"
+  T_sat_C: number; // saturation temperature at 1 atm
+  rho_l: number;
+  rho_v: number;
+  mu_l: number;
+  mu_v: number;
+  k_l: number;
+  k_v: number;
+  cp_l: number;
+  cp_v: number;
+  sigma: number;
+  h_lv: number;
+}
+
+/** Editable per-series conditions (subset of OperatingConditions). T_sat is not
+ * here: it is derived from the selected fluid, not typed. */
 export interface ConditionsUpdate {
-  T_sat_C?: number;
+  fluid?: string; // fluid config-group id (allow-listed server-side)
   dt_frame_ms?: number;
   channel_width_um?: number;
   channel_height_um?: number;
@@ -378,6 +397,9 @@ export const api = {
 
   getModel: (id: string) =>
     getJson<ModelArchitecture>(`/api/model/${encodeURIComponent(id)}`),
+
+  /** The catalogue of characterised working fluids for the new-series form. */
+  listFluids: () => getJson<Fluid[]>("/api/fluids"),
 };
 
 /** Direct artifact URLs (used as href / img src / video src, not fetched as JSON). */
