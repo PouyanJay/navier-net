@@ -12,10 +12,11 @@ The pipeline, in order:
    bubble) and close to seal gaps in the bubble's dark ring. The largest
    connected component is the bubble's meniscus band. That band is a thick dark
    rim, not a line -- its outer edge over-reads the vapour and its inner edge
-   under-reads it -- so the interface is taken midway across the rim, pairing
-   each outer-edge point with the nearest inner-edge point and averaging. That
-   curve is then low-passed along its arc length, replacing the pixel staircase
-   with the smooth closed curve a bubble interface is, while hugging the shape.
+   under-reads it -- so the interface is taken at the rim's centreline, the
+   zero-crossing of a distance-transform medial field that is blurred first to
+   round off the cusp where the edges converge. That curve is then low-passed
+   along its arc length, replacing the pixel staircase with the smooth closed
+   curve a bubble interface is, while hugging the shape.
 
 3. **Tensor assembly.** Volume fraction, signed distance (negative inside the
    vapour), and a validity mask. The x axis is flipped so that downstream is
@@ -34,7 +35,6 @@ import cv2
 import numpy as np
 import scipy.signal as ss
 from PIL import Image
-from scipy.spatial import cKDTree
 
 from naviernet.data.contour import smooth_closed_contour
 from naviernet.utils.logging import get_logger
@@ -106,8 +106,6 @@ def _largest_component(mask: np.ndarray) -> np.ndarray | None:
     return (labels == 1 + int(np.argmax(areas))).astype(np.uint8)
 
 
-# Samples per rim edge when averaging the two edges into the centreline.
-_MIDLINE_POINTS = 400
 # Points on the stored interface curve (rasterised into alpha, drawn on the QC
 # overlay). Enough to draw as a smooth polyline without a heavy payload.
 _INTERFACE_POINTS = 480
@@ -129,16 +127,17 @@ def _resample_closed(points: np.ndarray, n: int) -> np.ndarray:
     return np.column_stack([xs, ys])
 
 
-def _meniscus_midline(band: np.ndarray, min_hole_fraction: float) -> np.ndarray:
-    """The interface contour: the curve midway between the rim's two edges.
+def _meniscus_midline(band: np.ndarray, min_hole_fraction: float, field_blur_px: float) -> np.ndarray:
+    """The interface contour: the centreline of the meniscus rim.
 
     The imaged edge is a thick dark rim, so its outer contour over-reads the
-    vapour and its inner contour under-reads it. Each outer-edge point is paired
-    with its nearest inner-edge point and the two are averaged -- the curve
-    halfway across the rim. (A distance-transform ridge would give the same
-    centre but spikes where the edges converge; pairing by index instead of
-    nearest point drifts and overshoots at the pointed tail, where the edges
-    differ most in length. Nearest-point pairing stays smooth at both ends.)
+    vapour and its inner contour under-reads it. The centre is the zero-crossing
+    of ``distance-to-outer-edge − distance-to-inner-edge`` (zero exactly midway
+    across the rim). That medial field is Gaussian-blurred *before* the crossing
+    is taken, which rounds off the cusp a raw medial axis forms where the edges
+    converge at the nose, and the jitter a thick rim gives -- so the curve is
+    smooth and never self-intersects, by construction rather than by post-hoc
+    fitting.
 
     Falls back to the outer edge when there is no enclosed interior to bound the
     rim: a near-solid nucleus, or a bubble cut open by the field-of-view edge.
@@ -149,10 +148,13 @@ def _meniscus_midline(band: np.ndarray, min_hole_fraction: float) -> np.ndarray:
     if int(hole.sum()) < min_hole_fraction * int(filled.sum()) or cut_by_fov:
         return _outer_contour(filled)
 
-    outer = _resample_closed(_outer_contour(filled), _MIDLINE_POINTS)
-    inner = _resample_closed(_outer_contour(hole), 2 * _MIDLINE_POINTS)
-    _, nearest = cKDTree(inner).query(outer)
-    return (outer + inner[nearest]) / 2.0
+    to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge
+    to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
+    field = (to_outer - to_inner).astype(np.float32)
+    if field_blur_px > 0:
+        field = cv2.GaussianBlur(field, (0, 0), field_blur_px)
+    centre = _largest_component((field >= 0).astype(np.uint8))
+    return _outer_contour(_fill_holes(centre)) if centre is not None else _outer_contour(filled)
 
 
 def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
@@ -182,7 +184,7 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
             f"(currently {imaging.dark_thresh})"
         )
 
-    interface = _meniscus_midline(band, imaging.min_rim_hole_fraction)
+    interface = _meniscus_midline(band, imaging.min_rim_hole_fraction, imaging.contour_smooth_px)
     if imaging.contour_smooth_px > 0:
         return smooth_closed_contour(interface, imaging.contour_smooth_px, n_points=_INTERFACE_POINTS)
     return _resample_closed(interface, _INTERFACE_POINTS)

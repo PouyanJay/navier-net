@@ -59,7 +59,7 @@ def test_midline_sits_between_the_rim_edges_without_spiking():
     inner = _ellipse(shape, 100, 100, 20, 20)
     band = (outer & (1 - inner)).astype(np.uint8)
 
-    mid = _meniscus_midline(band, min_hole_fraction=0.05)
+    mid = _meniscus_midline(band, min_hole_fraction=0.05, field_blur_px=5.0)
     radius = _radius(mid, 100, 100)
     # The interface lands near the band centre (~30 px), between inner and outer,
     # and is a clean ring: a small radius spread, no medial-axis spike.
@@ -70,7 +70,7 @@ def test_midline_sits_between_the_rim_edges_without_spiking():
 def test_midline_falls_back_to_the_outer_edge_for_a_solid_nucleus():
     # A small dark blob with no enclosed interior: nothing to centre in.
     band = _ellipse((200, 200), 100, 100, 15, 15)
-    mid = _meniscus_midline(band, min_hole_fraction=0.05)
+    mid = _meniscus_midline(band, min_hole_fraction=0.05, field_blur_px=5.0)
     assert 13 <= _radius(mid, 100, 100).mean() <= 16  # the outer edge itself
 
 
@@ -83,7 +83,7 @@ def test_midline_falls_back_when_the_rim_is_cut_by_the_frame_edge():
     band[:, 0] = band[:, 0] | outer[:, 0]  # touches the left border
     assert band[:, 0].any()
 
-    mid = _meniscus_midline(band, min_hole_fraction=0.05)
+    mid = _meniscus_midline(band, min_hole_fraction=0.05, field_blur_px=5.0)
     # Fallback traces the outer edge, reaching ~col 100, not the ~col 80 inner.
     assert mid.ndim == 2 and mid.shape[1] == 2
     assert mid[:, 0].max() >= 95
