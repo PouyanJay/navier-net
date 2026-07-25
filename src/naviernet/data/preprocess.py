@@ -197,12 +197,15 @@ def _meniscus_interface(
     where a discrete centreline would kink or self-intersect. A final fairing
     band-limits the curve so its curvature varies smoothly, with no sudden jumps.
 
-    Falls back to the outer edge when there is no enclosed interior to bound the
-    rim (a near-solid nucleus): there is no rim to centre in.
+    Falls back to the whole outer outline when the rim has no enclosed interior
+    to centre in: a near-solid nucleus, or a bubble cut by the field-of-view edge
+    (a pinching bubble at critical tension, whose off-frame lobe cannot be
+    enclosed -- centring on the enclosed lobe alone would drop the rest).
     """
     filled = _fill_holes(band)
     hole = (filled & (1 - band)).astype(np.uint8)
-    if int(hole.sum()) < min_hole_fraction * int(filled.sum()):
+    cut_by_fov = bool(band[:, 0].any() or band[:, -1].any())
+    if int(hole.sum()) < min_hole_fraction * int(filled.sum()) or cut_by_fov:
         return fair_closed_contour(_outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS)
 
     to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge

@@ -87,6 +87,22 @@ def test_interface_falls_back_to_the_outer_edge_for_a_solid_nucleus():
     assert 13 <= _radius(curve, 100, 100).mean() <= 16  # the outer edge itself
 
 
+def test_interface_traces_the_whole_outline_when_cut_by_the_frame_edge():
+    # A bubble running off the left edge (e.g. pinching at critical tension)
+    # cannot have its interior enclosed, so the interface must be the whole
+    # visible outline, not just the enclosed part.
+    shape = (200, 300)
+    outer = _ellipse(shape, 100, 60, 50, 100)  # centre near the left, runs off
+    inner = _ellipse(shape, 100, 60, 26, 70)
+    band = (outer & (1 - inner)).astype(np.uint8)
+    band[:, 0] = band[:, 0] | outer[:, 0]  # touches the left border
+    assert band[:, 0].any()
+
+    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    # Spans from the cut edge across to the far side, not closed off midway.
+    assert curve[:, 0].min() < 5 and curve[:, 0].max() > 140
+
+
 def _curvature(curve: np.ndarray) -> np.ndarray:
     x, y = curve[:, 0], curve[:, 1]
     dx, dy = np.gradient(x), np.gradient(y)
