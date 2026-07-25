@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from naviernet.data.contour import smooth_closed_contour
+from naviernet.data.contour import fair_closed_contour
 from naviernet.data.preprocess import (
     _largest_component,
     _meniscus_interface,
@@ -87,38 +87,52 @@ def test_interface_falls_back_to_the_outer_edge_for_a_solid_nucleus():
     assert 13 <= _radius(curve, 100, 100).mean() <= 16  # the outer edge itself
 
 
-def test_smoothing_a_noisy_circle_recovers_the_circle():
+def _curvature(curve: np.ndarray) -> np.ndarray:
+    x, y = curve[:, 0], curve[:, 1]
+    dx, dy = np.gradient(x), np.gradient(y)
+    ddx, ddy = np.gradient(dx), np.gradient(dy)
+    return (dx * ddy - dy * ddx) / np.power(dx * dx + dy * dy, 1.5)
+
+
+def test_fairing_a_noisy_circle_recovers_the_circle():
     t = np.linspace(0, 2 * np.pi, 400, endpoint=False)
     r = 50.0
     rng = np.random.default_rng(0)
     noisy = np.column_stack([r * np.cos(t), r * np.sin(t)]) + rng.normal(0, 1.5, (400, 2))
 
-    smooth = smooth_closed_contour(noisy, sigma=4.0, n_points=360)
-    radii = np.hypot(smooth[:, 0], smooth[:, 1])
+    fair = fair_closed_contour(noisy, wavelength_px=40.0, n_points=360)
+    radii = np.hypot(fair[:, 0], fair[:, 1])
     noisy_radii = np.hypot(noisy[:, 0], noisy[:, 1])
-    assert smooth.shape == (360, 2)
+    assert fair.shape == (360, 2)
     assert abs(radii.mean() - r) < 2.0  # radius preserved
-    assert radii.std() < 0.6 * noisy_radii.std()  # jitter substantially reduced
+    assert radii.std() < 0.5 * noisy_radii.std()  # jitter removed
 
 
-def test_smoothing_follows_the_shape_it_does_not_flatten_it():
-    # An elongated ellipse: a global fit would bow off it; a local low-pass keeps
-    # its extent. Corners of the jittered outline should still be tracked.
+def test_fairing_smooths_the_curvature_of_a_bumpy_curve():
+    # A circle with a fast radial wobble: fairing removes it and the curvature
+    # stops jumping, while the overall size is preserved.
+    t = np.linspace(0, 2 * np.pi, 500, endpoint=False)
+    radius = 60 + 3 * np.sin(21 * t)
+    bumpy = np.column_stack([radius * np.cos(t), radius * np.sin(t)])
+
+    fair = fair_closed_contour(bumpy, wavelength_px=40.0)
+    jump = np.abs(np.diff(_curvature(fair))).max()
+    assert jump < np.abs(np.diff(_curvature(bumpy))).max() / 3  # curvature settles
+    assert abs(np.hypot(fair[:, 0], fair[:, 1]).mean() - 60) < 2
+
+
+def test_fairing_is_scale_invariant_and_keeps_an_elongated_shape():
+    # A long ellipse gets more harmonics than a small circle at the same
+    # wavelength, so its ends are not bowed in.
     t = np.linspace(0, 2 * np.pi, 600, endpoint=False)
-    ell = np.column_stack([120 * np.cos(t), 30 * np.sin(t)])
-    rng = np.random.default_rng(1)
-    smooth = smooth_closed_contour(ell + rng.normal(0, 0.8, ell.shape), sigma=3.0)
-    assert abs(smooth[:, 0].max() - 120) < 3 and abs(smooth[:, 1].max() - 30) < 3
+    ell = np.column_stack([200 * np.cos(t), 40 * np.sin(t)])
+    fair = fair_closed_contour(ell, wavelength_px=60.0)
+    assert abs(fair[:, 0].max() - 200) < 3 and abs(fair[:, 1].max() - 40) < 3
 
 
-def test_smoothing_leaves_a_contour_too_short_to_smooth_untouched():
-    pts = np.array([[0, 0], [2, 0], [2, 2]], float)
-    assert np.array_equal(smooth_closed_contour(pts, sigma=3.0), pts)
-
-
-def test_smoothing_is_disabled_by_a_nonpositive_scale():
+def test_fairing_is_disabled_by_a_nonpositive_wavelength():
     pts = np.array([[0, 0], [4, 0], [4, 4], [0, 4], [2, 5]], float)
-    assert np.array_equal(smooth_closed_contour(pts, sigma=0.0), pts)
+    assert np.array_equal(fair_closed_contour(pts, wavelength_px=0.0), pts)
 
 
 def _synthetic_frame(path) -> None:

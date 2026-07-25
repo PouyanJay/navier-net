@@ -16,7 +16,8 @@ The pipeline, in order:
    curve seeded near the rim centre that settles onto the centre-line while a
    rigidity term keeps it smooth. Smoothness is intrinsic to the model -- the
    curve cannot bend sharply -- which is also physical, rigidity standing in for
-   the surface tension that keeps real bubbles smooth.
+   the surface tension that keeps real bubbles smooth. A final scale-invariant
+   fairing band-limits the curve so its curvature varies smoothly too.
 
 3. **Tensor assembly.** Volume fraction, signed distance (negative inside the
    vapour), and a validity mask. The x axis is flipped so that downstream is
@@ -37,7 +38,7 @@ import scipy.signal as ss
 from PIL import Image
 from scipy.ndimage import gaussian_filter, map_coordinates
 
-from naviernet.data.contour import smooth_closed_contour
+from naviernet.data.contour import DEFAULT_WAVELENGTH_PX, fair_closed_contour
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -188,12 +189,13 @@ def _snake_centreline(signed: np.ndarray, init: np.ndarray) -> np.ndarray:
 def _meniscus_interface(
     band: np.ndarray, min_hole_fraction: float, seed_blur_px: float
 ) -> np.ndarray:
-    """The interface: a smooth closed curve on the meniscus rim's centreline.
+    """The interface: a fair closed curve on the meniscus rim's centreline.
 
     The rim centre is the zero level-set of a medial field (distance to the outer
     edge minus distance to the inner edge). An active contour, seeded from the
     blurred level-set, settles onto it and stays smooth by its own rigidity --
-    where a discrete centreline would kink or self-intersect.
+    where a discrete centreline would kink or self-intersect. A final fairing
+    band-limits the curve so its curvature varies smoothly, with no sudden jumps.
 
     Falls back to the outer edge when there is no enclosed interior to bound the
     rim (a near-solid nucleus): there is no rim to centre in.
@@ -201,7 +203,7 @@ def _meniscus_interface(
     filled = _fill_holes(band)
     hole = (filled & (1 - band)).astype(np.uint8)
     if int(hole.sum()) < min_hole_fraction * int(filled.sum()):
-        return smooth_closed_contour(_outer_contour(filled), seed_blur_px, _INTERFACE_POINTS)
+        return fair_closed_contour(_outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS)
 
     to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge
     to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
@@ -210,9 +212,9 @@ def _meniscus_interface(
     seed_field = cv2.GaussianBlur(signed, (0, 0), seed_blur_px) if seed_blur_px > 0 else signed
     seed = _largest_component((seed_field >= 0).astype(np.uint8))
     if seed is None:  # no interior half survived the blur; take the outer edge
-        return smooth_closed_contour(_outer_contour(filled), seed_blur_px, _INTERFACE_POINTS)
+        return fair_closed_contour(_outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS)
     init = _resample_closed(_outer_contour(_fill_holes(seed)), _SNAKE_POINTS)
-    return _resample_closed(_snake_centreline(signed, init), _INTERFACE_POINTS)
+    return fair_closed_contour(_snake_centreline(signed, init), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS)
 
 
 def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:

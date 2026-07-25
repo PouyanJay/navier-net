@@ -1,42 +1,41 @@
-"""Smooth a closed interface contour with a local arc-length low-pass.
+"""Fair a closed interface contour to a curve of smoothly varying curvature.
 
-A bubble interface is a smooth closed curve, but a contour traced from a pixel
-mask is a staircase of pixel-scale steps. Smoothing it must be *local*: a global
-fit (e.g. truncated Fourier descriptors) has a fixed budget of detail for the
-whole perimeter, so on an elongated bubble it bows away from the true edge to
-spend that budget elsewhere.
+A bubble interface is not just smooth in position but *fair*: its curvature (the
+second derivative) varies smoothly, with no sudden jumps. Truncated Fourier
+descriptors give exactly that -- a band-limited curve is C-infinity, so every
+derivative is smooth -- but a *fixed* harmonic count bows a long curve (too few
+harmonics for its detail) and under-smooths a short one.
 
-Convolving the closed curve with a Gaussian along its arc length instead has a
-single length-scale knob, ``sigma``, in the coordinate units of the points:
-features finer than ``sigma`` (the staircase, microchannel nicks) are erased,
-everything coarser (the bubble's actual shape) is followed. The curve is
-resampled densely enough to resolve ``sigma`` first, so the knob means the same
-thing whether the points are mask pixels or non-dimensional ``x*``.
+Scaling the cut-off with the perimeter fixes both: keep harmonics down to a
+fixed arc-length ``wavelength``, so ``harmonics = perimeter / wavelength``. The
+smoothing is then scale-invariant -- the same physical detail is removed whether
+the bubble is small or large -- a small bubble keeps few harmonics (its foot
+smooths out) and a long one keeps many (its tail is not bowed).
 """
 
 from __future__ import annotations
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
 
-# Pixel length scale below which contour detail is treated as staircase noise.
-DEFAULT_SMOOTH_PX = 3.0
+# Arc-length below which contour detail is faired away, in pixels.
+DEFAULT_WAVELENGTH_PX = 100.0
 
-# Samples per sigma when resampling: enough to resolve the Gaussian, cheaply.
-_SAMPLES_PER_SIGMA = 4
+# Minimum harmonics kept, so a tiny contour still has a defined shape.
+_MIN_HARMONICS = 6
 
 
-def smooth_closed_contour(
-    points: np.ndarray, sigma: float = DEFAULT_SMOOTH_PX, n_points: int = 360
+def fair_closed_contour(
+    points: np.ndarray, wavelength_px: float = DEFAULT_WAVELENGTH_PX, n_points: int = 480
 ) -> np.ndarray:
-    """Low-pass a closed contour, returned as ``n_points`` ordered ``[x, y]``.
+    """Fair a closed contour, returned as ``n_points`` ordered ``[x, y]``.
 
     ``points`` is an ordered ``(N, 2)`` closed contour (first and last need not
-    coincide). A non-positive ``sigma`` or a contour too short to smooth is
-    returned unchanged so callers need no special-casing.
+    coincide). Harmonics are kept down to ``wavelength_px`` of arc length, so the
+    fairing is scale-invariant. A non-positive ``wavelength_px`` or a contour too
+    short to fair is returned unchanged so callers need no special-casing.
     """
     pts = np.asarray(points, dtype=np.float64)
-    if sigma <= 0 or len(pts) < 4:
+    if wavelength_px <= 0 or len(pts) < 2 * _MIN_HARMONICS:
         return pts
 
     # Arc length around the closed curve (back to the first point).
@@ -46,15 +45,16 @@ def smooth_closed_contour(
     if perimeter == 0:
         return pts
 
-    # Resample uniformly, fine enough to resolve sigma regardless of coordinate
-    # scale, then convolve periodically so the seam is not a discontinuity.
-    work = max(n_points, int(perimeter / (sigma / _SAMPLES_PER_SIGMA)) + 1)
-    sample = np.linspace(0.0, perimeter, work, endpoint=False)
+    # Resample uniformly so the harmonics mean the same all the way round.
+    sample = np.linspace(0.0, perimeter, n_points, endpoint=False)
     xs = np.interp(sample, arc, np.append(pts[:, 0], pts[0, 0]))
     ys = np.interp(sample, arc, np.append(pts[:, 1], pts[0, 1]))
-    sigma_samples = sigma * work / perimeter
-    xs = gaussian_filter1d(xs, sigma_samples, mode="wrap")
-    ys = gaussian_filter1d(ys, sigma_samples, mode="wrap")
 
-    keep = np.linspace(0, work, n_points, endpoint=False).astype(int)
-    return np.column_stack([xs[keep], ys[keep]])
+    # Keep the harmonics whose wavelength is longer than the cut-off, and drop
+    # the finer ones; band-limiting the curve makes its curvature smooth.
+    harmonics = max(_MIN_HARMONICS, round(perimeter / wavelength_px))
+    spectrum = np.fft.fft(xs + 1j * ys)
+    order = np.fft.fftfreq(n_points, d=1.0 / n_points)
+    spectrum[np.abs(order) > harmonics] = 0.0
+    faired = np.fft.ifft(spectrum)
+    return np.column_stack([faired.real, faired.imag])
