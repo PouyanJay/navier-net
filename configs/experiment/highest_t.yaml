@@ -8,9 +8,13 @@ defaults:
   - base_experiment
 
 name: highest_t
-fluid: FC-72
 
-T_sat_C: 56.6 # saturation at 1 atm
+# Fluid label and saturation temperature are derived from the selected fluid
+# group (configs/fluid/), so choosing a fluid sets both. Override the group, not
+# these: `naviernet fluid=water` (or the per-series fluid choice in the UI).
+fluid: ${fluid.name}
+T_sat_C: ${fluid.T_sat_C}
+
 q_wall_W_cm2: 2.0
 flow_rate_mL_hr: 5.0
 

@@ -1,0 +1,28 @@
+# 3M Novec 7100 / HFE-7100 (methoxy-nonafluorobutane, C4F9OCH3),
+# saturated at T_sat = 61 C, 1 atm.
+# Source: 3M Novec 7100 product datasheet; saturated values cross-checked against
+# electronics-cooling boiling studies (e.g. El-Genk, Bar-Cohen).
+# NOTE: property values are a first-pass sourcing and should be reviewed against a
+# primary reference before production use (see PR).
+
+defaults:
+  - base_fluid
+
+name: HFE-7100
+
+T_sat_C: 61.0 # boiling point at 1 atm
+
+rho_l: 1418.0 # kg/m^3  (saturated liquid)
+rho_v: 9.58
+
+mu_l: 3.7e-4 # Pa.s
+mu_v: 1.1e-5
+
+k_l: 0.062 # W/m/K
+k_v: 0.0126
+
+cp_l: 1253.0 # J/kg/K
+cp_v: 892.0
+
+sigma: 1.02e-2 # N/m
+h_lv: 112.0e3 # J/kg  (latent heat at the boiling point)

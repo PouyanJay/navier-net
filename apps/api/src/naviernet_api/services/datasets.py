@@ -18,6 +18,7 @@ from omegaconf import DictConfig
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import DatasetDetail, DatasetSummary, OperatingConditions
 from naviernet_api.services.config_service import compose_cfg
+from naviernet_api.services.fluids import available_fluid_ids, is_known_fluid
 from naviernet_api.settings import Settings
 
 log = get_logger(__name__)
@@ -49,7 +50,6 @@ class ExclusionError(ValueError):
 # values apply at every compose site for the dataset (detail, groups,
 # preprocess, run launches), so the whole pipeline sees them.
 CONDITION_FIELDS: dict[str, tuple[str, float, float]] = {
-    "T_sat_C": ("experiment.T_sat_C", -273.15, 1000.0),
     "dt_frame_ms": ("experiment.dt_frame_ms", 1e-6, 1e4),
     "channel_width_um": ("experiment.channel_width_um", 1.0, 1e6),
     "channel_height_um": ("experiment.channel_height_um", 1.0, 1e6),
@@ -57,6 +57,11 @@ CONDITION_FIELDS: dict[str, tuple[str, float, float]] = {
     "q_wall_W_cm2": ("experiment.q_wall_W_cm2", 1e-3, 1e4),
     "U_ref": ("scales.U_ref", 1e-6, 1e3),
 }
+# T_sat is not here: it is a property of the selected fluid (derived, read-only),
+# not a typed operating condition. The working fluid is chosen by group name and
+# validated against the fluids allow-list; it is stored alongside the scalars
+# under this key in conditions.json.
+FLUID_KEY = "fluid"
 
 
 def is_valid_dataset_id(dataset: str) -> bool:
@@ -110,8 +115,10 @@ def _conditions_path(settings: Settings, dataset: str) -> Path | None:
     return None if raw_dir is None else raw_dir / "conditions.json"
 
 
-def read_conditions(settings: Settings, dataset: str) -> dict[str, float]:
-    """The series' saved condition values ({} when none have been saved)."""
+def _read_raw_conditions(settings: Settings, dataset: str) -> dict:
+    """The series' raw saved conditions object ({} when absent/corrupt). Carries
+    both the scalar fields and the fluid choice; callers project out what they
+    need so an edit to one never drops the other."""
     path = _conditions_path(settings, dataset)
     if path is None or not path.is_file():
         return {}
@@ -125,23 +132,55 @@ def read_conditions(settings: Settings, dataset: str) -> dict[str, float]:
         # whole dataset listing down with an AttributeError.
         log.warning("ignoring non-object conditions file for %s", dataset)
         return {}
+    return saved
+
+
+def read_conditions(settings: Settings, dataset: str) -> dict[str, float]:
+    """The series' saved scalar condition values ({} when none saved)."""
+    saved = _read_raw_conditions(settings, dataset)
     return {k: v for k, v in saved.items() if k in CONDITION_FIELDS}
 
 
+def read_series_fluid(settings: Settings, dataset: str) -> str | None:
+    """The series' selected fluid group id, or None when none saved (or the
+    saved id is no longer a known fluid)."""
+    fluid = _read_raw_conditions(settings, dataset).get(FLUID_KEY)
+    if fluid is None:
+        return None
+    if isinstance(fluid, str) and is_known_fluid(fluid):
+        return fluid
+    # A fluid config that a series once selected was renamed or removed. Fall
+    # back to the default fluid group, but say so rather than silently reverting.
+    log.warning("ignoring unknown saved fluid %r for %s", fluid, dataset)
+    return None
+
+
 def conditions_overrides(settings: Settings, dataset: str) -> list[str]:
-    """Saved conditions as Hydra overrides, for compose sites of this dataset."""
+    """Saved conditions as Hydra overrides, for compose sites of this dataset.
+    Includes the fluid *group* override (`fluid=<id>`) when one is selected."""
     saved = read_conditions(settings, dataset)
-    return [f"{CONDITION_FIELDS[key][0]}={value}" for key, value in sorted(saved.items())]
+    overrides = [f"{CONDITION_FIELDS[key][0]}={value}" for key, value in sorted(saved.items())]
+    fluid = read_series_fluid(settings, dataset)
+    if fluid is not None:
+        overrides.append(f"{FLUID_KEY}={fluid}")
+    return overrides
 
 
-def save_conditions(
-    settings: Settings, dataset: str, updates: dict[str, float]
-) -> dict[str, float]:
-    """Merge validated condition edits into the series' file; returns the set."""
+def save_conditions(settings: Settings, dataset: str, updates: dict[str, float | str]) -> dict:
+    """Merge validated condition edits into the series' file; returns the set.
+    Accepts the scalar operating conditions and an allow-listed ``fluid`` id."""
     path = _conditions_path(settings, dataset)
     if path is None or not path.parent.is_dir():
         raise ConditionsError(f"dataset {dataset!r} not found")
+
+    fluid = updates.get(FLUID_KEY)
+    if fluid is not None and (not isinstance(fluid, str) or not is_known_fluid(fluid)):
+        raise ConditionsError(
+            f"unknown fluid {fluid!r}; choose one of {', '.join(available_fluid_ids())}"
+        )
     for key, value in updates.items():
+        if key == FLUID_KEY:
+            continue
         if key not in CONDITION_FIELDS:
             raise ConditionsError(f"unknown condition field {key!r}")
         _, lo, hi = CONDITION_FIELDS[key]
@@ -150,7 +189,7 @@ def save_conditions(
         if not lo <= value <= hi:
             raise ConditionsError(f"{key} must be within [{lo}, {hi}], got {value!r}")
 
-    merged = {**read_conditions(settings, dataset), **updates}
+    merged = {**_read_raw_conditions(settings, dataset), **updates}
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(merged, indent=2))
     tmp.replace(path)

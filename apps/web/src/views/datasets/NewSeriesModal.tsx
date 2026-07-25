@@ -2,17 +2,17 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { Button, Callout } from "../../components";
 import { useToast } from "../../components/Toast";
-import { api, type ProjectSummary } from "../../lib/api";
+import { api, type Fluid, type ProjectSummary } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 
 const POLL_INTERVAL_MS = 1000;
 const SERIES_ID_RE = /^[A-Za-z0-9._-]+$/;
+const DEFAULT_FLUID_ID = "fc72";
 
 type ConditionKey =
   | "dt_frame_ms"
   | "channel_width_um"
   | "channel_height_um"
-  | "T_sat_C"
   | "q_wall_W_cm2"
   | "flow_rate_mL_hr"
   | "U_ref";
@@ -75,20 +75,11 @@ const REQUIRED_CONDITIONS: ConditionSpec[] = [
 
 /**
  * The operating conditions of the run. Unlike the measurements they have
- * sensible FC-72 defaults, so they start pre-filled and are edited to override;
- * they set the reference scales and the dimensionless groups.
+ * sensible defaults, so they start pre-filled and are edited to override; they
+ * set the reference scales and the dimensionless groups. Saturation temperature
+ * is not here: it is a property of the selected fluid (derived, read-only).
  */
 const OPERATING_CONDITIONS: ConditionSpec[] = [
-  {
-    key: "T_sat_C",
-    label: "Saturation temperature",
-    hint: "T_sat",
-    unit: "°C",
-    step: 0.1,
-    min: -273.15,
-    max: 1000,
-    why: "fluid saturation at the operating pressure",
-  },
   {
     key: "q_wall_W_cm2",
     label: "Wall heat flux",
@@ -129,18 +120,22 @@ const ALL_CONDITIONS: ConditionSpec[] = [
 type ConditionInputs = Record<ConditionKey, string>;
 
 /** Measurements start empty (must be entered); operating conditions start at
- * their FC-72 defaults and are edited to override. */
+ * their defaults and are edited to override. */
 const INITIAL_CONDITIONS: ConditionInputs = {
   dt_frame_ms: "",
   channel_width_um: "",
   channel_height_um: "",
-  T_sat_C: "56.6",
   q_wall_W_cm2: "2.0",
   flow_rate_mL_hr: "5.0",
   U_ref: "0.20",
 };
 
 type Phase = "form" | "uploading" | "preprocessing";
+
+type FluidsLoad =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; list: Fluid[] };
 
 interface NewSeriesModalProps {
   project: ProjectSummary;
@@ -168,11 +163,39 @@ export function NewSeriesModal({
   const [files, setFiles] = useState<FileList | null>(null);
   const [conditions, setConditions] =
     useState<ConditionInputs>(INITIAL_CONDITIONS);
+  const [fluids, setFluids] = useState<FluidsLoad>({ status: "loading" });
+  const [fluidId, setFluidId] = useState(DEFAULT_FLUID_ID);
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState<string | null>(null);
   const attached = useRef(false);
-  const fluidId = useId();
+  const fluidSelectId = useId();
   const toast = useToast();
+
+  // The fluid catalogue drives the selector and the derived T_sat / properties.
+  useEffect(() => {
+    let alive = true;
+    api
+      .listFluids()
+      .then((list) => {
+        if (!alive) return;
+        setFluids({ status: "ready", list });
+        // Default to FC-72 when present, else the first characterised fluid.
+        if (!list.some((f) => f.id === DEFAULT_FLUID_ID) && list[0]) {
+          setFluidId(list[0].id);
+        }
+      })
+      .catch(
+        (err) =>
+          alive && setFluids({ status: "error", message: errorMessage(err) }),
+      );
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const fluidList = fluids.status === "ready" ? fluids.list : [];
+  const selectedFluid =
+    fluidList.find((f) => f.id === fluidId) ?? fluidList[0] ?? null;
 
   const validName = SERIES_ID_RE.test(name) && !project.datasets.includes(name);
   const parsed = ALL_CONDITIONS.map((spec) => ({
@@ -210,7 +233,9 @@ export function NewSeriesModal({
   }, [phase, name, onClose, toast]);
 
   async function start() {
-    if (!validName || !files?.length || !conditionsValid) return;
+    if (!validName || !files?.length || !conditionsValid || !selectedFluid) {
+      return;
+    }
     setError(null);
     setPhase("uploading");
     try {
@@ -224,12 +249,12 @@ export function NewSeriesModal({
       // Before preprocessing, not after: these values are baked into the
       // calibration and the time axis, so running first would produce tensors
       // built from another series' conditions.
-      await api.updateConditions(
-        name,
-        Object.fromEntries(
+      await api.updateConditions(name, {
+        fluid: fluidId,
+        ...Object.fromEntries(
           parsed.map((entry) => [entry.spec.key, entry.value ?? undefined]),
         ),
-      );
+      });
     } catch (err) {
       setError(
         `The frames are uploaded, but the operating conditions could not be saved: ` +
@@ -341,18 +366,43 @@ export function NewSeriesModal({
 
           <div className="modal-section">
             <h3 className="modal-section-hd">
-              Operating conditions <span>FC-72 defaults · edit to override</span>
+              Operating conditions <span>defaults · edit to override</span>
             </h3>
             <div className="frm">
               <div className="fld">
-                <label htmlFor={fluidId}>Working fluid</label>
+                <label htmlFor={fluidSelectId}>Working fluid</label>
                 <div className="ug">
-                  <select id={fluidId} value="FC-72" disabled>
-                    <option value="FC-72">FC-72</option>
+                  <select
+                    id={fluidSelectId}
+                    value={fluidId}
+                    disabled={busy || fluids.status !== "ready"}
+                    onChange={(e) => setFluidId(e.target.value)}
+                  >
+                    {fluids.status === "ready" ? (
+                      fluidList.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))
+                    ) : (
+                      <option>
+                        {fluids.status === "loading"
+                          ? "Loading fluids…"
+                          : "Fluids unavailable"}
+                      </option>
+                    )}
                   </select>
                 </div>
-                <span className="fld-why">the only fluid characterised so far</span>
+                <span className="fld-why">
+                  sets the fluid properties and the derived saturation temperature
+                </span>
               </div>
+              {fluids.status === "error" && (
+                <Callout tone="error">
+                  Could not load the fluid catalogue: {fluids.message}
+                </Callout>
+              )}
+              {selectedFluid && <FluidProperties fluid={selectedFluid} />}
               {OPERATING_CONDITIONS.map((spec) => (
                 <MeasurementField
                   key={spec.key}
@@ -390,7 +440,11 @@ export function NewSeriesModal({
               variant="primary"
               onClick={() => void start()}
               disabled={
-                busy || !validName || !files?.length || !conditionsValid
+                busy ||
+                !validName ||
+                !files?.length ||
+                !conditionsValid ||
+                !selectedFluid
               }
             >
               {busy ? "Working…" : "Upload & preprocess"}
@@ -453,5 +507,41 @@ function MeasurementField({
           : spec.why}
       </span>
     </div>
+  );
+}
+
+/** The selected fluid's derived saturation temperature and the saturated
+ * properties it commits the run to — read-only: they come from the fluid, not
+ * the form. Overriding a property is a config-level action, not a per-series one. */
+function FluidProperties({ fluid }: { fluid: Fluid }) {
+  const rows: { label: string; value: string }[] = [
+    { label: "Saturation temperature", value: `${fluid.T_sat_C} °C` },
+    { label: "Liquid density", value: `${fluid.rho_l.toFixed(0)} kg·m⁻³` },
+    {
+      label: "Liquid viscosity",
+      value: `${(fluid.mu_l * 1e3).toPrecision(3)} mPa·s`,
+    },
+    {
+      label: "Thermal conductivity",
+      value: `${fluid.k_l.toPrecision(3)} W·m⁻¹·K⁻¹`,
+    },
+    {
+      label: "Surface tension",
+      value: `${(fluid.sigma * 1e3).toPrecision(3)} mN·m⁻¹`,
+    },
+    {
+      label: "Latent heat",
+      value: `${(fluid.h_lv / 1e3).toFixed(0)} kJ·kg⁻¹`,
+    },
+  ];
+  return (
+    <dl className="fluid-props" aria-label={`${fluid.name} properties`}>
+      {rows.map((row) => (
+        <div className="fluid-prop" key={row.label}>
+          <dt>{row.label}</dt>
+          <dd>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }

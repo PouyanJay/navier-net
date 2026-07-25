@@ -12,6 +12,26 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class Fluid(BaseModel):
+    """A characterised working fluid: its label, atmospheric saturation
+    temperature, and the saturated two-phase properties the pipeline needs.
+    Mirrors the fluid config group (`configs/fluid/<id>.yaml`)."""
+
+    id: str  # the config group stem, e.g. "fc72" (also the fluid= override value)
+    name: str  # display label, e.g. "FC-72"
+    T_sat_C: float  # saturation temperature at 1 atm (deg C)
+    rho_l: float  # kg/m^3
+    rho_v: float
+    mu_l: float  # Pa.s
+    mu_v: float
+    k_l: float  # W/m/K
+    k_v: float
+    cp_l: float  # J/kg/K
+    cp_v: float
+    sigma: float  # N/m
+    h_lv: float  # J/kg
+
+
 class RunSummary(BaseModel):
     """One row in the runs list."""
 
@@ -110,15 +130,18 @@ class DatasetSummary(BaseModel):
 
 class ConditionsUpdate(BaseModel):
     """Editable per-series operating conditions; omitted fields keep their
-    current (config-default or previously saved) value."""
+    current (config-default or previously saved) value. Unknown fields are
+    rejected (T_sat is not here: it is derived from the selected fluid)."""
 
-    T_sat_C: float | None = None
+    model_config = {"extra": "forbid"}
+
+    fluid: str | None = None  # fluid config-group id, e.g. "water" (allow-listed)
     dt_frame_ms: float | None = None
     channel_width_um: float | None = None
     channel_height_um: float | None = None
     flow_rate_mL_hr: float | None = None
     q_wall_W_cm2: float | None = None
-    U_ref: float | None = None
+    U_ref: float | None = None  # reference velocity (scales.U_ref)
 
 
 class QcKinematics(BaseModel):
