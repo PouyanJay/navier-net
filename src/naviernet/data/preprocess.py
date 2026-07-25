@@ -12,10 +12,10 @@ The pipeline, in order:
    bubble) and close to seal gaps in the bubble's dark ring. The largest
    connected component is the bubble's meniscus band. That band is a thick dark
    rim, not a line -- its outer edge over-reads the vapour and its inner edge
-   under-reads it -- so the interface is taken at the band's centreline, the set
-   of points equidistant from the rim's inner and outer edges. That outline is
-   then low-passed along its arc length, replacing the pixel staircase with the
-   smooth closed curve a bubble interface is, while still hugging the shape.
+   under-reads it -- so the interface is taken midway across the rim, by
+   averaging its inner and outer edges point for point. That curve is then
+   low-passed along its arc length, replacing the pixel staircase with the smooth
+   closed curve a bubble interface is, while still hugging the shape.
 
 3. **Tensor assembly.** Volume fraction, signed distance (negative inside the
    vapour), and a validity mask. The x axis is flipped so that downstream is
@@ -105,28 +105,54 @@ def _largest_component(mask: np.ndarray) -> np.ndarray | None:
     return (labels == 1 + int(np.argmax(areas))).astype(np.uint8)
 
 
+# Samples per rim edge when averaging the two edges into the centreline.
+_MIDLINE_POINTS = 400
+
+
+def _outer_contour(mask: np.ndarray) -> np.ndarray:
+    """Largest external contour of a mask as ordered float ``[x, y]`` points."""
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    return max(contours, key=cv2.contourArea).squeeze(1).astype(np.float64)
+
+
+def _resample_closed(points: np.ndarray, n: int) -> np.ndarray:
+    """Resample a closed contour to ``n`` points, uniform in arc length."""
+    steps = np.hypot(*np.diff(points, axis=0, append=points[:1]).T)
+    arc = np.concatenate(([0.0], np.cumsum(steps)))
+    sample = np.linspace(0.0, arc[-1], n, endpoint=False)
+    xs = np.interp(sample, arc, np.append(points[:, 0], points[0, 0]))
+    ys = np.interp(sample, arc, np.append(points[:, 1], points[0, 1]))
+    return np.column_stack([xs, ys])
+
+
 def _meniscus_midline(band: np.ndarray, min_hole_fraction: float) -> np.ndarray:
-    """Fill the bubble to the centreline of its dark meniscus ``band``.
+    """The interface contour: the curve midway between the rim's two edges.
 
-    The imaged edge is a thick rim: its outer contour over-reads the vapour and
-    its inner contour under-reads it, so the interface is the band's centreline
-    -- points equidistant from the rim's inner and outer edges. Keeping the half
-    of the filled region nearer the interior yields exactly that region.
+    The imaged edge is a thick dark rim, so its outer contour over-reads the
+    vapour and its inner contour under-reads it. The two edges are resampled to a
+    common length, anchored at the downstream nose, and averaged point for point
+    -- literally the curve halfway across the rim. (A distance-transform ridge
+    would give the same centre but spikes where the rim's edges converge at the
+    nose; averaging the edges stays smooth there.)
 
-    Falls back to the filled outline when there is no enclosed interior to centre
-    in: a near-solid nucleus, or a bubble cut open by the field-of-view edge.
+    Falls back to the outer edge when there is no enclosed interior to bound the
+    rim: a near-solid nucleus, or a bubble cut open by the field-of-view edge.
     """
     filled = _fill_holes(band)
     hole = (filled & (1 - band)).astype(np.uint8)
     cut_by_fov = bool(band[:, 0].any() or band[:, -1].any())
     if int(hole.sum()) < min_hole_fraction * int(filled.sum()) or cut_by_fov:
-        return filled
+        return _outer_contour(filled)
 
-    to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge
-    to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
-    inner_half = ((to_outer - to_inner) >= 0).astype(np.uint8)
-    largest = _largest_component(inner_half)
-    return _fill_holes(largest) if largest is not None else filled
+    outer = _resample_closed(_outer_contour(filled), _MIDLINE_POINTS)
+    inner = _resample_closed(_outer_contour(hole), _MIDLINE_POINTS)
+    # Anchor both at the downstream nose (least x) and traverse the same way, so
+    # index i pairs an outer point with the inner point across the rim from it.
+    outer = np.roll(outer, -int(np.argmin(outer[:, 0])), axis=0)
+    inner = np.roll(inner, -int(np.argmin(inner[:, 0])), axis=0)
+    if np.dot(outer[1] - outer[0], inner[1] - inner[0]) < 0:
+        inner = np.roll(inner[::-1], 1, axis=0)
+    return (outer + inner) / 2.0
 
 
 def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
@@ -153,26 +179,17 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
             f"(currently {imaging.dark_thresh})"
         )
 
-    bubble = _meniscus_midline(band, imaging.min_rim_hole_fraction)
-    return _smooth_mask(bubble, imaging.contour_smooth_px)
+    interface = _meniscus_midline(band, imaging.min_rim_hole_fraction)
+    return _rasterise(interface, dark.shape, imaging.contour_smooth_px)
 
 
-def _smooth_mask(mask: np.ndarray, sigma_px: float) -> np.ndarray:
-    """Replace a mask's staircase boundary with a smooth closed interface curve.
-
-    The outline is traced, low-passed along its arc length, and rasterised back,
-    so the mask carries a clean bubble curve that still hugs the real shape.
-    """
-    if sigma_px <= 0:
-        return mask
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    if not contours:
-        return mask
-    outline = max(contours, key=cv2.contourArea).squeeze(1)
-    smoothed = smooth_closed_contour(outline, sigma_px, n_points=720)
-    out = np.zeros_like(mask)
-    cv2.fillPoly(out, [np.round(smoothed).astype(np.int32)], 1)
-    return out
+def _rasterise(interface: np.ndarray, shape: tuple[int, int], sigma_px: float) -> np.ndarray:
+    """Smooth a closed interface contour and fill it into a binary bubble mask."""
+    if sigma_px > 0:
+        interface = smooth_closed_contour(interface, sigma_px, n_points=720)
+    mask = np.zeros(shape, dtype=np.uint8)
+    cv2.fillPoly(mask, [np.round(interface).astype(np.int32)], 1)
+    return mask
 
 
 def usable_frame_numbers(cfg) -> list[int]:

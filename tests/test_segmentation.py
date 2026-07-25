@@ -34,6 +34,11 @@ def _outer_extent(mask: np.ndarray) -> tuple[int, int]:
     return (rows[-1] - rows[0]) // 2, (cols[-1] - cols[0]) // 2
 
 
+def _radius(polygon: np.ndarray, cy: float, cx: float) -> np.ndarray:
+    """Distance of each [x, y] contour point from a centre (cy row, cx col)."""
+    return np.hypot(polygon[:, 0] - cx, polygon[:, 1] - cy)
+
+
 def test_largest_component_keeps_the_bubble_and_drops_speckle():
     mask = np.zeros((60, 60), np.uint8)
     mask[10:50, 10:50] = 1  # the bubble
@@ -47,7 +52,7 @@ def test_largest_component_is_none_on_an_empty_mask():
     assert _largest_component(np.zeros((10, 10), np.uint8)) is None
 
 
-def test_midline_sits_between_the_rim_edges():
+def test_midline_sits_between_the_rim_edges_without_spiking():
     # A thick annular rim: inner edge at ~20 px, outer edge at ~40 px.
     shape = (200, 200)
     outer = _ellipse(shape, 100, 100, 40, 40)
@@ -55,18 +60,18 @@ def test_midline_sits_between_the_rim_edges():
     band = (outer & (1 - inner)).astype(np.uint8)
 
     mid = _meniscus_midline(band, min_hole_fraction=0.05)
-    ry, rx = _outer_extent(mid)
-    # The interface must land near the band centre (~30 px), well inside the
-    # outer edge (40) and outside the inner edge (20).
-    assert 27 <= ry <= 33 and 27 <= rx <= 33
+    radius = _radius(mid, 100, 100)
+    # The interface lands near the band centre (~30 px), between inner and outer,
+    # and is a clean ring: a small radius spread, no medial-axis spike.
+    assert 27 <= radius.mean() <= 33
+    assert radius.std() < 2.0
 
 
-def test_midline_falls_back_to_the_filled_outline_for_a_solid_nucleus():
+def test_midline_falls_back_to_the_outer_edge_for_a_solid_nucleus():
     # A small dark blob with no enclosed interior: nothing to centre in.
     band = _ellipse((200, 200), 100, 100, 15, 15)
     mid = _meniscus_midline(band, min_hole_fraction=0.05)
-    ry, rx = _outer_extent(mid)
-    assert 14 <= ry <= 16 and 14 <= rx <= 16  # the outline itself
+    assert 13 <= _radius(mid, 100, 100).mean() <= 16  # the outer edge itself
 
 
 def test_midline_falls_back_when_the_rim_is_cut_by_the_frame_edge():
@@ -79,8 +84,9 @@ def test_midline_falls_back_when_the_rim_is_cut_by_the_frame_edge():
     assert band[:, 0].any()
 
     mid = _meniscus_midline(band, min_hole_fraction=0.05)
-    # Fallback fills to the outer edge, so the interior hole is covered.
-    assert int(mid.sum()) >= int((outer & (1 - inner)).sum())
+    # Fallback traces the outer edge, reaching ~col 100, not the ~col 80 inner.
+    assert mid.ndim == 2 and mid.shape[1] == 2
+    assert mid[:, 0].max() >= 95
 
 
 def test_smoothing_a_noisy_circle_recovers_the_circle():

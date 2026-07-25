@@ -146,7 +146,7 @@ def _rings(
             # Low-pass the traced ring so the overlay reads as the smooth curve a
             # bubble interface is, not the mask's pixel staircase; close the loop
             # so the ring is a proper polygon (first point repeated at the end).
-            ring = smooth_closed_contour(polygon[start:end], sigma_star, n_points=240)
+            ring = smooth_closed_contour(polygon[start:end], sigma_star, n_points=480)
             closed = np.vstack([ring, ring[:1]])
             rings.append(np.round(closed, 4).tolist())
     return rings
