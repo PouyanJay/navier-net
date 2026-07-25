@@ -225,7 +225,9 @@ def _meniscus_interface(
     filled = _fill_holes(band)
     hole = (filled & (1 - band)).astype(np.uint8)
     if int(hole.sum()) < min_hole_fraction * int(filled.sum()):
-        return fair_closed_contour(_outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS)
+        return fair_closed_contour(
+            _outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS
+        )
 
     to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge
     to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
@@ -234,9 +236,13 @@ def _meniscus_interface(
     seed_field = cv2.GaussianBlur(signed, (0, 0), seed_blur_px) if seed_blur_px > 0 else signed
     seed = _largest_component((seed_field >= 0).astype(np.uint8))
     if seed is None:  # no interior half survived the blur; take the outer edge
-        return fair_closed_contour(_outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS)
+        return fair_closed_contour(
+            _outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS
+        )
     init = _resample_closed(_outer_contour(_fill_holes(seed)), _SNAKE_POINTS)
-    return fair_closed_contour(_snake_centreline(signed, init), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS)
+    return fair_closed_contour(
+        _snake_centreline(signed, init), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS
+    )
 
 
 def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
@@ -276,7 +282,9 @@ def _fill_interface(interface: np.ndarray, shape: tuple[int, int]) -> np.ndarray
     return mask
 
 
-def _interface_to_star(interface: np.ndarray, width_px: int, um_per_px: float, l_ref: float) -> np.ndarray:
+def _interface_to_star(
+    interface: np.ndarray, width_px: int, um_per_px: float, l_ref: float
+) -> np.ndarray:
     """Interface polygon (ROI pixels) → non-dimensional ``[x*, y*]``.
 
     Undoes the x-flip and the ROI offset exactly as the tensors' ``x_star`` /

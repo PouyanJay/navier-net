@@ -280,9 +280,7 @@ def test_qc_data_before_preprocessing_is_404(client):
 def test_conditions_bounds_are_per_field(client):
     # A valid heat-flux setpoint is accepted...
     assert (
-        client.patch(
-            "/api/datasets/sample/conditions", json={"q_wall_W_cm2": 3.0}
-        ).status_code
+        client.patch("/api/datasets/sample/conditions", json={"q_wall_W_cm2": 3.0}).status_code
         == 200
     )
     # ...but lengths must stay positive.
@@ -322,9 +320,7 @@ def test_selecting_a_fluid_updates_conditions_and_groups(client):
 
 
 def test_unknown_fluid_is_rejected(client):
-    r = client.patch(
-        "/api/datasets/sample/conditions", json={"fluid": "unobtanium"}
-    )
+    r = client.patch("/api/datasets/sample/conditions", json={"fluid": "unobtanium"})
     assert r.status_code == 400
     assert "unobtanium" in r.json()["detail"]
 
@@ -348,9 +344,7 @@ def test_fluid_choice_reaches_the_run_config(repo_root):
 def test_fluid_id_is_allow_listed_not_a_path(client):
     """A traversal-style fluid id is rejected by the allow-list, never used to
     reach a config outside configs/fluid/ (SECURITY.md §3, §4)."""
-    r = client.patch(
-        "/api/datasets/sample/conditions", json={"fluid": "../model/stage_a"}
-    )
+    r = client.patch("/api/datasets/sample/conditions", json={"fluid": "../model/stage_a"})
     assert r.status_code == 400
 
 
