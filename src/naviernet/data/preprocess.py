@@ -12,10 +12,10 @@ The pipeline, in order:
    bubble) and close to seal gaps in the bubble's dark ring. The largest
    connected component is the bubble's meniscus band. That band is a thick dark
    rim, not a line -- its outer edge over-reads the vapour and its inner edge
-   under-reads it -- so the interface is taken midway across the rim, by
-   averaging its inner and outer edges point for point. That curve is then
-   low-passed along its arc length, replacing the pixel staircase with the smooth
-   closed curve a bubble interface is, while still hugging the shape.
+   under-reads it -- so the interface is taken midway across the rim, pairing
+   each outer-edge point with the nearest inner-edge point and averaging. That
+   curve is then low-passed along its arc length, replacing the pixel staircase
+   with the smooth closed curve a bubble interface is, while hugging the shape.
 
 3. **Tensor assembly.** Volume fraction, signed distance (negative inside the
    vapour), and a validity mask. The x axis is flipped so that downstream is
@@ -34,6 +34,7 @@ import cv2
 import numpy as np
 import scipy.signal as ss
 from PIL import Image
+from scipy.spatial import cKDTree
 
 from naviernet.data.contour import smooth_closed_contour
 from naviernet.utils.logging import get_logger
@@ -129,11 +130,12 @@ def _meniscus_midline(band: np.ndarray, min_hole_fraction: float) -> np.ndarray:
     """The interface contour: the curve midway between the rim's two edges.
 
     The imaged edge is a thick dark rim, so its outer contour over-reads the
-    vapour and its inner contour under-reads it. The two edges are resampled to a
-    common length, anchored at the downstream nose, and averaged point for point
-    -- literally the curve halfway across the rim. (A distance-transform ridge
-    would give the same centre but spikes where the rim's edges converge at the
-    nose; averaging the edges stays smooth there.)
+    vapour and its inner contour under-reads it. Each outer-edge point is paired
+    with its nearest inner-edge point and the two are averaged -- the curve
+    halfway across the rim. (A distance-transform ridge would give the same
+    centre but spikes where the edges converge; pairing by index instead of
+    nearest point drifts and overshoots at the pointed tail, where the edges
+    differ most in length. Nearest-point pairing stays smooth at both ends.)
 
     Falls back to the outer edge when there is no enclosed interior to bound the
     rim: a near-solid nucleus, or a bubble cut open by the field-of-view edge.
@@ -145,14 +147,9 @@ def _meniscus_midline(band: np.ndarray, min_hole_fraction: float) -> np.ndarray:
         return _outer_contour(filled)
 
     outer = _resample_closed(_outer_contour(filled), _MIDLINE_POINTS)
-    inner = _resample_closed(_outer_contour(hole), _MIDLINE_POINTS)
-    # Anchor both at the downstream nose (least x) and traverse the same way, so
-    # index i pairs an outer point with the inner point across the rim from it.
-    outer = np.roll(outer, -int(np.argmin(outer[:, 0])), axis=0)
-    inner = np.roll(inner, -int(np.argmin(inner[:, 0])), axis=0)
-    if np.dot(outer[1] - outer[0], inner[1] - inner[0]) < 0:
-        inner = np.roll(inner[::-1], 1, axis=0)
-    return (outer + inner) / 2.0
+    inner = _resample_closed(_outer_contour(hole), 2 * _MIDLINE_POINTS)
+    _, nearest = cKDTree(inner).query(outer)
+    return (outer + inner[nearest]) / 2.0
 
 
 def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
