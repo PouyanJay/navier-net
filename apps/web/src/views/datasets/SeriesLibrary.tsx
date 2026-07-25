@@ -1,7 +1,11 @@
 import { useState } from "react";
 
-import { Chip, Panel } from "../../components";
-import type { DatasetSummary, ProjectSummary } from "../../lib/api";
+import { Chip, DL, type KV, Panel } from "../../components";
+import type {
+  DatasetDetail,
+  DatasetSummary,
+  ProjectSummary,
+} from "../../lib/api";
 import { NewSeriesModal } from "./NewSeriesModal";
 
 interface SeriesLibraryProps {
@@ -9,9 +13,26 @@ interface SeriesLibraryProps {
   series: DatasetSummary[];
   trainedIds: Set<string>;
   selected: string | null;
+  /** The selected series' detail, for the read-only conditions summary. */
+  detail: DatasetDetail | null;
   onSelect: (id: string) => void;
   /** Called with the updated project after a new series is uploaded+attached. */
   onProjectChanged: (project: ProjectSummary) => void;
+}
+
+/** The inputs set for a series in the upload modal, as read-only rows. */
+function conditionItems(detail: DatasetDetail): KV[] {
+  const c = detail.conditions;
+  return [
+    { label: "Working fluid", value: c.fluid },
+    { label: "Frame interval", value: c.dt_frame_ms, hint: "ms" },
+    { label: "Channel width", value: c.channel_width_um, hint: "µm" },
+    { label: "Channel height", value: c.channel_height_um, hint: "µm" },
+    { label: "Saturation temp", value: c.T_sat_C, hint: "°C" },
+    { label: "Wall heat flux", value: c.q_wall_W_cm2, hint: "W·cm⁻²" },
+    { label: "Flow rate", value: c.flow_rate_mL_hr, hint: "mL·hr⁻¹" },
+    { label: "Reference velocity", value: c.U_ref_m_s ?? "—", hint: "m·s⁻¹" },
+  ];
 }
 
 function seriesChip(summary: DatasetSummary, trained: boolean) {
@@ -40,6 +61,7 @@ export function SeriesLibrary({
   series,
   trainedIds,
   selected,
+  detail,
   onSelect,
   onProjectChanged,
 }: SeriesLibraryProps) {
@@ -88,6 +110,18 @@ export function SeriesLibrary({
             onSelect(seriesId);
           }}
         />
+      )}
+      {detail && detail.id === selected && (
+        <section
+          className="ds-conditions"
+          aria-label={`${detail.id} conditions`}
+        >
+          <div className="ds-conditions-hd">
+            <h3 className="mono">{detail.id}</h3>
+            <span className="sub">inputs</span>
+          </div>
+          <DL items={conditionItems(detail)} />
+        </section>
       )}
       <p className="note">
         <b>Transfer learning:</b> once two or more series are configured, Stage

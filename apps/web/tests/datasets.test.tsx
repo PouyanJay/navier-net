@@ -282,6 +282,21 @@ describe("DatasetsView", () => {
     expect(await screen.findByText("215.5")).toBeInTheDocument();
   });
 
+  it("shows the selected series' inputs read-only in the library card", async () => {
+    mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // The inputs set in the upload modal are surfaced for the selected series.
+    const inputs = within(
+      await screen.findByRole("region", { name: /sample conditions/ }),
+    );
+    expect(inputs.getByText("Working fluid")).toBeInTheDocument();
+    expect(inputs.getByText("FC-72")).toBeInTheDocument();
+    expect(inputs.getByText("Channel height")).toBeInTheDocument();
+    expect(inputs.getByText("150")).toBeInTheDocument();
+    expect(inputs.getByText("Reference velocity")).toBeInTheDocument();
+  });
+
   it("uploads a new series through the modal and preprocesses it", async () => {
     const calls = mockApi();
     const onProjectChanged = vi.fn();

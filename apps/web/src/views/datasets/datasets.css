@@ -766,3 +766,28 @@
   text-transform: none;
   color: var(--ink3);
 }
+
+/* Selected-series inputs, read-only, in the series-library side card. */
+.ds-conditions {
+  border-top: 1px solid var(--line2);
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  display: grid;
+  gap: var(--s3);
+}
+.ds-conditions-hd {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.ds-conditions-hd h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ds-conditions-hd .sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}

@@ -55,6 +55,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
         series={series}
         trainedIds={trainedIds}
         selected={inScope ? data.selected : null}
+        detail={detail}
         onSelect={data.setSelected}
         onProjectChanged={(updated) => {
           // The new series must appear in the library without a reload.
