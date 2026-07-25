@@ -13,9 +13,9 @@ The pipeline, in order:
    connected component is the bubble's meniscus band. That band is a thick dark
    rim, not a line -- its outer edge over-reads the vapour and its inner edge
    under-reads it -- so the interface is taken at the band's centreline, the set
-   of points equidistant from the rim's inner and outer edges. The outline is
-   then smoothed to shed single-pixel jaggies and the bumps where microchannel
-   features graze the rim.
+   of points equidistant from the rim's inner and outer edges. That outline is
+   then fitted with truncated Fourier descriptors, replacing the pixel staircase
+   with the smooth closed curve a bubble interface actually is.
 
 3. **Tensor assembly.** Volume fraction, signed distance (negative inside the
    vapour), and a validity mask. The x axis is flipped so that downstream is
@@ -35,6 +35,7 @@ import numpy as np
 import scipy.signal as ss
 from PIL import Image
 
+from naviernet.data.contour import smooth_closed_contour
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -153,14 +154,25 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
         )
 
     bubble = _meniscus_midline(band, imaging.min_rim_hole_fraction)
+    return _smooth_mask(bubble, imaging.contour_harmonics)
 
-    # Round the outline: single-pixel jaggies and microchannel bumps, not the
-    # interface, which the opening/closing pair leaves in place.
-    if imaging.smooth_kernel > 1:
-        k_smooth = cv2.getStructuringElement(ellipse, (imaging.smooth_kernel,) * 2)
-        bubble = cv2.morphologyEx(bubble, cv2.MORPH_OPEN, k_smooth)
-        bubble = cv2.morphologyEx(bubble, cv2.MORPH_CLOSE, k_smooth)
-    return bubble
+
+def _smooth_mask(mask: np.ndarray, n_harmonics: int) -> np.ndarray:
+    """Replace a mask's staircase boundary with a smooth closed interface curve.
+
+    The outline is traced, low-passed with Fourier descriptors, and rasterised
+    back, so the mask carries a clean bubble curve rather than pixel jaggies.
+    """
+    if n_harmonics <= 0:
+        return mask
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return mask
+    outline = max(contours, key=cv2.contourArea).squeeze(1)
+    smoothed = smooth_closed_contour(outline, n_harmonics)
+    out = np.zeros_like(mask)
+    cv2.fillPoly(out, [np.round(smoothed).astype(np.int32)], 1)
+    return out
 
 
 def usable_frame_numbers(cfg) -> list[int]:

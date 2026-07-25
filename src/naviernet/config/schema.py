@@ -84,9 +84,9 @@ class ImagingConfig:
     # its centreline. Below this interior-hole fraction the rim has no enclosed
     # interior to centre in, so the filled outline is used instead.
     min_rim_hole_fraction: float = 0.05
-    # Rounds contour jaggies and microchannel bumps off the outline without
-    # moving the interface. Set to 1 (or 0) to disable.
-    smooth_kernel: int = 5
+    # Fourier harmonics kept when smoothing the interface into a clean closed
+    # curve: fewer round it off, more keep finer features. 0 disables smoothing.
+    contour_harmonics: int = 12
     # Columns masked out on the last usable frame, where the bubble leaves the
     # field of view (expressed in flipped, downstream-positive coordinates).
     truncated_cols: int = 0

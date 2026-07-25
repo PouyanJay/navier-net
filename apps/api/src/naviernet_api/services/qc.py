@@ -12,6 +12,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from naviernet.data.contour import smooth_closed_contour
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import QcData, QcInterface, QcInterfaceFrame, QcKinematics, QcSdf
 from naviernet_api.services.datasets import tensors_meta, tensors_path
@@ -136,7 +137,10 @@ def _rings(xs: np.ndarray, ys: np.ndarray, field: np.ndarray) -> list[list[list[
         # A polygon is an outer ring followed by any holes; each is emitted
         # separately and drawn with an even-odd fill, so holes stay holes.
         for start, end in zip(boundaries[:-1], boundaries[1:], strict=True):
-            rings.append(np.round(polygon[start:end], 4).tolist())
+            # Low-pass the traced ring so the overlay reads as the smooth curve a
+            # bubble interface is, not the mask's pixel staircase.
+            ring = smooth_closed_contour(polygon[start:end], n_points=240)
+            rings.append(np.round(ring, 4).tolist())
     return rings
 
 

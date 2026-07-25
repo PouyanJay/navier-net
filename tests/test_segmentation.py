@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
+from naviernet.data.contour import smooth_closed_contour
 from naviernet.data.preprocess import (
     _largest_component,
     _meniscus_midline,
@@ -80,6 +81,29 @@ def test_midline_falls_back_when_the_rim_is_cut_by_the_frame_edge():
     mid = _meniscus_midline(band, min_hole_fraction=0.05)
     # Fallback fills to the outer edge, so the interior hole is covered.
     assert int(mid.sum()) >= int((outer & (1 - inner)).sum())
+
+
+def test_smoothing_a_noisy_circle_recovers_the_circle():
+    t = np.linspace(0, 2 * np.pi, 400, endpoint=False)
+    r = 50.0
+    rng = np.random.default_rng(0)
+    noisy = np.column_stack([r * np.cos(t), r * np.sin(t)]) + rng.normal(0, 1.5, (400, 2))
+
+    smooth = smooth_closed_contour(noisy, n_harmonics=4, n_points=360)
+    radii = np.hypot(smooth[:, 0], smooth[:, 1])
+    assert smooth.shape == (360, 2)
+    assert abs(radii.mean() - r) < 2.0  # radius preserved
+    assert radii.std() < 0.5  # the pixel jitter is gone
+
+
+def test_smoothing_leaves_a_contour_too_short_to_smooth_untouched():
+    pts = np.array([[0, 0], [2, 0], [2, 2]], float)
+    assert np.array_equal(smooth_closed_contour(pts, n_harmonics=12), pts)
+
+
+def test_smoothing_is_disabled_by_zero_harmonics():
+    pts = np.array([[0, 0], [4, 0], [4, 4], [0, 4], [2, 5]], float)
+    assert np.array_equal(smooth_closed_contour(pts, n_harmonics=0), pts)
 
 
 def _synthetic_frame(path) -> None:
