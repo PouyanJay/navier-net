@@ -13,7 +13,6 @@ from typing import NamedTuple
 import numpy as np
 
 from naviernet.utils.logging import get_logger
-from naviernet.viz.qc import CONTOUR_FRAME_STRIDE
 from naviernet_api.models import QcData, QcInterface, QcInterfaceFrame, QcKinematics, QcSdf
 from naviernet_api.services.datasets import tensors_meta, tensors_path
 from naviernet_api.settings import Settings
@@ -35,6 +34,10 @@ class _Tensors(NamedTuple):
     l_ref_um: float
     x_pin_star: float
     n_event: int
+    # Tensor-row → 1-based camera frame, so a silhouette can be laid on its
+    # raw frame image, and the top ROI row that the rings' y* = 0 sits at.
+    frame_numbers: list[int]
+    y_roi_top: int
 
 
 def qc_data(settings: Settings, dataset: str) -> QcData | None:
@@ -60,6 +63,7 @@ def _load(settings: Settings, dataset: str) -> _Tensors | None:
         return None
     with np.load(path) as data:
         ts = data["t_star"]
+        frame_numbers = [int(n) for n in meta.get("frame_numbers", range(1, len(ts) + 1))]
         return _Tensors(
             alpha=data["alpha"],
             sdf=data["sdf"],
@@ -70,6 +74,8 @@ def _load(settings: Settings, dataset: str) -> _Tensors | None:
             l_ref_um=float(meta["L_ref_um"]),
             x_pin_star=float(meta.get("x_pin_star", 0.0)),
             n_event=int(meta.get("n_frames_event", len(ts))),
+            frame_numbers=frame_numbers,
+            y_roi_top=int(meta.get("y_roi", [0, 0])[0]),
         )
 
 
@@ -91,18 +97,23 @@ def _kinematics_payload(tensors: _Tensors) -> QcKinematics:
 
 
 def _interface_payload(tensors: _Tensors) -> QcInterface:
+    # Every frame, not every other: the web app overlays a silhouette on each
+    # raw frame in the lightbox, so a gap would leave frames with no boundary.
+    # (The matplotlib QC figure still strides; this is the interactive path.)
     return QcInterface(
         x_pin_star=tensors.x_pin_star,
         x_range=[float(tensors.xs[0]), float(tensors.xs[-1])],
         y_range=[float(tensors.ys[0]), float(tensors.ys[-1])],
         l_ref_um=tensors.l_ref_um,
+        y_roi_top=tensors.y_roi_top,
         frames=[
             QcInterfaceFrame(
                 index=i,
+                camera_frame=tensors.frame_numbers[i],
                 t_ms=round(float(tensors.t_ms[i]), 2),
                 rings=_rings(tensors.xs, tensors.ys, tensors.alpha[i]),
             )
-            for i in range(0, len(tensors.t_ms), CONTOUR_FRAME_STRIDE)
+            for i in range(len(tensors.t_ms))
         ],
     )
 

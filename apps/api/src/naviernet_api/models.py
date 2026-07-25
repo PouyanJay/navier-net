@@ -139,6 +139,9 @@ class QcInterfaceFrame(BaseModel):
     """
 
     index: int
+    # The 1-based camera frame this silhouette belongs to. Not index + 1 once
+    # frames are excluded: it maps a ring straight onto its raw frame image.
+    camera_frame: int
     t_ms: float
     rings: list[list[list[float]]]
 
@@ -148,6 +151,9 @@ class QcInterface(BaseModel):
     x_range: list[float]
     y_range: list[float]
     l_ref_um: float  # x* · l_ref_um = µm, for physical axis labels
+    # Top row of the imaged band in raw-frame pixels: rings are cut to this ROI,
+    # so overlaying them on the full frame means shifting y down by this much.
+    y_roi_top: int
     frames: list[QcInterfaceFrame]
 
 

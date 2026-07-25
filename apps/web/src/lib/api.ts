@@ -108,6 +108,9 @@ export interface QcKinematics {
 
 export interface QcInterfaceFrame {
   index: number;
+  /** 1-based camera frame this silhouette belongs to, for overlaying it on the
+   * raw frame image (not index + 1 once frames are excluded). */
+  camera_frame: number;
   t_ms: number;
   /** Closed [x*, y*] rings: the outer silhouette first, then any holes. */
   rings: number[][][];
@@ -123,6 +126,9 @@ export interface QcData {
     y_range: [number, number];
     /** x* · l_ref_um = µm; the charts label their axes in physical units. */
     l_ref_um: number;
+    /** Top row of the imaged band in raw-frame pixels; rings are cut to this
+     * ROI, so a frame overlay shifts them down by this much. */
+    y_roi_top: number;
     frames: QcInterfaceFrame[];
   };
   sdf: {

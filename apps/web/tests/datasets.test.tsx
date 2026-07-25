@@ -88,9 +88,11 @@ const QC = {
     x_range: [0, 5.7] as [number, number],
     y_range: [0, 1] as [number, number],
     l_ref_um: 300,
+    y_roi_top: 2,
     frames: [
       {
         index: 0,
+        camera_frame: 1,
         t_ms: 0,
         rings: [
           [
@@ -134,6 +136,7 @@ function mockApi({
   holdout = 6,
   excluded = [] as number[],
   exclusionStatus = 200,
+  umPerPx = null as number | null,
 } = {}): Calls {
   const calls: Calls = {
     upload: [],
@@ -243,6 +246,7 @@ function mockApi({
           processed,
           holdout_frame: holdout,
           excluded_frames: excludedFrames,
+          um_per_px: umPerPx ?? DETAIL.um_per_px,
         });
       }
       return new Response("not found", { status: 404 });
@@ -267,8 +271,12 @@ describe("DatasetsView", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByAltText(/Frame \d+ preview/).length).toBe(3);
     // Conditions are editable inputs with unit suffixes.
-    expect(screen.getByLabelText(/Frame interval/)).toHaveValue(0.5);
+    expect(screen.getByLabelText(/Flow rate/)).toHaveValue(5);
     expect(screen.getByLabelText(/Reference velocity/)).toHaveValue(0.2);
+    // The fixed geometry and timing live in the upload modal, not here.
+    expect(screen.queryByLabelText(/Frame interval/)).toBeNull();
+    expect(screen.queryByLabelText(/Channel width/)).toBeNull();
+    expect(screen.queryByLabelText(/Channel height/)).toBeNull();
     // Groups render as tiles.
     expect(await screen.findByText("215.5")).toBeInTheDocument();
   });
@@ -277,12 +285,12 @@ describe("DatasetsView", () => {
     const calls = mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    const dt = await screen.findByLabelText(/Frame interval/);
-    fireEvent.change(dt, { target: { value: "0.4" } });
-    fireEvent.blur(dt);
+    const flow = await screen.findByLabelText(/Flow rate/);
+    fireEvent.change(flow, { target: { value: "6" } });
+    fireEvent.blur(flow);
 
     await waitFor(() =>
-      expect(calls.conditionPatches).toEqual([{ dt_frame_ms: 0.4 }]),
+      expect(calls.conditionPatches).toEqual([{ flow_rate_mL_hr: 6 }]),
     );
     expect(await screen.findByText("431.0")).toBeInTheDocument(); // live Re
   });
@@ -315,6 +323,9 @@ describe("DatasetsView", () => {
     });
     fireEvent.change(form.getByLabelText(/Channel width/), {
       target: { value: "400" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel height/), {
+      target: { value: "150" },
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Upload & preprocess" }),
@@ -462,7 +473,7 @@ describe("DatasetsView with several series", () => {
 describe("NewSeriesModal failure paths", () => {
   function openFormAndFill(name = "mid_T") {
     fireEvent.click(screen.getByRole("button", { name: /Upload new series/ }));
-    // Scope to the dialog: the conditions panel behind it uses the same labels.
+    // Scope to the dialog so the query is unambiguous.
     const form = within(
       screen.getByRole("dialog", { name: "Upload new series" }),
     );
@@ -480,6 +491,9 @@ describe("NewSeriesModal failure paths", () => {
     });
     fireEvent.change(form.getByLabelText(/Channel width/), {
       target: { value: "400" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel height/), {
+      target: { value: "150" },
     });
   }
 
@@ -565,7 +579,9 @@ describe("ConditionsPanel behavior", () => {
       async (url: string | URL, opts?: RequestInit) => {
         if (String(url).endsWith("/conditions")) {
           return new Response(
-            JSON.stringify({ detail: "dt_frame_ms must be a positive number" }),
+            JSON.stringify({
+              detail: "flow_rate_mL_hr must be a positive number",
+            }),
             { status: 400 },
           );
         }
@@ -574,12 +590,12 @@ describe("ConditionsPanel behavior", () => {
     );
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    const dt = await screen.findByLabelText(/Frame interval/);
-    fireEvent.change(dt, { target: { value: "3" } });
-    fireEvent.blur(dt);
+    const flow = await screen.findByLabelText(/Flow rate/);
+    fireEvent.change(flow, { target: { value: "-3" } });
+    fireEvent.blur(flow);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /Frame interval: dt_frame_ms must be a positive number/,
+      /Flow rate: flow_rate_mL_hr must be a positive number/,
     );
   });
 
@@ -587,9 +603,9 @@ describe("ConditionsPanel behavior", () => {
     const calls = mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    const dt = await screen.findByLabelText(/Frame interval/);
-    fireEvent.change(dt, { target: { value: "0.5" } }); // same as current
-    fireEvent.blur(dt);
+    const flow = await screen.findByLabelText(/Flow rate/);
+    fireEvent.change(flow, { target: { value: "5" } }); // same as current
+    fireEvent.blur(flow);
 
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(calls.conditionPatches).toEqual([]);
@@ -886,7 +902,7 @@ describe("new series conditions", () => {
       type: "image/tiff",
     });
 
-  /** Queries scoped to the dialog: the conditions panel behind it shares labels. */
+  /** Queries scoped to the dialog so condition lookups are unambiguous. */
   async function openModal() {
     fireEvent.click(
       await screen.findByRole("button", { name: /Upload new series/ }),
@@ -907,12 +923,12 @@ describe("new series conditions", () => {
   const submit = () =>
     screen.getByRole("button", { name: "Upload & preprocess" });
 
-  it("will not upload until the frame interval and channel width are given", async () => {
+  it("will not upload until the frame interval, channel width, and channel height are given", async () => {
     mockApi();
     render(<Harness />);
     const form = await openModal();
 
-    // Name and frames alone are not enough: preprocessing bakes these two in.
+    // Name and frames alone are not enough: preprocessing bakes these in.
     expect(submit()).toBeDisabled();
 
     fireEvent.change(form.getByLabelText(/Frame interval/), {
@@ -922,6 +938,11 @@ describe("new series conditions", () => {
 
     fireEvent.change(form.getByLabelText(/Channel width/), {
       target: { value: "400" },
+    });
+    expect(submit()).toBeDisabled();
+
+    fireEvent.change(form.getByLabelText(/Channel height/), {
+      target: { value: "150" },
     });
     expect(submit()).toBeEnabled();
   });
@@ -968,6 +989,9 @@ describe("new series conditions", () => {
     fireEvent.change(form.getByLabelText(/Channel width/), {
       target: { value: "400" },
     });
+    fireEvent.change(form.getByLabelText(/Channel height/), {
+      target: { value: "150" },
+    });
     fireEvent.click(submit());
 
     await waitFor(() => expect(calls.startPreprocess).toEqual(["mid_T"]));
@@ -975,7 +999,7 @@ describe("new series conditions", () => {
     // and the wrong µm/px, and nothing downstream would say so.
     expect(order).toEqual(["conditions", "preprocess"]);
     expect(calls.conditionPatches).toEqual([
-      { dt_frame_ms: 0.25, channel_width_um: 400 },
+      { dt_frame_ms: 0.25, channel_width_um: 400, channel_height_um: 150 },
     ]);
   });
 
@@ -1004,6 +1028,9 @@ describe("new series conditions", () => {
     });
     fireEvent.change(form.getByLabelText(/Channel width/), {
       target: { value: "400" },
+    });
+    fireEvent.change(form.getByLabelText(/Channel height/), {
+      target: { value: "150" },
     });
     fireEvent.click(submit());
 
@@ -1069,5 +1096,70 @@ describe("QC chart axes", () => {
     expect(
       document.querySelectorAll("text.chart-axis-title").length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe("frame boundary overlay", () => {
+  // A calibrated, processed series is what makes the overlay possible: the
+  // rings need µm/px and the raw frame size to land on real pixels.
+  const calibrated = () =>
+    mockApi({ processed: true, umPerPx: 100 });
+
+  async function enlarge(frame: number) {
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText("Preprocessing QC");
+    fireEvent.click(
+      screen.getByRole("button", { name: `Enlarge frame ${frame}` }),
+    );
+    return within(await screen.findByRole("dialog", { name: /Frame/ }));
+  }
+
+  it("overlays the detected boundary on the enlarged frame by default", async () => {
+    calibrated();
+    await enlarge(1);
+
+    const path = document.querySelector(".frame-overlay path");
+    expect(path).not.toBeNull();
+    // Flip (col = W − 0.5 − x*·L/µm) and ROI shift (row = y*·L/µm − 0.5 + y0)
+    // with W=16, L/µm = 300/100 = 3, y0 = 2: [0.2, 0.3] → (14.90, 2.40).
+    expect(path?.getAttribute("d")).toContain("M14.90 2.40");
+    expect(path?.getAttribute("d")).toMatch(/Z$/); // a closed silhouette
+  });
+
+  it("toggles the boundary off and back on", async () => {
+    calibrated();
+    const dialog = await enlarge(1);
+    expect(document.querySelector(".frame-overlay")).not.toBeNull();
+
+    const toggle = dialog.getByRole("button", { name: "Boundary" });
+    fireEvent.click(toggle); // off
+    expect(document.querySelector(".frame-overlay")).toBeNull();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(toggle); // back on
+    expect(document.querySelector(".frame-overlay")).not.toBeNull();
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("says so, and draws nothing, when a frame has no silhouette", async () => {
+    calibrated(); // the fixture only has a ring for frame 1
+    const dialog = await enlarge(2);
+
+    expect(document.querySelector(".frame-overlay")).toBeNull();
+    expect(dialog.getByText(/no boundary this frame/)).toBeInTheDocument();
+    // The control is still there so the user can turn it off.
+    expect(
+      dialog.getByRole("button", { name: "Boundary" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers no overlay control for an uncalibrated series", async () => {
+    mockApi({ processed: true }); // um_per_px stays null
+    const dialog = await enlarge(1);
+
+    expect(
+      dialog.queryByRole("button", { name: "Boundary" }),
+    ).toBeNull();
+    expect(document.querySelector(".frame-overlay")).toBeNull();
   });
 });

@@ -13,11 +13,15 @@ import {
   artifactUrl,
   type DatasetDetail,
   type PreprocessStatus,
+  type QcData,
 } from "../../lib/api";
 import { FrameLightbox } from "./FrameLightbox";
 
 interface ImageSequenceProps {
   detail: DatasetDetail;
+  /** Preprocessing QC, when the series is processed: the lightbox draws each
+   * frame's detected boundary from its interface silhouettes. */
+  qc: QcData | null;
   preprocess: PreprocessStatus | null;
   onPreprocess: () => void;
   onToggleExcluded: (frame: number) => void;
@@ -72,6 +76,7 @@ function RerunIcon() {
  * preprocessing, which is what actually applies an exclusion. */
 export function ImageSequence({
   detail,
+  qc,
   preprocess,
   onPreprocess,
   onToggleExcluded,
@@ -253,6 +258,7 @@ export function ImageSequence({
       {zoomed !== null && (
         <FrameLightbox
           detail={detail}
+          qc={qc}
           frame={zoomed}
           onFrameChange={setZoomed}
           onToggleExcluded={onToggleExcluded}

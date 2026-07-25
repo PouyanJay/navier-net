@@ -20,32 +20,11 @@ interface FieldSpec {
   value: (c: OperatingConditions) => number | null;
 }
 
-// Each editable field maps to a real config value on the API side.
+// Each editable field maps to a real config value on the API side. The fixed
+// geometry and timing of a run — frame interval, channel width, channel height
+// — are set once in the upload modal (they are baked into the tensors), so they
+// are not editable here.
 const FIELDS: FieldSpec[] = [
-  {
-    field: "dt_frame_ms",
-    label: "Frame interval",
-    hint: "Δt",
-    unit: "ms",
-    step: 0.1,
-    value: (c) => c.dt_frame_ms,
-  },
-  {
-    field: "channel_width_um",
-    label: "Channel width",
-    hint: "imaged",
-    unit: "µm",
-    step: 10,
-    value: (c) => c.channel_width_um,
-  },
-  {
-    field: "channel_height_um",
-    label: "Channel height",
-    hint: "heated wall below",
-    unit: "µm",
-    step: 10,
-    value: (c) => c.channel_height_um,
-  },
   {
     field: "flow_rate_mL_hr",
     label: "Flow rate",

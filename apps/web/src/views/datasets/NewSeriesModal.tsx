@@ -9,11 +9,11 @@ const POLL_INTERVAL_MS = 1000;
 const SERIES_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 /**
- * The two conditions preprocessing cannot be run without, with the server-side
- * bounds they are validated against (`CONDITION_FIELDS` in the datasets
- * service). Everything else about a series is editable afterwards in the
- * conditions panel; these two are baked into the tensors, so asking later would
- * mean asking for a re-run.
+ * The fixed geometry and timing of a run, with the server-side bounds they are
+ * validated against (`CONDITION_FIELDS` in the datasets service). Everything
+ * else about a series is editable afterwards in the conditions panel; these are
+ * baked into the tensors and the physical scale, so asking later would mean
+ * asking for a re-run.
  */
 const REQUIRED_CONDITIONS = [
   {
@@ -38,6 +38,17 @@ const REQUIRED_CONDITIONS = [
     max: 1e6,
     why: "calibrates µm/px from the detected walls",
   },
+  {
+    key: "channel_height_um",
+    label: "Channel height",
+    hint: "heated wall below",
+    unit: "µm",
+    step: 10,
+    placeholder: "150",
+    min: 1,
+    max: 1e6,
+    why: "sets the physical scale of the heated channel",
+  },
 ] as const;
 
 type ConditionKey = (typeof REQUIRED_CONDITIONS)[number]["key"];
@@ -46,6 +57,7 @@ type ConditionInputs = Record<ConditionKey, string>;
 const EMPTY_CONDITIONS: ConditionInputs = {
   dt_frame_ms: "",
   channel_width_um: "",
+  channel_height_um: "",
 };
 
 type Phase = "form" | "uploading" | "preprocessing";
@@ -131,10 +143,12 @@ export function NewSeriesModal({
       // Before preprocessing, not after: these values are baked into the
       // calibration and the time axis, so running first would produce tensors
       // built from another series' conditions.
-      await api.updateConditions(name, {
-        dt_frame_ms: parsed[0].value ?? undefined,
-        channel_width_um: parsed[1].value ?? undefined,
-      });
+      await api.updateConditions(
+        name,
+        Object.fromEntries(
+          parsed.map((entry) => [entry.spec.key, entry.value ?? undefined]),
+        ),
+      );
     } catch (err) {
       setError(
         `The frames are uploaded, but the operating conditions could not be saved: ` +
@@ -239,10 +253,11 @@ export function NewSeriesModal({
             ))}
           </div>
           <p className="note">
-            <b>Why these two now</b> They are the only conditions preprocessing
-            itself consumes: the frame interval sets the time axis and the
-            channel width calibrates µm/px. The rest of the operating conditions
-            are editable in the conditions panel once the series is in.
+            <b>Why these three now</b> They fix the geometry and timing of the
+            run: the frame interval sets the time axis, the channel width
+            calibrates µm/px, and the channel height sets the physical scale of
+            the heated channel. The rest of the operating conditions are editable
+            in the conditions panel once the series is in.
           </p>
 
           {phase !== "form" && (

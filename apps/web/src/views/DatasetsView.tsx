@@ -70,6 +70,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
           <>
             <ImageSequence
               detail={detail}
+              qc={qc}
               preprocess={data.preprocess}
               onPreprocess={data.runPreprocess}
               onToggleExcluded={(frame) => void data.toggleExcludedFrame(frame)}
