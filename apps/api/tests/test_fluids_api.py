@@ -7,6 +7,8 @@ and show what physics each fluid commits to.
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_lists_available_fluids(client):
     r = client.get("/api/fluids")
@@ -18,7 +20,7 @@ def test_lists_available_fluids(client):
     assert "fc72" in by_id
     fc72 = by_id["fc72"]
     assert fc72["name"] == "FC-72"
-    assert fc72["T_sat_C"] == 56.6
+    assert fc72["T_sat_C"] == pytest.approx(56.6)
     # The full saturated-property set the pipeline needs is present.
     for key in ("rho_l", "rho_v", "mu_l", "k_l", "cp_l", "sigma", "h_lv"):
         assert isinstance(fc72[key], (int, float))
@@ -37,7 +39,7 @@ def test_all_characterised_fluids_are_offered(client):
     assert set(expected) <= set(by_id)
     for fluid_id, (name, t_sat) in expected.items():
         assert by_id[fluid_id]["name"] == name
-        assert by_id[fluid_id]["T_sat_C"] == t_sat
+        assert by_id[fluid_id]["T_sat_C"] == pytest.approx(t_sat)
 
 
 def test_base_fluid_template_is_not_listed(client):

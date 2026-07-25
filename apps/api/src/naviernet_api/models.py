@@ -142,7 +142,6 @@ class ConditionsUpdate(BaseModel):
     flow_rate_mL_hr: float | None = None
     q_wall_W_cm2: float | None = None
     U_ref: float | None = None  # reference velocity (scales.U_ref)
-    U_ref: float | None = None
 
 
 class QcKinematics(BaseModel):

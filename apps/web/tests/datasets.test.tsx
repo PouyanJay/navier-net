@@ -1134,20 +1134,7 @@ describe("new series conditions", () => {
     );
 
     render(<Harness />);
-    // Open the modal directly (openModal waits on the fluid selector, which
-    // never enables here) and fill the measurements.
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Upload new series/ }),
-    );
-    const form = within(
-      await screen.findByRole("dialog", { name: "Upload new series" }),
-    );
-    fireEvent.change(form.getByLabelText("Series name"), {
-      target: { value: "mid_T" },
-    });
-    fireEvent.change(form.getByLabelText(/Image sequence/), {
-      target: { files: [tiff()] },
-    });
+    const form = await openModal();
     fireEvent.change(form.getByLabelText(/Frame interval/), {
       target: { value: "0.25" },
     });
@@ -1177,18 +1164,7 @@ describe("new series conditions", () => {
     );
 
     render(<Harness />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Upload new series/ }),
-    );
-    const form = within(
-      await screen.findByRole("dialog", { name: "Upload new series" }),
-    );
-    fireEvent.change(form.getByLabelText("Series name"), {
-      target: { value: "mid_T" },
-    });
-    fireEvent.change(form.getByLabelText(/Image sequence/), {
-      target: { files: [tiff()] },
-    });
+    const form = await openModal();
     fireEvent.change(form.getByLabelText(/Frame interval/), {
       target: { value: "0.25" },
     });
@@ -1200,6 +1176,8 @@ describe("new series conditions", () => {
     });
 
     // No fluid to commit to → the flow cannot proceed (no silent default).
+    // Wait a tick for the (empty) catalogue fetch to resolve before asserting.
+    await waitFor(() => expect(form.getByLabelText("Working fluid")).toBeEnabled());
     expect(submit()).toBeDisabled();
   });
 });

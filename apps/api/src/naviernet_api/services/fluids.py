@@ -10,12 +10,18 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from omegaconf import DictConfig
+
 from naviernet.config import config_dir
 from naviernet_api.models import Fluid
 from naviernet_api.services.config_service import compose_cfg
 
 # The abstract schema node registered in code, not a selectable fluid file.
 _TEMPLATE_STEM = "base_fluid"
+
+# Any dataset composes here: the fluid properties depend only on the selected
+# fluid group, not on `dataset` (which feeds path interpolation, not `cfg.fluid`).
+_COMPOSE_DATASET = "highest_t"
 
 
 @lru_cache(maxsize=1)
@@ -32,22 +38,22 @@ def is_known_fluid(fluid_id: str) -> bool:
     return fluid_id in available_fluid_ids()
 
 
-def _fluid_from_cfg(fluid_id: str, cfg) -> Fluid:
-    f = cfg.fluid
+def _fluid_from_cfg(fluid_id: str, cfg: DictConfig) -> Fluid:
+    fluid_cfg = cfg.fluid
     return Fluid(
         id=fluid_id,
-        name=f.name,
-        T_sat_C=f.T_sat_C,
-        rho_l=f.rho_l,
-        rho_v=f.rho_v,
-        mu_l=f.mu_l,
-        mu_v=f.mu_v,
-        k_l=f.k_l,
-        k_v=f.k_v,
-        cp_l=f.cp_l,
-        cp_v=f.cp_v,
-        sigma=f.sigma,
-        h_lv=f.h_lv,
+        name=fluid_cfg.name,
+        T_sat_C=fluid_cfg.T_sat_C,
+        rho_l=fluid_cfg.rho_l,
+        rho_v=fluid_cfg.rho_v,
+        mu_l=fluid_cfg.mu_l,
+        mu_v=fluid_cfg.mu_v,
+        k_l=fluid_cfg.k_l,
+        k_v=fluid_cfg.k_v,
+        cp_l=fluid_cfg.cp_l,
+        cp_v=fluid_cfg.cp_v,
+        sigma=fluid_cfg.sigma,
+        h_lv=fluid_cfg.h_lv,
     )
 
 
@@ -57,6 +63,6 @@ def list_fluids() -> list[Fluid]:
     read), so the pipeline's default experiment is used to compose."""
     fluids: list[Fluid] = []
     for fluid_id in available_fluid_ids():
-        cfg = compose_cfg("highest_t", overrides=[f"fluid={fluid_id}"])
+        cfg = compose_cfg(_COMPOSE_DATASET, overrides=[f"fluid={fluid_id}"])
         fluids.append(_fluid_from_cfg(fluid_id, cfg))
     return fluids

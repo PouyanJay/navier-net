@@ -145,7 +145,14 @@ def read_series_fluid(settings: Settings, dataset: str) -> str | None:
     """The series' selected fluid group id, or None when none saved (or the
     saved id is no longer a known fluid)."""
     fluid = _read_raw_conditions(settings, dataset).get(FLUID_KEY)
-    return fluid if isinstance(fluid, str) and is_known_fluid(fluid) else None
+    if fluid is None:
+        return None
+    if isinstance(fluid, str) and is_known_fluid(fluid):
+        return fluid
+    # A fluid config that a series once selected was renamed or removed. Fall
+    # back to the default fluid group, but say so rather than silently reverting.
+    log.warning("ignoring unknown saved fluid %r for %s", fluid, dataset)
+    return None
 
 
 def conditions_overrides(settings: Settings, dataset: str) -> list[str]:
