@@ -1,7 +1,7 @@
 import * as d3 from "d3";
 import { useEffect, useRef, useState } from "react";
 
-import { Panel, ViewCanvas } from "../../components";
+import { ViewCanvas } from "../../components";
 import type { QcData, QcKinematics } from "../../lib/api";
 
 const WIDTH = 920;
@@ -20,37 +20,57 @@ const CHECKS: { id: Check; label: string; sub: string }[] = [
   { id: "sdf", label: "Signed distance", sub: "mid frame" },
 ];
 
-/** The three preprocessing checks as interactive charts behind one switch. */
-export function QcPanel({ qc }: { qc: QcData }) {
+interface QcChecksProps {
+  /** The QC data once the tensors exist, or null before / while they build. */
+  qc: QcData | null;
+  /** Whether preprocessing has run, to word the empty state correctly. */
+  processed: boolean;
+}
+
+/** The three preprocessing checks as interactive charts behind one switch,
+ * rendered as a sub-section within the image-sequence card so the frames and
+ * the QC computed from them read as one thing. */
+export function QcChecks({ qc, processed }: QcChecksProps) {
   const [check, setCheck] = useState<Check>("kinematics");
   return (
-    <Panel
-      title="Preprocessing QC"
-      subtitle="computed from the training tensors; inspect before solving"
-      actions={
-        <div className="seg" role="tablist" aria-label="QC check">
-          {CHECKS.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              role="tab"
-              aria-selected={check === c.id}
-              className={check === c.id ? "segb on" : "segb"}
-              onClick={() => setCheck(c.id)}
-            >
-              {c.label}
-              <span>{c.sub}</span>
-            </button>
-          ))}
+    <section className="qc-sub" aria-label="Preprocessing QC">
+      <div className="qc-sub-hd">
+        <div className="qc-sub-title">
+          <h3>Preprocessing QC</h3>
+          <span className="sub">computed from the training tensors</span>
         </div>
-      }
-    >
-      <ViewCanvas>
-        {check === "kinematics" && <KinematicsChart qc={qc} />}
-        {check === "interface" && <InterfaceChart qc={qc} />}
-        {check === "sdf" && <SdfChart qc={qc} />}
-      </ViewCanvas>
-    </Panel>
+        {qc && (
+          <div className="seg" role="tablist" aria-label="QC check">
+            {CHECKS.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                role="tab"
+                aria-selected={check === c.id}
+                className={check === c.id ? "segb on" : "segb"}
+                onClick={() => setCheck(c.id)}
+              >
+                {c.label}
+                <span>{c.sub}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {qc ? (
+        <ViewCanvas>
+          {check === "kinematics" && <KinematicsChart qc={qc} />}
+          {check === "interface" && <InterfaceChart qc={qc} />}
+          {check === "sdf" && <SdfChart qc={qc} />}
+        </ViewCanvas>
+      ) : (
+        <p className="state-note" role="status">
+          {processed
+            ? "Building the QC checks from the tensors…"
+            : "Run preprocessing to compute the QC checks."}
+        </p>
+      )}
+    </section>
   );
 }
 

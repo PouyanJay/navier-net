@@ -700,3 +700,69 @@
 .newproj .plus {
   font-size: 22px;
 }
+
+/* Preprocessing QC as a sub-section of the image-sequence card, so the frames
+   and the QC computed from them read as one continuous card. */
+.qc-sub {
+  border-top: 1px solid var(--line2);
+  margin-top: var(--s4);
+  padding-top: var(--s4);
+  display: grid;
+  gap: var(--s3);
+}
+.qc-sub-hd {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.qc-sub-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-right: auto;
+}
+.qc-sub-title h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.qc-sub-title .sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+
+/* Upload-new-series modal: wider than a task modal and scrollable, since it now
+   carries the full series setup (measurements + operating conditions). */
+.series-modal {
+  width: min(600px, 94vw);
+}
+.series-modal > .body {
+  max-height: min(74vh, 720px);
+  overflow-y: auto;
+}
+.modal-section {
+  display: grid;
+  gap: var(--s2);
+}
+.modal-section-hd {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink2);
+}
+.modal-section-hd span {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink3);
+}

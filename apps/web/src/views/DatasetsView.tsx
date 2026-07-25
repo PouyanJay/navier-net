@@ -1,9 +1,7 @@
 import { Callout } from "../components";
 import { type ProjectSummary } from "../lib/api";
-import { ConditionsPanel } from "./datasets/ConditionsPanel";
 import { GroupsPanel } from "./datasets/GroupsPanel";
 import { ImageSequence } from "./datasets/ImageSequence";
-import { QcPanel } from "./datasets/QcPanel";
 import { SeriesLibrary } from "./datasets/SeriesLibrary";
 import {
   useDatasetData,
@@ -20,7 +18,8 @@ interface DatasetsViewProps {
 }
 
 /** The datasets stage: the project's series library plus the selected series'
- * frames, calibration, conditions, groups, and preprocessing QC. */
+ * frames + preprocessing QC (one card) and its dimensionless groups. Operating
+ * conditions are set per series in the upload modal, not edited here. */
 export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   const data = useDatasetData(project.datasets[0] ?? null);
   const trainedIds = useTrainedIds();
@@ -81,12 +80,6 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
                 {qcError}
               </Callout>
             )}
-            {qc && <QcPanel qc={qc} />}
-            <ConditionsPanel
-              datasetId={detail.id}
-              conditions={detail.conditions}
-              onSaved={data.applyConditions}
-            />
             {data.groups && (
               <GroupsPanel datasetId={detail.id} groups={data.groups} />
             )}

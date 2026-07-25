@@ -260,7 +260,7 @@ afterEach(() => vi.unstubAllGlobals());
 const noop = vi.fn();
 
 describe("DatasetsView", () => {
-  it("shows the series library, frame strip, conditions, and groups", async () => {
+  it("shows the series library, frame strip, QC, and groups", async () => {
     mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
@@ -270,29 +270,16 @@ describe("DatasetsView", () => {
       await screen.findByText(/Image sequence · sample/),
     ).toBeInTheDocument();
     expect(screen.getAllByAltText(/Frame \d+ preview/).length).toBe(3);
-    // Conditions are editable inputs with unit suffixes.
-    expect(screen.getByLabelText(/Flow rate/)).toHaveValue(5);
-    expect(screen.getByLabelText(/Reference velocity/)).toHaveValue(0.2);
-    // The fixed geometry and timing live in the upload modal, not here.
+    // QC is a sub-section of the same card; before preprocessing it prompts.
+    expect(screen.getByText("Preprocessing QC")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Run preprocessing to compute the QC checks/),
+    ).toBeInTheDocument();
+    // Operating conditions are set in the upload modal, not edited here.
+    expect(screen.queryByLabelText(/Flow rate/)).toBeNull();
     expect(screen.queryByLabelText(/Frame interval/)).toBeNull();
-    expect(screen.queryByLabelText(/Channel width/)).toBeNull();
-    expect(screen.queryByLabelText(/Channel height/)).toBeNull();
     // Groups render as tiles.
     expect(await screen.findByText("215.5")).toBeInTheDocument();
-  });
-
-  it("saves an edited condition on blur and applies the recomputed groups", async () => {
-    const calls = mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-
-    const flow = await screen.findByLabelText(/Flow rate/);
-    fireEvent.change(flow, { target: { value: "6" } });
-    fireEvent.blur(flow);
-
-    await waitFor(() =>
-      expect(calls.conditionPatches).toEqual([{ flow_rate_mL_hr: 6 }]),
-    );
-    expect(await screen.findByText("431.0")).toBeInTheDocument(); // live Re
   });
 
   it("uploads a new series through the modal and preprocesses it", async () => {
@@ -369,11 +356,13 @@ describe("DatasetsView", () => {
     mockApi({ processed: true });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    expect(await screen.findByText("Preprocessing QC")).toBeInTheDocument();
+    // "Preprocessing QC" shows immediately; the tabs appear once tensors load.
+    const kinematics = await screen.findByRole("tab", {
+      name: /Growth kinematics/,
+    });
+    expect(screen.getByText("Preprocessing QC")).toBeInTheDocument();
     // Three checks behind one switch; kinematics is the default tab.
-    expect(
-      screen.getByRole("tab", { name: /Growth kinematics/ }),
-    ).toHaveAttribute("aria-selected", "true");
+    expect(kinematics).toHaveAttribute("aria-selected", "true");
     expect(
       screen.getByRole("img", {
         name: /Bubble length in micrometres against time/,
@@ -570,48 +559,6 @@ describe("NewSeriesModal failure paths", () => {
   });
 });
 
-describe("ConditionsPanel behavior", () => {
-  it("surfaces the API's rejection of a bad value", async () => {
-    mockApi();
-    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
-    const real = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(
-      async (url: string | URL, opts?: RequestInit) => {
-        if (String(url).endsWith("/conditions")) {
-          return new Response(
-            JSON.stringify({
-              detail: "flow_rate_mL_hr must be a positive number",
-            }),
-            { status: 400 },
-          );
-        }
-        return real(url, opts);
-      },
-    );
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-
-    const flow = await screen.findByLabelText(/Flow rate/);
-    fireEvent.change(flow, { target: { value: "-3" } });
-    fireEvent.blur(flow);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      /Flow rate: flow_rate_mL_hr must be a positive number/,
-    );
-  });
-
-  it("does not PATCH when the value is unchanged", async () => {
-    const calls = mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-
-    const flow = await screen.findByLabelText(/Flow rate/);
-    fireEvent.change(flow, { target: { value: "5" } }); // same as current
-    fireEvent.blur(flow);
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(calls.conditionPatches).toEqual([]);
-  });
-});
-
 describe("DatasetsView preprocess polling", () => {
   it("polls a running job to completion and refreshes the series", async () => {
     let started = false;
@@ -659,10 +606,13 @@ describe("DatasetsView preprocess polling", () => {
       await screen.findByRole("button", { name: /Run preprocessing/ }),
     );
 
-    // Real timers: the hook polls every 1s until done, then refreshes ;
-    // proven by the QC panel appearing once the series reports processed.
+    // Real timers: the hook polls every 1s until done, then refreshes; proven by
+    // the QC charts (their tabs) appearing once the series reports processed.
     await waitFor(
-      () => expect(screen.getByText("Preprocessing QC")).toBeInTheDocument(),
+      () =>
+        expect(
+          screen.getByRole("tab", { name: /Growth kinematics/ }),
+        ).toBeInTheDocument(),
       { timeout: 5000 },
     );
     expect(polls).toBeGreaterThanOrEqual(2);
@@ -996,10 +946,19 @@ describe("new series conditions", () => {
 
     await waitFor(() => expect(calls.startPreprocess).toEqual(["mid_T"]));
     // Tensors built before the conditions land would carry the wrong time axis
-    // and the wrong µm/px, and nothing downstream would say so.
+    // and the wrong µm/px, and nothing downstream would say so. All conditions
+    // are sent at once: the filled measurements and the operating defaults.
     expect(order).toEqual(["conditions", "preprocess"]);
     expect(calls.conditionPatches).toEqual([
-      { dt_frame_ms: 0.25, channel_width_um: 400, channel_height_um: 150 },
+      {
+        dt_frame_ms: 0.25,
+        channel_width_um: 400,
+        channel_height_um: 150,
+        T_sat_C: 56.6,
+        q_wall_W_cm2: 2,
+        flow_rate_mL_hr: 5,
+        U_ref: 0.2,
+      },
     ]);
   });
 
@@ -1047,17 +1006,16 @@ describe("QC chart axes", () => {
   async function showCheck(name: RegExp) {
     mockApi({ processed: true });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText("Preprocessing QC");
-    fireEvent.click(screen.getByRole("tab", { name }));
+    // The QC tabs appear once the tensors load (before that the section prompts).
+    fireEvent.click(await screen.findByRole("tab", { name }));
   }
 
   it("names the quantity and unit on both axes of the kinematics chart", async () => {
     mockApi({ processed: true });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText("Preprocessing QC");
 
     // Tick numbers alone do not say what is being measured.
-    expect(screen.getByText(/t \(ms\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/t \(ms\)/)).toBeInTheDocument();
     expect(screen.getByText(/L \(µm\)/)).toBeInTheDocument();
   });
 

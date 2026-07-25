@@ -8,14 +8,36 @@ import { errorMessage } from "../../lib/errors";
 const POLL_INTERVAL_MS = 1000;
 const SERIES_ID_RE = /^[A-Za-z0-9._-]+$/;
 
+type ConditionKey =
+  | "dt_frame_ms"
+  | "channel_width_um"
+  | "channel_height_um"
+  | "T_sat_C"
+  | "q_wall_W_cm2"
+  | "flow_rate_mL_hr"
+  | "U_ref";
+
+interface ConditionSpec {
+  key: ConditionKey;
+  label: string;
+  hint: string;
+  unit: string;
+  step: number;
+  /** Server-side bounds (`CONDITION_FIELDS` in the datasets service). */
+  min: number;
+  max: number;
+  /** Shown when empty (measurements) or pre-filled as the value (operating). */
+  placeholder?: string;
+  why: string;
+}
+
 /**
- * The fixed geometry and timing of a run, with the server-side bounds they are
- * validated against (`CONDITION_FIELDS` in the datasets service). Everything
- * else about a series is editable afterwards in the conditions panel; these are
- * baked into the tensors and the physical scale, so asking later would mean
- * asking for a re-run.
+ * The fixed geometry and timing of a run. These are baked into the tensors and
+ * the physical scale, so they must be set before the first preprocessing run;
+ * asking later would mean asking for a re-run. They start empty -- there is no
+ * honest default for a series nobody has described yet.
  */
-const REQUIRED_CONDITIONS = [
+const REQUIRED_CONDITIONS: ConditionSpec[] = [
   {
     key: "dt_frame_ms",
     label: "Frame interval",
@@ -49,15 +71,73 @@ const REQUIRED_CONDITIONS = [
     max: 1e6,
     why: "sets the physical scale of the heated channel",
   },
-] as const;
+];
 
-type ConditionKey = (typeof REQUIRED_CONDITIONS)[number]["key"];
+/**
+ * The operating conditions of the run. Unlike the measurements they have
+ * sensible FC-72 defaults, so they start pre-filled and are edited to override;
+ * they set the reference scales and the dimensionless groups.
+ */
+const OPERATING_CONDITIONS: ConditionSpec[] = [
+  {
+    key: "T_sat_C",
+    label: "Saturation temperature",
+    hint: "T_sat",
+    unit: "°C",
+    step: 0.1,
+    min: -273.15,
+    max: 1000,
+    why: "fluid saturation at the operating pressure",
+  },
+  {
+    key: "q_wall_W_cm2",
+    label: "Wall heat flux",
+    hint: "baseline",
+    unit: "W·cm⁻²",
+    step: 0.1,
+    min: 1e-3,
+    max: 1e4,
+    why: "bottom-wall heat flux setpoint",
+  },
+  {
+    key: "flow_rate_mL_hr",
+    label: "Flow rate",
+    hint: "inlet",
+    unit: "mL·hr⁻¹",
+    step: 0.5,
+    min: 1e-3,
+    max: 1e6,
+    why: "volumetric inlet flow rate",
+  },
+  {
+    key: "U_ref",
+    label: "Reference velocity",
+    hint: "U_ref",
+    unit: "m·s⁻¹",
+    step: 0.01,
+    min: 1e-6,
+    max: 1e3,
+    why: "measured nose-speed scale; sets the reference time",
+  },
+];
+
+const ALL_CONDITIONS: ConditionSpec[] = [
+  ...REQUIRED_CONDITIONS,
+  ...OPERATING_CONDITIONS,
+];
+
 type ConditionInputs = Record<ConditionKey, string>;
 
-const EMPTY_CONDITIONS: ConditionInputs = {
+/** Measurements start empty (must be entered); operating conditions start at
+ * their FC-72 defaults and are edited to override. */
+const INITIAL_CONDITIONS: ConditionInputs = {
   dt_frame_ms: "",
   channel_width_um: "",
   channel_height_um: "",
+  T_sat_C: "56.6",
+  q_wall_W_cm2: "2.0",
+  flow_rate_mL_hr: "5.0",
+  U_ref: "0.20",
 };
 
 type Phase = "form" | "uploading" | "preprocessing";
@@ -87,14 +167,15 @@ export function NewSeriesModal({
   const [name, setName] = useState("");
   const [files, setFiles] = useState<FileList | null>(null);
   const [conditions, setConditions] =
-    useState<ConditionInputs>(EMPTY_CONDITIONS);
+    useState<ConditionInputs>(INITIAL_CONDITIONS);
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState<string | null>(null);
   const attached = useRef(false);
+  const fluidId = useId();
   const toast = useToast();
 
   const validName = SERIES_ID_RE.test(name) && !project.datasets.includes(name);
-  const parsed = REQUIRED_CONDITIONS.map((spec) => ({
+  const parsed = ALL_CONDITIONS.map((spec) => ({
     spec,
     value: parseCondition(conditions[spec.key], spec.min, spec.max),
   }));
@@ -191,7 +272,7 @@ export function NewSeriesModal({
       }}
     >
       <div
-        className="modal"
+        className="modal series-modal"
         role="dialog"
         aria-modal="true"
         aria-label="Upload new series"
@@ -239,26 +320,52 @@ export function NewSeriesModal({
             )}
           </label>
 
-          <div className="frm">
-            {REQUIRED_CONDITIONS.map((spec) => (
-              <MeasurementField
-                key={spec.key}
-                spec={spec}
-                value={conditions[spec.key]}
-                disabled={busy}
-                onChange={(next) =>
-                  setConditions((current) => ({ ...current, [spec.key]: next }))
-                }
-              />
-            ))}
+          <div className="modal-section">
+            <h3 className="modal-section-hd">
+              Measurements <span>baked into the tensors</span>
+            </h3>
+            <div className="frm">
+              {REQUIRED_CONDITIONS.map((spec) => (
+                <MeasurementField
+                  key={spec.key}
+                  spec={spec}
+                  value={conditions[spec.key]}
+                  disabled={busy}
+                  onChange={(next) =>
+                    setConditions((c) => ({ ...c, [spec.key]: next }))
+                  }
+                />
+              ))}
+            </div>
           </div>
-          <p className="note">
-            <b>Why these three now</b> They fix the geometry and timing of the
-            run: the frame interval sets the time axis, the channel width
-            calibrates µm/px, and the channel height sets the physical scale of
-            the heated channel. The rest of the operating conditions are editable
-            in the conditions panel once the series is in.
-          </p>
+
+          <div className="modal-section">
+            <h3 className="modal-section-hd">
+              Operating conditions <span>FC-72 defaults · edit to override</span>
+            </h3>
+            <div className="frm">
+              <div className="fld">
+                <label htmlFor={fluidId}>Working fluid</label>
+                <div className="ug">
+                  <select id={fluidId} value="FC-72" disabled>
+                    <option value="FC-72">FC-72</option>
+                  </select>
+                </div>
+                <span className="fld-why">the only fluid characterised so far</span>
+              </div>
+              {OPERATING_CONDITIONS.map((spec) => (
+                <MeasurementField
+                  key={spec.key}
+                  spec={spec}
+                  value={conditions[spec.key]}
+                  disabled={busy}
+                  onChange={(next) =>
+                    setConditions((c) => ({ ...c, [spec.key]: next }))
+                  }
+                />
+              ))}
+            </div>
+          </div>
 
           {phase !== "form" && (
             <div className="modal-progress">
@@ -299,15 +406,15 @@ export function NewSeriesModal({
 }
 
 interface MeasurementFieldProps {
-  spec: (typeof REQUIRED_CONDITIONS)[number];
+  spec: ConditionSpec;
   value: string;
   disabled: boolean;
   onChange: (value: string) => void;
 }
 
-/** A required measurement with its unit, in the conditions form's own shell.
- * Unlike the shared NumberField it starts empty: there is no honest default for
- * a series nobody has described yet, so the value has to be entered. */
+/** A single condition with its unit and bounds, in the form's field shell.
+ * Measurements start empty (they have no honest default); operating conditions
+ * arrive pre-filled with their FC-72 default value. */
 function MeasurementField({
   spec,
   value,

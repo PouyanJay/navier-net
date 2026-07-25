@@ -16,6 +16,7 @@ import {
   type QcData,
 } from "../../lib/api";
 import { FrameLightbox } from "./FrameLightbox";
+import { QcChecks } from "./QcPanel";
 
 interface ImageSequenceProps {
   detail: DatasetDetail;
@@ -253,6 +254,10 @@ export function ImageSequence({
         <p className="note">
           <b>Auto-detected</b> {detail.notes}
         </p>
+      )}
+
+      {detail.n_frames > 0 && !running && (
+        <QcChecks qc={qc} processed={detail.processed} />
       )}
 
       {zoomed !== null && (
