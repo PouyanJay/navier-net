@@ -3,7 +3,23 @@
   display: grid;
   gap: var(--s4);
   grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
-  align-items: start;
+  /* Stretch so the series-library side card matches the right column's height
+     and their bottoms line up. */
+  align-items: stretch;
+}
+/* Fill the stretched side card: body grows, the transfer-learning note sinks to
+   the bottom so the extra space reads as intentional spacing, not a gap. */
+.lib-card {
+  display: flex;
+  flex-direction: column;
+}
+.lib-card > .body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.lib-card > .body > .note {
+  margin-top: auto;
 }
 .dsx-main {
   display: grid;

@@ -70,7 +70,11 @@ export function SeriesLibrary({
   const [adding, setAdding] = useState(false);
 
   return (
-    <Panel title="Series library" subtitle="per-series conditions">
+    <Panel
+      title="Series library"
+      subtitle="per-series conditions"
+      className="lib-card"
+    >
       {series.length === 0 && (
         <div className="dsempty">
           <b>No series yet</b>
