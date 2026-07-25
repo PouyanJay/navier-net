@@ -89,21 +89,32 @@ def test_smoothing_a_noisy_circle_recovers_the_circle():
     rng = np.random.default_rng(0)
     noisy = np.column_stack([r * np.cos(t), r * np.sin(t)]) + rng.normal(0, 1.5, (400, 2))
 
-    smooth = smooth_closed_contour(noisy, n_harmonics=4, n_points=360)
+    smooth = smooth_closed_contour(noisy, sigma=4.0, n_points=360)
     radii = np.hypot(smooth[:, 0], smooth[:, 1])
+    noisy_radii = np.hypot(noisy[:, 0], noisy[:, 1])
     assert smooth.shape == (360, 2)
     assert abs(radii.mean() - r) < 2.0  # radius preserved
-    assert radii.std() < 0.5  # the pixel jitter is gone
+    assert radii.std() < 0.6 * noisy_radii.std()  # jitter substantially reduced
+
+
+def test_smoothing_follows_the_shape_it_does_not_flatten_it():
+    # An elongated ellipse: a global fit would bow off it; a local low-pass keeps
+    # its extent. Corners of the jittered outline should still be tracked.
+    t = np.linspace(0, 2 * np.pi, 600, endpoint=False)
+    ell = np.column_stack([120 * np.cos(t), 30 * np.sin(t)])
+    rng = np.random.default_rng(1)
+    smooth = smooth_closed_contour(ell + rng.normal(0, 0.8, ell.shape), sigma=3.0)
+    assert abs(smooth[:, 0].max() - 120) < 3 and abs(smooth[:, 1].max() - 30) < 3
 
 
 def test_smoothing_leaves_a_contour_too_short_to_smooth_untouched():
     pts = np.array([[0, 0], [2, 0], [2, 2]], float)
-    assert np.array_equal(smooth_closed_contour(pts, n_harmonics=12), pts)
+    assert np.array_equal(smooth_closed_contour(pts, sigma=3.0), pts)
 
 
-def test_smoothing_is_disabled_by_zero_harmonics():
+def test_smoothing_is_disabled_by_a_nonpositive_scale():
     pts = np.array([[0, 0], [4, 0], [4, 4], [0, 4], [2, 5]], float)
-    assert np.array_equal(smooth_closed_contour(pts, n_harmonics=0), pts)
+    assert np.array_equal(smooth_closed_contour(pts, sigma=0.0), pts)
 
 
 def _synthetic_frame(path) -> None:

@@ -14,8 +14,8 @@ The pipeline, in order:
    rim, not a line -- its outer edge over-reads the vapour and its inner edge
    under-reads it -- so the interface is taken at the band's centreline, the set
    of points equidistant from the rim's inner and outer edges. That outline is
-   then fitted with truncated Fourier descriptors, replacing the pixel staircase
-   with the smooth closed curve a bubble interface actually is.
+   then low-passed along its arc length, replacing the pixel staircase with the
+   smooth closed curve a bubble interface is, while still hugging the shape.
 
 3. **Tensor assembly.** Volume fraction, signed distance (negative inside the
    vapour), and a validity mask. The x axis is flipped so that downstream is
@@ -154,22 +154,22 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
         )
 
     bubble = _meniscus_midline(band, imaging.min_rim_hole_fraction)
-    return _smooth_mask(bubble, imaging.contour_harmonics)
+    return _smooth_mask(bubble, imaging.contour_smooth_px)
 
 
-def _smooth_mask(mask: np.ndarray, n_harmonics: int) -> np.ndarray:
+def _smooth_mask(mask: np.ndarray, sigma_px: float) -> np.ndarray:
     """Replace a mask's staircase boundary with a smooth closed interface curve.
 
-    The outline is traced, low-passed with Fourier descriptors, and rasterised
-    back, so the mask carries a clean bubble curve rather than pixel jaggies.
+    The outline is traced, low-passed along its arc length, and rasterised back,
+    so the mask carries a clean bubble curve that still hugs the real shape.
     """
-    if n_harmonics <= 0:
+    if sigma_px <= 0:
         return mask
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         return mask
     outline = max(contours, key=cv2.contourArea).squeeze(1)
-    smoothed = smooth_closed_contour(outline, n_harmonics)
+    smoothed = smooth_closed_contour(outline, sigma_px, n_points=720)
     out = np.zeros_like(mask)
     cv2.fillPoly(out, [np.round(smoothed).astype(np.int32)], 1)
     return out
@@ -251,6 +251,8 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         "x_pin_star": x_pin,
         "n_frames_usable": n_usable,
         "n_frames_event": n_event,
+        # Interface-smoothing scale, so the QC overlay smooths its rings to match.
+        "contour_smooth_px": float(cfg.imaging.contour_smooth_px),
         # Row -> camera frame. Downstream reads this rather than assuming
         # row i is frame i+1, which stops holding once frames are excluded.
         "frame_numbers": frame_numbers,
