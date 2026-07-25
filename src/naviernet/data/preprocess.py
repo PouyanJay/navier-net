@@ -9,9 +9,13 @@ The pipeline, in order:
 
 2. **Segmentation.** Threshold the dark structure, then open with a large
    kernel (erasing the thin heater traces that would otherwise merge with the
-   bubble), close to seal gaps in the bubble's dark ring, and fill each
-   connected component by flood-filling from a zero-padded border. The largest
-   filled component is the bubble.
+   bubble) and close to seal gaps in the bubble's dark ring. The largest
+   connected component is the bubble's meniscus band. That band is a thick dark
+   rim, not a line -- its outer edge over-reads the vapour and its inner edge
+   under-reads it -- so the interface is taken at the band's centreline, the set
+   of points equidistant from the rim's inner and outer edges. The outline is
+   then smoothed to shed single-pixel jaggies and the bumps where microchannel
+   features graze the rim.
 
 3. **Tensor assembly.** Volume fraction, signed distance (negative inside the
    vapour), and a validity mask. The x axis is flipped so that downstream is
@@ -91,8 +95,45 @@ def _fill_holes(component: np.ndarray) -> np.ndarray:
     return (padded | (1 - flooded))[1:-1, 1:-1]
 
 
+def _largest_component(mask: np.ndarray) -> np.ndarray | None:
+    """The biggest connected component of a binary mask, or None if it is empty."""
+    n_components, labels = cv2.connectedComponents(mask)
+    if n_components <= 1:
+        return None
+    areas = [int((labels == i).sum()) for i in range(1, n_components)]
+    return (labels == 1 + int(np.argmax(areas))).astype(np.uint8)
+
+
+def _meniscus_midline(band: np.ndarray, min_hole_fraction: float) -> np.ndarray:
+    """Fill the bubble to the centreline of its dark meniscus ``band``.
+
+    The imaged edge is a thick rim: its outer contour over-reads the vapour and
+    its inner contour under-reads it, so the interface is the band's centreline
+    -- points equidistant from the rim's inner and outer edges. Keeping the half
+    of the filled region nearer the interior yields exactly that region.
+
+    Falls back to the filled outline when there is no enclosed interior to centre
+    in: a near-solid nucleus, or a bubble cut open by the field-of-view edge.
+    """
+    filled = _fill_holes(band)
+    hole = (filled & (1 - band)).astype(np.uint8)
+    cut_by_fov = bool(band[:, 0].any() or band[:, -1].any())
+    if int(hole.sum()) < min_hole_fraction * int(filled.sum()) or cut_by_fov:
+        return filled
+
+    to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge
+    to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
+    inner_half = ((to_outer - to_inner) >= 0).astype(np.uint8)
+    largest = _largest_component(inner_half)
+    return _fill_holes(largest) if largest is not None else filled
+
+
 def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
-    """Binary bubble mask for raw frame ``n`` (1-based), cropped to the ROI."""
+    """Binary bubble mask for raw frame ``n`` (1-based), cropped to the ROI.
+
+    The mask is filled to the meniscus centreline, so its boundary is the
+    interface itself rather than the outer edge of the dark rim.
+    """
     imaging = cfg.imaging
     y0, y1 = roi
     grey = np.asarray(Image.open(paths.raw_frame(n)).convert("L"))
@@ -102,23 +143,24 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
     k_open = cv2.getStructuringElement(ellipse, (imaging.open_kernel,) * 2)
     k_close = cv2.getStructuringElement(ellipse, (imaging.close_kernel,) * 2)
 
-    thick = cv2.morphologyEx(dark, cv2.MORPH_OPEN, k_open)
-    ring = cv2.morphologyEx(thick, cv2.MORPH_CLOSE, k_close)
-
-    n_components, labels = cv2.connectedComponents(ring)
-    best, best_area = None, 0
-    for i in range(1, n_components):
-        filled = _fill_holes((labels == i).astype(np.uint8))
-        area = int(filled.sum())
-        if area > best_area:
-            best_area, best = area, filled
-
-    if best is None:
+    thick = cv2.morphologyEx(dark, cv2.MORPH_OPEN, k_open)  # erase thin traces
+    ring = cv2.morphologyEx(thick, cv2.MORPH_CLOSE, k_close)  # seal ring gaps
+    band = _largest_component(ring)
+    if band is None:
         raise RuntimeError(
             f"no bubble found in frame {n}; check imaging.dark_thresh "
             f"(currently {imaging.dark_thresh})"
         )
-    return best
+
+    bubble = _meniscus_midline(band, imaging.min_rim_hole_fraction)
+
+    # Round the outline: single-pixel jaggies and microchannel bumps, not the
+    # interface, which the opening/closing pair leaves in place.
+    if imaging.smooth_kernel > 1:
+        k_smooth = cv2.getStructuringElement(ellipse, (imaging.smooth_kernel,) * 2)
+        bubble = cv2.morphologyEx(bubble, cv2.MORPH_OPEN, k_smooth)
+        bubble = cv2.morphologyEx(bubble, cv2.MORPH_CLOSE, k_smooth)
+    return bubble
 
 
 def usable_frame_numbers(cfg) -> list[int]:

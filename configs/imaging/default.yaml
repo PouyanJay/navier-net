@@ -16,4 +16,8 @@ dark_thresh: 100 # bubble ring and other dark structure
 open_kernel: 9 # large enough to erase the thin heater traces
 close_kernel: 7 # seals gaps in the bubble's dark ring
 
+# The dark bubble edge is a thick rim; the interface is its centreline.
+min_rim_hole_fraction: 0.05 # below this the rim is solid; use the filled outline
+smooth_kernel: 5 # rounds contour jaggies without moving the interface
+
 truncated_cols: 60 # FOV-cut safety band on the final usable frame

@@ -80,6 +80,13 @@ class ImagingConfig:
     dark_thresh: int = MISSING  # intensity below which a pixel is "dark"
     open_kernel: int = MISSING  # morphological opening; removes heater traces
     close_kernel: int = MISSING  # morphological closing; seals the bubble ring
+    # The imaged bubble edge is a thick dark rim, not a line; the interface is
+    # its centreline. Below this interior-hole fraction the rim has no enclosed
+    # interior to centre in, so the filled outline is used instead.
+    min_rim_hole_fraction: float = 0.05
+    # Rounds contour jaggies and microchannel bumps off the outline without
+    # moving the interface. Set to 1 (or 0) to disable.
+    smooth_kernel: int = 5
     # Columns masked out on the last usable frame, where the bubble leaves the
     # field of view (expressed in flipped, downstream-positive coordinates).
     truncated_cols: int = 0
