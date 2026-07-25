@@ -31,8 +31,12 @@ class ExperimentConfig:
     """Operating conditions of one imaged ebullition dataset."""
 
     name: str = MISSING
+    # Both derived from the selected fluid group (``${fluid.name}`` /
+    # ``${fluid.T_sat_C}``): the working fluid fixes its own label and its
+    # atmospheric saturation temperature. Kept on the experiment so every
+    # existing consumer (groups, residuals, API) reads one stable path.
     fluid: str = MISSING
-    T_sat_C: float = MISSING  # saturation temperature at operating pressure
+    T_sat_C: float = MISSING  # saturation temperature at operating pressure (from fluid)
     q_wall_W_cm2: float = MISSING  # bottom-wall heat flux setpoint
     flow_rate_mL_hr: float = MISSING
     channel_width_um: float = MISSING  # imaged (in-plane) direction
@@ -57,6 +61,10 @@ class FluidConfig:
     """Saturated two-phase properties at ``T_sat`` (SI units)."""
 
     name: str = MISSING
+    # Saturation temperature at the operating pressure (atmospheric). A property
+    # of the fluid, not a free operating input: the experiment derives its
+    # ``T_sat_C`` from this, so selecting a fluid sets the saturation point.
+    T_sat_C: float = MISSING  # deg C
     rho_l: float = MISSING  # kg/m^3
     rho_v: float = MISSING
     mu_l: float = MISSING  # Pa.s

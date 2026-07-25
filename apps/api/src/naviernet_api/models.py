@@ -12,6 +12,26 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class Fluid(BaseModel):
+    """A characterised working fluid: its label, atmospheric saturation
+    temperature, and the saturated two-phase properties the pipeline needs.
+    Mirrors the fluid config group (`configs/fluid/<id>.yaml`)."""
+
+    id: str  # the config group stem, e.g. "fc72" (also the fluid= override value)
+    name: str  # display label, e.g. "FC-72"
+    T_sat_C: float  # saturation temperature at 1 atm (deg C)
+    rho_l: float  # kg/m^3
+    rho_v: float
+    mu_l: float  # Pa.s
+    mu_v: float
+    k_l: float  # W/m/K
+    k_v: float
+    cp_l: float  # J/kg/K
+    cp_v: float
+    sigma: float  # N/m
+    h_lv: float  # J/kg
+
+
 class RunSummary(BaseModel):
     """One row in the runs list."""
 

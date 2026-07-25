@@ -6,6 +6,8 @@ defaults:
 
 name: FC-72
 
+T_sat_C: 56.6 # saturation at 1 atm
+
 rho_l: 1601.6 # kg/m^3
 rho_v: 13.39
 
