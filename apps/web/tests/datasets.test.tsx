@@ -292,9 +292,10 @@ describe("DatasetsView", () => {
     );
     expect(inputs.getByText("Working fluid")).toBeInTheDocument();
     expect(inputs.getByText("FC-72")).toBeInTheDocument();
-    expect(inputs.getByText("Channel height")).toBeInTheDocument();
+    // The unit rides in the label, so the value column stays clean numbers.
+    expect(inputs.getByText("Channel height (µm)")).toBeInTheDocument();
     expect(inputs.getByText("150")).toBeInTheDocument();
-    expect(inputs.getByText("Reference velocity")).toBeInTheDocument();
+    expect(inputs.getByText("Reference velocity (m·s⁻¹)")).toBeInTheDocument();
   });
 
   it("uploads a new series through the modal and preprocesses it", async () => {

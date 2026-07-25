@@ -20,18 +20,20 @@ interface SeriesLibraryProps {
   onProjectChanged: (project: ProjectSummary) => void;
 }
 
-/** The inputs set for a series in the upload modal, as read-only rows. */
+/** The inputs set for a series in the upload modal, as read-only rows. The unit
+ * is carried in the label (e.g. "Frame interval (ms)") so the values stay a
+ * clean column of numbers. */
 function conditionItems(detail: DatasetDetail): KV[] {
   const c = detail.conditions;
   return [
     { label: "Working fluid", value: c.fluid },
-    { label: "Frame interval", value: c.dt_frame_ms, hint: "ms" },
-    { label: "Channel width", value: c.channel_width_um, hint: "µm" },
-    { label: "Channel height", value: c.channel_height_um, hint: "µm" },
-    { label: "Saturation temp", value: c.T_sat_C, hint: "°C" },
-    { label: "Wall heat flux", value: c.q_wall_W_cm2, hint: "W·cm⁻²" },
-    { label: "Flow rate", value: c.flow_rate_mL_hr, hint: "mL·hr⁻¹" },
-    { label: "Reference velocity", value: c.U_ref_m_s ?? "—", hint: "m·s⁻¹" },
+    { label: "Frame interval (ms)", value: c.dt_frame_ms },
+    { label: "Channel width (µm)", value: c.channel_width_um },
+    { label: "Channel height (µm)", value: c.channel_height_um },
+    { label: "Saturation temp (°C)", value: c.T_sat_C },
+    { label: "Wall heat flux (W·cm⁻²)", value: c.q_wall_W_cm2 },
+    { label: "Flow rate (mL·hr⁻¹)", value: c.flow_rate_mL_hr },
+    { label: "Reference velocity (m·s⁻¹)", value: c.U_ref_m_s ?? "—" },
   ];
 }
 
