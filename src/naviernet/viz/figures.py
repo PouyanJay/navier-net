@@ -45,8 +45,9 @@ def frames_matching(cfg, model, data, paths: RunPaths) -> None:
     stride = cfg.evaluation.stride
     threshold = cfg.evaluation.threshold
     xs, ys = data.x[::stride], data.y[::stride]
-    n_event = cfg.experiment.n_frames_event
-    holdout = int(cfg.training.holdout_frame)
+    n_event = data.n_event
+    holdout = data.holdout_row
+    t_ref_ms = reference_time_ms(cfg.scales)
 
     fig, axes = plt.subplots(n_event, 1, figsize=(11, 1.6 * n_event), sharex=True)
     for i in range(n_event):
@@ -74,7 +75,7 @@ def frames_matching(cfg, model, data, paths: RunPaths) -> None:
         ax.text(
             0.01,
             0.72,
-            f"frame {i + 1}   t = {i * cfg.experiment.dt_frame_ms:.1f} ms   "
+            f"frame {data.frame_numbers[i]}   t = {data.t[i] * t_ref_ms:.1f} ms   "
             f"IoU = {iou:.3f}" + ("   *HOLDOUT*" if is_holdout else ""),
             transform=ax.transAxes,
             fontsize=9,
@@ -82,7 +83,7 @@ def frames_matching(cfg, model, data, paths: RunPaths) -> None:
         )
         ax.set_aspect("equal")
 
-    axes[0].set_title("Measured (black) vs PINN (red dashed) — flow left to right")
+    axes[0].set_title("Measured (black) vs PINN (red dashed); flow left to right")
     axes[-1].set_xlabel("x* (downstream)")
     fig.tight_layout()
     _save(fig, paths.figures_dir / "frames_matching.png", dpi=120)
@@ -103,7 +104,7 @@ def continuous_dynamics(cfg, model, data, paths: RunPaths, n_t: int = 37) -> Non
         predicted = predict_alpha(model, data, t, stride)
         ax.contour(xs, ys, predicted, [threshold], colors=[cmap(k / n_t)], linewidths=1.0)
 
-    for i in range(cfg.experiment.n_frames_event):
+    for i in range(data.n_event):
         ax.contour(
             xs,
             ys,
@@ -127,7 +128,7 @@ def continuous_dynamics(cfg, model, data, paths: RunPaths, n_t: int = 37) -> Non
 
 def trajectories(cfg, model, data, paths: RunPaths) -> None:
     """Nose position and vapour area: continuous prediction vs measurement."""
-    holdout = int(cfg.training.holdout_frame)
+    holdout = data.holdout_row
     t_ref_ms = reference_time_ms(cfg.scales)
 
     t_star, nose, area = nose_trajectory(cfg, model, data)
@@ -139,7 +140,7 @@ def trajectories(cfg, model, data, paths: RunPaths) -> None:
     ax = axes[0]
     ax.plot(t_ms, nose, "r-", label="PINN (continuous)")
     ax.plot(meas_t, meas_nose, "ko", label="measured")
-    if holdout >= 0:
+    if 0 <= holdout < len(meas_t):
         ax.plot(
             meas_t[holdout],
             meas_nose[holdout],
@@ -172,11 +173,13 @@ def overlays_on_raw(cfg, model, data, paths: RunPaths) -> None:
     """Predicted contour drawn onto the raw camera frames, in camera orientation."""
     threshold = cfg.evaluation.threshold
     y0, y1 = data.meta["y_roi"]
-    holdout = int(cfg.training.holdout_frame)
+    holdout = data.holdout_row
+    t_ref_ms = reference_time_ms(cfg.scales)
 
     tiles = []
-    for i in range(cfg.experiment.n_frames_event):
-        raw = np.asarray(Image.open(paths.raw_frame(i + 1)).convert("RGB"))
+    for i in range(data.n_event):
+        frame_number = data.frame_numbers[i]
+        raw = np.asarray(Image.open(paths.raw_frame(frame_number)).convert("RGB"))
         # Un-flip x to return from downstream-positive to camera orientation.
         predicted = predict_alpha_fullres(model, data, data.t[i])[:, ::-1]
         mask = (predicted > threshold).astype(np.uint8)
@@ -185,13 +188,13 @@ def overlays_on_raw(cfg, model, data, paths: RunPaths) -> None:
         canvas = raw.copy()
         cv2.drawContours(canvas[y0:y1, :], contours, -1, (255, 30, 30), 4)
         Image.fromarray(canvas[y0 - 60 : y1 + 60, :]).save(
-            paths.figures_dir / f"pinn_on_image_f{i + 1:02d}.png"
+            paths.figures_dir / f"pinn_on_image_f{frame_number:02d}.png"
         )
 
         tile = canvas[y0 - 52 : y1 + 18, :]
         is_holdout = i == holdout
         # ASCII only: cv2 renders with Hershey fonts, which have no glyphs beyond it.
-        label = f"frame {i + 1}  t={i * cfg.experiment.dt_frame_ms:.1f} ms" + (
+        label = f"frame {frame_number}  t={data.t[i] * t_ref_ms:.1f} ms" + (
             "   [HOLDOUT - never seen]" if is_holdout else ""
         )
         cv2.putText(

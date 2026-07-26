@@ -63,7 +63,25 @@ class BubbleDataset:
         self.cfg = cfg
         self.device = device
         self.eps = float(cfg.model.alpha_eps)
-        self.holdout_frame = int(cfg.training.holdout_frame)
+
+        n_rows = self.alpha.shape[0]
+        # Row -> 1-based camera frame. Identity unless the series excludes
+        # frames; archives written before exclusions existed have no such key.
+        self.frame_numbers: list[int] = [
+            int(n) for n in self.meta.get("frame_numbers", range(1, n_rows + 1))
+        ]
+        # Rows of the growth event -- the prefix every per-frame stage iterates.
+        self.n_event = int(self.meta.get("n_frames_event", n_rows))
+        # `training.holdout_frame` is the 0-based position in the unexcluded
+        # sequence (camera frame - 1). Resolve it to a row, so that excluding a
+        # frame can never quietly shift supervision onto the holdout. -1 (train
+        # on all frames) and an excluded holdout both resolve to "no row".
+        holdout_camera = int(cfg.training.holdout_frame) + 1
+        self.holdout_row = (
+            self.frame_numbers.index(holdout_camera)
+            if holdout_camera in self.frame_numbers
+            else -1
+        )
 
         self.domain = Domain(
             x_min=float(self.x[0]),
@@ -84,7 +102,7 @@ class BubbleDataset:
         weights = np.exp(-((self.sdf / (4 * self.eps)) ** 2)) + 0.02
         weights = (weights * self.valid).ravel()
 
-        trainable = (self._ti != self.holdout_frame) & (weights > 0)
+        trainable = (self._ti != self.holdout_row) & (weights > 0)
         self._train_idx = np.where(trainable)[0]
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
@@ -93,6 +111,11 @@ class BubbleDataset:
     def shape(self) -> tuple[int, int, int]:
         """``(n_frames, height_px, width_px)``."""
         return self.alpha.shape
+
+    @property
+    def event_frames(self) -> list[int]:
+        """Camera frame numbers of the growth event, in row order."""
+        return self.frame_numbers[: self.n_event]
 
     def _coords(self, idx: np.ndarray) -> np.ndarray:
         """Map flat tensor indices to ``(x, y, t)`` coordinates."""

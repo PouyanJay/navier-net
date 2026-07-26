@@ -7,14 +7,19 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from naviernet_api.models import (
+    ConditionsResponse,
+    ConditionsUpdate,
     DatasetDetail,
     DatasetSummary,
+    ExclusionsUpdate,
     PreprocessStatus,
+    QcData,
 )
 from naviernet_api.services import datasets as datasets_service
 from naviernet_api.services import jobs as jobs_service
-from naviernet_api.services.config_service import compute_groups_for
-from naviernet_api.services.datasets import UploadError
+from naviernet_api.services import qc as qc_service
+from naviernet_api.services.config_service import compose_cfg, compute_groups_for
+from naviernet_api.services.datasets import ConditionsError, ExclusionError, UploadError
 from naviernet_api.settings import Settings, get_settings
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -39,15 +44,76 @@ def get_dataset(dataset: str, settings: Settings = Depends(get_settings)) -> Dat
 def get_dataset_groups(
     dataset: str, settings: Settings = Depends(get_settings)
 ) -> dict[str, float]:
-    """Live dimensionless groups, computed from the dataset's config."""
+    """Live dimensionless groups, computed from the dataset's config plus its
+    saved per-series conditions."""
     if datasets_service.get_dataset(settings, dataset) is None:
         raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
-    return compute_groups_for(dataset)
+    return compute_groups_for(
+        dataset, overrides=datasets_service.series_overrides(settings, dataset)
+    )
+
+
+@router.patch("/{dataset}/conditions", response_model=ConditionsResponse)
+def update_conditions(
+    dataset: str,
+    payload: ConditionsUpdate,
+    settings: Settings = Depends(get_settings),
+) -> ConditionsResponse:
+    """Save per-series operating conditions; groups recompute immediately."""
+    if datasets_service.get_dataset_summary(settings, dataset) is None:
+        raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
+    updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+    try:
+        datasets_service.save_conditions(settings, dataset, updates)
+    except ConditionsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    overrides = datasets_service.series_overrides(settings, dataset)
+    cfg = compose_cfg(dataset, overrides=overrides)
+    return ConditionsResponse(
+        conditions=datasets_service.conditions_from_cfg(cfg),
+        groups=compute_groups_for(dataset, overrides=overrides),
+    )
+
+
+@router.put("/{dataset}/excluded-frames", response_model=DatasetDetail)
+def set_excluded_frames(
+    dataset: str,
+    payload: ExclusionsUpdate,
+    settings: Settings = Depends(get_settings),
+) -> DatasetDetail:
+    """Replace the frames held out of the tensors. Takes effect on the next
+    preprocessing run; the returned detail says whether one is still pending."""
+    if datasets_service.get_dataset_summary(settings, dataset) is None:
+        raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
+    try:
+        datasets_service.save_excluded_frames(settings, dataset, payload.excluded_frames)
+    except ExclusionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    detail = datasets_service.get_dataset(settings, dataset)
+    if detail is None:  # saved but not found; should not happen
+        raise HTTPException(status_code=500, detail="exclusions saved but dataset not found")
+    return detail
+
+
+@router.get("/{dataset}/qc-data", response_model=QcData)
+def get_qc_data(dataset: str, settings: Settings = Depends(get_settings)) -> QcData:
+    """The preprocessing QC checks as chart data (kinematics, interface, SDF)."""
+    data = qc_service.qc_data(settings, dataset)
+    if data is None:
+        raise HTTPException(
+            status_code=404, detail=f"dataset {dataset!r} has not been preprocessed"
+        )
+    return data
 
 
 @router.get("/{dataset}/qc")
 def get_dataset_qc(dataset: str, settings: Settings = Depends(get_settings)) -> FileResponse:
-    """The preprocessing QC figure."""
+    """The pipeline's rendered QC figure, as a downloadable artifact.
+
+    The web app draws its own interactive QC from /qc-data; this stays as the
+    raw matplotlib artifact the preprocess stage writes to disk."""
     path = datasets_service.qc_path(settings, dataset)
     if path is None:
         raise HTTPException(status_code=404, detail=f"no QC figure for {dataset!r}")
@@ -85,7 +151,7 @@ async def upload_frames(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     summary = datasets_service.get_dataset_summary(settings, dataset)
-    if summary is None:  # saved but not found — should not happen
+    if summary is None:  # saved but not found; should not happen
         raise HTTPException(status_code=500, detail="upload saved but dataset not found")
     return summary
 

@@ -3,13 +3,13 @@
 Evaluates the trained model's volume fraction on a strided grid over a set of
 continuous timesteps and extracts the alpha = 0.5 interface contours as
 polylines (plus the measured contours at the camera instants). This is pure
-visualization geometry — the physics all lives in the pipeline; contour
+visualization geometry: the physics all lives in the pipeline; contour
 extraction uses contourpy, the same engine matplotlib's own contour plots use.
 
 Loading the checkpoint + tensors takes a moment, so results are memoized per
 (run, frame-count), invalidated when the checkpoint changes on disk. The cache
 is a small bounded FIFO; concurrent misses on the same key may both build (the
-build is idempotent and read-only — accepted, like `_mint_run_id`'s documented
+build is idempotent and read-only; accepted, like `_mint_run_id`'s documented
 filesystem race, to keep the lock away from model inference).
 """
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-# Maximum prediction-grid stride (pixels) — matches the evaluation default.
+# Maximum prediction-grid stride (pixels); matches the evaluation default.
 # Small (e.g. test) tensors get a finer stride so contours stay resolvable.
 MAX_STRIDE = 4
 
@@ -150,7 +150,7 @@ def _measured_frames(scene: _Scene) -> list[dict]:
                 scene, scene.data.alpha[frame, :: scene.stride, :: scene.stride]
             ),
         }
-        for frame in range(int(scene.cfg.experiment.n_frames_event))
+        for frame in range(int(scene.data.n_event))
     ]
 
 

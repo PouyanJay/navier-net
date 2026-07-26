@@ -30,7 +30,8 @@ interface CrosshairOptions {
  * hide() cleanup for the caller's effect teardown.
  */
 export function attachCrosshair(options: CrosshairOptions): () => void {
-  const { svg, g, tipEl, width, margin, innerWidth, innerHeight, readout } = options;
+  const { svg, g, tipEl, width, margin, innerWidth, innerHeight, readout } =
+    options;
   const crosshair = g
     .append("line")
     .attr("class", "chart-cursor")
@@ -43,12 +44,17 @@ export function attachCrosshair(options: CrosshairOptions): () => void {
     const [px] = d3.pointer(event, g.node());
     const result = readout(px);
     if (!result) return;
-    crosshair.style("display", null).attr("x1", result.xPix).attr("x2", result.xPix);
+    crosshair
+      .style("display", null)
+      .attr("x1", result.xPix)
+      .attr("x2", result.xPix);
     tip.style("display", "block").text("");
     tip.append("div").attr("class", "tip-x").text(result.title);
     for (const row of result.rows) {
       const line = tip.append("div").attr("class", "tip-row");
-      line.append("i").attr("class", `tip-swatch ${row.swatchClass ?? ""}`.trim());
+      line
+        .append("i")
+        .attr("class", `tip-swatch ${row.swatchClass ?? ""}`.trim());
       line.append("span").text(row.text);
     }
     const bounds = (svg.node() as SVGSVGElement).getBoundingClientRect();

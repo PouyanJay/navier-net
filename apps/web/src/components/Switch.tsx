@@ -9,7 +9,13 @@ interface SwitchProps {
 }
 
 /** An accessible on/off switch with its visible label and an optional mono hint. */
-export function Switch({ label, hint, checked, onChange, disabled }: SwitchProps) {
+export function Switch({
+  label,
+  hint,
+  checked,
+  onChange,
+  disabled,
+}: SwitchProps) {
   const labelId = useId();
   return (
     <div className="wsw">

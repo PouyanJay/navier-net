@@ -2,7 +2,7 @@
 
 A minimal in-process job registry: one preprocess job per dataset, run on a
 daemon thread, its state polled over HTTP. Preprocess is quick (seconds), so no
-streaming is needed — this is the seed of the fuller run manager Phase 4 adds for
+streaming is needed; this is the seed of the fuller run manager Phase 4 adds for
 training.
 """
 
@@ -67,15 +67,24 @@ def _run(settings: Settings, dataset: str) -> None:
     try:
         from naviernet.pipeline import Pipeline
         from naviernet_api.services.config_service import compose_cfg
+        from naviernet_api.services.datasets import series_overrides
 
         # paths.root is pinned to the repo so data/ and outputs/ resolve
-        # regardless of the server's working directory.
-        cfg = compose_cfg(dataset, overrides=[f"paths.root={settings.repo_root}"])
+        # regardless of the server's working directory. The series' saved
+        # conditions and frame exclusions apply here too, so preprocessing sees
+        # its real Δt and drops the frames the user marked.
+        cfg = compose_cfg(
+            dataset,
+            overrides=[
+                f"paths.root={settings.repo_root}",
+                *series_overrides(settings, dataset),
+            ],
+        )
         Pipeline(cfg).preprocess()
         with _lock:
             _jobs[dataset] = _Job(state="done")
         log.info("preprocess done for %s", dataset)
-    except Exception as exc:  # noqa: BLE001 — report any failure back to the client
+    except Exception as exc:  # noqa: BLE001 (report any failure back to the client)
         log.exception("preprocess failed for %s", dataset)
         with _lock:
             _jobs[dataset] = _Job(state="error", message=str(exc))

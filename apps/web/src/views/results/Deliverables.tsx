@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Panel } from "../../components";
+import { Callout, Panel } from "../../components";
 import { ArtifactImage } from "../../components/ArtifactImage";
 import { artifactUrl, type ArtifactFlags } from "../../lib/api";
 
@@ -12,7 +12,10 @@ interface DeliverablesProps {
 /** Downloadable run outputs: tensors, checkpoint, video, and figure previews. */
 export function Deliverables({ runId, artifacts }: DeliverablesProps) {
   return (
-    <Panel title="Deliverables" subtitle="Everything the run produced — fully reproducible">
+    <Panel
+      title="Deliverables"
+      subtitle="Everything the run produced; fully reproducible"
+    >
       <div className="deliverables">
         <FileRow
           name="training_data.npz"
@@ -37,7 +40,15 @@ export function Deliverables({ runId, artifacts }: DeliverablesProps) {
   );
 }
 
-function FileRow({ name, desc, href }: { name: string; desc: string; href: string }) {
+function FileRow({
+  name,
+  desc,
+  href,
+}: {
+  name: string;
+  desc: string;
+  href: string;
+}) {
   return (
     <div className="deliverable">
       <div>
@@ -55,9 +66,9 @@ function VideoPreview({ runId }: { runId: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
     return (
-      <p className="state-note error" role="alert">
+      <Callout tone="error">
         The reconstruction video could not be loaded.
-      </p>
+      </Callout>
     );
   }
   return (
@@ -77,9 +88,18 @@ function FigureGrid({ runId, figures }: { runId: string; figures: string[] }) {
   return (
     <div className="figure-grid">
       {figures.map((name) => (
-        <a key={name} href={artifactUrl.figure(runId, name)} target="_blank" rel="noreferrer">
+        <a
+          key={name}
+          href={artifactUrl.figure(runId, name)}
+          target="_blank"
+          rel="noreferrer"
+        >
           <figure>
-            <ArtifactImage src={artifactUrl.figure(runId, name)} alt={name} loading="lazy" />
+            <ArtifactImage
+              src={artifactUrl.figure(runId, name)}
+              alt={name}
+              loading="lazy"
+            />
             <figcaption>{name}</figcaption>
           </figure>
         </a>

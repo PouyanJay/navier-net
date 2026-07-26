@@ -1,0 +1,26 @@
+# Water, saturated at T_sat = 100 C, 1 atm.
+# Source: IAPWS-IF97 / Incropera, Fundamentals of Heat and Mass Transfer,
+# saturated-water tables at 373.15 K. A high-sigma, high-h_lv contrast case
+# against the dielectric fluorocarbons.
+
+defaults:
+  - base_fluid
+
+name: Water
+
+T_sat_C: 100.0 # saturation at 1 atm
+
+rho_l: 958.4 # kg/m^3
+rho_v: 0.5982
+
+mu_l: 2.82e-4 # Pa.s
+mu_v: 1.23e-5
+
+k_l: 0.679 # W/m/K
+k_v: 0.0251
+
+cp_l: 4217.0 # J/kg/K
+cp_v: 2080.0
+
+sigma: 5.89e-2 # N/m
+h_lv: 2.257e6 # J/kg

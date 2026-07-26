@@ -1,4 +1,11 @@
-import { Chip, type Column, IouChart, Panel, Table, ViewCanvas } from "../../components";
+import {
+  Chip,
+  type Column,
+  IouChart,
+  Panel,
+  Table,
+  ViewCanvas,
+} from "../../components";
 import type { FramePoint } from "../../components";
 import type { RunDetail } from "../../lib/api";
 
@@ -20,17 +27,24 @@ function IouBar({ iou }: { iou: number }) {
 
 const COLUMNS: Column<FrameRow>[] = [
   { header: "Frame", cell: (r) => r.frame, num: true },
-  { header: "t (ms)", cell: (r) => (r.tMs != null ? r.tMs.toFixed(1) : "—"), num: true },
+  {
+    header: "t (ms)",
+    cell: (r) => (r.tMs != null ? r.tMs.toFixed(1) : "n/a"),
+    num: true,
+  },
   { header: "IoU", cell: (r) => r.iou.toFixed(3), num: true },
   { header: "", cell: (r) => <IouBar iou={r.iou} /> },
   {
     header: "",
-    cell: (r) => (r.holdout ? <Chip tone="amber">holdout — never supervised</Chip> : null),
+    cell: (r) =>
+      r.holdout ? <Chip tone="amber">holdout, never supervised</Chip> : null,
   },
 ];
 
 function frameDtMs(detail: RunDetail): number | null {
-  const config = detail.config as { experiment?: { dt_frame_ms?: number } } | null;
+  const config = detail.config as {
+    experiment?: { dt_frame_ms?: number };
+  } | null;
   const dt = config?.experiment?.dt_frame_ms;
   return typeof dt === "number" ? dt : null;
 }
@@ -58,14 +72,22 @@ export function AgreementPerFrame({ detail }: { detail: RunDetail }) {
 
   if (rows.length === 0) {
     return (
-      <Panel title="Agreement per frame" subtitle="IoU vs the segmented experiment">
-        <p className="state-note">This run has no per-frame agreement recorded.</p>
+      <Panel
+        title="Agreement per frame"
+        subtitle="IoU vs the segmented experiment"
+      >
+        <p className="state-note">
+          This run has no per-frame agreement recorded.
+        </p>
       </Panel>
     );
   }
 
   return (
-    <Panel title="Agreement per frame" subtitle="IoU vs the segmented experiment">
+    <Panel
+      title="Agreement per frame"
+      subtitle="IoU vs the segmented experiment"
+    >
       <ViewCanvas>
         <IouChart data={rows} />
       </ViewCanvas>

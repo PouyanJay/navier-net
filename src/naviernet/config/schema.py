@@ -31,8 +31,12 @@ class ExperimentConfig:
     """Operating conditions of one imaged ebullition dataset."""
 
     name: str = MISSING
+    # Both derived from the selected fluid group (``${fluid.name}`` /
+    # ``${fluid.T_sat_C}``): the working fluid fixes its own label and its
+    # atmospheric saturation temperature. Kept on the experiment so every
+    # existing consumer (groups, residuals, API) reads one stable path.
     fluid: str = MISSING
-    T_sat_C: float = MISSING  # saturation temperature at operating pressure
+    T_sat_C: float = MISSING  # saturation temperature at operating pressure (from fluid)
     q_wall_W_cm2: float = MISSING  # bottom-wall heat flux setpoint
     flow_rate_mL_hr: float = MISSING
     channel_width_um: float = MISSING  # imaged (in-plane) direction
@@ -41,8 +45,13 @@ class ExperimentConfig:
     flow_direction: str = MISSING  # direction of flow in the raw camera frames
 
     n_frames_raw: int = MISSING  # TIFFs present on disk
-    n_frames_usable: int = MISSING  # frames fed to the model
+    n_frames_usable: int = MISSING  # end of the usable window (1..n)
     n_frames_event: int = MISSING  # frames of one continuous growth event
+
+    # 1-based camera frames dropped from the usable window (a mis-segmented
+    # frame, a stray reflection). Absolute frame times are preserved, so the
+    # frames that remain keep their true t* -- only tensor rows disappear.
+    excluded_frames: list[int] = field(default_factory=list)
 
     notes: str = ""
 
@@ -52,6 +61,10 @@ class FluidConfig:
     """Saturated two-phase properties at ``T_sat`` (SI units)."""
 
     name: str = MISSING
+    # Saturation temperature at the operating pressure (atmospheric). A property
+    # of the fluid, not a free operating input: the experiment derives its
+    # ``T_sat_C`` from this, so selecting a fluid sets the saturation point.
+    T_sat_C: float = MISSING  # deg C
     rho_l: float = MISSING  # kg/m^3
     rho_v: float = MISSING
     mu_l: float = MISSING  # Pa.s
@@ -75,6 +88,14 @@ class ImagingConfig:
     dark_thresh: int = MISSING  # intensity below which a pixel is "dark"
     open_kernel: int = MISSING  # morphological opening; removes heater traces
     close_kernel: int = MISSING  # morphological closing; seals the bubble ring
+    # The imaged bubble edge is a thick dark rim, not a line; the interface is
+    # its centreline. Below this interior-hole fraction the rim has no enclosed
+    # interior to centre in, so the filled outline is used instead.
+    min_rim_hole_fraction: float = 0.05
+    # Pixel scale that seeds the active contour (blur on the medial field it
+    # starts from) and smooths the solid-nucleus fallback. The interface's own
+    # smoothness comes from the contour's rigidity, not this. 0 disables the blur.
+    contour_smooth_px: float = 5.0
     # Columns masked out on the last usable frame, where the bubble leaves the
     # field of view (expressed in flipped, downstream-positive coordinates).
     truncated_cols: int = 0

@@ -1,6 +1,12 @@
 /** Solver view: config form → launch → live SSE console/chart → terminal states. */
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Console } from "../src/components/Console";
@@ -10,11 +16,20 @@ import { Switch } from "../src/components/Switch";
 import { SolverView } from "../src/views/SolverView";
 
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 
 const DATASETS = [{ id: "highest_t", n_frames: 11, processed: true }];
 const TRAINED_RUNS = [
-  { id: "highest_t", dataset: "highest_t", status: "trained", steps: 1500, iou_holdout: 0.968 },
+  {
+    id: "highest_t",
+    dataset: "highest_t",
+    status: "trained",
+    steps: 1500,
+    iou_holdout: 0.968,
+  },
 ];
 const LAUNCHED = {
   run_id: "run-test",
@@ -63,7 +78,10 @@ function stubApi({ launchStatus = 202 }: { launchStatus?: number } = {}) {
         posts.push(JSON.parse(String(options.body)));
         return launchStatus === 202
           ? json(LAUNCHED)
-          : json({ detail: "a training run is already in progress" }, launchStatus);
+          : json(
+              { detail: "a training run is already in progress" },
+              launchStatus,
+            );
       }
       if (path.endsWith("/api/datasets")) return json(DATASETS);
       if (path.endsWith("/api/runs/active")) return json(null);
@@ -75,7 +93,13 @@ function stubApi({ launchStatus = 202 }: { launchStatus?: number } = {}) {
           steps: 40,
           metrics: { iou_holdout: 0.901 },
           config: null,
-          artifacts: { checkpoint: true, metrics: true, groups: false, video: false, figures: [] },
+          artifacts: {
+            checkpoint: true,
+            metrics: true,
+            groups: false,
+            video: false,
+            figures: [],
+          },
         });
       }
       if (path.endsWith("/api/runs")) return json(TRAINED_RUNS);
@@ -87,7 +111,10 @@ function stubApi({ launchStatus = 202 }: { launchStatus?: number } = {}) {
 
 beforeEach(() => {
   FakeEventSource.instances = [];
-  vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+  vi.stubGlobal(
+    "EventSource",
+    FakeEventSource as unknown as typeof EventSource,
+  );
 });
 
 afterEach(() => {
@@ -102,7 +129,7 @@ describe("SolverView", () => {
     expect(screen.getByLabelText("Steps")).toHaveValue(1500);
     expect(screen.getByLabelText(/Learning rate/)).toHaveValue(0.002);
     expect(screen.getByLabelText(/w\s*data/)).toHaveValue(10);
-    const idleLine = "[naviernet] solver idle — configure a run and press Run";
+    const idleLine = "[naviernet] solver idle; configure a run and press Run";
     expect(screen.getByText(idleLine)).toBeInTheDocument();
   });
 
@@ -111,7 +138,9 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("Dataset");
 
-    fireEvent.change(screen.getByLabelText("Steps"), { target: { value: "40" } });
+    fireEvent.change(screen.getByLabelText("Steps"), {
+      target: { value: "40" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -125,20 +154,41 @@ describe("SolverView", () => {
     const stream = FakeEventSource.instances[0];
     expect(stream.url).toContain("/api/runs/run-test/stream");
 
-    const record = { step: 10, lr: 0.002, data: 0.5, vof: 0.04, div: 0.01, src: 0.001, bc: 0.02 };
+    const record = {
+      step: 10,
+      lr: 0.002,
+      data: 0.5,
+      vof: 0.04,
+      div: 0.01,
+      src: 0.001,
+      bc: 0.02,
+    };
     act(() => {
-      stream.emit("log", { line: "[naviernet] starting run run-test", tone: "dim" });
+      stream.emit("log", {
+        line: "[naviernet] starting run run-test",
+        tone: "dim",
+      });
       stream.emit("hist", record);
     });
-    expect(screen.getByText("[naviernet] starting run run-test")).toBeInTheDocument();
+    expect(
+      screen.getByText("[naviernet] starting run run-test"),
+    ).toBeInTheDocument();
     expect(screen.getByText("5.00e-1")).toBeInTheDocument(); // latest data loss
     // Step progress advances from hist records alone (status only changes per stage).
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "10");
+    expect(screen.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "10",
+    );
     expect(screen.getByText("running · train")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
 
     act(() => {
-      stream.emit("status", { ...LAUNCHED, state: "done", stage: null, steps_done: 40 });
+      stream.emit("status", {
+        ...LAUNCHED,
+        state: "done",
+        stage: null,
+        steps_done: 40,
+      });
     });
     expect(await screen.findByText("done")).toBeInTheDocument();
     expect(stream.closed).toBe(true);
@@ -161,7 +211,9 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("Dataset");
 
-    fireEvent.click(screen.getByRole("switch", { name: "Resume from checkpoint" }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Resume from checkpoint" }),
+    );
     expect(screen.getByLabelText("Dataset")).toBeDisabled();
     expect(screen.getByLabelText(/Learning rate/)).toBeDisabled();
     const resumeSelect = await screen.findByLabelText("Run to resume");
@@ -192,8 +244,24 @@ describe("SolverView sweep mode", () => {
             message: null,
             seeds: [3, 4],
             children: [
-              { run_id: "sweep-test-s3", dataset: "highest_t", state: "queued", stage: null, message: null, steps_done: 0, steps_total: 0 },
-              { run_id: "sweep-test-s4", dataset: "highest_t", state: "queued", stage: null, message: null, steps_done: 0, steps_total: 0 },
+              {
+                run_id: "sweep-test-s3",
+                dataset: "highest_t",
+                state: "queued",
+                stage: null,
+                message: null,
+                steps_done: 0,
+                steps_total: 0,
+              },
+              {
+                run_id: "sweep-test-s4",
+                dataset: "highest_t",
+                state: "queued",
+                stage: null,
+                message: null,
+                steps_done: 0,
+                steps_total: 0,
+              },
             ],
           });
         }
@@ -208,8 +276,24 @@ describe("SolverView sweep mode", () => {
             message: null,
             seeds: [3, 4],
             children: [
-              { run_id: "sweep-test-s3", dataset: "highest_t", state: "running", stage: "train", message: null, steps_done: 0, steps_total: 40 },
-              { run_id: "sweep-test-s4", dataset: "highest_t", state: "queued", stage: null, message: null, steps_done: 0, steps_total: 0 },
+              {
+                run_id: "sweep-test-s3",
+                dataset: "highest_t",
+                state: "running",
+                stage: "train",
+                message: null,
+                steps_done: 0,
+                steps_total: 40,
+              },
+              {
+                run_id: "sweep-test-s4",
+                dataset: "highest_t",
+                state: "queued",
+                stage: null,
+                message: null,
+                steps_done: 0,
+                steps_total: 0,
+              },
             ],
           });
         }
@@ -221,7 +305,9 @@ describe("SolverView sweep mode", () => {
     render(<SolverView />);
     await screen.findByLabelText("Dataset");
     fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
-    fireEvent.change(screen.getByLabelText(/Seeds/), { target: { value: "3, 4" } });
+    fireEvent.change(screen.getByLabelText(/Seeds/), {
+      target: { value: "3, 4" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -231,14 +317,21 @@ describe("SolverView sweep mode", () => {
     expect(body.resume).toBeUndefined();
 
     // The sweep panel lists both children (queued until each starts).
-    expect(await screen.findByText("Seed sweep", { selector: "h2" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("Seed sweep", { selector: "h2" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/seed 3/)).toBeInTheDocument();
     expect(screen.getByText(/seed 4/)).toBeInTheDocument();
     // The running child gets streamed once polling notices it.
-    await waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0), {
-      timeout: 3000,
-    });
-    expect(FakeEventSource.instances[0].url).toContain("/api/runs/sweep-test-s3/stream");
+    await waitFor(
+      () => expect(FakeEventSource.instances.length).toBeGreaterThan(0),
+      {
+        timeout: 3000,
+      },
+    );
+    expect(FakeEventSource.instances[0].url).toContain(
+      "/api/runs/sweep-test-s3/stream",
+    );
   });
 
   it("rejects an unparseable seed list by disabling Run", async () => {
@@ -246,9 +339,14 @@ describe("SolverView sweep mode", () => {
     render(<SolverView />);
     await screen.findByLabelText("Dataset");
     fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
-    fireEvent.change(screen.getByLabelText(/Seeds/), { target: { value: "1, 1, x" } });
+    fireEvent.change(screen.getByLabelText(/Seeds/), {
+      target: { value: "1, 1, x" },
+    });
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-    expect(screen.getByLabelText(/Seeds/)).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText(/Seeds/)).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
   });
 });
 
@@ -264,14 +362,22 @@ describe("solver components", () => {
         label="Solver console"
       />,
     );
-    expect(screen.getByRole("log", { name: "Solver console" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("log", { name: "Solver console" }),
+    ).toBeInTheDocument();
     expect(container.querySelector(".ok")).toHaveTextContent("good");
     expect(container.querySelector(".dim")).toHaveTextContent("note");
   });
 
   it("Switch toggles aria-checked", () => {
     const onChange = vi.fn();
-    render(<Switch label="Render deliverables" checked={false} onChange={onChange} />);
+    render(
+      <Switch
+        label="Render deliverables"
+        checked={false}
+        onChange={onChange}
+      />,
+    );
     const sw = screen.getByRole("switch", { name: "Render deliverables" });
     expect(sw).toHaveAttribute("aria-checked", "false");
     fireEvent.click(sw);
@@ -287,10 +393,28 @@ describe("solver components", () => {
 
   it("LossChart draws one line per loss term once two records exist", () => {
     const records = [
-      { step: 10, lr: 2e-3, data: 0.5, vof: 0.04, div: 0.01, src: 1e-3, bc: 0.02 },
-      { step: 20, lr: 2e-3, data: 0.3, vof: 0.03, div: 0.008, src: 9e-4, bc: 0.015 },
+      {
+        step: 10,
+        lr: 2e-3,
+        data: 0.5,
+        vof: 0.04,
+        div: 0.01,
+        src: 1e-3,
+        bc: 0.02,
+      },
+      {
+        step: 20,
+        lr: 2e-3,
+        data: 0.3,
+        vof: 0.03,
+        div: 0.008,
+        src: 9e-4,
+        bc: 0.015,
+      },
     ];
-    const { container } = render(<LossChart records={records} rebalanceSteps={[10]} />);
+    const { container } = render(
+      <LossChart records={records} rebalanceSteps={[10]} />,
+    );
     expect(container.querySelectorAll("path.chart-line")).toHaveLength(3);
     expect(container.querySelectorAll("line.chart-marker")).toHaveLength(1);
     const empty = render(<LossChart records={[]} />);

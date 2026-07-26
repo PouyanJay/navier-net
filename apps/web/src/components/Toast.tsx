@@ -1,4 +1,11 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 const TOAST_MS = 3600;
 
@@ -9,7 +16,11 @@ export interface ToastMessage {
   tone: "ok" | "err" | "default";
 }
 
-type PushToast = (title: string, sub?: string, tone?: ToastMessage["tone"]) => void;
+type PushToast = (
+  title: string,
+  sub?: string,
+  tone?: ToastMessage["tone"],
+) => void;
 
 const ToastContext = createContext<PushToast>(() => {});
 
@@ -25,7 +36,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const push = useCallback<PushToast>((title, sub, tone = "default") => {
     const id = nextId.current++;
     setToasts((prev) => [...prev, { id, title, sub, tone }]);
-    window.setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), TOAST_MS);
+    window.setTimeout(
+      () => setToasts((prev) => prev.filter((t) => t.id !== id)),
+      TOAST_MS,
+    );
   }, []);
 
   return (

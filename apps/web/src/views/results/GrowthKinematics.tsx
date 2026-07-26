@@ -1,8 +1,16 @@
 import { useEffect, useState } from "react";
 
-import { Panel, SelectField, ViewCanvas } from "../../components";
-import { CompareChart, type ComparePoint } from "../../components/charts/CompareChart";
-import { api, ApiError, type KinematicsSeries, type Trajectory } from "../../lib/api";
+import { Callout, Panel, SelectField, ViewCanvas } from "../../components";
+import {
+  CompareChart,
+  type ComparePoint,
+} from "../../components/charts/CompareChart";
+import {
+  api,
+  ApiError,
+  type KinematicsSeries,
+  type Trajectory,
+} from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 
 type Load =
@@ -14,7 +22,10 @@ type Load =
 type Quantity = "nose" | "area";
 
 /** Pair times with values, skipping instants where either is null (a gap). */
-function toSeries(t: KinematicsSeries, values: KinematicsSeries): ComparePoint[] {
+function toSeries(
+  t: KinematicsSeries,
+  values: KinematicsSeries,
+): ComparePoint[] {
   const points: ComparePoint[] = [];
   t.forEach((time, i) => {
     const value = values[i];
@@ -24,7 +35,7 @@ function toSeries(t: KinematicsSeries, values: KinematicsSeries): ComparePoint[]
 }
 
 /** Nose position / vapor area over time: the PINN's continuous curve vs the
- * measured camera instants — the trajectories figure, as an interactive chart. */
+ * measured camera instants: the trajectories figure, as an interactive chart. */
 export function GrowthKinematics({ runId }: { runId: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [quantity, setQuantity] = useState<Quantity>("nose");
@@ -50,7 +61,10 @@ export function GrowthKinematics({ runId }: { runId: string }) {
   }, [runId]);
 
   return (
-    <Panel title="Growth kinematics" subtitle="continuous reconstruction vs camera instants">
+    <Panel
+      title="Growth kinematics"
+      subtitle="continuous reconstruction vs camera instants"
+    >
       {load.status === "loading" && (
         <p className="state-note" role="status">
           Loading kinematics…
@@ -58,13 +72,13 @@ export function GrowthKinematics({ runId }: { runId: string }) {
       )}
       {load.status === "unavailable" && (
         <p className="state-note">
-          No kinematics recorded — re-run the evaluate stage to produce them.
+          No kinematics recorded; re-run the evaluate stage to produce them.
         </p>
       )}
       {load.status === "error" && (
-        <p className="state-note error" role="alert">
-          Could not load kinematics: {load.message}
-        </p>
+        <Callout tone="error" title="Could not load kinematics">
+          {load.message}
+        </Callout>
       )}
       {load.status === "ready" && (
         <>
@@ -89,7 +103,9 @@ export function GrowthKinematics({ runId }: { runId: string }) {
                   id: "PINN",
                   points: toSeries(
                     load.trajectory.t_ms,
-                    quantity === "nose" ? load.trajectory.nose_um : load.trajectory.area_um2,
+                    quantity === "nose"
+                      ? load.trajectory.nose_um
+                      : load.trajectory.area_um2,
                   ),
                 },
                 {

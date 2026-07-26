@@ -1,3 +1,4 @@
+import { Callout } from "../components";
 import { ArchitecturePanel } from "./physics/ArchitecturePanel";
 import { GoverningEquations } from "./physics/GoverningEquations";
 import { ModelTopology } from "./physics/ModelTopology";
@@ -12,15 +13,17 @@ export function PhysicsModelView() {
       <GoverningEquations />
 
       {load.status === "loading" && (
-        <p className="state-note" role="status">Loading model…</p>
+        <p className="state-note" role="status">
+          Loading model…
+        </p>
       )}
       {load.status === "empty" && (
         <p className="state-note">
-          No datasets yet — upload a sequence to see the model topology.
+          No datasets yet; upload a sequence to see the model topology.
         </p>
       )}
       {load.status === "error" && (
-        <p className="state-note error" role="alert">{load.message}</p>
+        <Callout tone="error">{load.message}</Callout>
       )}
       {load.status === "ready" && (
         <>

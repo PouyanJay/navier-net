@@ -20,7 +20,10 @@ describe("Stat", () => {
 
   it("carries the tone as a data attribute for token-driven color", () => {
     const { container } = render(<Stat label="x" value={1} tone="amber" />);
-    expect(container.querySelector(".stat")).toHaveAttribute("data-tone", "amber");
+    expect(container.querySelector(".stat")).toHaveAttribute(
+      "data-tone",
+      "amber",
+    );
   });
 });
 
@@ -35,7 +38,10 @@ describe("Chip", () => {
   it("renders its content with a tone", () => {
     const { container } = render(<Chip tone="accent">highest_t</Chip>);
     expect(screen.getByText("highest_t")).toBeInTheDocument();
-    expect(container.querySelector(".chip")).toHaveAttribute("data-tone", "accent");
+    expect(container.querySelector(".chip")).toHaveAttribute(
+      "data-tone",
+      "accent",
+    );
   });
 });
 
@@ -72,7 +78,9 @@ describe("Table", () => {
     );
     expect(screen.getByText("Frame")).toBeInTheDocument();
     expect(screen.getByText("0.973")).toBeInTheDocument();
-    expect(container.querySelector('tr[data-tone="amber"]')).toBeInTheDocument();
+    expect(
+      container.querySelector('tr[data-tone="amber"]'),
+    ).toBeInTheDocument();
   });
 });
 

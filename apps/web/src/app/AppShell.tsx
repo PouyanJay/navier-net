@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
-import { CommandPalette, type PaletteAction } from "../components/CommandPalette";
+import {
+  CommandPalette,
+  type PaletteAction,
+} from "../components/CommandPalette";
 import { useToast } from "../components/Toast";
 import type { RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
@@ -17,10 +26,25 @@ export interface NavItem {
 /** The platform's top-level navigation, in the mockup's order. */
 export const NAV_ITEMS: NavItem[] = [
   { id: "projects", label: "Projects", sub: "workspace home" },
-  { id: "datasets", label: "Datasets & conditions", sub: "frames · calibration", stage: 1 },
-  { id: "physics", label: "Physics & model", sub: "equations · architecture", stage: 2 },
+  {
+    id: "datasets",
+    label: "Datasets & conditions",
+    sub: "frames · calibration",
+    stage: 1,
+  },
+  {
+    id: "physics",
+    label: "Physics & model",
+    sub: "equations · architecture",
+    stage: 2,
+  },
   { id: "solver", label: "Solver", sub: "configure & run", stage: 3 },
-  { id: "results", label: "Results & validation", sub: "fields · figures · video", stage: 4 },
+  {
+    id: "results",
+    label: "Results & validation",
+    sub: "fields · figures · video",
+    stage: 4,
+  },
 ];
 
 /** What the shell knows about the platform's real state (drives chrome). */
@@ -47,7 +71,10 @@ interface AppShellProps {
 function ThemeIcon({ theme }: { theme: Theme }) {
   return theme === "dark" ? (
     <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M13 9.5A5.5 5.5 0 0 1 6.5 3 5.5 5.5 0 1 0 13 9.5Z" fill="currentColor" />
+      <path
+        d="M13 9.5A5.5 5.5 0 0 1 6.5 3 5.5 5.5 0 1 0 13 9.5Z"
+        fill="currentColor"
+      />
     </svg>
   ) : (
     <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -140,11 +167,9 @@ function StatusChips({
     return (
       <>
         <span className="chip" data-tone={trained ? "green" : undefined}>
-          <span className="cdot" aria-hidden="true" />
           Stage A · {trained ? "trained" : "untrained"}
         </span>
         <span className="chip" data-tone="amber">
-          <span className="cdot" aria-hidden="true" />
           Stage B · not configured
         </span>
       </>
@@ -153,13 +178,9 @@ function StatusChips({
   return (
     <>
       <span className="chip">
-        <span className="cdot" aria-hidden="true" />
         {projectCount} project{projectCount === 1 ? "" : "s"}
       </span>
-      <span className="chip">
-        <span className="cdot" aria-hidden="true" />
-        {running ? "1 active" : "0 active"}
-      </span>
+      <span className="chip">{running ? "1 active" : "0 active"}</span>
     </>
   );
 }
@@ -180,7 +201,12 @@ function Sidebar({
 }) {
   return (
     <nav className="sidebar" aria-label="Primary">
-      <button type="button" className="backhome" onClick={onHome} aria-label="All projects">
+      <button
+        type="button"
+        className="backhome"
+        onClick={onHome}
+        aria-label="All projects"
+      >
         <span aria-hidden="true">←</span>
         <span className="backhome-label">All projects</span>
       </button>
@@ -197,7 +223,10 @@ function Sidebar({
                 aria-current={item.id === active ? "page" : undefined}
                 onClick={() => onNavigate(item.id)}
               >
-                <span className="node" data-done={status.done[item.id] || undefined}>
+                <span
+                  className="node"
+                  data-done={status.done[item.id] || undefined}
+                >
                   {status.done[item.id] ? "✓" : item.stage}
                 </span>
                 <span className="txt">
@@ -212,11 +241,13 @@ function Sidebar({
             <div className="raillbl">Run metadata</div>
             <div className="kv">
               <span>Checkpoint</span>
-              <span className="mono">{status.latestRun ? "ckpt.pt" : "—"}</span>
+              <span className="mono">
+                {status.latestRun ? "ckpt.pt" : "n/a"}
+              </span>
             </div>
             <div className="kv">
               <span>Run</span>
-              <span className="mono">{status.latestRun?.id ?? "—"}</span>
+              <span className="mono">{status.latestRun?.id ?? "n/a"}</span>
             </div>
             <div className="kv">
               <span>Backend</span>
@@ -278,9 +309,17 @@ export function AppShell({
         run: () =>
           project
             ? onNavigate(item.id)
-            : toast("Open a project first", "pipeline stages are project-scoped"),
+            : toast(
+                "Open a project first",
+                "pipeline stages are project-scoped",
+              ),
       })),
-      { group: "Appearance", label: "Toggle dark mode", shortcut: "⌘J", run: toggleTheme },
+      {
+        group: "Appearance",
+        label: "Toggle dark mode",
+        shortcut: "⌘J",
+        run: toggleTheme,
+      },
     ],
     [onNavigate, toggleTheme, project, onHome, toast],
   );
@@ -292,7 +331,11 @@ export function AppShell({
           {/* The logo kit ships per-background marks; swap with the theme. */}
           <img
             className="mark"
-            src={theme === "dark" ? "/brand/naviernet-mark-dark.svg" : "/brand/naviernet-mark-light.svg"}
+            src={
+              theme === "dark"
+                ? "/brand/naviernet-mark-dark.svg"
+                : "/brand/naviernet-mark-light.svg"
+            }
             alt=""
           />
           <div>
@@ -316,7 +359,11 @@ export function AppShell({
           )}
         </nav>
         <div className="topbar-spacer" />
-        <button type="button" className="search" onClick={() => setPaletteOpen(true)}>
+        <button
+          type="button"
+          className="search"
+          onClick={() => setPaletteOpen(true)}
+        >
           <span>Search or run a command…</span>
           <span className="kbds" aria-hidden="true">
             <kbd>⌘</kbd>
@@ -324,7 +371,11 @@ export function AppShell({
           </span>
         </button>
         {activeRun?.state === "running" && (
-          <button type="button" className="runpill" onClick={() => onNavigate("solver")}>
+          <button
+            type="button"
+            className="runpill"
+            onClick={() => onNavigate("solver")}
+          >
             <span className="pdot" aria-hidden="true" />
             Training · <span className="mono">{activeRun.run_id}</span>
           </button>
@@ -347,7 +398,10 @@ export function AppShell({
           type="button"
           className="btn"
           onClick={() =>
-            toast("Sharing is not available yet", "this workspace is local to your machine")
+            toast(
+              "Sharing is not available yet",
+              "this workspace is local to your machine",
+            )
           }
         >
           Share
@@ -356,7 +410,10 @@ export function AppShell({
           type="button"
           className="btn primary"
           onClick={() =>
-            toast("Report export is not available yet", "planned: PDF with config + figures")
+            toast(
+              "Report export is not available yet",
+              "planned: PDF with config + figures",
+            )
           }
         >
           Export report

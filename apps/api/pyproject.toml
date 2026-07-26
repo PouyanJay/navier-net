@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "naviernet-api"
 version = "0.1.0"
-description = "HTTP API for the naviernet platform — a thin layer over the solver pipeline"
+description = "HTTP API for the naviernet platform: a thin layer over the solver pipeline"
 requires-python = ">=3.10"
 dependencies = [
     "naviernet",

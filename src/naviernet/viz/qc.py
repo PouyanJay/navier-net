@@ -17,10 +17,18 @@ from naviernet.utils.paths import RunPaths
 
 log = get_logger(__name__)
 
+# Interface-evolution frame stride; shared with the platform API's qc-data
+# endpoint so the interactive chart matches this figure.
+CONTOUR_FRAME_STRIDE = 2
 
-def qc_figure(cfg, paths: RunPaths, alpha, sdf, xs, ys, ts, um_per_px, x_pin) -> None:
-    """Growth kinematics, interface evolution, and an example SDF."""
-    n_event = cfg.experiment.n_frames_event
+
+def qc_figure(cfg, paths: RunPaths, alpha, sdf, xs, ys, ts, um_per_px, x_pin, n_event) -> None:
+    """Growth kinematics, interface evolution, and an example SDF.
+
+    ``n_event`` counts *rows* of the growth event, not camera frames: excluded
+    frames are absent from ``alpha``/``ts``, so the config's frame count would
+    over-slice them.
+    """
     t_ms = ts * reference_time_ms(cfg.scales)
 
     # Bubble length in um: streamwise extent of the mask, frame by frame.
@@ -41,7 +49,7 @@ def qc_figure(cfg, paths: RunPaths, alpha, sdf, xs, ys, ts, um_per_px, x_pin) ->
     ax.grid(alpha=0.3)
 
     ax = axes[1]
-    for i in range(0, len(ts), 2):
+    for i in range(0, len(ts), CONTOUR_FRAME_STRIDE):
         ax.contour(xs, ys, alpha[i], [0.5], linewidths=1.2)
     ax.axvline(x_pin, color="k", ls=":", label="pinned cavity")
     ax.set_aspect("equal")

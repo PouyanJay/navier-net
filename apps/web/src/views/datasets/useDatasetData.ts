@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   api,
+  ApiError,
+  type ConditionsUpdate,
   type DatasetDetail,
   type DatasetSummary,
   type DimensionlessGroups,
   type PreprocessStatus,
+  type QcData,
 } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
+import { isTrainedRun } from "../../lib/runs";
 
 const POLL_INTERVAL_MS = 1000;
 
@@ -19,9 +23,16 @@ export interface DatasetData {
   groups: DimensionlessGroups | null;
   preprocess: PreprocessStatus | null;
   error: string | null;
-  busy: boolean;
-  upload: (files: FileList | File[]) => Promise<void>;
+  /** Add or remove a 1-based camera frame from the series' exclusion set. */
+  toggleExcludedFrame: (frame: number) => Promise<void>;
+  /** A rejected or failed exclusion edit, for the sequence panel to surface. */
+  exclusionError: string | null;
   runPreprocess: () => Promise<void>;
+  /** Persist an edit to the selected series' operating conditions, then refresh
+   * the detail (incl. the baked-condition staleness flag) and groups. */
+  saveConditions: (updates: ConditionsUpdate) => Promise<void>;
+  /** Re-fetch the dataset list (e.g. after a new series is uploaded). */
+  refresh: () => Promise<void>;
 }
 
 /** The dataset list plus the current selection (defaulting to the first). */
@@ -73,17 +84,31 @@ function usePreprocessPolling(
   }, [preprocess?.state, selected, setPreprocess, onSettled, onError]);
 }
 
+/** Toggle a frame in a sorted exclusion set, leaving it sorted. */
+function withFrameToggled(excluded: number[], frame: number): number[] {
+  return excluded.includes(frame)
+    ? excluded.filter((n) => n !== frame)
+    : [...excluded, frame].sort((a, b) => a - b);
+}
+
 /**
  * Owns the Datasets view's data: the list + selection (via useDatasetList), the
  * selected dataset's detail/groups/status, preprocess polling, and the upload /
  * run-preprocess actions that refresh the affected state.
  */
 export function useDatasetData(focusId?: string | null): DatasetData {
-  const { datasets, selected, setSelected, refresh, error, setError } = useDatasetList(focusId);
+  const { datasets, selected, setSelected, refresh, error, setError } =
+    useDatasetList(focusId);
   const [detail, setDetail] = useState<DatasetDetail | null>(null);
   const [groups, setGroups] = useState<DimensionlessGroups | null>(null);
   const [preprocess, setPreprocess] = useState<PreprocessStatus | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [exclusionError, setExclusionError] = useState<string | null>(null);
+  // The set the user has asked for, updated synchronously on click so a burst of
+  // toggles composes instead of each one racing off the same stale render.
+  const wanted = useRef<number[]>([]);
+  useEffect(() => {
+    wanted.current = detail?.excluded_frames ?? [];
+  }, [detail]);
 
   const loadSelected = useCallback(
     async (id: string) => {
@@ -101,7 +126,8 @@ export function useDatasetData(focusId?: string | null): DatasetData {
   );
 
   useEffect(() => {
-    if (selected) loadSelected(selected).catch((err) => setError(errorMessage(err)));
+    if (selected)
+      loadSelected(selected).catch((err) => setError(errorMessage(err)));
   }, [selected, loadSelected, setError]);
 
   const onSettled = useCallback(async () => {
@@ -110,23 +136,12 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     await refresh();
   }, [selected, loadSelected, refresh]);
 
-  usePreprocessPolling(selected, preprocess, setPreprocess, onSettled, setError);
-
-  const upload = useCallback(
-    async (files: FileList | File[]) => {
-      if (!selected) return;
-      setBusy(true);
-      setError(null);
-      try {
-        await api.uploadFrames(selected, files);
-        await onSettled();
-      } catch (err) {
-        setError(errorMessage(err));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [selected, onSettled, setError],
+  usePreprocessPolling(
+    selected,
+    preprocess,
+    setPreprocess,
+    onSettled,
+    setError,
   );
 
   const runPreprocess = useCallback(async () => {
@@ -139,5 +154,105 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     }
   }, [selected, setError]);
 
-  return { datasets, selected, setSelected, detail, groups, preprocess, error, busy, upload, runPreprocess };
+  const toggleExcludedFrame = useCallback(
+    async (frame: number) => {
+      if (!selected) return;
+      const next = withFrameToggled(wanted.current, frame);
+      wanted.current = next;
+      setExclusionError(null);
+      // Optimistic: the border follows the click, then the server confirms it.
+      setDetail((current) =>
+        current ? { ...current, excluded_frames: next } : current,
+      );
+      try {
+        const saved = await api.setExcludedFrames(selected, next);
+        if (wanted.current === next) setDetail(saved); // a later toggle wins
+      } catch (err) {
+        setExclusionError(errorMessage(err));
+        // The strip must never show an exclusion the server did not accept.
+        await loadSelected(selected).catch((reloadErr) =>
+          setError(errorMessage(reloadErr)),
+        );
+      }
+    },
+    [selected, loadSelected, setError],
+  );
+
+  const saveConditions = useCallback(
+    async (updates: ConditionsUpdate) => {
+      if (!selected) return;
+      await api.updateConditions(selected, updates);
+      // Re-read so the conditions summary, groups, and the baked-condition
+      // staleness flag all reflect the edit.
+      await loadSelected(selected);
+      await refresh();
+    },
+    [selected, loadSelected, refresh],
+  );
+
+  return {
+    datasets,
+    selected,
+    setSelected,
+    detail,
+    groups,
+    preprocess,
+    error,
+    toggleExcludedFrame,
+    exclusionError,
+    runPreprocess,
+    saveConditions,
+    refresh,
+  };
+}
+
+/** Dataset ids with a trained run; drives the library's status chips. */
+export function useTrainedIds(): Set<string> {
+  const [ids, setIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    api
+      .listRuns()
+      .then((runs) =>
+        setIds(
+          new Set(
+            runs
+              .filter(isTrainedRun)
+              .flatMap((run) => (run.dataset ? [run.dataset] : [])),
+          ),
+        ),
+      )
+      .catch(() => setIds(new Set())); // chips only; panels surface real errors
+  }, []);
+  return ids;
+}
+
+/** The selected series' QC chart data, refreshed after preprocessing.
+ * A 404 means "not preprocessed yet" (expected); anything else is surfaced. */
+export function useQcData(
+  selected: string | null,
+  processed: boolean,
+): { qc: QcData | null; qcError: string | null } {
+  const [qc, setQc] = useState<QcData | null>(null);
+  const [qcError, setQcError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let stale = false;
+    setQc(null);
+    setQcError(null);
+    if (!selected || !processed) return;
+    api
+      .getQcData(selected)
+      .then((payload) => {
+        if (!stale) setQc(payload);
+      })
+      .catch((err) => {
+        if (stale || (err instanceof ApiError && err.status === 404)) return;
+        setQcError(errorMessage(err));
+      });
+    return () => {
+      stale = true;
+    };
+  }, [selected, processed]);
+
+  return { qc, qcError };
 }

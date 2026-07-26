@@ -1,7 +1,7 @@
 """Runtime settings for the API.
 
 The API is a thin layer over the naviernet package and its on-disk artifacts, so
-its only real configuration is *where the repository lives* — the directory that
+its only real configuration is *where the repository lives*; the directory that
 holds `outputs/`, `data/`, and `configs/`. Everything else derives from there via
 the reused `RunPaths` layout.
 """

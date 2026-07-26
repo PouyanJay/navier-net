@@ -1,4 +1,4 @@
-"""naviernet — physics-informed neural networks for multiphase microchannel flow.
+"""naviernet; physics-informed neural networks for multiphase microchannel flow.
 
 Reconstructs the continuous velocity and interface fields of a growing vapour
 bubble in a heated microchannel from a handful of high-speed camera frames, by

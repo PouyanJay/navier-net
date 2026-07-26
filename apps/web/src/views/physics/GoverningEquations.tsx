@@ -9,22 +9,31 @@ const BOUNDARY = String.raw`u\big|_{\text{inlet}} = u_{\text{in}}, \qquad \mathb
 /** The Stage-A governing physics, rendered as math with explanatory prose. */
 export function GoverningEquations() {
   return (
-    <Panel title="Governing equations" subtitle="Stage A — VOF transport + continuity">
+    <Panel
+      title="Governing equations"
+      subtitle="Stage A: VOF transport + continuity"
+    >
       <p className="prose">
-        The network is constrained to satisfy the conservation laws, not merely to
-        interpolate the pixels. The volume fraction is advected by the local velocity,
-        and continuity carries an inferred dilatation source for phase change.
+        The network is constrained to satisfy the conservation laws, not merely
+        to interpolate the pixels. The volume fraction is advected by the local
+        velocity, and continuity carries an inferred dilatation source for phase
+        change.
       </p>
 
-      <p className="prose">Volume-of-fluid transport (the interface moves with the flow):</p>
+      <p className="prose">
+        Volume-of-fluid transport (the interface moves with the flow):
+      </p>
       <EquationBlock tex={VOF} />
 
-      <p className="prose">Continuity with an inferred dilatation source <em>s</em>:</p>
+      <p className="prose">
+        Continuity with an inferred dilatation source <em>s</em>:
+      </p>
       <EquationBlock tex={CONTINUITY} />
 
       <p className="prose">
-        The volume fraction is a bounded function of a level-set field, making the
-        interface half-thickness <em>ε</em> an explicit, annealable parameter:
+        The volume fraction is a bounded function of a level-set field, making
+        the interface half-thickness <em>ε</em> an explicit, annealable
+        parameter:
       </p>
       <EquationBlock tex={VOLUME_FRACTION} />
 

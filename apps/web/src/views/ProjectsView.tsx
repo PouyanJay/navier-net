@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 
-import { Button, Chip } from "../components";
+import { Button, Callout, Chip } from "../components";
 import { useToast } from "../components/Toast";
 import {
   api,
@@ -15,17 +15,22 @@ import "./runs.css";
 
 interface ProjectFacts {
   project: ProjectSummary;
-  dataset: DatasetSummary | null;
+  datasets: DatasetSummary[];
   runs: RunSummary[];
 }
 
 /** Pipeline progress for one project: which stages have real artifacts. */
 function stageDots(facts: ProjectFacts): boolean[] {
-  if (!facts.dataset) return [false, false, false, false];
-  const dataReady = facts.dataset.processed;
+  if (facts.datasets.length === 0) return [false, false, false, false];
+  const dataReady = facts.datasets.some((dataset) => dataset.processed);
   // The governing equations ship with the platform, so the Model stage is
   // complete as soon as the data it binds to is (dot 2 mirrors dot 1).
-  return [dataReady, dataReady, facts.runs.some(isTrainedRun), facts.runs.some(hasEvaluation)];
+  return [
+    dataReady,
+    dataReady,
+    facts.runs.some(isTrainedRun),
+    facts.runs.some(hasEvaluation),
+  ];
 }
 
 interface ProjectsViewProps {
@@ -61,9 +66,9 @@ export function ProjectsView({
 
   if (error) {
     return (
-      <p className="state-note error" role="alert">
+      <Callout tone="error" title="Could not load projects">
         {error}. Is the API running on :8000?
-      </p>
+      </Callout>
     );
   }
   if (projects === null) {
@@ -75,7 +80,9 @@ export function ProjectsView({
   }
 
   const replaceProject = (updated: ProjectSummary) => {
-    setProjects((current) => (current ?? []).map((p) => (p.id === updated.id ? updated : p)));
+    setProjects((current) =>
+      (current ?? []).map((p) => (p.id === updated.id ? updated : p)),
+    );
     onChanged?.();
   };
 
@@ -86,8 +93,11 @@ export function ProjectsView({
           key={project.id}
           facts={{
             project,
-            dataset: datasets.find((d) => d.id === project.dataset) ?? null,
-            runs: runs.filter((run) => run.dataset === project.dataset),
+            datasets: datasets.filter((d) => project.datasets.includes(d.id)),
+            runs: runs.filter(
+              (run) =>
+                run.dataset != null && project.datasets.includes(run.dataset),
+            ),
           }}
           onOpen={onOpen}
           onSaved={replaceProject}
@@ -103,7 +113,11 @@ export function ProjectsView({
           onCancel={() => onCreatingChange(false)}
         />
       ) : (
-        <button type="button" className="newproj" onClick={() => onCreatingChange(true)}>
+        <button
+          type="button"
+          className="newproj"
+          onClick={() => onCreatingChange(true)}
+        >
           <span className="plus" aria-hidden="true">
             ＋
           </span>
@@ -118,9 +132,11 @@ export function ProjectsView({
 const STAGE_NAMES = ["Data", "Model", "Solve", "Results"];
 
 function statusChip(facts: ProjectFacts, trained: boolean) {
-  if (!facts.dataset) return <Chip>Awaiting data</Chip>;
+  if (facts.datasets.length === 0) return <Chip>Awaiting data</Chip>;
   if (trained) return <Chip tone="green">Stage A · trained</Chip>;
-  if (!facts.dataset.processed) return <Chip tone="amber">needs preprocess</Chip>;
+  if (!facts.datasets.some((dataset) => dataset.processed)) {
+    return <Chip tone="amber">needs preprocess</Chip>;
+  }
   return <Chip>No runs yet</Chip>;
 }
 
@@ -157,7 +173,7 @@ function ProjectCard({
   onOpen: (project: ProjectSummary) => void;
   onSaved: (project: ProjectSummary) => void;
 }) {
-  const { project, dataset } = facts;
+  const { project } = facts;
   const [editing, setEditing] = useState(false);
   const dots = stageDots(facts);
 
@@ -170,7 +186,10 @@ function ProjectCard({
           initialDescription={project.description}
           submitLabel="Save"
           onSubmit={async (name, description) => {
-            const updated = await api.updateProject(project.id, { name, description });
+            const updated = await api.updateProject(project.id, {
+              name,
+              description,
+            });
             onSaved(updated);
             setEditing(false);
           }}
@@ -191,15 +210,18 @@ function ProjectCard({
       <p className="purpose">{project.description || "No description yet."}</p>
       <div className="pmeta mono">
         <span>
-          <b>{dataset?.n_frames ?? 0}</b> frames
+          <b>{facts.datasets.length}</b> dataset
+          {facts.datasets.length === 1 ? "" : "s"}
         </span>
         <span>
-          <b>{facts.runs.length}</b> runs
+          <b>{facts.runs.length}</b> run{facts.runs.length === 1 ? "" : "s"}
         </span>
       </div>
       <StagePipe dots={dots} />
       <div className="pfoot">
-        <span className="mono">naviernet://{dataset?.id ?? project.id.slice(0, 8)}</span>
+        <span className="mono">
+          naviernet://{facts.datasets[0]?.id ?? project.id.slice(0, 8)}
+        </span>
         <span className="pfoot-actions">
           <button
             type="button"
@@ -288,7 +310,7 @@ function ProjectMetadataForm({
       }}
     >
       {/* Limits mirror the API's MAX_NAME_CHARS / MAX_DESCRIPTION_CHARS
-          (apps/api services/projects.py) — keep the pairs in sync. */}
+          (apps/api services/projects.py); keep the pairs in sync. */}
       <label className="pform-field">
         Name
         <input
@@ -308,11 +330,7 @@ function ProjectMetadataForm({
           maxLength={2000}
         />
       </label>
-      {error && (
-        <p className="state-note error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <Callout tone="error">{error}</Callout>}
       <div className="pform-actions">
         <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
           {busy ? "Saving…" : submitLabel}

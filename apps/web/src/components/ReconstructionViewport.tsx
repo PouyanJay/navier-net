@@ -5,9 +5,14 @@ import type { InterfaceData, InterfaceFrame } from "../lib/api";
 const PLAYBACK_FPS = 14;
 
 const toPath = (contour: number[][], flipY: (y: number) => number) =>
-  contour.map(([x, y], i) => `${i === 0 ? "M" : "L"} ${x} ${flipY(y)}`).join(" ");
+  contour
+    .map(([x, y], i) => `${i === 0 ? "M" : "L"} ${x} ${flipY(y)}`)
+    .join(" ");
 
-function nearestByTime(frames: InterfaceFrame[], tMs: number): InterfaceFrame | null {
+function nearestByTime(
+  frames: InterfaceFrame[],
+  tMs: number,
+): InterfaceFrame | null {
   if (frames.length === 0) return null;
   return frames.reduce((best, frame) =>
     Math.abs(frame.t_ms - tMs) < Math.abs(best.t_ms - tMs) ? frame : best,
@@ -52,7 +57,9 @@ export function ReconstructionViewport({ data }: ViewportProps) {
   const width = x1 - x0;
   const height = y1 - y0;
   const flipY = useMemo(() => (y: number) => y1 + y0 - y, [y0, y1]);
-  const measured = showMeasured ? nearestByTime(data.measured, frame?.t_ms ?? 0) : null;
+  const measured = showMeasured
+    ? nearestByTime(data.measured, frame?.t_ms ?? 0)
+    : null;
   const length = frame ? noseLength(frame, data.domain.x_pin_um) : null;
   const gridLines = useMemo(
     () => Array.from({ length: 23 }, (_, i) => x0 + ((i + 1) * width) / 24),
@@ -84,7 +91,8 @@ export function ReconstructionViewport({ data }: ViewportProps) {
           </button>
         </div>
         <span className="hudright">
-          t = {frame.t_ms.toFixed(2)} ms{length != null && ` · L = ${Math.round(length)} µm`}
+          t = {frame.t_ms.toFixed(2)} ms
+          {length != null && ` · L = ${Math.round(length)} µm`}
         </span>
       </div>
       <svg
@@ -101,7 +109,11 @@ export function ReconstructionViewport({ data }: ViewportProps) {
         <line className="vp-wall" x1={x0} x2={x1} y1={y0 + 0.5} y2={y0 + 0.5} />
         <line className="vp-wall" x1={x0} x2={x1} y1={y1 - 0.5} y2={y1 - 0.5} />
         {measured?.contours.map((contour, i) => (
-          <path key={`m${i}`} className="vp-measured" d={toPath(contour, flipY)} />
+          <path
+            key={`m${i}`}
+            className="vp-measured"
+            d={toPath(contour, flipY)}
+          />
         ))}
         {showInterface &&
           frame.contours.map((contour, i) => (
@@ -113,13 +125,25 @@ export function ReconstructionViewport({ data }: ViewportProps) {
           cy={flipY(y0 + height * 0.08)}
           r={height * 0.03}
         />
-        <text className="vp-label" x={data.domain.x_pin_um} y={flipY(y0 + height * 0.16)}>
+        <text
+          className="vp-label"
+          x={data.domain.x_pin_um}
+          y={flipY(y0 + height * 0.16)}
+        >
           nucleation cavity · pinned
         </text>
-        <text className="vp-label" x={x0 + width * 0.01} y={flipY(y1 - height * 0.12)}>
+        <text
+          className="vp-label"
+          x={x0 + width * 0.01}
+          y={flipY(y1 - height * 0.12)}
+        >
           inlet
         </text>
-        <text className="vp-label vp-label-end" x={x1 - width * 0.01} y={flipY(y1 - height * 0.12)}>
+        <text
+          className="vp-label vp-label-end"
+          x={x1 - width * 0.01}
+          y={flipY(y1 - height * 0.12)}
+        >
           outlet →
         </text>
       </svg>

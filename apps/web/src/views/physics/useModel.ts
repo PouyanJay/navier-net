@@ -26,7 +26,10 @@ export function useModel(): ModelLoad {
         const model = await api.getModel(datasets[0].id);
         if (alive) setLoad({ status: "ready", model });
       })
-      .catch((err) => alive && setLoad({ status: "error", message: errorMessage(err) }));
+      .catch(
+        (err) =>
+          alive && setLoad({ status: "error", message: errorMessage(err) }),
+      );
     return () => {
       alive = false;
     };

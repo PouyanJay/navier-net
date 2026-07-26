@@ -12,7 +12,6 @@ import {
 } from "./lib/api";
 import { hasEvaluation, isTrainedRun } from "./lib/runs";
 import { DatasetsView } from "./views/DatasetsView";
-import { EmptyProjectUpload } from "./views/datasets/EmptyProjectUpload";
 import { PhysicsModelView } from "./views/PhysicsModelView";
 import { ProjectsView } from "./views/ProjectsView";
 import { ResultsView } from "./views/ResultsView";
@@ -26,16 +25,27 @@ const PAGE_INTRO: Record<string, string> = {
   projects:
     "Each project scopes its own datasets, physics configuration, runs, and results. Open a project to enter its reconstruction pipeline.",
   datasets:
-    "Operating conditions, derived dimensionless groups, the raw image sequence, and calibration/segmentation.",
+    "Each uploaded image series carries its own operating conditions; the solver never shares conditions across datasets. Select a series to review its frames and edit its conditions; dimensionless groups recompute live for the selected dataset.",
   physics:
     "The governing equations the network is constrained by, and the live architecture of the field ensemble.",
   solver:
-    "Configure the optimization — every value below is an input to the run. The holdout frame is never supervised; its IoU is the live generalization metric. Runs are resumable from the checkpoint.",
+    "Configure the optimization: every value below is an input to the run. The holdout frame is never supervised; its IoU is the live generalization metric. Runs are resumable from the checkpoint.",
   results:
     "Solver runs and their validation against the measured bubble. Every number is read live from the pipeline's own artifacts.",
 };
 
-const IDLE_STATUS: PlatformStatus = { done: { physics: true }, latestRun: null, projects: 0 };
+// Each stage's "continue" action, advancing along the pipeline (mockup flow).
+const CONTINUE: Record<string, { label: string; next: string }> = {
+  datasets: { label: "Continue to physics →", next: "physics" },
+  physics: { label: "Continue to solver →", next: "solver" },
+  solver: { label: "Continue to results →", next: "results" },
+};
+
+const IDLE_STATUS: PlatformStatus = {
+  done: { physics: true },
+  latestRun: null,
+  projects: 0,
+};
 
 interface RepoFacts {
   datasets: DatasetSummary[];
@@ -57,7 +67,7 @@ export function App() {
       .then(([datasets, runs, projects]) =>
         setRepo({ datasets, runs, projectCount: projects.length }),
       )
-      .catch(() => setRepo(null)); // chrome only — views surface real errors
+      .catch(() => setRepo(null)); // chrome only; views surface real errors
   }, []);
 
   // Stage flags are scoped to the open project: an empty project shows an
@@ -65,9 +75,14 @@ export function App() {
   const status = useMemo<PlatformStatus>(() => {
     if (!repo) return IDLE_STATUS;
     const datasets = project
-      ? repo.datasets.filter((dataset) => dataset.id === project.dataset)
+      ? repo.datasets.filter((dataset) => project.datasets.includes(dataset.id))
       : repo.datasets;
-    const runs = project ? repo.runs.filter((run) => run.dataset === project.dataset) : repo.runs;
+    const runs = project
+      ? repo.runs.filter(
+          (run) =>
+            run.dataset != null && project.datasets.includes(run.dataset),
+        )
+      : repo.runs;
     const trained = runs.filter(isTrainedRun);
     const latest = trained[trained.length - 1] ?? null;
     return {
@@ -94,12 +109,18 @@ export function App() {
   const handleRunState = useCallback(
     (run: RunJobStatus | null) => {
       const previous = previousRun.current;
-      if (run && previous && previous.run_id === run.run_id && previous.state === "running") {
+      if (
+        run &&
+        previous &&
+        previous.run_id === run.run_id &&
+        previous.state === "running"
+      ) {
         if (run.state === "done") {
           toast("Training complete", run.run_id, "ok");
           refreshStatus();
         }
-        if (run.state === "error") toast("Run failed", run.message ?? run.run_id, "err");
+        if (run.state === "error")
+          toast("Run failed", run.message ?? run.run_id, "err");
       }
       previousRun.current = run;
       setActiveRun(run);
@@ -118,8 +139,8 @@ export function App() {
     setActive("projects");
   }, []);
 
-  // The first upload attaches the dataset; the pipeline unlocks from there.
-  const attachDataset = useCallback(
+  // Series uploads update the project's dataset list; stage flags follow.
+  const handleProjectChanged = useCallback(
     (updated: ProjectSummary) => {
       setProject(updated);
       refreshStatus();
@@ -146,6 +167,14 @@ export function App() {
             ＋ New project
           </Button>
         )}
+        {project && CONTINUE[active] && (
+          <Button
+            variant="primary"
+            onClick={() => setActive(CONTINUE[active].next)}
+          >
+            {CONTINUE[active].label}
+          </Button>
+        )}
       </header>
       <div className="stack">
         {active === "results" && <ResultsView />}
@@ -157,12 +186,12 @@ export function App() {
             onChanged={refreshStatus}
           />
         )}
-        {active === "datasets" &&
-          (project && !project.dataset ? (
-            <EmptyProjectUpload project={project} onAttached={attachDataset} />
-          ) : (
-            <DatasetsView datasetId={project?.dataset} />
-          ))}
+        {active === "datasets" && project && (
+          <DatasetsView
+            project={project}
+            onProjectChanged={handleProjectChanged}
+          />
+        )}
         {active === "physics" && <PhysicsModelView />}
         {active === "solver" && <SolverView onRunState={handleRunState} />}
       </div>

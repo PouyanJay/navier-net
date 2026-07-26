@@ -33,6 +33,22 @@ def write_synthetic_tensors(path: Path) -> None:
     x_star = ((np.arange(width) + 0.5) / width).astype(np.float32)
     y_star = ((np.arange(height) + 0.5) / height).astype(np.float32)
     t_star = (np.arange(n_t) * 0.1).astype(np.float32)
+    # The smooth interface curve the QC overlay draws: a box round each frame's
+    # bubble, growing downstream. [x*, y*] per point, one closed loop per frame.
+    interface_star = np.stack(
+        [
+            np.array(
+                [
+                    [x_star[0], y_star[3]],
+                    [x_star[min(width - 1, 2 + i)], y_star[3]],
+                    [x_star[min(width - 1, 2 + i)], y_star[8]],
+                    [x_star[0], y_star[8]],
+                ],
+                dtype=np.float32,
+            )
+            for i in range(n_t)
+        ]
+    )
     meta = {
         "dataset": "highest_t",
         "um_per_px": 4.3,
@@ -42,6 +58,13 @@ def write_synthetic_tensors(path: Path) -> None:
         "x_pin_star": float(x_star[1]),
         "n_frames_usable": n_t,
         "n_frames_event": 10,
+        # Snapshot of the conditions baked into these tensors (matches the
+        # highest_t defaults), so the staleness check has something to compare.
+        "baked_conditions": {
+            "dt_frame_ms": 0.5,
+            "channel_width_um": 300.0,
+            "U_ref": 0.2,
+        },
     }
     np.savez_compressed(
         path,
@@ -52,6 +75,7 @@ def write_synthetic_tensors(path: Path) -> None:
         y_star=y_star,
         t_star=t_star,
         masks_camera=(alpha > 0.5).astype(np.uint8),
+        interface_star=interface_star,
         meta=json.dumps(meta),
     )
 
@@ -154,6 +178,16 @@ def client(repo_root: Path) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: Settings(repo_root=repo_root)
     return TestClient(app)
+
+
+@pytest.fixture
+def sample_processed(repo_root: Path) -> Path:
+    """Make the `sample` series both raw-present and preprocessed, so staleness
+    (which compares tensor meta to the composed config) has tensors to read."""
+    processed = repo_root / "data" / "processed" / "sample"
+    processed.mkdir(parents=True, exist_ok=True)
+    write_synthetic_tensors(processed / "tensors.npz")
+    return repo_root
 
 
 @pytest.fixture

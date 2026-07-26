@@ -63,13 +63,14 @@ export interface OperatingConditions {
   n_frames_raw: number;
   n_frames_usable: number;
   n_frames_event: number;
+  U_ref_m_s: number | null;
 }
 
 export interface ProjectSummary {
   id: string;
   name: string;
   description: string;
-  dataset: string | null;
+  datasets: string[];
   created_at: string;
 }
 
@@ -77,11 +78,100 @@ export interface DatasetSummary {
   id: string;
   n_frames: number;
   processed: boolean;
+  conditions_set: boolean;
+  frame_px: [number, number] | null;
+  dt_frame_ms: number | null;
+}
+
+/** A selectable working fluid with its atmospheric T_sat and saturated
+ * properties (mirrors the `configs/fluid/<id>.yaml` group). */
+export interface Fluid {
+  id: string; // config-group id and the fluid= override value, e.g. "fc72"
+  name: string; // display label, e.g. "FC-72"
+  T_sat_C: number; // saturation temperature at 1 atm
+  rho_l: number;
+  rho_v: number;
+  mu_l: number;
+  mu_v: number;
+  k_l: number;
+  k_v: number;
+  cp_l: number;
+  cp_v: number;
+  sigma: number;
+  h_lv: number;
+}
+
+/** Editable per-series conditions (subset of OperatingConditions). T_sat is not
+ * here: it is derived from the selected fluid, not typed. */
+export interface ConditionsUpdate {
+  fluid?: string; // fluid config-group id (allow-listed server-side)
+  dt_frame_ms?: number;
+  channel_width_um?: number;
+  channel_height_um?: number;
+  flow_rate_mL_hr?: number;
+  q_wall_W_cm2?: number;
+  U_ref?: number;
+}
+
+export interface ConditionsResponse {
+  conditions: OperatingConditions;
+  groups: DimensionlessGroups;
+}
+
+export interface QcKinematics {
+  t_ms: number[];
+  length_um: number[];
+  fit_slope_mm_s: number;
+  fit_intercept_um: number;
+}
+
+export interface QcInterfaceFrame {
+  index: number;
+  /** 1-based camera frame this silhouette belongs to, for overlaying it on the
+   * raw frame image (not index + 1 once frames are excluded). */
+  camera_frame: number;
+  t_ms: number;
+  /** Closed [x*, y*] rings: the outer silhouette first, then any holes. */
+  rings: number[][][];
+}
+
+export interface QcData {
+  dataset: string;
+  n_frames_event: number;
+  kinematics: QcKinematics;
+  interface: {
+    x_pin_star: number;
+    x_range: [number, number];
+    y_range: [number, number];
+    /** x* · l_ref_um = µm; the charts label their axes in physical units. */
+    l_ref_um: number;
+    /** Top row of the imaged band in raw-frame pixels; rings are cut to this
+     * ROI, so a frame overlay shifts them down by this much. */
+    y_roi_top: number;
+    frames: QcInterfaceFrame[];
+  };
+  sdf: {
+    frame_index: number;
+    t_ms: number;
+    x_range: [number, number];
+    y_range: [number, number];
+    values: number[][];
+  };
 }
 
 export interface DatasetDetail extends DatasetSummary {
   has_qc: boolean;
   conditions: OperatingConditions;
+  holdout_frame: number | null;
+  um_per_px: number | null;
+  notes: string | null;
+  /** 1-based camera frames kept out of the tensors the model trains on. */
+  excluded_frames: number[];
+  /** False when the exclusions above still need a preprocessing re-run. */
+  exclusions_applied: boolean;
+  /** False when a tensor-baked condition (frame interval, channel width, or
+   * reference velocity) was edited and the tensors need a re-preprocess. */
+  conditions_applied: boolean;
 }
 
 export type DimensionlessGroups = Record<string, number>;
@@ -180,7 +270,11 @@ export interface Trajectory {
   t_ms: KinematicsSeries;
   nose_um: KinematicsSeries;
   area_um2: KinematicsSeries;
-  measured: { t_ms: KinematicsSeries; nose_um: KinematicsSeries; area_um2: KinematicsSeries };
+  measured: {
+    t_ms: KinematicsSeries;
+    nose_um: KinematicsSeries;
+    area_um2: KinematicsSeries;
+  };
 }
 
 /** One reconstructed instant: interface contour polylines in µm. */
@@ -215,7 +309,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try {
-      detail = ((await response.json()) as { detail?: string }).detail ?? detail;
+      detail =
+        ((await response.json()) as { detail?: string }).detail ?? detail;
     } catch {
       /* non-JSON error body */
     }
@@ -224,13 +319,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
-const getJson = <T,>(path: string) =>
+const getJson = <T>(path: string) =>
   request<T>(path, { headers: { Accept: "application/json" } });
 
-const send = <T,>(path: string, method: string, body?: BodyInit) =>
+const send = <T>(path: string, method: string, body?: BodyInit) =>
   request<T>(path, { method, body });
 
-const sendJson = <T,>(path: string, method: string, payload: unknown) =>
+const sendJson = <T>(path: string, method: string, payload: unknown) =>
   request<T>(path, {
     method,
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -244,20 +339,24 @@ const datasetPath = (id: string) => `/api/datasets/${encodeURIComponent(id)}`;
 export const api = {
   listRuns: () => getJson<RunSummary[]>("/api/runs"),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
-  getValidation: (id: string) => getJson<PhysicsValidation>(`${runPath(id)}/validation`),
+  getValidation: (id: string) =>
+    getJson<PhysicsValidation>(`${runPath(id)}/validation`),
 
   startRun: (request: RunLaunchRequest) =>
     sendJson<RunJobStatus>("/api/runs", "POST", request),
   getRunStatus: (id: string) => getJson<RunJobStatus>(`${runPath(id)}/status`),
   getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
-  getLossHistory: (id: string) => getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
-  getTrajectory: (id: string) => getJson<Trajectory>(`${runPath(id)}/trajectory`),
+  getLossHistory: (id: string) =>
+    getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
+  getTrajectory: (id: string) =>
+    getJson<Trajectory>(`${runPath(id)}/trajectory`),
   getInterface: (id: string, frames = 48) =>
     getJson<InterfaceData>(`${runPath(id)}/interface?frames=${frames}`),
 
   startSweep: (request: SweepLaunchRequest) =>
     sendJson<SweepStatus>("/api/sweeps", "POST", request),
-  getSweep: (id: string) => getJson<SweepStatus>(`/api/sweeps/${encodeURIComponent(id)}`),
+  getSweep: (id: string) =>
+    getJson<SweepStatus>(`/api/sweeps/${encodeURIComponent(id)}`),
   getActiveSweep: () => getJson<SweepStatus | null>("/api/sweeps/active"),
 
   listProjects: () => getJson<ProjectSummary[]>("/api/projects"),
@@ -265,12 +364,30 @@ export const api = {
     sendJson<ProjectSummary>("/api/projects", "POST", { name, description }),
   updateProject: (
     id: string,
-    fields: Partial<Pick<ProjectSummary, "name" | "description" | "dataset">>,
-  ) => sendJson<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`, "PATCH", fields),
+    fields: Partial<Pick<ProjectSummary, "name" | "description" | "datasets">>,
+  ) =>
+    sendJson<ProjectSummary>(
+      `/api/projects/${encodeURIComponent(id)}`,
+      "PATCH",
+      fields,
+    ),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),
-  getDatasetGroups: (id: string) => getJson<DimensionlessGroups>(`${datasetPath(id)}/groups`),
+  getDatasetGroups: (id: string) =>
+    getJson<DimensionlessGroups>(`${datasetPath(id)}/groups`),
+  updateConditions: (id: string, fields: ConditionsUpdate) =>
+    sendJson<ConditionsResponse>(
+      `${datasetPath(id)}/conditions`,
+      "PATCH",
+      fields,
+    ),
+  /** Replace the series' excluded frames (full set, not a delta). */
+  setExcludedFrames: (id: string, frames: number[]) =>
+    sendJson<DatasetDetail>(`${datasetPath(id)}/excluded-frames`, "PUT", {
+      excluded_frames: frames,
+    }),
+  getQcData: (id: string) => getJson<QcData>(`${datasetPath(id)}/qc-data`),
   getPreprocessStatus: (id: string) =>
     getJson<PreprocessStatus>(`${datasetPath(id)}/preprocess`),
   startPreprocess: (id: string) =>
@@ -281,7 +398,11 @@ export const api = {
     return send<DatasetSummary>(`${datasetPath(id)}/upload`, "POST", form);
   },
 
-  getModel: (id: string) => getJson<ModelArchitecture>(`/api/model/${encodeURIComponent(id)}`),
+  getModel: (id: string) =>
+    getJson<ModelArchitecture>(`/api/model/${encodeURIComponent(id)}`),
+
+  /** The catalogue of characterised working fluids for the new-series form. */
+  listFluids: () => getJson<Fluid[]>("/api/fluids"),
 };
 
 /** Direct artifact URLs (used as href / img src / video src, not fetched as JSON). */
@@ -291,6 +412,5 @@ export const artifactUrl = {
   video: (id: string) => `${runPath(id)}/video`,
   checkpoint: (id: string) => `${runPath(id)}/checkpoint`,
   tensors: (id: string) => `${runPath(id)}/tensors`,
-  datasetQc: (id: string) => `${datasetPath(id)}/qc`,
   datasetFrame: (id: string, n: number) => `${datasetPath(id)}/frames/${n}`,
 };

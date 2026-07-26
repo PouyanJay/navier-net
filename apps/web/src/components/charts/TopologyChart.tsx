@@ -121,7 +121,9 @@ export function TopologyChart({ model }: { model: ModelArchitecture }) {
     const svg = d3.select(ref.current);
     svg.selectAll("*").remove();
     const cols = columns(model);
-    const g = svg.append("g").attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
+    const g = svg
+      .append("g")
+      .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     const x = d3
       .scalePoint<number>()
       .domain(cols.map((_, i) => i))

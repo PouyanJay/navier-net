@@ -1,9 +1,9 @@
 /*
- * naviernet design tokens — the single source of visual truth.
+ * naviernet design tokens: the single source of visual truth.
  * Values taken verbatim from the platform mockup
  * (.claude/references/naviernet_platform.html). See the enterprise-ui skill.
  *
- * Never write a raw hex/px in a component — reference a token so light and dark
+ * Never write a raw hex/px in a component; reference a token so light and dark
  * both stay correct.
  */
 
@@ -34,12 +34,12 @@
   --view2: #171922;
   --viewline: #292c38;
 
-  /* Accent (blue) — primary actions & active state, NOT a status color */
+  /* Accent (blue); primary actions & active state, NOT a status color */
   --acc: #2563eb;
   --acc2: #60a5fa;
   --accsoft: #2563eb14;
 
-  /* Semantic — green=converged, amber=holdout/caution, red=diverged/error */
+  /* Semantic; green=converged, amber=holdout/caution, red=diverged/error */
   --green: #059669;
   --greensoft: #05966914;
   --amber: #b45309;
@@ -49,10 +49,10 @@
   /* Error text on paper needs more contrast than the red fill color (AA). */
   --redtext: #b91c1c;
 
-  /* Chart series — third line-series color (after --acc and --green) */
+  /* Chart series; third line-series color (after --acc and --green) */
   --purple: #a855f7;
 
-  /* Solver console tones — the console sits on the always-dark view canvas,
+  /* Solver console tones: the console sits on the always-dark view canvas,
      so these do not vary with the theme (values from the mockup's console). */
   --console-text: #9fb0cb;
   --console-ok: #4ec08a;

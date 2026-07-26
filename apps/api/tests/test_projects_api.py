@@ -20,7 +20,7 @@ def test_create_project_returns_identity_and_persists(client):
     assert projects_service.is_valid_project_id(project["id"])
     assert project["name"] == "Condensing slug"
     assert project["description"] == "Inverse reconstruction."
-    assert project["dataset"] is None
+    assert project["datasets"] == []
     assert project["created_at"]
 
     listed = {p["id"] for p in client.get("/api/projects").json()}
@@ -47,12 +47,12 @@ def test_create_project_rejects_oversized_metadata(client, payload):
 
 
 def test_legacy_dataset_is_materialized_once(client, repo_root: Path):
-    first = [p for p in client.get("/api/projects").json() if p["dataset"] == "sample"]
+    first = [p for p in client.get("/api/projects").json() if "sample" in p["datasets"]]
     assert len(first) == 1
     assert first[0]["name"] == "sample"
 
     # Listing again must reuse the materialized file, not mint a new identity.
-    second = [p for p in client.get("/api/projects").json() if p["dataset"] == "sample"]
+    second = [p for p in client.get("/api/projects").json() if "sample" in p["datasets"]]
     assert second == first
     assert (repo_root / "projects" / f"{first[0]['id']}.json").is_file()
 
@@ -74,20 +74,40 @@ def test_patch_updates_name_and_description(client):
 
 def test_patch_attaches_an_existing_dataset(client):
     project = client.post("/api/projects", json={"name": "attach me"}).json()
-    r = client.patch(f"/api/projects/{project['id']}", json={"dataset": "sample"})
+    r = client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample"]})
     assert r.status_code == 200
-    assert r.json()["dataset"] == "sample"
+    assert r.json()["datasets"] == ["sample"]
 
 
 def test_patch_with_explicit_null_detaches_the_dataset(client):
     project = client.post("/api/projects", json={"name": "attach me"}).json()
-    client.patch(f"/api/projects/{project['id']}", json={"dataset": "sample"})
+    client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample"]})
 
-    r = client.patch(f"/api/projects/{project['id']}", json={"dataset": None})
+    r = client.patch(f"/api/projects/{project['id']}", json={"datasets": None})
     assert r.status_code == 200
-    assert r.json()["dataset"] is None
+    assert r.json()["datasets"] == []
     # An omitted field must stay untouched — the name survived both patches.
     assert r.json()["name"] == "attach me"
+
+
+def test_legacy_single_dataset_file_is_migrated(client, repo_root: Path):
+    # Files written before multi-series support carried `dataset: str|null`.
+    projects_dir = repo_root / "projects"
+    projects_dir.mkdir(exist_ok=True)
+    legacy_id = "b" * 32
+    (projects_dir / f"{legacy_id}.json").write_text(
+        json.dumps(
+            {
+                "id": legacy_id,
+                "name": "legacy",
+                "description": "",
+                "dataset": "sample",
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+    )
+    listed = {p["id"]: p for p in client.get("/api/projects").json()}
+    assert listed[legacy_id]["datasets"] == ["sample"]
 
 
 def test_patch_with_explicit_null_name_is_rejected(client):
@@ -125,7 +145,7 @@ def test_get_project_by_id(client):
 
 def test_patch_rejects_a_missing_dataset(client):
     project = client.post("/api/projects", json={"name": "attach me"}).json()
-    r = client.patch(f"/api/projects/{project['id']}", json={"dataset": "nope"})
+    r = client.patch(f"/api/projects/{project['id']}", json={"datasets": ["nope"]})
     assert r.status_code == 400
 
 
@@ -144,18 +164,18 @@ def test_corrupt_project_file_is_skipped(client, repo_root: Path):
     assert r.status_code == 200
     # The bad file is logged and dropped; the healthy projects still list.
     assert "a" * 32 not in {p["id"] for p in r.json()}
-    assert any(p["dataset"] == "sample" for p in r.json())
+    assert any("sample" in p["datasets"] for p in r.json())
 
 
 def test_materialized_project_survives_edit(client, repo_root: Path):
-    materialized = [p for p in client.get("/api/projects").json() if p["dataset"] == "sample"]
+    materialized = [p for p in client.get("/api/projects").json() if "sample" in p["datasets"]]
     project_id = materialized[0]["id"]
     r = client.patch(f"/api/projects/{project_id}", json={"name": "FC-72 bubble growth"})
     assert r.status_code == 200
 
     on_disk = json.loads((repo_root / "projects" / f"{project_id}.json").read_text())
     assert on_disk["name"] == "FC-72 bubble growth"
-    assert on_disk["dataset"] == "sample"
+    assert on_disk["datasets"] == ["sample"]
 
 
 def test_list_is_sorted_oldest_first(repo_root: Path):
@@ -164,3 +184,18 @@ def test_list_is_sorted_oldest_first(repo_root: Path):
     b = projects_service.create_project(settings, "second")
     ids = [p.id for p in projects_service.list_projects(settings)]
     assert ids.index(a.id) < ids.index(b.id)
+
+
+def test_patch_validates_every_dataset_in_the_list(client, tiff_bytes):
+    files = [("files", ("1.tif", tiff_bytes, "image/tiff"))]
+    assert client.post("/api/datasets/second/upload", files=files).status_code == 200
+    project = client.post("/api/projects", json={"name": "multi"}).json()
+
+    # One bad entry anywhere in the list rejects the whole edit.
+    r = client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample", "nope"]})
+    assert r.status_code == 400
+
+    # Two valid series persist together, in order.
+    r = client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample", "second"]})
+    assert r.status_code == 200
+    assert r.json()["datasets"] == ["sample", "second"]

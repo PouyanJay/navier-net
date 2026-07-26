@@ -39,7 +39,7 @@
   color: var(--ink3);
 }
 
-/* Top bar — spans the full width, brand included */
+/* Top bar; spans the full width, brand included */
 .topbar {
   grid-column: 1 / 3;
   grid-row: 1;
@@ -101,15 +101,8 @@
   background: var(--panel);
   color: var(--ink2);
 }
-/* Status dot inside topbar chips (mockup's chip .dot) */
 .topbar .chip {
   white-space: nowrap;
-}
-.topbar .cdot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
 }
 
 .thbtn {
@@ -198,7 +191,7 @@
   color: var(--ink);
 }
 
-/* Sidebar rail — dark navy chrome */
+/* Sidebar rail; dark navy chrome */
 .sidebar {
   grid-column: 1;
   grid-row: 2;
@@ -252,7 +245,7 @@
   opacity: 0.75;
 }
 
-/* "← All projects" — the way back to the workspace home */
+/* "← All projects": the way back to the workspace home */
 .backhome {
   display: flex;
   align-items: center;
@@ -346,7 +339,7 @@
   font-size: 11px;
 }
 
-/* Workspace — paper. Content is capped so wide monitors don't stretch it. */
+/* Workspace; paper. Content is capped so wide monitors don't stretch it. */
 .workspace {
   grid-column: 2;
   grid-row: 2;

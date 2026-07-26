@@ -2,7 +2,7 @@
 
 Reuses the pipeline's own config schema and groups so the API never re-implements
 any physics. Hydra keeps global state, so composition is serialized behind a lock
-and the global instance is cleared each time — safe for the API's occasional,
+and the global instance is cleared each time; safe for the API's occasional,
 low-frequency use (operating conditions, live groups, driving preprocess).
 """
 
@@ -22,6 +22,10 @@ from naviernet.config import config_dir, register_configs
 _lock = threading.Lock()
 _registered = False
 _cache: dict[tuple[str, tuple[str, ...]], DictConfig] = {}
+# Conditions edits mint new override tuples, so the key space is no longer
+# bounded by the dataset count; cap the cache (FIFO) to keep repeated PATCHes
+# from growing it without limit (SECURITY.md §4).
+_CACHE_MAX_ENTRIES = 64
 
 
 def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
@@ -38,12 +42,14 @@ def compose_cfg(dataset: str, overrides: list[str] | None = None) -> DictConfig:
         if cached is not None:
             return cached
         cfg = _compose_locked(dataset, overrides)
+        while len(_cache) >= _CACHE_MAX_ENTRIES:
+            _cache.pop(next(iter(_cache)))  # dicts iterate oldest-first
         _cache[key] = cfg
         return cfg
 
 
 def compose_cfg_once(dataset: str, overrides: list[str] | None = None) -> DictConfig:
-    """Compose without memoizing — for overrides unique per call (a run launch
+    """Compose without memoizing; for overrides unique per call (a run launch
     carries a freshly minted ``run_name``, so caching would only grow)."""
     with _lock:
         return _compose_locked(dataset, overrides)
@@ -65,8 +71,9 @@ def _compose_locked(dataset: str, overrides: list[str] | None) -> DictConfig:
     return cfg
 
 
-def compute_groups_for(dataset: str) -> dict[str, float]:
-    """Live dimensionless groups for a dataset, computed from its config."""
+def compute_groups_for(dataset: str, overrides: list[str] | None = None) -> dict[str, float]:
+    """Live dimensionless groups for a dataset, computed from its config
+    (plus the series' saved condition overrides, when given)."""
     from naviernet.physics.groups import compute_groups
 
-    return compute_groups(compose_cfg(dataset))
+    return compute_groups(compose_cfg(dataset, overrides=overrides))

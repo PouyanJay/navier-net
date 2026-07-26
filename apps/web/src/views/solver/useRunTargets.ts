@@ -37,7 +37,9 @@ export function useRunTargets(): RunTargets {
         setResumeRunId((cur) => cur || trained[0]?.id || "");
       })
       // Launching still works without the list, but say why resume is empty.
-      .catch(() => setLoadError("Could not load existing runs — resume is unavailable."));
+      .catch(() =>
+        setLoadError("Could not load existing runs; resume is unavailable."),
+      );
   }, []);
 
   useEffect(() => {
@@ -48,7 +50,9 @@ export function useRunTargets(): RunTargets {
         setDatasets(processed);
         setDataset((cur) => cur || processed[0]?.id || "");
       })
-      .catch(() => setLoadError("Could not load datasets — is the API running?"));
+      .catch(() =>
+        setLoadError("Could not load datasets; is the API running?"),
+      );
     refreshRuns();
   }, [refreshRuns]);
 

@@ -7,14 +7,17 @@ import { expect, test } from "@playwright/test";
 /**
  * The Phase 4 journey, for real: configure a short run in the Solver, launch
  * it, watch the console and loss chart update live over SSE, and find the
- * finished run in Results — every layer (browser → API → run_manager → the
+ * finished run in Results; every layer (browser → API → run_manager → the
  * actual PINN trainer → outputs/) exercised with no mocks.
  *
  * The run is tiny (25 steps, small batches, no rendering) but real, so it
  * lands in the repo's outputs/; the spec removes exactly that run afterwards.
  */
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const REPO_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../..",
+);
 const RUN_ID_SHAPE = /^run-\d{8}-\d{6}(-\d+)?$/;
 
 let launchedRunId: string | null = null;
@@ -27,12 +30,16 @@ test.afterAll(() => {
   }
 });
 
-test("configure, launch, watch live, and find the run in Results", async ({ page }) => {
+test("configure, launch, watch live, and find the run in Results", async ({
+  page,
+}) => {
   test.setTimeout(180_000); // a real (if tiny) training + evaluation run
 
   await page.goto("/");
   await page.getByRole("button", { name: "Solver", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Solver", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Solver", exact: true }),
+  ).toBeVisible();
 
   // A tiny but real configuration; every field maps onto cfg.training.
   await page.getByLabel("Steps").fill("25");
@@ -43,9 +50,11 @@ test("configure, launch, watch live, and find the run in Results", async ({ page
   await page.getByRole("switch", { name: "Render deliverables" }).click();
 
   // Capture the minted run id straight off the launch response, BEFORE any UI
-  // assertion can fail — so afterAll can always clean up what was created.
+  // assertion can fail; so afterAll can always clean up what was created.
   const launchResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/runs") && response.request().method() === "POST",
+    (response) =>
+      response.url().endsWith("/api/runs") &&
+      response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   const launched = await launchResponse;
@@ -53,18 +62,33 @@ test("configure, launch, watch live, and find the run in Results", async ({ page
   launchedRunId = ((await launched.json()) as { run_id: string }).run_id;
 
   // The run is live: id assigned, pill on, console streaming, chart drawing.
-  const runId = (await page.locator(".solver-head .id").textContent({ timeout: 15_000 }))!;
+  const runId = (await page
+    .locator(".solver-head .id")
+    .textContent({ timeout: 15_000 }))!;
   expect(runId).toMatch(RUN_ID_SHAPE);
   expect(runId).toBe(launchedRunId);
-  await expect(page.getByText(`[naviernet] starting run ${runId}`, { exact: false })).toBeVisible();
+  await expect(
+    page.getByText(`[naviernet] starting run ${runId}`, { exact: false }),
+  ).toBeVisible();
   await expect(page.locator(".runpill")).toBeVisible();
-  await expect(page.getByText(/training steps 1-25/)).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator("path.chart-line")).toHaveCount(3, { timeout: 60_000 });
+  await expect(page.getByText(/training steps 1-25/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.locator("path.chart-line")).toHaveCount(3, {
+    timeout: 60_000,
+  });
 
   // It finishes: done state, full progress, transcript milestone, pill off.
-  await expect(page.locator(".solver-head .dot")).toHaveText("done", { timeout: 120_000 });
-  await expect(page.getByText("[naviernet] run complete", { exact: false })).toBeVisible();
-  await expect(page.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "25");
+  await expect(page.locator(".solver-head .dot")).toHaveText("done", {
+    timeout: 120_000,
+  });
+  await expect(
+    page.getByText("[naviernet] run complete", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuenow",
+    "25",
+  );
   await expect(page.locator(".runpill")).toHaveCount(0);
 
   // The finished run is a first-class run in Results.

@@ -3,8 +3,8 @@
 A sweep is the API-side equivalent of the CLI's `--multirun training.seed=...`:
 the same configuration composed once per seed, each child trained and evaluated
 in order. Children are ordinary run_manager jobs with flat ids
-(`<sweep_id>-s<seed>`), so every per-run endpoint — stream, status, detail,
-loss history — works on them unchanged, and the comparison view reads them like
+(`<sweep_id>-s<seed>`), so every per-run endpoint; stream, status, detail,
+loss history; works on them unchanged, and the comparison view reads them like
 any other run. The sweep registry here only ties them together.
 
 All children are reserved (queued) upfront, so the sweep owns the single
@@ -50,7 +50,7 @@ def _evicted_child(settings: Settings, sweep: _Sweep, child_id: str) -> RunJobSt
     """A child that left the run registry, reconstructed from its artifacts.
 
     Only finished children are ever evicted (queued/running block eviction),
-    so the checkpoint on disk decides between done and error — the sweep must
+    so the checkpoint on disk decides between done and error; the sweep must
     never quietly shrink.
     """
     trained = runs_service.checkpoint_path(settings, child_id) is not None
@@ -133,7 +133,7 @@ def _worker(settings: Settings, sweep_id: str, request: SweepLaunchRequest) -> N
         with _lock:
             sweep.state = "done"
         log.info("sweep %s finished (%d children)", sweep_id, len(sweep.child_ids))
-    except Exception as exc:  # noqa: BLE001 — report any failure to the client
+    except Exception as exc:  # noqa: BLE001 (report any failure to the client)
         log.exception("sweep %s failed", sweep_id)
         with _lock:
             sweep.state = "error"

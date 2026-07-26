@@ -5,11 +5,16 @@ import type { PhysicsValidation as Validation } from "../../lib/api";
 // agreement (green); beyond it, flag for attention (amber).
 const NOSE_SPEED_ERROR_TOLERANCE_PCT = 10;
 
-const fmt = (v: number | null, digits = 3) => (v != null ? v.toFixed(digits) : "—");
+const fmt = (v: number | null, digits = 3) =>
+  v != null ? v.toFixed(digits) : "n/a";
 
 function groupRows(v: Validation): KV[] {
   return [
-    { label: "Bretherton film", value: fmt(v.bretherton_film_um, 2), hint: "µm" },
+    {
+      label: "Bretherton film",
+      value: fmt(v.bretherton_film_um, 2),
+      hint: "µm",
+    },
     { label: "Reynolds (Re)", value: fmt(v.reynolds, 1) },
     { label: "Weber (We)", value: fmt(v.weber, 3) },
     { label: "Capillary (Ca)", value: fmt(v.capillary, 4) },
@@ -20,7 +25,12 @@ function groupRows(v: Validation): KV[] {
 
 function NoseSpeedCompare({ v }: { v: Validation }) {
   const err = v.nose_speed_error_pct;
-  const errTone = err == null ? "default" : err < NOSE_SPEED_ERROR_TOLERANCE_PCT ? "green" : "amber";
+  const errTone =
+    err == null
+      ? "default"
+      : err < NOSE_SPEED_ERROR_TOLERANCE_PCT
+        ? "green"
+        : "amber";
   return (
     <div className="nose-compare">
       <Stat
@@ -57,11 +67,13 @@ function checkRows(v: Validation): Check[] {
     const good = v.nose_speed_error_pct < NOSE_SPEED_ERROR_TOLERANCE_PCT;
     checks.push({
       tone: good ? "green" : "amber",
-      title: good ? "Nose speed agrees with measurement" : "Nose speed deviates",
+      title: good
+        ? "Nose speed agrees with measurement"
+        : "Nose speed deviates",
       detail: `inferred ${fmt(v.nose_speed_inferred_mm_s, 0)} vs measured ${fmt(
         v.nose_speed_measured_mm_s,
         0,
-      )} mm/s — neither was supervised`,
+      )} mm/s; neither was supervised`,
     });
   }
   if (v.bretherton_film_um != null && v.capillary != null) {
@@ -76,7 +88,7 @@ function checkRows(v: Validation): Check[] {
   }
   checks.push({
     tone: "amber",
-    title: "Global mass closure — open",
+    title: "Global mass closure: open",
     detail:
       "free dilatation source not yet quantitative · resolved by the Stage-B evaporation coupling",
   });
@@ -98,7 +110,11 @@ function CheckRow({ check }: { check: Check }) {
 }
 
 /** Physics validation: inferred vs measured kinematics + key dimensionless groups. */
-export function PhysicsValidationPanel({ validation }: { validation: Validation }) {
+export function PhysicsValidationPanel({
+  validation,
+}: {
+  validation: Validation;
+}) {
   return (
     <Panel title="Physics validation" subtitle="independent of training">
       <NoseSpeedCompare v={validation} />

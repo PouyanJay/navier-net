@@ -1,7 +1,17 @@
 import { useState } from "react";
 
-import { Panel, SelectField, Table, ViewCanvas, type Column } from "../../components";
-import { CompareChart, type CompareSeries } from "../../components/charts/CompareChart";
+import {
+  Callout,
+  Panel,
+  SelectField,
+  Table,
+  ViewCanvas,
+  type Column,
+} from "../../components";
+import {
+  CompareChart,
+  type CompareSeries,
+} from "../../components/charts/CompareChart";
 import type { RunSummary } from "../../lib/api";
 import { MAX_COMPARED, useComparison, type ComparedRun } from "./useComparison";
 
@@ -32,7 +42,7 @@ const METRICS_COLUMNS: Column<MetricsRow>[] = [
 ];
 
 const fmt = (value: number | null | undefined, digits = 3) =>
-  value == null ? "—" : value.toFixed(digits);
+  value == null ? "n/a" : value.toFixed(digits);
 
 function lossSeries(runs: ComparedRun[], term: LossTerm): CompareSeries[] {
   return runs.map((run) => ({
@@ -44,17 +54,19 @@ function lossSeries(runs: ComparedRun[], term: LossTerm): CompareSeries[] {
 function iouSeries(runs: ComparedRun[]): CompareSeries[] {
   return runs.map((run) => ({
     id: run.detail.id,
-    points: Object.entries(run.detail.metrics?.iou_per_frame ?? {}).map(([frame, iou]) => ({
-      x: Number(frame),
-      y: iou,
-    })),
+    points: Object.entries(run.detail.metrics?.iou_per_frame ?? {}).map(
+      ([frame, iou]) => ({
+        x: Number(frame),
+        y: iou,
+      }),
+    ),
   }));
 }
 
 function metricsRows(runs: ComparedRun[]): MetricsRow[] {
   return runs.map((run) => ({
     id: run.detail.id,
-    steps: run.detail.steps != null ? String(run.detail.steps) : "—",
+    steps: run.detail.steps != null ? String(run.detail.steps) : "n/a",
     iouMean: fmt(run.detail.metrics?.iou_mean),
     iouHoldout: fmt(run.detail.metrics?.iou_holdout),
     nose: fmt(run.detail.metrics?.nose_speed_mm_s, 0),
@@ -90,9 +102,9 @@ export function ComparePanel({ candidates }: { candidates: RunSummary[] }) {
         })}
       </div>
       {error && (
-        <p className="state-note error" role="alert">
-          Could not load comparison data: {error}
-        </p>
+        <Callout tone="error" title="Could not load comparison data">
+          {error}
+        </Callout>
       )}
       {selected.length < 2 && (
         <p className="state-note">Select at least two runs to compare them.</p>
@@ -134,7 +146,11 @@ export function ComparePanel({ candidates }: { candidates: RunSummary[] }) {
               />
             </ViewCanvas>
           </div>
-          <Table columns={METRICS_COLUMNS} rows={metricsRows(runs)} rowKey={(row) => row.id} />
+          <Table
+            columns={METRICS_COLUMNS}
+            rows={metricsRows(runs)}
+            rowKey={(row) => row.id}
+          />
         </div>
       )}
     </Panel>
