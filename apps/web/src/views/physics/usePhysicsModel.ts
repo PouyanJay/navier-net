@@ -25,15 +25,24 @@ interface Globals {
   nodewise: boolean;
 }
 
+interface Baseline {
+  perField: Record<FieldName, FieldArch>;
+  globals: Pick<Globals, "ff" | "ffScale">;
+}
+
 interface EditState {
   dataset: string;
   equations: EquationState[];
   groups: Record<string, number>;
   enabled: Record<string, boolean>; // toggleable equation id -> on
   weights: Record<string, number>; // weight_key -> value
-  preset: PresetName;
+  preset: PresetName | null; // the matching preset, or null when custom
   perField: Record<FieldName, FieldArch>;
   globals: Globals;
+  // The width/depth/Fourier values an "override" is measured against: the
+  // loaded config, or whatever a later preset re-derived. So a freshly loaded
+  // config reads as 0 overrides even when it matches no preset.
+  baseline: Baseline;
   dirty: boolean;
 }
 
@@ -47,12 +56,14 @@ export interface PhysicsModel {
   dataset: string;
   equations: EquationDisplay[];
   groups: Record<string, number>;
-  preset: PresetName;
+  preset: PresetName | null;
   perField: Record<FieldName, FieldArch>;
   globals: Globals;
   activeFields: FieldName[];
   fieldOn: (field: FieldName) => boolean;
   fieldParamCount: (field: FieldName) => number;
+  fieldOverridden: (field: FieldName) => boolean;
+  globalOverridden: (key: "ff" | "ffScale") => boolean;
   totalParams: number;
   overrideCount: number;
   dirty: boolean;
@@ -86,17 +97,18 @@ function baseFrom(model: ModelArchitecture, field: FieldName): FieldArch {
   };
 }
 
-function detectPreset(model: ModelArchitecture): PresetName {
-  const match = (Object.keys(PRESETS) as PresetName[]).find((name) => {
-    const p = PRESETS[name];
-    return (
-      model.hidden === p.width &&
-      model.layers === p.depth &&
-      model.fourier_feats === p.ff &&
-      model.fourier_scale === p.ffScale
-    );
-  });
-  return match ?? "medium";
+function detectPreset(model: ModelArchitecture): PresetName | null {
+  return (
+    (Object.keys(PRESETS) as PresetName[]).find((name) => {
+      const p = PRESETS[name];
+      return (
+        model.hidden === p.width &&
+        model.layers === p.depth &&
+        model.fourier_feats === p.ff &&
+        model.fourier_scale === p.ffScale
+      );
+    }) ?? null
+  );
 }
 
 function buildEdit(model: ModelArchitecture, physics: PhysicsState): EditState {
@@ -121,6 +133,10 @@ function buildEdit(model: ModelArchitecture, physics: PhysicsState): EditState {
       ffScale: model.fourier_scale,
       alphaEps: model.alpha_eps,
       nodewise: model.nodewise_activation,
+    },
+    baseline: {
+      perField: structuredClone(perField),
+      globals: { ff: model.fourier_feats, ffScale: model.fourier_scale },
     },
     dirty: false,
   };
@@ -195,8 +211,20 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
     fieldParams(edit.perField[f], edit.globals.ff, edit.globals.nodewise);
   const totalParams = activeFields.reduce((sum, f) => sum + fieldParamCount(f), 0);
 
-  const derived = deriveFromPreset(edit.preset);
-  const overrideCount = countOverrides(edit, derived);
+  const fieldOverridden = (f: FieldName) =>
+    edit.perField[f].width !== edit.baseline.perField[f].width ||
+    edit.perField[f].depth !== edit.baseline.perField[f].depth;
+  const globalOverridden = (key: "ff" | "ffScale") => edit.globals[key] !== edit.baseline.globals[key];
+  const overrideCount =
+    ALL_FIELDS.reduce(
+      (n, f) =>
+        n +
+        (edit.perField[f].width !== edit.baseline.perField[f].width ? 1 : 0) +
+        (edit.perField[f].depth !== edit.baseline.perField[f].depth ? 1 : 0),
+      0,
+    ) +
+    (globalOverridden("ff") ? 1 : 0) +
+    (globalOverridden("ffScale") ? 1 : 0);
 
   const equations: EquationDisplay[] = edit.equations.map((e) => ({
     ...e,
@@ -215,6 +243,8 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
     activeFields,
     fieldOn,
     fieldParamCount,
+    fieldOverridden,
+    globalOverridden,
     totalParams,
     overrideCount,
     dirty: edit.dirty,
@@ -228,15 +258,22 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
       patch({ weights: { ...edit.weights, [weightKey]: value } }),
     applyPreset: (preset) => {
       const d = deriveFromPreset(preset);
-      patch({ preset, perField: d.perField, globals: { ...edit.globals, ...d.globals } });
+      // The preset becomes the new baseline: re-derived values read as 0 overrides.
+      patch({
+        preset,
+        perField: d.perField,
+        globals: { ...edit.globals, ...d.globals },
+        baseline: { perField: structuredClone(d.perField), globals: d.globals },
+      });
     },
     setGlobal: (key, value) => patch({ globals: { ...edit.globals, [key]: value } }),
     setFieldArch: (field, key, value) =>
       patch({ perField: { ...edit.perField, [field]: { ...edit.perField[field], [key]: value } } }),
-    resetToPreset: () => {
-      const d = deriveFromPreset(edit.preset);
-      patch({ perField: d.perField, globals: { ...edit.globals, ...d.globals } });
-    },
+    resetToPreset: () =>
+      patch({
+        perField: structuredClone(edit.baseline.perField),
+        globals: { ...edit.globals, ...edit.baseline.globals },
+      }),
     hydraCommand: buildHydra(edit, activeFields, base(edit)),
     save,
   };
@@ -261,20 +298,6 @@ function deriveFromPreset(preset: PresetName): {
     };
   }
   return { perField, globals: { ff: p.ff, ffScale: p.ffScale } };
-}
-
-function countOverrides(
-  edit: EditState,
-  derived: ReturnType<typeof deriveFromPreset>,
-): number {
-  let n = 0;
-  if (edit.globals.ff !== derived.globals.ff) n++;
-  if (edit.globals.ffScale !== derived.globals.ffScale) n++;
-  for (const f of ALL_FIELDS) {
-    if (edit.perField[f].width !== derived.perField[f].width) n++;
-    if (edit.perField[f].depth !== derived.perField[f].depth) n++;
-  }
-  return n;
 }
 
 function buildHydra(edit: EditState, activeFields: FieldName[], baseArch: FieldArch): string {

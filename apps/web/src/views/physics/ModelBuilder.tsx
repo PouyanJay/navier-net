@@ -1,12 +1,5 @@
 import { Panel } from "../../components";
-import {
-  derivePerField,
-  estMemoryMB,
-  estMinutesPer1kSteps,
-  fmtCount,
-  PRESETS,
-  type PresetName,
-} from "./model";
+import { estMemoryMB, estMinutesPer1kSteps, fmtCount, type PresetName } from "./model";
 import type { PhysicsModel } from "./usePhysicsModel";
 
 const PRESET_META: { name: PresetName; label: string; note: string }[] = [
@@ -22,8 +15,6 @@ interface Reco {
 }
 
 function recommendations(model: PhysicsModel): Reco[] {
-  const preset = PRESETS[model.preset];
-  const derived = derivePerField(preset);
   const g = model.globals;
   const pf = model.perField;
   const pOn = model.fieldOn("p") || model.fieldOn("T");
@@ -31,24 +22,24 @@ function recommendations(model: PhysicsModel): Reco[] {
     {
       value: `σ_B = ${g.ffScale} · ε = ${g.alphaEps}`,
       why: `Spectral scale sized so ${g.ff} Fourier pairs resolve the interface half-width.`,
-      modified: g.ff !== preset.ff || g.ffScale !== preset.ffScale,
+      modified: model.globalOverridden("ff") || model.globalOverridden("ffScale"),
     },
     {
       value: `α network ${pf.phi.width} × ${pf.phi.depth}`,
       why: "The steepest field — it carries the sigmoid(φ/ε) interface.",
-      modified: pf.phi.width !== derived.phi.width || pf.phi.depth !== derived.phi.depth,
+      modified: model.fieldOverridden("phi"),
     },
     {
       value: `u, v, s networks ${pf.u.width} × ${pf.u.depth}`,
       why: "Smooth hidden fields; capacity follows α at ratio 1.0.",
-      modified: pf.u.width !== derived.u.width || pf.u.depth !== derived.u.depth,
+      modified: model.fieldOverridden("u") || model.fieldOverridden("v") || model.fieldOverridden("s"),
     },
     {
       value: pOn ? `p, T networks ${pf.p.width} × ${pf.p.depth}` : "p, T — locked",
       why: pOn
         ? "Stage-B fields sized +33% width, +2 depth for stiffer residuals."
         : "Enable Momentum or Energy to unlock pressure and temperature.",
-      modified: pOn && (pf.p.width !== derived.p.width || pf.p.depth !== derived.p.depth),
+      modified: pOn && (model.fieldOverridden("p") || model.fieldOverridden("T")),
     },
   ];
 }
