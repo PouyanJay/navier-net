@@ -8,6 +8,10 @@ import torch
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures
 from naviernet.models.pinn import BubblePINN, FieldNet
 
+from .conftest import make_config
+
+_TINY = ["model.hidden=8", "model.layers=2", "model.fourier_feats=4"]
+
 
 def test_fourier_features_double_the_width():
     ff = FourierFeatures(in_dim=3, n_feats=16, scale=2.0)
@@ -72,6 +76,49 @@ def test_stage_b_fields_can_be_enabled_by_config(tiny_cfg):
     model = BubblePINN(tiny_cfg, fields=["phi", "u", "v", "s", "p", "T"])
     assert model.pressure(torch.rand(3, 3)).shape == (3, 1)
     assert model.temperature(torch.rand(3, 3)).shape == (3, 1)
+
+
+def _param_count(model, field: str) -> int:
+    return sum(p.numel() for p in model.nets[field].parameters())
+
+
+def test_per_field_override_is_absent_by_default():
+    """No per_field key means every field uses the global architecture -- the
+    exact behaviour before overrides existed."""
+    model = BubblePINN(make_config(_TINY))
+    counts = {f: _param_count(model, f) for f in model.fields}
+    assert len(set(counts.values())) == 1, "all fields share the global arch"
+
+
+def test_per_field_width_override_changes_only_that_field():
+    """A per-field width override resizes that network and leaves the rest at
+    the global width."""
+    base = BubblePINN(make_config(_TINY))
+    global_u = _param_count(base, "u")
+
+    model = BubblePINN(make_config([*_TINY, "+model.per_field={s:{hidden:32}}"]))
+
+    assert _param_count(model, "u") == global_u, "u untouched"
+    assert _param_count(model, "s") > global_u, "s widened by its override"
+
+
+def test_per_field_depth_override_adds_layers():
+    base = BubblePINN(make_config(_TINY))
+    model = BubblePINN(make_config([*_TINY, "+model.per_field={s:{layers:5}}"]))
+    assert _param_count(model, "s") > _param_count(base, "s")
+
+
+def test_per_field_override_leaves_other_fields_bit_identical():
+    """Overriding one field must not shift another field's initial weights."""
+    cfg = make_config([*_TINY, "+model.per_field={s:{hidden:32}}"])
+
+    torch.manual_seed(0)
+    overridden = BubblePINN(cfg)
+    torch.manual_seed(0)
+    plain = BubblePINN(make_config(_TINY))
+
+    x = torch.rand(8, 3)
+    assert torch.equal(overridden.alpha(x), plain.alpha(x)), "phi net unaffected"
 
 
 def test_checkpoint_round_trips_exactly(tiny_cfg, tmp_path):
