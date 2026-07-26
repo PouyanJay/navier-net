@@ -287,6 +287,33 @@
   background: var(--acc2);
   border-color: var(--acc2);
 }
+/* Destructive action (delete a project and its data). Red text + border filling
+   with a soft red tint on hover — accessible in both themes, unlike white-on-red
+   which the light dark-mode red cannot carry. */
+.btn.danger {
+  color: var(--redtext);
+  border-color: var(--red);
+}
+.btn.danger:hover {
+  background: var(--redsoft);
+}
+.btn.ghost.danger {
+  color: var(--redtext);
+}
+.btn.ghost.danger:hover {
+  background: var(--redsoft);
+}
+/* Icon-only button: a square hit area sized to the 16-grid glyph inside it. */
+.btn.icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
+.btn.icon-only svg {
+  width: 14px;
+  height: 14px;
+}
 /* Compact form for a secondary action in a panel header, where a full-size
    button would outweigh the panel's own title. */
 .btn.sm {

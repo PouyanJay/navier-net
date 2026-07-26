@@ -15,12 +15,16 @@ import json
 import re
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import ProjectSummary, ProjectUpdate
 from naviernet_api.services import datasets as datasets_service
+from naviernet_api.services import run_manager
+from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings
 
 log = get_logger(__name__)
@@ -44,6 +48,10 @@ _LEGACY_DESCRIPTION = (
 
 class ProjectError(ValueError):
     """A rejected project operation (bad name, unknown dataset, …)."""
+
+
+class ProjectInUseError(ProjectError):
+    """A delete blocked because a training run is live on the project's data."""
 
 
 def is_valid_project_id(project_id: str) -> bool:
@@ -191,3 +199,78 @@ def update_project(
         )
         _write(settings, updated)
     return updated
+
+
+def _datasets_of_other_projects(settings: Settings, exclude_id: str) -> set[str]:
+    """Every dataset referenced by a project other than `exclude_id`.
+
+    Reads the project files directly (no materialization), so it is safe to call
+    while already holding `_lock` — unlike `list_projects`, which takes it.
+    """
+    shared: set[str] = set()
+    if settings.projects_dir.is_dir():
+        for path in settings.projects_dir.glob("*.json"):
+            if path.stem == exclude_id:
+                continue
+            other = _read(path)
+            if other is not None:
+                shared.update(other.datasets)
+    return shared
+
+
+def _try_remove(
+    delete: Callable[[Settings, str], Any], settings: Settings, target: str, *, label: str
+) -> None:
+    """Run one filesystem delete, logging (not raising) if it fails, so a single
+    unremovable resource cannot abort the rest of a project's cascade."""
+    try:
+        delete(settings, target)
+    except OSError as exc:  # permission, file held open, races with a writer
+        log.error("could not remove %s while deleting project: %s", label, exc)
+
+
+def delete_project(settings: Settings, project_id: str) -> ProjectSummary | None:
+    """Delete a project and the data and outputs it exclusively owns.
+
+    A dataset still referenced by another project — and that dataset's runs —
+    is preserved; only series this project alone holds have their raw and
+    processed directories and their runs removed. Returns the deleted project,
+    or None if the id is unknown (mirrors `update_project`, so the route can 404).
+
+    Raises `ProjectInUseError` if a training run is live on one of the owned
+    datasets: deleting its tensors mid-run would corrupt the run (and the worker
+    would recreate the "deleted" output dir). Cancel the run first.
+
+    The lock is held across the filesystem cascade on purpose: it stops a
+    concurrent `update_project` from re-attaching an owned dataset to another
+    project between the ownership check and the delete. With a single training
+    slot and few projects the cascade is brief, so the availability cost is
+    acceptable; the alternative (I/O outside the lock) reopens that race.
+    """
+    with _lock:
+        project = get_project(settings, project_id)
+        if project is None:
+            return None
+        shared = _datasets_of_other_projects(settings, project_id)
+        owned = [dataset for dataset in project.datasets if dataset not in shared]
+
+        in_use = sorted(set(owned) & run_manager.active_datasets())
+        if in_use:
+            raise ProjectInUseError(
+                f"a training run is in progress on {in_use[0]!r}; "
+                "cancel it before deleting this project"
+            )
+
+        # Best-effort: one stubborn file must not abort the cascade and leave the
+        # project record pointing at half-deleted data. Log what could not be
+        # removed, then always drop the record last.
+        for run in runs_service.list_runs(settings):
+            if run.dataset in owned:
+                _try_remove(runs_service.delete_run, settings, run.id, label=f"run {run.id}")
+        for dataset in owned:
+            _try_remove(
+                datasets_service.delete_dataset, settings, dataset, label=f"dataset {dataset}"
+            )
+        _path(settings, project_id).unlink(missing_ok=True)
+    log.info("deleted project %s (%d owned dataset(s) removed)", project_id, len(owned))
+    return project

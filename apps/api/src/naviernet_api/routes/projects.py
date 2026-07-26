@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from naviernet_api.models import ProjectCreate, ProjectSummary, ProjectUpdate
 from naviernet_api.services import projects as projects_service
-from naviernet_api.services.projects import ProjectError
+from naviernet_api.services.projects import ProjectError, ProjectInUseError
 from naviernet_api.settings import Settings, get_settings
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -51,3 +51,19 @@ def update_project(
     if updated is None:
         raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
     return updated
+
+
+@router.delete("/{project_id}", response_model=ProjectSummary)
+def delete_project(
+    project_id: str, settings: Settings = Depends(get_settings)
+) -> ProjectSummary:
+    """Delete a project and the data and outputs it exclusively owns. Datasets
+    shared with another project (and their runs) are left intact. Returns the
+    deleted project. 409 if a training run is live on the project's data."""
+    try:
+        deleted = projects_service.delete_project(settings, project_id)
+    except ProjectInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if deleted is None:
+        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+    return deleted
