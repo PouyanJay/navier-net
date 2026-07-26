@@ -414,6 +414,9 @@ def _write_model_config(settings: Settings, dataset: str, config: dict) -> dict:
     try:
         with os.fdopen(fd, "w") as fh:
             fh.write(json.dumps(config, indent=2))
+        # mkstemp makes the file 0600; keep the usual readable mode so model.json
+        # matches its sibling per-series JSON files (which use write_text).
+        os.chmod(tmp, 0o644)
         tmp.replace(path)
     finally:
         tmp.unlink(missing_ok=True)

@@ -43,21 +43,36 @@ def test_model_edit_out_of_bounds_is_rejected(client):
     assert r.status_code == 422  # Pydantic bounds reject before the service
 
 
-def test_model_and_physics_saves_both_persist_without_temp_leak(client, repo_root):
-    """The two saves write the same model.json; both sets of keys survive and no
-    unique temp file is left behind (guards the shared-temp collision)."""
+def test_concurrent_model_and_physics_saves_do_not_collide(client, repo_root):
+    """The two saves land on the same model.json concurrently (the web fires them
+    together). A shared temp filename made one write's replace() remove the temp
+    the other was about to replace -> 500. Race them for real and assert both
+    always succeed, leave no temp file, and keep model.json valid."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    raw = repo_root / "data" / "raw" / "sample"
+    for _ in range(10):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_phys = pool.submit(
+                client.put,
+                "/api/physics/sample",
+                json={"enabled": ["mom"], "weights": {"mom": 2.0}},
+            )
+            f_model = pool.submit(
+                client.put,
+                "/api/model/sample",
+                json={"hidden": 100, "per_field": {"p": {"hidden": 64}}},
+            )
+        assert f_phys.result().status_code == 200
+        assert f_model.result().status_code == 200
+        assert not list(raw.glob("*.tmp")), "atomic write left a temp file behind"
+
     from naviernet_api.services import datasets as datasets_service
     from naviernet_api.settings import Settings
 
-    client.put("/api/physics/sample", json={"enabled": ["mom"], "weights": {"mom": 2.0}})
-    client.put("/api/model/sample", json={"hidden": 100, "per_field": {"p": {"hidden": 64}}})
-
-    settings = Settings(repo_root=repo_root)
-    cfg = datasets_service.read_model_config(settings, "sample")
+    cfg = datasets_service.read_model_config(Settings(repo_root=repo_root), "sample")
     assert cfg["enabled"] == ["mom"] and cfg["hidden"] == 100
     assert cfg["per_field"]["p"]["hidden"] == 64
-    raw = repo_root / "data" / "raw" / "sample"
-    assert not list(raw.glob("*.tmp")), "atomic write left a temp file behind"
 
 
 def test_saved_model_config_reaches_a_launched_run(client, repo_root):
