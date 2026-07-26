@@ -140,13 +140,18 @@ class ModelConfig:
 
 @dataclass
 class LossWeights:
-    """Initial multipliers; ``vof``/``div``/``bc`` are rebalanced during training."""
+    """Initial multipliers; ``vof``/``div``/``bc`` (and Stage-B ``mom``/``energy``)
+    are rebalanced during training. Stage-B terms default to 1.0 so Stage-A
+    configs compose unchanged -- they are inert while their equations are off."""
 
     data: float = MISSING
     vof: float = MISSING
     div: float = MISSING
     src: float = MISSING
     bc: float = MISSING
+    mom: float = 1.0  # Stage B: momentum
+    energy: float = 1.0  # Stage B: energy
+    evap: float = 1.0  # Stage B: evaporation mass-closure penalty
 
 
 @dataclass
@@ -165,6 +170,10 @@ class TrainingConfig:
 
     weights: LossWeights = MISSING
     rebalance_every: int = MISSING  # gradient-norm loss rebalancing period
+    # Stage B: steps over which the evaporation mass-closure ramps in while the
+    # off-interface source penalty decays (soft -> hard curriculum). 0 disables
+    # the schedule (the penalty and closure keep their static weights).
+    curriculum_steps: int = 0
 
     seed: int = 0
     device: str = "cpu"

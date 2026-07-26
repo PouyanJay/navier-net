@@ -27,17 +27,36 @@ def test_src_is_a_penalty_not_rebalanced():
     assert src.rebalanced is False
 
 
-def test_stage_b_equations_are_present_but_unimplemented():
+def test_stage_b_equations_are_present_and_implemented():
     by_id = {e.id: e for e in registry.REGISTRY}
-    assert {"mom", "energy"} <= set(by_id)
-    for eid in ("mom", "energy"):
+    assert {"mom", "energy", "evap"} <= set(by_id)
+    for eid in ("mom", "energy", "evap"):
         assert by_id[eid].stage == "B"
-        assert by_id[eid].implemented is False, "Stage-B lands in a later task"
+        assert by_id[eid].implemented is True
 
 
-def test_stage_b_stays_disabled_until_implemented_even_with_its_fields():
+def test_full_stage_b_fields_enable_every_equation():
     ids = [e.id for e in registry.enabled_equations(("phi", "u", "v", "s", "p", "T"))]
-    assert "mom" not in ids and "energy" not in ids
+    assert ids == ["vof", "div", "src", "bc", "mom", "energy", "evap"]
+
+
+def test_stage_b_rebalances_momentum_and_energy_but_not_evaporation():
+    eqs = registry.enabled_equations(("phi", "u", "v", "s", "p", "T"))
+    assert registry.rebalanced_terms(eqs) == ("vof", "div", "bc", "mom", "energy")
+
+
+def test_momentum_needs_pressure_and_can_be_enabled_without_temperature():
+    """The toggles are independent: pressure unlocks momentum, temperature unlocks
+    energy + evaporation. Enabling one must not require the other."""
+    ids = [e.id for e in registry.enabled_equations(("phi", "u", "v", "s", "p"))]
+    assert "mom" in ids
+    assert "energy" not in ids and "evap" not in ids
+
+
+def test_energy_needs_temperature_and_can_be_enabled_without_pressure():
+    ids = [e.id for e in registry.enabled_equations(("phi", "u", "v", "s", "T"))]
+    assert "energy" in ids and "evap" in ids
+    assert "mom" not in ids
 
 
 def test_momentum_and_energy_declare_the_fields_they_unlock():

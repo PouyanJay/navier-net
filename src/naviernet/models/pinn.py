@@ -42,14 +42,14 @@ class FieldNet(nn.Module):
         super().__init__()
         model_cfg = cfg.model
         hidden = _resolve(arch, "hidden", model_cfg.hidden)
-        layers = _resolve(arch, "layers", model_cfg.layers)
+        depth = _resolve(arch, "layers", model_cfg.layers)
         self.ff = FourierFeatures(
             in_dim=3,
             n_feats=_resolve(arch, "fourier_feats", model_cfg.fourier_feats),
             scale=_resolve(arch, "fourier_scale", model_cfg.fourier_scale),
         )
 
-        dims = [self.ff.out_dim] + [hidden] * layers
+        dims = [self.ff.out_dim] + [hidden] * depth
         layers: list[nn.Module] = []
         for d_in, d_out in zip(dims[:-1], dims[1:], strict=True):
             layers += [
@@ -83,6 +83,12 @@ class BubblePINN(nn.Module):
         self.nets = nn.ModuleDict(
             {name: FieldNet(cfg, arch=per_field.get(name)) for name in names}
         )
+        # Stage-B inverse unknowns, present only when temperature is modelled:
+        # the interfacial resistance closing evaporation and the inlet superheat.
+        # Both are inferred, not measured (the dataset calls them unknowns).
+        if "T" in names:
+            self._log_r_int = nn.Parameter(torch.zeros(1))
+            self._theta_in_raw = nn.Parameter(torch.zeros(1))
 
     @property
     def fields(self) -> list[str]:
@@ -107,9 +113,21 @@ class BubblePINN(nn.Module):
         """Stage B. Raises if the pressure field was not configured."""
         return self._require("p")(x)
 
+    @property
+    def r_int_star(self) -> torch.Tensor:
+        """Non-dimensional interfacial resistance (>0), a trainable unknown."""
+        return nn.functional.softplus(self._log_r_int) + 1e-3
+
+    @property
+    def theta_in(self) -> torch.Tensor:
+        """Inlet superheat in (0, 1) -- saturation to wall -- a trainable unknown."""
+        return torch.sigmoid(self._theta_in_raw)
+
     def temperature(self, x: torch.Tensor) -> torch.Tensor:
-        """Stage B. Raises if the temperature field was not configured."""
-        return self._require("T")(x)
+        """Non-dimensional superheat, bounded to (theta_in, 1) so temperature stays
+        between the inlet and the wall. Stage B; raises if T was not configured."""
+        raw = self._require("T")(x)
+        return self.theta_in + (1.0 - self.theta_in) * torch.sigmoid(raw)
 
     def _require(self, name: str) -> nn.Module:
         if name not in self.nets:

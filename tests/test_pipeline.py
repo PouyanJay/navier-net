@@ -69,6 +69,18 @@ def test_stage_a_training_is_byte_for_byte_unchanged(tmp_path):
         )
 
 
+def test_curriculum_ramps_evaporation_in_as_the_source_penalty_decays():
+    """Soft -> hard: at the start the penalty is full and the closure off; by the
+    end the closure is full and the penalty gone. Disabled (0) leaves both at 1."""
+    from naviernet.training import _curriculum
+
+    assert _curriculum(0, 100) == (1.0, 0.0)
+    assert _curriculum(50, 100) == (0.5, 0.5)
+    assert _curriculum(100, 100) == (0.0, 1.0)
+    assert _curriculum(150, 100) == (0.0, 1.0), "clamped past the end"
+    assert _curriculum(50, 0) == (1.0, 1.0), "0 disables the schedule"
+
+
 def test_unknown_stage_is_rejected(tiny_cfg):
     with pytest.raises(ValueError, match="unknown stage"):
         Pipeline(tiny_cfg).run("trian")

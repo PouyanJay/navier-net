@@ -21,8 +21,12 @@ from dataclasses import dataclass, field
 import torch
 
 from naviernet.physics.residuals import (
+    EnergyResiduals,
+    MomentumResiduals,
     StageAResiduals,
     boundary_losses,
+    energy_residuals,
+    momentum_residuals,
     source_penalty,
     stage_a_residuals,
 )
@@ -36,7 +40,15 @@ class LossContext:
     trainer did with one ``stage_a_residuals`` call.
     """
 
-    def __init__(self, model, x_coll, inlet, walls, u_inlet: float, groups: dict) -> None:
+    def __init__(
+        self,
+        model,
+        x_coll: torch.Tensor,
+        inlet: torch.Tensor,
+        walls: torch.Tensor,
+        u_inlet: float,
+        groups: dict[str, float],
+    ) -> None:
         self.model = model
         self.x_coll = x_coll
         self.inlet = inlet
@@ -44,12 +56,28 @@ class LossContext:
         self.u_inlet = u_inlet
         self.groups = groups
         self._res_a: StageAResiduals | None = None
+        self._mom: MomentumResiduals | None = None
+        self._energy: EnergyResiduals | None = None
 
     @property
     def res_a(self) -> StageAResiduals:
         if self._res_a is None:
             self._res_a = stage_a_residuals(self.model, self.x_coll)
         return self._res_a
+
+    @property
+    def mom_res(self) -> MomentumResiduals:
+        if self._mom is None:
+            self._mom = momentum_residuals(self.model, self.x_coll, self.groups)
+        return self._mom
+
+    @property
+    def energy_res(self) -> EnergyResiduals:
+        if self._energy is None:
+            self._energy = energy_residuals(
+                self.model, self.x_coll, self.groups, self.model.r_int_star
+            )
+        return self._energy
 
 
 # --- Stage-A loss terms (byte-for-byte identical to the original trainer) ----
@@ -69,6 +97,22 @@ def _src_term(ctx: LossContext) -> torch.Tensor:
 
 def _bc_term(ctx: LossContext) -> torch.Tensor:
     return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet)
+
+
+# --- Stage-B loss terms -----------------------------------------------------
+
+
+def _mom_term(ctx: LossContext) -> torch.Tensor:
+    res = ctx.mom_res
+    return (res.mom_x**2).mean() + (res.mom_y**2).mean()
+
+
+def _energy_term(ctx: LossContext) -> torch.Tensor:
+    return (ctx.energy_res.energy**2).mean()
+
+
+def _evap_term(ctx: LossContext) -> torch.Tensor:
+    return (ctx.energy_res.src_closure**2).mean()
 
 
 @dataclass(frozen=True)
@@ -138,7 +182,7 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("phi", "u", "v", "p"),
         fields_added=("p",),
         groups=("Re", "We", "hele_shaw"),
-        implemented=False,  # residuals land in a later task
+        term=_mom_term,
     ),
     Equation(
         id="energy",
@@ -150,7 +194,18 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("u", "v", "T"),
         fields_added=("T",),
         groups=("Pe", "Pr"),
-        implemented=False,
+        term=_energy_term,
+    ),
+    Equation(
+        id="evap",
+        stage="B",
+        name="Evaporation mass closure",
+        tex=r"s = (\rho_\ell/\rho_v - 1)\,\mathrm{St}\,j\,\delta_\text{int}",
+        weight_key="evap",
+        fields_required=("s", "T"),
+        groups=("Ja",),
+        rebalanced=False,  # a soft consistency penalty, ramped by the curriculum
+        term=_evap_term,
     ),
 )
 

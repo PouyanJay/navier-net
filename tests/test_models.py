@@ -78,6 +78,30 @@ def test_stage_b_fields_can_be_enabled_by_config(tiny_cfg):
     assert model.temperature(torch.rand(3, 3)).shape == (3, 1)
 
 
+def test_temperature_is_bounded_between_inlet_and_wall(tiny_cfg):
+    """theta = theta_in + (1 - theta_in) sigmoid(raw) stays in (theta_in, 1)."""
+    model = BubblePINN(tiny_cfg, fields=["phi", "u", "v", "s", "p", "T"])
+    theta = model.temperature(torch.rand(128, 3) * 20 - 10)
+    theta_in = model.theta_in.item()
+    assert torch.all(theta > theta_in) and torch.all(theta < 1.0)
+
+
+def test_inverse_unknowns_are_trainable_and_physical(tiny_cfg):
+    """R_int_star and inlet superheat are inferred parameters: r>0, theta_in in (0,1)."""
+    model = BubblePINN(tiny_cfg, fields=["phi", "u", "v", "s", "p", "T"])
+    assert model.r_int_star.item() > 0.0
+    assert 0.0 < model.theta_in.item() < 1.0
+    grad_params = {name for name, p in model.named_parameters() if p.requires_grad}
+    assert "_log_r_int" in grad_params and "_theta_in_raw" in grad_params
+
+
+def test_inverse_unknowns_are_absent_without_temperature(tiny_cfg):
+    """A Stage-A model carries no evaporation parameters."""
+    model = BubblePINN(tiny_cfg)  # phi, u, v, s -- no T
+    names = dict(model.named_parameters())
+    assert "_log_r_int" not in names and "_theta_in_raw" not in names
+
+
 def _param_count(model, field: str) -> int:
     return sum(p.numel() for p in model.nets[field].parameters())
 

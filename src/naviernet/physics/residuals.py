@@ -98,8 +98,11 @@ def boundary_losses(model, inlet_x, wall_x, u_inlet: float) -> torch.Tensor:
 
 # --- Stage B: momentum + surface tension, energy + evaporation --------------
 
-# Floor on |grad alpha| in the interface-normal and area-density calculations,
-# so curvature and the interfacial delta stay finite where alpha is flat.
+# Numerical floor on |grad alpha| in the interface-normal and area-density
+# calculations, so curvature and the interfacial delta stay finite where alpha
+# is flat (0/0). This is a solver safeguard, not a physical parameter -- it is
+# dataset-independent and only needs to sit well below a resolved interface's
+# gradient magnitude, so it is a fixed constant rather than a cfg value.
 KAPPA_EPS = 1e-3
 
 
@@ -123,12 +126,24 @@ def mixture(alpha: torch.Tensor, ratio: float) -> torch.Tensor:
     return (1.0 - alpha) + alpha / ratio
 
 
-def _interface_normal(alpha: torch.Tensor, x: torch.Tensor, eps: float):
-    """Unit interface normal ``grad alpha / |grad alpha|`` and the floored
-    magnitude ``|grad alpha|`` (the interfacial area density)."""
+_Normal = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+
+
+def _interface_normal(alpha: torch.Tensor, x: torch.Tensor, eps: float) -> _Normal:
+    """``(a_x, a_y, n_x, n_y, |grad alpha|)``: the interface gradient, its unit
+    normal ``grad alpha / |grad alpha|``, and the floored magnitude (the
+    interfacial area density)."""
     a_x, a_y, _ = gradients(alpha, x)
     grad_mag = torch.sqrt(a_x**2 + a_y**2 + eps**2)
     return a_x, a_y, a_x / grad_mag, a_y / grad_mag, grad_mag
+
+
+def _normal_divergence(nx: torch.Tensor, ny: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """``div(n) = n_x,x + n_y,y`` -- the one implementation both the standalone
+    ``curvature`` and the momentum residual share."""
+    nx_x, _, _ = gradients(nx, x)
+    _, ny_y, _ = gradients(ny, x)
+    return nx_x + ny_y
 
 
 def curvature(alpha: torch.Tensor, x: torch.Tensor, eps: float = KAPPA_EPS) -> torch.Tensor:
@@ -138,9 +153,7 @@ def curvature(alpha: torch.Tensor, x: torch.Tensor, eps: float = KAPPA_EPS) -> t
     positive curvature, hence a positive Laplace pressure jump.
     """
     _, _, nx, ny, _ = _interface_normal(alpha, x, eps)
-    nx_x, _, _ = gradients(nx, x)
-    _, ny_y, _ = gradients(ny, x)
-    return -(nx_x + ny_y)
+    return -_normal_divergence(nx, ny, x)
 
 
 def _laplacian(field: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -150,43 +163,39 @@ def _laplacian(field: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     return f_xx + f_yy
 
 
-def stage_b_residuals(
-    model, x: torch.Tensor, groups: dict, r_int_star: float = 1.0, eps: float = KAPPA_EPS
-) -> StageBResiduals:
-    """Evaluate the Stage-B residuals at collocation points ``x``.
+class MomentumResiduals(NamedTuple):
+    mom_x: torch.Tensor
+    mom_y: torch.Tensor
+    kappa: torch.Tensor
 
-    Every coefficient comes from ``groups`` (never a literal), so the residuals
-    stay consistent with the non-dimensionalisation. ``r_int_star`` is the
-    non-dimensional interfacial resistance closing the evaporation flux; it is a
-    trainable inverse unknown supplied by the trainer.
+
+class EnergyResiduals(NamedTuple):
+    energy: torch.Tensor  # energy + evaporation latent sink
+    src_closure: torch.Tensor  # source(x) minus the evaporation mass closure
+    interface_delta: torch.Tensor  # |grad alpha| area density, for inspection
+
+
+def momentum_residuals(
+    model, x: torch.Tensor, groups: dict[str, float], eps: float = KAPPA_EPS
+) -> MomentumResiduals:
+    """x/y momentum with Hele-Shaw drag and CSF surface tension. Needs ``p``.
+
+    Every coefficient comes from ``groups`` (never a literal).
     """
     re = groups["Re"]
     we = groups["We"]
-    pe = groups["Pe"]
     c_hs = groups["hele_shaw"]
-    rho_ratio = groups["rho_ratio"]
-    mu_ratio = groups["mu_ratio"]
-    stefan = groups["Ja"]  # Stefan/Jakob number at the actual superheat
-    q_wall = groups["q_wall_star"]
-
     alpha = model.alpha(x)
+    rho_t = mixture(alpha, groups["rho_ratio"])
+    mu_t = mixture(alpha, groups["mu_ratio"])
+
+    a_x, a_y, nx, ny, _ = _interface_normal(alpha, x, eps)
+    kappa = -_normal_divergence(nx, ny, x)
+
     u, v = model.velocity(x)
-    p = model.pressure(x)
-    theta = model.temperature(x)  # non-dimensional superheat (T - T_sat)/dT_ref
-    s = model.source(x)
-
-    rho_t = mixture(alpha, rho_ratio)
-    mu_t = mixture(alpha, mu_ratio)
-
-    a_x, a_y, nx, ny, grad_mag = _interface_normal(alpha, x, eps)
-    nx_x, _, _ = gradients(nx, x)
-    _, ny_y, _ = gradients(ny, x)
-    kappa = -(nx_x + ny_y)
-    delta = grad_mag  # interfacial area density (normalised |grad alpha|)
-
     u_x, u_y, u_t = gradients(u, x)
     v_x, v_y, v_t = gradients(v, x)
-    p_x, p_y, _ = gradients(p, x)
+    p_x, p_y, _ = gradients(model.pressure(x), x)
     mom_x = (
         rho_t * (u_t + u * u_x + v * u_y)
         + p_x
@@ -201,14 +210,32 @@ def stage_b_residuals(
         + c_hs * mu_t * v
         - (1.0 / we) * kappa * a_y
     )
+    return MomentumResiduals(mom_x, mom_y, kappa)
 
-    # Hardt-Wondra evaporation flux and its closures. The mass source dilates
-    # the continuity field; the same flux removes latent heat in energy.
-    j = theta / r_int_star
-    evap = stefan * j * delta
-    s_closure = (rho_ratio - 1.0) * evap
-    src_closure = s - s_closure
 
+def energy_residuals(
+    model, x: torch.Tensor, groups: dict[str, float], r_int_star, eps: float = KAPPA_EPS
+) -> EnergyResiduals:
+    """Energy advection-diffusion with wall heating and the two-way evaporation
+    closure. Needs ``T`` (and the ``s`` field for the mass consistency).
+
+    ``r_int_star`` is the non-dimensional interfacial resistance closing the
+    evaporation flux -- a trainable inverse unknown supplied by the trainer.
+    """
+    pe = groups["Pe"]
+    q_wall = groups["q_wall_star"]
+    rho_ratio = groups["rho_ratio"]
+
+    alpha = model.alpha(x)
+    a_x, a_y, _ = gradients(alpha, x)
+    delta = torch.sqrt(a_x**2 + a_y**2 + eps**2)  # interfacial area density
+
+    theta = model.temperature(x)  # non-dimensional superheat (T - T_sat)/dT_ref
+    # Hardt-Wondra flux; the same flux dilates mass and removes latent heat.
+    evap = groups["Ja"] * (theta / r_int_star) * delta
+    src_closure = model.source(x) - (rho_ratio - 1.0) * evap
+
+    u, v = model.velocity(x)
     t_x, t_y, t_t = gradients(theta, x)
     energy = (
         t_t
@@ -218,5 +245,15 @@ def stage_b_residuals(
         - q_wall * (1.0 - alpha)  # wall heating, gated by liquid contact
         + evap  # latent-heat sink at the interface
     )
+    return EnergyResiduals(energy, src_closure, delta)
 
-    return StageBResiduals(mom_x, mom_y, energy, src_closure, kappa, delta)
+
+def stage_b_residuals(
+    model, x: torch.Tensor, groups: dict[str, float], r_int_star=1.0, eps: float = KAPPA_EPS
+) -> StageBResiduals:
+    """Convenience combiner of momentum + energy, for the full Stage-B set."""
+    mom = momentum_residuals(model, x, groups, eps)
+    en = energy_residuals(model, x, groups, r_int_star, eps)
+    return StageBResiduals(
+        mom.mom_x, mom.mom_y, en.energy, en.src_closure, mom.kappa, en.interface_delta
+    )

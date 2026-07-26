@@ -61,6 +61,19 @@ def _gradient_norms(model, losses: dict[str, torch.Tensor], opt) -> dict[str, fl
     return norms
 
 
+def _curriculum(step: int, curriculum_steps: int) -> tuple[float, float]:
+    """Soft -> hard evaporation schedule: ``(src_factor, evap_factor)``.
+
+    Over ``curriculum_steps`` the off-interface source penalty decays 1 -> 0 while
+    the evaporation mass-closure ramps 0 -> 1, so the converged state is the hard
+    closure without the early gradient shock. ``0`` disables the schedule.
+    """
+    if curriculum_steps <= 0:
+        return 1.0, 1.0
+    frac = min(1.0, step / curriculum_steps)
+    return 1.0 - frac, frac
+
+
 def _rebalance(
     weights: dict[str, float],
     norms: dict[str, float],
@@ -103,10 +116,28 @@ def train(
     state = _initial_state(cfg, equations)
     if paths.checkpoint.exists():
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model"])
-        opt.load_state_dict(ckpt["opt"])
-        state = ckpt["state"]
-        log.info("resuming from %s at step %d", paths.checkpoint, state["done"])
+        incompatible = model.load_state_dict(ckpt["model"], strict=False)
+        if incompatible.unexpected_keys:
+            raise RuntimeError(
+                f"checkpoint {paths.checkpoint} has parameters not in this model: "
+                f"{incompatible.unexpected_keys}"
+            )
+        if incompatible.missing_keys:
+            # Warm start: e.g. a Stage-A checkpoint feeding a Stage-B run. Keep the
+            # loaded fields, initialise the new ones fresh, start the optimiser
+            # over, and carry the step count and Stage-A weights forward.
+            log.info(
+                "warm start from %s: %d fresh parameters for new fields",
+                paths.checkpoint,
+                len(incompatible.missing_keys),
+            )
+            state["w"].update(ckpt["state"]["w"])
+            state["done"] = ckpt["state"]["done"]
+            state["hist"] = ckpt["state"]["hist"]
+        else:
+            opt.load_state_dict(ckpt["opt"])
+            state = ckpt["state"]
+            log.info("resuming from %s at step %d", paths.checkpoint, state["done"])
 
     # Offset the seed by completed steps so a resumed run does not replay the
     # same sample sequence it already saw.
@@ -136,7 +167,11 @@ def train(
             _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
-        total = sum(weights[name] * loss for name, loss in losses.items())
+        src_factor, evap_factor = _curriculum(step, tcfg.curriculum_steps)
+        schedule = {"src": src_factor, "evap": evap_factor}
+        total = sum(
+            weights[name] * schedule.get(name, 1.0) * loss for name, loss in losses.items()
+        )
         total.backward()
         opt.step()
 
