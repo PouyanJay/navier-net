@@ -7,6 +7,8 @@ failing test rather than as a quietly different result.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 import torch
 
@@ -89,8 +91,8 @@ def test_conduction_superheat_scales_with_wall_flux():
 def test_stage_b_groups_are_finite_and_positive(cfg):
     groups = compute_groups(cfg)
     for name in ("dT_ref", "Ja", "q_wall_star"):
+        assert math.isfinite(groups[name])  # rejects nan AND inf
         assert groups[name] > 0.0
-        assert groups[name] == pytest.approx(groups[name])  # finite (not nan/inf)
 
 
 def test_bond_number_is_small(cfg):
@@ -198,7 +200,9 @@ class _Analytic:
         return u, v
 
     def pressure(self, x):
-        return torch.sin(x[:, 0:1] + x[:, 1:2])
+        # Asymmetric in x/y, so a p_x <-> p_y transposition in the residual is
+        # detectable (p_x = cos x, p_y = -0.5 sin y are not interchangeable).
+        return torch.sin(x[:, 0:1]) + 0.5 * torch.cos(x[:, 1:2])
 
     def temperature(self, x):
         return 0.5 * torch.sin(x[:, 0:1]) + 0.2 * x[:, 1:2] ** 2 + 0.1 * x[:, 2:3]
@@ -232,6 +236,8 @@ def test_curvature_of_a_circular_bubble_is_one_over_radius():
     kappa = curvature(alpha, pts)
 
     assert torch.all(kappa > 0.0), "a bubble must have positive curvature"
+    # 15% tolerance: the sigmoid interface has finite width (eps=0.02 vs R=0.3),
+    # so the discrete curvature at the sampled ring is only approximately 1/R.
     assert kappa.mean().item() == pytest.approx(1.0 / radius, rel=0.15)
 
 
@@ -276,6 +282,35 @@ def test_momentum_residual_assembles_the_expected_terms():
         - (1.0 / groups["We"]) * kappa * a_x
     )
     assert torch.allclose(res.mom_x, expected, atol=1e-5)
+
+
+def test_momentum_y_residual_assembles_the_expected_terms():
+    """The mirror of the x test: r_v must use v, p_y and a_y -- guards against a
+    transposition of the x/y terms in the parallel momentum code."""
+    groups = _groups()
+    model = _Analytic()
+    x = (torch.rand(48, 3) * 0.6 + 0.05).requires_grad_(True)
+
+    res = stage_b_residuals(model, x, groups, r_int_star=2.0)
+
+    alpha = model.alpha(x)
+    u, v = model.velocity(x)
+    _, a_y, _ = gradients(alpha, x)
+    v_x, v_y, v_t = gradients(v, x)
+    v_xx, _, _ = gradients(v_x, x)
+    _, v_yy, _ = gradients(v_y, x)
+    _, p_y, _ = gradients(model.pressure(x), x)
+    rho_t = mixture(alpha, groups["rho_ratio"])
+    mu_t = mixture(alpha, groups["mu_ratio"])
+    kappa = curvature(alpha, x)
+    expected = (
+        rho_t * (v_t + u * v_x + v * v_y)
+        + p_y
+        - (1.0 / groups["Re"]) * (v_xx + v_yy)
+        + groups["hele_shaw"] * mu_t * v
+        - (1.0 / groups["We"]) * kappa * a_y
+    )
+    assert torch.allclose(res.mom_y, expected, atol=1e-5)
 
 
 def test_energy_residual_has_wall_heating_gated_by_liquid_and_a_latent_sink():

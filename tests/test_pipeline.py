@@ -81,6 +81,16 @@ def test_curriculum_ramps_evaporation_in_as_the_source_penalty_decays():
     assert _curriculum(50, 0) == (1.0, 1.0), "0 disables the schedule"
 
 
+def test_curriculum_schedule_targets_real_weight_keys():
+    """The trainer applies the schedule by the names 'src' and 'evap'; guard those
+    strings against drifting from the registry's weight keys (else it silently
+    no-ops via schedule.get(name, 1.0))."""
+    from naviernet.physics.registry import REGISTRY
+
+    keys = {e.weight_key for e in REGISTRY}
+    assert {"src", "evap"} <= keys
+
+
 _TINY_TRAIN = [
     "model.hidden=8",
     "model.layers=2",
@@ -135,9 +145,11 @@ def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):
     assert paths.checkpoint.exists()
 
 
-def test_stage_b_warm_starts_from_a_stage_a_checkpoint(tmp_path):
+def test_stage_b_warm_starts_from_a_stage_a_checkpoint(tmp_path, caplog):
     """A Stage-A checkpoint seeds a Stage-B run: phi/u/v/s load, p/T and the
     evaporation unknowns initialise fresh, and the step count carries forward."""
+    import logging
+
     from naviernet.training import train
 
     cfg_a = make_config([f"paths.root={tmp_path}", "training.steps=2", *_TINY_TRAIN])
@@ -155,11 +167,19 @@ def test_stage_b_warm_starts_from_a_stage_a_checkpoint(tmp_path):
             "training.curriculum_steps=2",
         ]
     )
-    model, _, state_b = train(cfg_b, RunPaths.from_config(cfg_b))
+    with caplog.at_level(logging.INFO, logger="naviernet.training"):
+        model, _, state_b = train(cfg_b, RunPaths.from_config(cfg_b))
 
+    # The warm-start branch ran: it loaded phi/u/v/s (strict=False with only the
+    # new p/T/evaporation params missing) rather than starting from scratch. The
+    # unexpected-key guard would have raised had the checkpoint not matched.
+    assert "warm start" in caplog.text
     assert {"p", "T"} <= set(model.fields)
     assert state_b["done"] == 4, "warm start carries the Stage-A step count forward"
     assert {"mom", "energy", "evap"} <= set(state_b["w"])
+    # The data loss at the first Stage-B step continues from where Stage A left
+    # off (phi loaded), not a fresh-random-net value.
+    assert state_b["hist"][0]["data"] == pytest.approx(state_a["hist"][-1]["data"], rel=0.5)
 
 
 def test_unknown_stage_is_rejected(tiny_cfg):
