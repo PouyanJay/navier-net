@@ -163,7 +163,8 @@ describe("ProjectsView", () => {
 
   it("deletes a project only after the confirmation is accepted", async () => {
     const calls = mockApi();
-    render(<ProjectsView onOpen={vi.fn()} {...noCreate} />);
+    const onOpen = vi.fn();
+    render(<ProjectsView onOpen={onOpen} {...noCreate} />);
 
     await screen.findByText("Microchannel FC-72");
     fireEvent.click(
@@ -184,11 +185,15 @@ describe("ProjectsView", () => {
       expect(screen.queryByText("Microchannel FC-72")).not.toBeInTheDocument(),
     );
     expect(screen.getByText("Film boiling sweep")).toBeInTheDocument();
+    // Deleting must not also open the project (the dialog is portalled, so its
+    // clicks must not bubble to the card's onClick).
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it("keeps the project when the confirmation is cancelled", async () => {
+  it("keeps the project, and does not open it, when cancelled", async () => {
     const calls = mockApi();
-    render(<ProjectsView onOpen={vi.fn()} {...noCreate} />);
+    const onOpen = vi.fn();
+    render(<ProjectsView onOpen={onOpen} {...noCreate} />);
 
     await screen.findByText("Microchannel FC-72");
     fireEvent.click(
@@ -203,6 +208,8 @@ describe("ProjectsView", () => {
     );
     expect(calls.deleted).toEqual([]);
     expect(screen.getByText("Microchannel FC-72")).toBeInTheDocument();
+    // Cancelling must not navigate into the project.
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("shows the API's rejection instead of silently failing", async () => {

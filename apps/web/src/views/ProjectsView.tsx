@@ -357,6 +357,10 @@ function DeleteProjectDialog({
     <div
       className="modal-ov"
       role="presentation"
+      // React re-dispatches portal events up the *component* tree, so without
+      // this a click here still bubbles to the card's onClick (opening the
+      // project). Contain every click to the dialog.
+      onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
