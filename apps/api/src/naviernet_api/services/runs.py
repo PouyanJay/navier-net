@@ -143,32 +143,20 @@ def _dataset_of(run_dir: Path, metrics: dict | None) -> str | None:
     """The run's dataset name, validated so it is safe to use in a path.
 
     The value comes from user-influenced sources (`metrics.json`, the Hydra
-    `dataset=` override in the snapshot, or `dimensionless_groups.json`), so it
-    is checked against the same allowlist as a run id before it can flow into
-    `data/processed/<ds>`.
+    `dataset=` override recorded in the snapshot), so it is checked against the
+    same allowlist as a run id before it can flow into `data/processed/<ds>`.
     """
-    candidate = _dataset_candidate(run_dir, metrics)
+    candidate: str | None = None
+    if metrics and metrics.get("dataset"):
+        candidate = str(metrics["dataset"])
+    else:
+        config = _read_hydra_config(run_dir)
+        if config and config.get("dataset"):
+            candidate = str(config["dataset"])
     if candidate is not None and not _RUN_ID_RE.match(candidate):
         log.warning("ignoring unsafe dataset name %r in %s", candidate, run_dir)
         return None
     return candidate
-
-
-def _dataset_candidate(run_dir: Path, metrics: dict | None) -> str | None:
-    """First dataset name found across a run's artifacts (most authoritative
-    first). The groups file is a last resort: an aborted run can have written
-    it before either `metrics.json` or the Hydra snapshot, and without it such a
-    run's dataset would be unknowable — so it would survive its project's delete."""
-    if metrics and metrics.get("dataset"):
-        return str(metrics["dataset"])
-    config = _read_hydra_config(run_dir)
-    if config and config.get("dataset"):
-        return str(config["dataset"])
-    groups = _read_json(run_dir / "dimensionless_groups.json")
-    experiment = groups.get("experiment") if isinstance(groups, dict) else None
-    if isinstance(experiment, dict) and experiment.get("name"):
-        return str(experiment["name"])
-    return None
 
 
 def _load_checkpoint_state(checkpoint: Path) -> dict | None:

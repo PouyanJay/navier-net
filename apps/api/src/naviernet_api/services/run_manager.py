@@ -140,6 +140,21 @@ def active_run() -> RunJobStatus | None:
     return None
 
 
+def active_datasets() -> set[str]:
+    """Datasets a non-terminal (queued or running) job is training on.
+
+    Queued jobs count: a sweep reserves all its children upfront, so a dataset
+    can be claimed before its child reaches the slot. Callers use this to refuse
+    an operation that would pull data out from under a live run.
+    """
+    with _lock:
+        return {
+            job.dataset
+            for job in _jobs.values()
+            if job.state in ("queued", "running") and job.dataset
+        }
+
+
 def events_since(run_id: str, cursor: int) -> tuple[list[dict], int, bool] | None:
     """Events after ``cursor`` plus the new cursor and whether the run is over.
 

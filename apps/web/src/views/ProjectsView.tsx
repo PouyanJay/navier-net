@@ -236,7 +236,7 @@ function ProjectCard({
         <span className="pfoot-actions">
           <button
             type="button"
-            className="btn ghost danger picon"
+            className="btn ghost danger icon-only"
             aria-label={`Delete ${project.name}`}
             title="Delete project"
             onClick={(e) => {

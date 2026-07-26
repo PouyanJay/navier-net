@@ -212,6 +212,49 @@ describe("ProjectsView", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("surfaces a failed delete and keeps the card in place", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, opts?: RequestInit) => {
+        const u = String(url);
+        const del = u.match(/\/api\/projects\/([0-9a-f]{32})$/);
+        if (del && opts?.method === "DELETE") {
+          return new Response(
+            JSON.stringify({
+              detail: "a training run is in progress on 'sample'",
+            }),
+            { status: 409 },
+          );
+        }
+        if (u.endsWith("/api/projects")) return json([LINKED, EMPTY]);
+        if (u.endsWith("/api/datasets")) return json([]);
+        if (u.endsWith("/api/runs")) return json([]);
+        return new Response("not found", { status: 404 });
+      }),
+    );
+    render(<ProjectsView onOpen={vi.fn()} {...noCreate} />);
+
+    await screen.findByText("Microchannel FC-72");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete Microchannel FC-72" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Delete project" }),
+    );
+
+    // The reason is shown, the dialog stays open, and the card is not removed.
+    expect(
+      await screen.findByText(/a training run is in progress/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete project" }),
+    ).toBeEnabled();
+    // The card's own title (its heading, not the name echoed in the dialog body).
+    expect(
+      screen.getByRole("heading", { name: "Microchannel FC-72" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the API's rejection instead of silently failing", async () => {
     mockApi();
     vi.stubGlobal(

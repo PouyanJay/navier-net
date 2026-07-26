@@ -217,37 +217,48 @@ def test_delete_project_removes_file_and_owned_data(client, sample_processed, re
     assert not raw.exists()
     assert not processed.exists()
     assert not run.exists()
+    # The cascade is scoped: the fixture's unrelated `highest_t` run and tensors,
+    # owned by no project in this test, must be untouched.
+    assert (repo_root / "outputs" / "demo_run").is_dir()
+    assert (repo_root / "data" / "processed" / "highest_t").is_dir()
     # A second delete finds nothing to remove.
     assert client.delete(f"/api/projects/{project_id}").status_code == 404
 
 
-def test_delete_removes_a_run_identified_only_by_its_groups_file(client, repo_root: Path):
-    # An aborted run can have written dimensionless_groups.json but neither
-    # metrics.json nor a Hydra snapshot; its dataset must still resolve so the
-    # cascade does not leave it orphaned when its project is deleted.
-    project_id = _materialized_sample_id(client)
-    run = repo_root / "outputs" / "aborted_sample"
-    run.mkdir(parents=True)
-    (run / "dimensionless_groups.json").write_text(
-        json.dumps({"experiment": {"name": "sample"}})
-    )
-
-    assert client.delete(f"/api/projects/{project_id}").status_code == 200
-    assert not run.exists()
-
-
-def test_delete_keeps_a_dataset_shared_with_another_project(client, repo_root: Path):
+def test_delete_keeps_a_dataset_and_its_run_shared_with_another_project(
+    client, repo_root: Path
+):
     first = client.post("/api/projects", json={"name": "keeper"}).json()
     second = client.post("/api/projects", json={"name": "goner"}).json()
     for project in (first, second):
         client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample"]})
+    shared_run = _stage_run(repo_root, "shared_run", "sample")
 
     assert client.delete(f"/api/projects/{second['id']}").status_code == 200
 
-    # The shared series and its raw data survive for the project still using it.
+    # The shared series, its raw data, and its run survive for the project still
+    # using it — deletion is scoped to what the deleted project alone owned.
     assert (repo_root / "data" / "raw" / "sample").is_dir()
+    assert shared_run.is_dir()
     kept = client.get(f"/api/projects/{first['id']}").json()
     assert kept["datasets"] == ["sample"]
+
+
+def test_delete_is_blocked_while_a_run_is_live_on_owned_data(client, repo_root: Path):
+    from naviernet_api.services import run_manager
+
+    project_id = _materialized_sample_id(client)
+    run = _stage_run(repo_root, "sample_run", "sample")
+    # A live training run holds the `sample` dataset (default state is "running").
+    run_manager._jobs["live_sample"] = run_manager._RunJob(dataset="sample")
+
+    r = client.delete(f"/api/projects/{project_id}")
+    assert r.status_code == 409
+    assert "sample" in r.json()["detail"]
+    # Nothing was removed: the guard fires before any cascade side effect.
+    assert (repo_root / "projects" / f"{project_id}.json").is_file()
+    assert run.is_dir()
+    assert (repo_root / "data" / "raw" / "sample").is_dir()
 
 
 def test_delete_unknown_or_malformed_id_is_404(client):

@@ -304,13 +304,13 @@
   background: var(--redsoft);
 }
 /* Icon-only button: a square hit area sized to the 16-grid glyph inside it. */
-.btn.picon {
+.btn.icon-only {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 4px;
 }
-.btn.picon svg {
+.btn.icon-only svg {
   width: 14px;
   height: 14px;
 }
