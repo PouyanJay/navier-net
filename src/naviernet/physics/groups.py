@@ -65,6 +65,19 @@ def compute_groups(cfg) -> dict[str, float]:
     groups["Pe"] = groups["Re"] * groups["Pr"]
     groups["Ja_per_5K"] = fluid.cp_l * 5.0 / fluid.h_lv
 
+    # Stage-B energy closures.
+    # Conduction superheat over the half-height: the temperature scale the wall
+    # flux sets by pure conduction, so the non-dim wall source stays O(1). Also
+    # the reference for the superheat theta = (T - T_sat) / dT_ref.
+    q_wall = exp.q_wall_W_cm2 * 1e4  # W/cm^2 -> W/m^2
+    groups["dT_ref"] = q_wall * (h / 2.0) / fluid.k_l
+    # Stefan/Jakob number at the actual superheat (generalises Ja_per_5K).
+    groups["Ja"] = fluid.cp_l * groups["dT_ref"] / fluid.h_lv
+    # Depth-averaged wall heat source in the non-dimensional energy equation.
+    groups["q_wall_star"] = (
+        q_wall / (fluid.rho_l * fluid.cp_l * u * groups["dT_ref"]) * (length / h)
+    )
+
     # Property ratios entering the mixture rules
     groups["rho_ratio"] = fluid.rho_l / fluid.rho_v
     groups["mu_ratio"] = fluid.mu_l / fluid.mu_v

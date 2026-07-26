@@ -50,6 +50,10 @@ def test_inlet_velocity_from_flow_rate(cfg):
         ("Pr", 9.411),
         ("hele_shaw", 0.2228),
         ("bretherton_film_um", 4.875),
+        # Stage-B closures (q_wall = 2 W/cm^2, H = 150 um, k_l/cp_l/h_lv of FC-72)
+        ("dT_ref", 28.74),  # K, conduction superheat q'' (H/2) / k_l
+        ("Ja", 0.3746),  # Stefan/Jakob number at the actual superheat
+        ("q_wall_star", 0.003945),  # non-dim depth-averaged wall source
     ],
 )
 def test_published_groups(cfg, group, expected):
@@ -59,6 +63,28 @@ def test_published_groups(cfg, group, expected):
 def test_peclet_is_the_product_of_reynolds_and_prandtl(cfg):
     groups = compute_groups(cfg)
     assert groups["Pe"] == pytest.approx(groups["Re"] * groups["Pr"])
+
+
+def test_jakob_number_is_cp_superheat_over_latent_heat(cfg):
+    """Ja generalises the fixed Ja_per_5K to the run's actual conduction superheat."""
+    groups = compute_groups(cfg)
+    assert groups["Ja"] == pytest.approx(cfg.fluid.cp_l * groups["dT_ref"] / cfg.fluid.h_lv)
+
+
+def test_conduction_superheat_scales_with_wall_flux():
+    """dT_ref = q'' (H/2) / k_l — doubling the wall flux doubles the superheat."""
+    from .conftest import make_config
+
+    base = compute_groups(make_config(["experiment.q_wall_W_cm2=2.0"]))["dT_ref"]
+    hotter = compute_groups(make_config(["experiment.q_wall_W_cm2=4.0"]))["dT_ref"]
+    assert hotter == pytest.approx(2.0 * base)
+
+
+def test_stage_b_groups_are_finite_and_positive(cfg):
+    groups = compute_groups(cfg)
+    for name in ("dT_ref", "Ja", "q_wall_star"):
+        assert groups[name] > 0.0
+        assert groups[name] == pytest.approx(groups[name])  # finite (not nan/inf)
 
 
 def test_bond_number_is_small(cfg):
