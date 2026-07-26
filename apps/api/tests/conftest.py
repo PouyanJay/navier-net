@@ -58,6 +58,13 @@ def write_synthetic_tensors(path: Path) -> None:
         "x_pin_star": float(x_star[1]),
         "n_frames_usable": n_t,
         "n_frames_event": 10,
+        # Snapshot of the conditions baked into these tensors (matches the
+        # highest_t defaults), so the staleness check has something to compare.
+        "baked_conditions": {
+            "dt_frame_ms": 0.5,
+            "channel_width_um": 300.0,
+            "U_ref": 0.2,
+        },
     }
     np.savez_compressed(
         path,
@@ -171,6 +178,16 @@ def client(repo_root: Path) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: Settings(repo_root=repo_root)
     return TestClient(app)
+
+
+@pytest.fixture
+def sample_processed(repo_root: Path) -> Path:
+    """Make the `sample` series both raw-present and preprocessed, so staleness
+    (which compares tensor meta to the composed config) has tensors to read."""
+    processed = repo_root / "data" / "processed" / "sample"
+    processed.mkdir(parents=True, exist_ok=True)
+    write_synthetic_tensors(processed / "tensors.npz")
+    return repo_root
 
 
 @pytest.fixture

@@ -200,6 +200,12 @@ def test_preprocess_write_path_end_to_end(tmp_path, monkeypatch):
     assert (tmp_path / "data" / "processed" / "highest_t" / "tensors.npz").is_file()
     assert status.has_qc
 
+    # The real preprocess records the baked-condition snapshot, and the freshly
+    # built tensors read as current (not stale).
+    meta = datasets_service.tensors_meta(settings, "highest_t")
+    assert set(meta["baked_conditions"]) == {"dt_frame_ms", "channel_width_um", "U_ref"}
+    assert datasets_service.conditions_applied(settings, "highest_t") is True
+
 
 def test_patch_conditions_saves_and_recomputes_groups(client):
     baseline = client.get("/api/datasets/sample/groups").json()
@@ -339,6 +345,46 @@ def test_fluid_choice_reaches_the_run_config(repo_root):
     datasets_service.save_conditions(settings, "sample", {"fluid": "hfe7100"})
     overrides = datasets_service.series_overrides(settings, "sample")
     assert "fluid=hfe7100" in overrides
+
+
+# --- baked-condition staleness -----------------------------------------------
+
+
+def test_processed_tensors_start_current(sample_processed, client):
+    """A freshly processed series' tensors match its baked conditions."""
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["processed"] is True
+    assert detail["conditions_applied"] is True
+
+
+def test_editing_a_baked_condition_marks_tensors_stale(sample_processed, client):
+    """Frame interval is baked into the time axis: editing it needs a re-run."""
+    r = client.patch("/api/datasets/sample/conditions", json={"dt_frame_ms": 0.25})
+    assert r.status_code == 200
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["conditions_applied"] is False  # re-preprocess required
+
+
+def test_editing_a_cheap_condition_keeps_tensors_current(sample_processed, client):
+    """Wall heat flux only affects groups/physics, not the tensors: no re-run."""
+    r = client.patch("/api/datasets/sample/conditions", json={"q_wall_W_cm2": 3.5})
+    assert r.status_code == 200
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["conditions_applied"] is True
+
+
+def test_editing_channel_height_is_cheap(sample_processed, client):
+    """Channel height feeds only the dimensionless groups, not the tensors."""
+    r = client.patch("/api/datasets/sample/conditions", json={"channel_height_um": 200.0})
+    assert r.status_code == 200
+    assert client.get("/api/datasets/sample").json()["conditions_applied"] is True
+
+
+def test_unprocessed_series_is_not_flagged_stale(client):
+    """A series with no tensors yet has nothing to be stale about."""
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["processed"] is False
+    assert detail["conditions_applied"] is True
 
 
 def test_fluid_id_is_allow_listed_not_a_path(client):

@@ -13,7 +13,7 @@ import math
 import re
 from pathlib import Path
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import DatasetDetail, DatasetSummary, OperatingConditions
@@ -62,6 +62,14 @@ CONDITION_FIELDS: dict[str, tuple[str, float, float]] = {
 # validated against the fluids allow-list; it is stored alongside the scalars
 # under this key in conditions.json.
 FLUID_KEY = "fluid"
+
+# Condition fields baked into the preprocessed tensors (verified in
+# naviernet.data.preprocess): the frame interval sets the time axis, the channel
+# width sets um/px, and the reference velocity sets the reference time. Editing
+# one makes the saved tensors stale until a re-preprocess. Every other condition
+# (fluid, wall heat flux, flow rate, channel height) only feeds the dimensionless
+# groups / Stage-B physics and applies live.
+BAKED_CONDITION_FIELDS = ("dt_frame_ms", "channel_width_um", "U_ref")
 
 
 def is_valid_dataset_id(dataset: str) -> bool:
@@ -343,6 +351,34 @@ def exclusions_applied(settings: Settings, dataset: str) -> bool:
     return sorted(int(n) for n in applied) == read_excluded_frames(settings, dataset)
 
 
+def _current_baked_conditions(settings: Settings, dataset: str) -> dict[str, float]:
+    """The composed values of the tensor-baked condition fields for this series
+    (with its saved overrides applied)."""
+    cfg = compose_cfg(dataset, overrides=series_overrides(settings, dataset))
+    baked: dict[str, float] = {}
+    for key in BAKED_CONDITION_FIELDS:
+        path = CONDITION_FIELDS[key][0]  # e.g. "experiment.dt_frame_ms"
+        baked[key] = float(OmegaConf.select(cfg, path))
+    return baked
+
+
+def conditions_applied(settings: Settings, dataset: str) -> bool:
+    """Whether the preprocessed tensors were built with the current tensor-baked
+    conditions. False only when a baked edit is pending a re-preprocess.
+
+    True for an unprocessed series (nothing to be stale about) and for tensors
+    written before baked-condition snapshots existed (no false alarms).
+    """
+    snapshot = tensors_meta(settings, dataset).get("baked_conditions")
+    if not snapshot:
+        return True
+    current = _current_baked_conditions(settings, dataset)
+    return all(
+        key in snapshot and math.isclose(float(snapshot[key]), value, rel_tol=1e-9)
+        for key, value in current.items()
+    )
+
+
 def tensors_meta(settings: Settings, dataset: str) -> dict:
     """The meta record inside tensors.npz ({} when not preprocessed)."""
     path = tensors_path(settings, dataset)
@@ -442,6 +478,7 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
         notes=_notes_for(cfg, dataset),
         excluded_frames=read_excluded_frames(settings, dataset),
         exclusions_applied=exclusions_applied(settings, dataset),
+        conditions_applied=conditions_applied(settings, dataset),
     )
 
 

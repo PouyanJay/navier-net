@@ -224,6 +224,10 @@ class DatasetDetail(BaseModel):
     # Whether the preprocessed tensors were built with the exclusions above; false
     # means an edit is pending a preprocessing re-run.
     exclusions_applied: bool = False
+    # Whether the tensors were built with the current tensor-baked conditions
+    # (frame interval, channel width, reference velocity). False means a baked
+    # condition edit is pending a re-preprocess. True for an unprocessed series.
+    conditions_applied: bool = True
 
 
 class ExclusionsUpdate(BaseModel):

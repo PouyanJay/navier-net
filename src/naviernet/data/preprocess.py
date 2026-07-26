@@ -385,6 +385,14 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         # row i is frame i+1, which stops holding once frames are excluded.
         "frame_numbers": frame_numbers,
         "excluded_frames": sorted({int(n) for n in cfg.experiment.excluded_frames}),
+        # The conditions baked into these tensors (time axis, um/px, reference
+        # time). The API compares these to the series' current conditions to know
+        # when a baked-condition edit needs a re-preprocess.
+        "baked_conditions": {
+            "dt_frame_ms": cfg.experiment.dt_frame_ms,
+            "channel_width_um": cfg.experiment.channel_width_um,
+            "U_ref": cfg.scales.U_ref,
+        },
         "frames_used": _frames_used(cfg, frame_numbers),
         "x_convention": "x* runs downstream; raw camera flow is right to left",
     }
