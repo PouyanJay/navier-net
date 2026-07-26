@@ -65,6 +65,13 @@ def test_momentum_and_energy_declare_the_fields_they_unlock():
     assert by_id["energy"].fields_added == ("T",)
 
 
+def test_stage_a_equations_are_core_and_stage_b_are_not():
+    """`core` drives the UI's locked-on state: the Stage-A objective is always on."""
+    by_id = {e.id: e for e in registry.REGISTRY}
+    assert all(by_id[eid].core for eid in ("vof", "div", "src", "bc"))
+    assert not any(by_id[eid].core for eid in ("mom", "energy", "evap"))
+
+
 def test_every_equation_carries_ui_metadata():
     for e in registry.REGISTRY:
         assert e.tex, f"{e.id} has no TeX"

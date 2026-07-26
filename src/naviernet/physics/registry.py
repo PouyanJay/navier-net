@@ -9,8 +9,9 @@ An equation is *enabled* for a run when it is implemented and every field it
 requires is present in ``model.fields``. With the Stage-A field set
 ``(phi, u, v, s)`` this yields exactly ``vof, div, src, bc`` in that order, with
 ``vof, div, bc`` rebalanced and ``src`` a fixed penalty — reproducing the
-pre-registry trainer byte-for-byte. Stage-B equations (``mom``, ``energy``) are
-declared here for the UI but stay ``implemented=False`` until their residuals land.
+pre-registry trainer byte-for-byte. The Stage-A equations are ``core`` (always on;
+the UI locks them). Adding ``p`` unlocks momentum; adding ``T`` unlocks energy and
+the evaporation mass closure.
 """
 
 from __future__ import annotations
@@ -129,6 +130,7 @@ class Equation:
     groups: tuple[str, ...] = ()  # dimensionless groups entering the equation
     rebalanced: bool = True
     implemented: bool = True
+    core: bool = False  # always-on (the Stage-A objective); the UI locks it on
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
 
 
@@ -141,6 +143,7 @@ REGISTRY: tuple[Equation, ...] = (
         r" + v\,\frac{\partial \alpha}{\partial y} = 0",
         weight_key="vof",
         fields_required=("phi", "u", "v"),
+        core=True,
         term=_vof_term,
     ),
     Equation(
@@ -150,6 +153,7 @@ REGISTRY: tuple[Equation, ...] = (
         tex=r"\frac{\partial u}{\partial x} + \frac{\partial v}{\partial y} = s(x,y,t)",
         weight_key="div",
         fields_required=("u", "v", "s"),
+        core=True,
         term=_div_term,
     ),
     Equation(
@@ -160,6 +164,7 @@ REGISTRY: tuple[Equation, ...] = (
         weight_key="src",
         fields_required=("s",),
         rebalanced=False,  # a deliberate soft penalty, held where it is put
+        core=True,
         term=_src_term,
     ),
     Equation(
@@ -169,6 +174,7 @@ REGISTRY: tuple[Equation, ...] = (
         tex=r"u = U_\text{in}\ \text{(inlet)}; \quad u = 0\ \text{(walls)}",
         weight_key="bc",
         fields_required=("u", "v"),
+        core=True,
         term=_bc_term,
     ),
     Equation(
