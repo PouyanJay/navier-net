@@ -297,8 +297,12 @@
 .btn.danger:hover {
   background: var(--redsoft);
 }
+/* Ghost variant of the destructive action (e.g. the card's delete icon): red
+   like a ghost button, so it must stay borderless — .btn.danger's border would
+   otherwise win over .btn.ghost's transparent one (equal specificity, later). */
 .btn.ghost.danger {
   color: var(--redtext);
+  border-color: transparent;
 }
 .btn.ghost.danger:hover {
   background: var(--redsoft);
