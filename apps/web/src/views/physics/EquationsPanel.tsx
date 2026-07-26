@@ -69,6 +69,13 @@ function EquationRow({ eq, model }: { eq: EquationDisplay; model: PhysicsModel }
         aria-checked={eq.on}
         aria-label={eq.name}
         disabled={!eq.toggleable}
+        title={
+          eq.core
+            ? "Core equation — always on"
+            : !eq.toggleable
+              ? "Unlocked with Energy + evaporation"
+              : undefined
+        }
         onClick={() => model.toggleEquation(eq.id)}
       >
         <span className="knob" aria-hidden="true" />

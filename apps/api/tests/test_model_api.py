@@ -43,6 +43,23 @@ def test_model_edit_out_of_bounds_is_rejected(client):
     assert r.status_code == 422  # Pydantic bounds reject before the service
 
 
+def test_model_and_physics_saves_both_persist_without_temp_leak(client, repo_root):
+    """The two saves write the same model.json; both sets of keys survive and no
+    unique temp file is left behind (guards the shared-temp collision)."""
+    from naviernet_api.services import datasets as datasets_service
+    from naviernet_api.settings import Settings
+
+    client.put("/api/physics/sample", json={"enabled": ["mom"], "weights": {"mom": 2.0}})
+    client.put("/api/model/sample", json={"hidden": 100, "per_field": {"p": {"hidden": 64}}})
+
+    settings = Settings(repo_root=repo_root)
+    cfg = datasets_service.read_model_config(settings, "sample")
+    assert cfg["enabled"] == ["mom"] and cfg["hidden"] == 100
+    assert cfg["per_field"]["p"]["hidden"] == 64
+    raw = repo_root / "data" / "raw" / "sample"
+    assert not list(raw.glob("*.tmp")), "atomic write left a temp file behind"
+
+
 def test_saved_model_config_reaches_a_launched_run(client, repo_root):
     """The strongest guarantee: enabling momentum + a per-field override must show
     up in the config a run composes (runs compose via series_overrides)."""

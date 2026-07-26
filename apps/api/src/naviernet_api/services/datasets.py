@@ -10,7 +10,9 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import re
+import tempfile
 from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
@@ -404,9 +406,17 @@ def _write_model_config(settings: Settings, dataset: str, config: dict) -> dict:
     path = _model_config_path(settings, dataset)
     if path is None or not path.parent.is_dir():
         raise ModelConfigError(f"dataset {dataset!r} not found")
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(config, indent=2))
-    tmp.replace(path)
+    # A unique temp file per write: the model and physics saves land concurrently
+    # (the web sends them together), and a shared ".json.tmp" would let one write's
+    # replace() remove the file the other is about to replace.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix="model.", suffix=".json.tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(json.dumps(config, indent=2))
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
     log.info("saved model config for %s: %s", dataset, sorted(config))
     return config
 

@@ -22,6 +22,7 @@ function eq(
   id: string,
   name: string,
   stage: "A" | "B",
+  fields_required: string[],
   extra: Partial<Record<string, unknown>> = {},
 ) {
   return {
@@ -30,7 +31,7 @@ function eq(
     stage,
     tex: `\\mathrm{${id}}`,
     weight_key: id,
-    fields_required: [],
+    fields_required,
     fields_added: [],
     groups: [],
     core: stage === "A",
@@ -45,13 +46,19 @@ const PHYSICS = {
   fields: ["phi", "u", "v", "s"],
   groups: { Re: 215.5, We: 2.302, Pe: 2028, hele_shaw: 0.2228, dT_ref: 28.74 },
   equations: [
-    eq("vof", "Interface transport", "A"),
-    eq("div", "Continuity", "A"),
-    eq("src", "Source penalty", "A"),
-    eq("bc", "Boundary conditions", "A"),
-    eq("mom", "Momentum", "B", { fields_added: ["p"], groups: ["Re", "We", "hele_shaw"] }),
-    eq("energy", "Energy + evaporation", "B", { fields_added: ["T"], groups: ["Pe"] }),
-    eq("evap", "Evaporation mass closure", "B"),
+    eq("vof", "Interface transport", "A", ["phi", "u", "v"]),
+    eq("div", "Continuity", "A", ["u", "v", "s"]),
+    eq("src", "Source penalty", "A", ["s"]),
+    eq("bc", "Boundary conditions", "A", ["u", "v"]),
+    eq("mom", "Momentum", "B", ["phi", "u", "v", "p"], {
+      fields_added: ["p"],
+      groups: ["Re", "We", "hele_shaw"],
+    }),
+    eq("energy", "Energy + evaporation", "B", ["u", "v", "T"], {
+      fields_added: ["T"],
+      groups: ["Pe"],
+    }),
+    eq("evap", "Evaporation mass closure", "B", ["s", "T"]),
   ],
 };
 
@@ -111,6 +118,20 @@ describe("PhysicsModelView", () => {
     await waitFor(() => expect(screen.getByText(/5 networks/)).toBeInTheDocument());
     // And the config is dirty, so it reports unsaved changes.
     expect(screen.getByText("unsaved changes")).toBeInTheDocument();
+  });
+
+  it("enabling Energy lights up the coupled evaporation closure", async () => {
+    mockApi();
+    render(<PhysicsModelView datasets={DATASETS} />);
+    const energy = await screen.findByRole("switch", { name: "Energy + evaporation" });
+    const evap = screen.getByRole("switch", { name: "Evaporation mass closure" });
+    expect(evap).toHaveAttribute("aria-checked", "false");
+    expect(evap).toBeDisabled(); // not independently toggleable; rides on Energy
+
+    fireEvent.click(energy);
+
+    // The coupled closure follows Energy on, even though it can't be toggled itself.
+    await waitFor(() => expect(evap).toHaveAttribute("aria-checked", "true"));
   });
 
   it("core equations are locked on and cannot be toggled off", async () => {

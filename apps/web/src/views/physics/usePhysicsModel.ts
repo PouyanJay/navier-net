@@ -190,18 +190,22 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
         per_field[f] = { hidden: a.width, layers: a.depth };
       }
     }
-    Promise.all([
-      api.updatePhysics(edit.dataset, { enabled: enabledIds, weights }),
-      api.updateModel(edit.dataset, {
-        hidden: base.width,
-        layers: base.depth,
-        fourier_feats: edit.globals.ff,
-        fourier_scale: edit.globals.ffScale,
-        alpha_eps: edit.globals.alphaEps,
-        per_field,
-      }),
-    ])
-      .then(([physics, model]) => setEdit(buildEdit(model, physics)))
+    // Save physics first, then the architecture: both write the same model.json,
+    // so they must be sequential (the model save merges onto the physics save).
+    api
+      .updatePhysics(edit.dataset, { enabled: enabledIds, weights })
+      .then((physics) =>
+        api
+          .updateModel(edit.dataset, {
+            hidden: base.width,
+            layers: base.depth,
+            fourier_feats: edit.globals.ff,
+            fourier_scale: edit.globals.ffScale,
+            alpha_eps: edit.globals.alphaEps,
+            per_field,
+          })
+          .then((model) => setEdit(buildEdit(model, physics))),
+      )
       .catch((err) => setSaveError(errorMessage(err)))
       .finally(() => setSaving(false));
   }, [edit]);
@@ -250,9 +254,13 @@ function deriveView(edit: EditState, activeFields: FieldName[]) {
     ) +
     (globalOverridden("ff") ? 1 : 0) +
     (globalOverridden("ffScale") ? 1 : 0);
+  // An equation is active when all the fields it needs are present -- derived
+  // live from the toggles, so coupled terms (e.g. the evaporation closure, which
+  // rides on temperature) light up with the equation that unlocks their field.
+  const activeSet = new Set<string>(activeFields);
   const equations: EquationDisplay[] = edit.equations.map((e) => ({
     ...e,
-    on: e.core ? true : (edit.enabled[e.id] ?? e.enabled),
+    on: e.fields_required.every((f) => activeSet.has(f)),
     liveWeight: edit.weights[e.weight_key] ?? e.weight,
     toggleable: TOGGLEABLE.has(e.id),
   }));
