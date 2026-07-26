@@ -49,6 +49,7 @@ const DETAIL = {
   notes: "Frames 1-10 continuous growth.",
   excluded_frames: [] as number[],
   exclusions_applied: false,
+  conditions_applied: true,
   conditions: {
     fluid: "FC-72",
     T_sat_C: 56.6,
@@ -180,6 +181,10 @@ function mockApi({
   };
   // The endpoint replaces the set, so the mock keeps the series' current one.
   let excludedFrames = excluded;
+  // Baked-condition edits make the tensors stale until a re-preprocess, mirroring
+  // the server's conditions_applied flag.
+  const bakedKeys = new Set(["dt_frame_ms", "channel_width_um", "U_ref"]);
+  let conditionsApplied = true;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string | URL, opts?: RequestInit) => {
@@ -217,6 +222,9 @@ function mockApi({
       if (u.endsWith("/conditions") && opts?.method === "PATCH") {
         const body = JSON.parse(String(opts.body));
         calls.conditionPatches.push(body);
+        if (Object.keys(body).some((k) => bakedKeys.has(k))) {
+          conditionsApplied = false; // a baked edit needs a re-preprocess
+        }
         return json({
           conditions: { ...DETAIL.conditions, ...body },
           groups: { ...GROUPS, Re: 431.0 },
@@ -237,6 +245,7 @@ function mockApi({
       if (pre) {
         if (post) {
           calls.startPreprocess.push(pre[1]);
+          conditionsApplied = true; // a re-preprocess re-bakes the current conditions
           return json({ ...IDLE, dataset: pre[1], state: "running" });
         }
         // Once started, the job settles immediately so polling flows finish.
@@ -280,6 +289,7 @@ function mockApi({
           processed,
           holdout_frame: holdout,
           excluded_frames: excludedFrames,
+          conditions_applied: conditionsApplied,
           um_per_px: umPerPx ?? DETAIL.um_per_px,
         });
       }
@@ -330,6 +340,53 @@ describe("DatasetsView", () => {
     expect(inputs.getByText("Channel height (µm)")).toBeInTheDocument();
     expect(inputs.getByText("150")).toBeInTheDocument();
     expect(inputs.getByText("Reference velocity (m·s⁻¹)")).toBeInTheDocument();
+  });
+
+  it("edits a cheap condition live, without requiring a re-preprocess", async () => {
+    const calls = mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // Open the editor from the read-only conditions summary.
+    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Wall heat flux/), {
+      target: { value: "3.5" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+
+    await waitFor(() =>
+      expect(calls.conditionPatches).toContainEqual(
+        expect.objectContaining({ q_wall_W_cm2: 3.5 }),
+      ),
+    );
+    // A cheap edit does not make the tensors stale.
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Re-preprocess required/i),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("warns and requires a re-preprocess after a baked-condition edit", async () => {
+    const calls = mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+
+    // The stale banner appears with a re-preprocess action…
+    const banner = await screen.findByText(/Re-preprocess required/i);
+    expect(banner).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Re-preprocess/i }));
+    await waitFor(() => expect(calls.startPreprocess).toContain("sample"));
   });
 
   it("defines a dimensionless group and reads back its value on selection", async () => {

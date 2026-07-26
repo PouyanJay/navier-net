@@ -62,6 +62,9 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
           onProjectChanged(updated);
           data.refresh().catch(() => {});
         }}
+        onSaveConditions={data.saveConditions}
+        onPreprocess={() => void data.runPreprocess()}
+        preprocessing={data.preprocess?.state === "running"}
       />
 
       <div className="dsx-main">

@@ -897,3 +897,12 @@
   font-size: 10.5px;
   color: var(--ink3);
 }
+/* Push the edit control to the right of the conditions header. */
+.ds-conditions-edit {
+  margin-left: auto;
+  align-self: center;
+}
+/* The re-preprocess action inside the staleness callout. */
+.ds-conditions-reprocess {
+  margin-top: var(--s2);
+}

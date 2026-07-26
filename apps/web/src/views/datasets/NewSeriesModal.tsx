@@ -1,123 +1,23 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button, Callout } from "../../components";
 import { useToast } from "../../components/Toast";
-import { api, type Fluid, type ProjectSummary } from "../../lib/api";
+import { api, type ProjectSummary } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
+import {
+  ALL_CONDITIONS,
+  type ConditionInputs,
+  DEFAULT_FLUID_ID,
+  FluidSelect,
+  MeasurementField,
+  OPERATING_CONDITIONS,
+  parseCondition,
+  REQUIRED_CONDITIONS,
+  useFluids,
+} from "./conditions";
 
 const POLL_INTERVAL_MS = 1000;
 const SERIES_ID_RE = /^[A-Za-z0-9._-]+$/;
-const DEFAULT_FLUID_ID = "fc72";
-
-type ConditionKey =
-  | "dt_frame_ms"
-  | "channel_width_um"
-  | "channel_height_um"
-  | "q_wall_W_cm2"
-  | "flow_rate_mL_hr"
-  | "U_ref";
-
-interface ConditionSpec {
-  key: ConditionKey;
-  label: string;
-  hint: string;
-  unit: string;
-  step: number;
-  /** Server-side bounds (`CONDITION_FIELDS` in the datasets service). */
-  min: number;
-  max: number;
-  /** Shown when empty (measurements) or pre-filled as the value (operating). */
-  placeholder?: string;
-  why: string;
-}
-
-/**
- * The fixed geometry and timing of a run. These are baked into the tensors and
- * the physical scale, so they must be set before the first preprocessing run;
- * asking later would mean asking for a re-run. They start empty -- there is no
- * honest default for a series nobody has described yet.
- */
-const REQUIRED_CONDITIONS: ConditionSpec[] = [
-  {
-    key: "dt_frame_ms",
-    label: "Frame interval",
-    hint: "Δt between frames",
-    unit: "ms",
-    step: 0.1,
-    placeholder: "0.5",
-    min: 1e-6,
-    max: 1e4,
-    why: "sets the time axis of the tensors",
-  },
-  {
-    key: "channel_width_um",
-    label: "Channel width",
-    hint: "imaged direction",
-    unit: "µm",
-    step: 10,
-    placeholder: "300",
-    min: 1,
-    max: 1e6,
-    why: "calibrates µm/px from the detected walls",
-  },
-  {
-    key: "channel_height_um",
-    label: "Channel height",
-    hint: "heated wall below",
-    unit: "µm",
-    step: 10,
-    placeholder: "150",
-    min: 1,
-    max: 1e6,
-    why: "sets the physical scale of the heated channel",
-  },
-];
-
-/**
- * The operating conditions of the run. Unlike the measurements they have
- * sensible defaults, so they start pre-filled and are edited to override; they
- * set the reference scales and the dimensionless groups. Saturation temperature
- * is not here: it is a property of the selected fluid (derived, read-only).
- */
-const OPERATING_CONDITIONS: ConditionSpec[] = [
-  {
-    key: "q_wall_W_cm2",
-    label: "Wall heat flux",
-    hint: "baseline",
-    unit: "W·cm⁻²",
-    step: 0.1,
-    min: 1e-3,
-    max: 1e4,
-    why: "bottom-wall heat flux setpoint",
-  },
-  {
-    key: "flow_rate_mL_hr",
-    label: "Flow rate",
-    hint: "inlet",
-    unit: "mL·hr⁻¹",
-    step: 0.5,
-    min: 1e-3,
-    max: 1e6,
-    why: "volumetric inlet flow rate",
-  },
-  {
-    key: "U_ref",
-    label: "Reference velocity",
-    hint: "U_ref",
-    unit: "m·s⁻¹",
-    step: 0.01,
-    min: 1e-6,
-    max: 1e3,
-    why: "measured nose-speed scale; sets the reference time",
-  },
-];
-
-const ALL_CONDITIONS: ConditionSpec[] = [
-  ...REQUIRED_CONDITIONS,
-  ...OPERATING_CONDITIONS,
-];
-
-type ConditionInputs = Record<ConditionKey, string>;
 
 /** Measurements start empty (must be entered); operating conditions start at
  * their defaults and are edited to override. */
@@ -132,24 +32,12 @@ const INITIAL_CONDITIONS: ConditionInputs = {
 
 type Phase = "form" | "uploading" | "preprocessing";
 
-type FluidsLoad =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; list: Fluid[] };
-
 interface NewSeriesModalProps {
   project: ProjectSummary;
   onClose: () => void;
   /** Fired as soon as the series is attached (even if preprocessing is still
    * running or failed) so the library reflects reality. */
   onAttached: (project: ProjectSummary, seriesId: string) => void;
-}
-
-/** Parse a required measurement, or null when it is missing or out of range. */
-function parseCondition(raw: string, min: number, max: number): number | null {
-  const value = Number(raw);
-  if (raw.trim() === "" || !Number.isFinite(value)) return null;
-  return value >= min && value <= max ? value : null;
 }
 
 /** Upload a new series and run its preprocessing in one guided flow:
@@ -163,39 +51,24 @@ export function NewSeriesModal({
   const [files, setFiles] = useState<FileList | null>(null);
   const [conditions, setConditions] =
     useState<ConditionInputs>(INITIAL_CONDITIONS);
-  const [fluids, setFluids] = useState<FluidsLoad>({ status: "loading" });
+  const fluids = useFluids();
   const [fluidId, setFluidId] = useState(DEFAULT_FLUID_ID);
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState<string | null>(null);
   const attached = useRef(false);
-  const fluidSelectId = useId();
   const toast = useToast();
 
-  // The fluid catalogue drives the selector and the derived T_sat / properties.
+  const fluidList = useMemo(
+    () => (fluids.status === "ready" ? fluids.list : []),
+    [fluids],
+  );
+  // Default to FC-72 when present, else the first characterised fluid.
   useEffect(() => {
-    let alive = true;
-    api
-      .listFluids()
-      .then((list) => {
-        if (!alive) return;
-        setFluids({ status: "ready", list });
-        // Default to FC-72 when present, else the first characterised fluid.
-        if (!list.some((f) => f.id === DEFAULT_FLUID_ID) && list[0]) {
-          setFluidId(list[0].id);
-        }
-      })
-      .catch(
-        (err) =>
-          alive && setFluids({ status: "error", message: errorMessage(err) }),
-      );
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const fluidList = fluids.status === "ready" ? fluids.list : [];
-  const selectedFluid =
-    fluidList.find((f) => f.id === fluidId) ?? fluidList[0] ?? null;
+    if (fluidList.length > 0 && !fluidList.some((f) => f.id === fluidId)) {
+      setFluidId(fluidList[0].id);
+    }
+  }, [fluidList, fluidId]);
+  const fluidReady = fluidList.length > 0;
 
   const validName = SERIES_ID_RE.test(name) && !project.datasets.includes(name);
   const parsed = ALL_CONDITIONS.map((spec) => ({
@@ -233,7 +106,7 @@ export function NewSeriesModal({
   }, [phase, name, onClose, toast]);
 
   async function start() {
-    if (!validName || !files?.length || !conditionsValid || !selectedFluid) {
+    if (!validName || !files?.length || !conditionsValid || !fluidReady) {
       return;
     }
     setError(null);
@@ -347,7 +220,7 @@ export function NewSeriesModal({
 
           <div className="modal-section">
             <h3 className="modal-section-hd">
-              Measurements <span>baked into the tensors</span>
+              Measurements <span>frame interval & width bake into the tensors</span>
             </h3>
             <div className="frm">
               {REQUIRED_CONDITIONS.map((spec) => (
@@ -369,40 +242,12 @@ export function NewSeriesModal({
               Operating conditions <span>defaults · edit to override</span>
             </h3>
             <div className="frm">
-              <div className="fld">
-                <label htmlFor={fluidSelectId}>Working fluid</label>
-                <div className="ug">
-                  <select
-                    id={fluidSelectId}
-                    value={fluidId}
-                    disabled={busy || fluids.status !== "ready"}
-                    onChange={(e) => setFluidId(e.target.value)}
-                  >
-                    {fluids.status === "ready" ? (
-                      fluidList.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.name}
-                        </option>
-                      ))
-                    ) : (
-                      <option>
-                        {fluids.status === "loading"
-                          ? "Loading fluids…"
-                          : "Fluids unavailable"}
-                      </option>
-                    )}
-                  </select>
-                </div>
-                <span className="fld-why">
-                  sets the fluid properties and the derived saturation temperature
-                </span>
-              </div>
-              {fluids.status === "error" && (
-                <Callout tone="error">
-                  Could not load the fluid catalogue: {fluids.message}
-                </Callout>
-              )}
-              {selectedFluid && <FluidProperties fluid={selectedFluid} />}
+              <FluidSelect
+                fluids={fluids}
+                fluidId={fluidId}
+                disabled={busy}
+                onChange={setFluidId}
+              />
               {OPERATING_CONDITIONS.map((spec) => (
                 <MeasurementField
                   key={spec.key}
@@ -444,7 +289,7 @@ export function NewSeriesModal({
                 !validName ||
                 !files?.length ||
                 !conditionsValid ||
-                !selectedFluid
+                !fluidReady
               }
             >
               {busy ? "Working…" : "Upload & preprocess"}
@@ -456,92 +301,5 @@ export function NewSeriesModal({
         </div>
       </div>
     </div>
-  );
-}
-
-interface MeasurementFieldProps {
-  spec: ConditionSpec;
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-}
-
-/** A single condition with its unit and bounds, in the form's field shell.
- * Measurements start empty (they have no honest default); operating conditions
- * arrive pre-filled with their FC-72 default value. */
-function MeasurementField({
-  spec,
-  value,
-  disabled,
-  onChange,
-}: MeasurementFieldProps) {
-  const id = useId();
-  const out =
-    value.trim() !== "" && parseCondition(value, spec.min, spec.max) === null;
-  return (
-    <div className="fld">
-      <label htmlFor={id}>
-        {spec.label}
-        <span className="hint">{spec.hint}</span>
-      </label>
-      <span className="ug" data-disabled={disabled || undefined}>
-        <input
-          id={id}
-          type="number"
-          inputMode="decimal"
-          value={value}
-          step={spec.step}
-          min={spec.min}
-          max={spec.max}
-          placeholder={spec.placeholder}
-          disabled={disabled}
-          aria-invalid={out || undefined}
-          aria-describedby={`${id}-why`}
-          onChange={(e) => onChange(e.target.value)}
-        />
-        <span className="sfx">{spec.unit}</span>
-      </span>
-      <span id={`${id}-why`} className="fld-why">
-        {out
-          ? `Must be between ${spec.min} and ${spec.max} ${spec.unit}.`
-          : spec.why}
-      </span>
-    </div>
-  );
-}
-
-/** The selected fluid's derived saturation temperature and the saturated
- * properties it commits the run to — read-only: they come from the fluid, not
- * the form. Overriding a property is a config-level action, not a per-series one. */
-function FluidProperties({ fluid }: { fluid: Fluid }) {
-  const rows: { label: string; value: string }[] = [
-    { label: "Saturation temperature", value: `${fluid.T_sat_C} °C` },
-    { label: "Liquid density", value: `${fluid.rho_l.toFixed(0)} kg·m⁻³` },
-    {
-      label: "Liquid viscosity",
-      value: `${(fluid.mu_l * 1e3).toPrecision(3)} mPa·s`,
-    },
-    {
-      label: "Thermal conductivity",
-      value: `${fluid.k_l.toPrecision(3)} W·m⁻¹·K⁻¹`,
-    },
-    {
-      label: "Surface tension",
-      value: `${(fluid.sigma * 1e3).toPrecision(3)} mN·m⁻¹`,
-    },
-    {
-      label: "Latent heat",
-      value: `${(fluid.h_lv / 1e3).toFixed(0)} kJ·kg⁻¹`,
-    },
-  ];
-  return (
-    <dl className="fluid-props" aria-label={`${fluid.name} properties`}>
-      {rows.map((row) => (
-        <div className="fluid-prop" key={row.label}>
-          <dt>{row.label}</dt>
-          <dd>{row.value}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }

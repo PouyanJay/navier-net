@@ -1,11 +1,13 @@
 import { useState } from "react";
 
-import { Chip, DL, type KV, Panel } from "../../components";
+import { Button, Callout, Chip, DL, type KV, Panel } from "../../components";
 import type {
+  ConditionsUpdate,
   DatasetDetail,
   DatasetSummary,
   ProjectSummary,
 } from "../../lib/api";
+import { EditConditionsModal } from "./EditConditionsModal";
 import { NewSeriesModal } from "./NewSeriesModal";
 
 interface SeriesLibraryProps {
@@ -18,6 +20,12 @@ interface SeriesLibraryProps {
   onSelect: (id: string) => void;
   /** Called with the updated project after a new series is uploaded+attached. */
   onProjectChanged: (project: ProjectSummary) => void;
+  /** Persist an edit to the selected series' operating conditions. */
+  onSaveConditions: (updates: ConditionsUpdate) => Promise<void>;
+  /** Re-run preprocessing for the selected series (after a baked-field edit). */
+  onPreprocess: () => void;
+  /** Whether a preprocessing job is already running for the selected series. */
+  preprocessing: boolean;
 }
 
 /** The inputs set for a series in the upload modal, as read-only rows. The unit
@@ -66,8 +74,13 @@ export function SeriesLibrary({
   detail,
   onSelect,
   onProjectChanged,
+  onSaveConditions,
+  onPreprocess,
+  preprocessing,
 }: SeriesLibraryProps) {
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const trained = detail != null && trainedIds.has(detail.id);
 
   return (
     <Panel
@@ -125,9 +138,40 @@ export function SeriesLibrary({
           <div className="ds-conditions-hd">
             <h3 className="mono">{detail.id}</h3>
             <span className="sub">inputs</span>
+            <Button
+              className="ds-conditions-edit"
+              onClick={() => setEditing(true)}
+            >
+              Edit conditions
+            </Button>
           </div>
           <DL items={conditionItems(detail)} />
+          {detail.processed && !detail.conditions_applied && (
+            <Callout tone="caution" title="Re-preprocess required">
+              A tensor-baked condition (frame interval, channel width, or
+              reference velocity) changed since these tensors were built.
+              {trained
+                ? " Re-preprocessing rebuilds them and marks the trained run stale."
+                : " Re-preprocess to rebuild them from the new values."}
+              <div className="ds-conditions-reprocess">
+                <Button
+                  variant="primary"
+                  onClick={onPreprocess}
+                  disabled={preprocessing}
+                >
+                  {preprocessing ? "Re-preprocessing…" : "Re-preprocess"}
+                </Button>
+              </div>
+            </Callout>
+          )}
         </section>
+      )}
+      {editing && detail && detail.id === selected && (
+        <EditConditionsModal
+          detail={detail}
+          onClose={() => setEditing(false)}
+          onSave={onSaveConditions}
+        />
       )}
       <p className="note">
         <b>Transfer learning:</b> once two or more series are configured, Stage
