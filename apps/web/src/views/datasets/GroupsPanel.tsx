@@ -143,7 +143,8 @@ const TILES: Tile[] = [
     name: "Reference time",
     about:
       "Convective timescale L_ref / U_ref that non-dimensionalises the tensors' time axis.",
-    reading: () => "One non-dimensional time unit; the frame interval is measured against it.",
+    reading: () =>
+      "One non-dimensional time unit; the frame interval is measured against it.",
   },
 ];
 
@@ -211,7 +212,9 @@ export function GroupsPanel({
             </span>
           </div>
           <p>{selected.about}</p>
-          <p className="gdetail-read">{selected.reading(groups[selected.key])}</p>
+          <p className="gdetail-read">
+            {selected.reading(groups[selected.key])}
+          </p>
         </div>
       )}
     </Panel>

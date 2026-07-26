@@ -42,6 +42,23 @@ from naviernet.data.contour import DEFAULT_WAVELENGTH_PX, fair_closed_contour
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
+# The condition fields baked into the preprocessed tensors: the frame interval
+# sets the time axis, the channel width sets um/px, and the reference velocity
+# sets the reference time. This is the single source of truth for "what a
+# re-preprocess is needed for" -- the API imports it (see datasets service) so
+# the two never drift. Everything else only feeds the dimensionless groups.
+BAKED_CONDITION_FIELDS: tuple[str, ...] = ("dt_frame_ms", "channel_width_um", "U_ref")
+
+
+def baked_conditions(cfg) -> dict[str, float]:
+    """The values of the tensor-baked condition fields for a composed config."""
+    return {
+        "dt_frame_ms": cfg.experiment.dt_frame_ms,
+        "channel_width_um": cfg.experiment.channel_width_um,
+        "U_ref": cfg.scales.U_ref,
+    }
+
+
 log = get_logger(__name__)
 
 # Below this the time axis degenerates: the trajectory span runs t[0]..t[-2],
@@ -388,11 +405,7 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         # The conditions baked into these tensors (time axis, um/px, reference
         # time). The API compares these to the series' current conditions to know
         # when a baked-condition edit needs a re-preprocess.
-        "baked_conditions": {
-            "dt_frame_ms": cfg.experiment.dt_frame_ms,
-            "channel_width_um": cfg.experiment.channel_width_um,
-            "U_ref": cfg.scales.U_ref,
-        },
+        "baked_conditions": baked_conditions(cfg),
         "frames_used": _frames_used(cfg, frame_numbers),
         "x_convention": "x* runs downstream; raw camera flow is right to left",
     }

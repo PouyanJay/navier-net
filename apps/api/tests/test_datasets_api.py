@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from naviernet_api.services import jobs as jobs_service
 from naviernet_api.services.config_service import compose_cfg
 from naviernet_api.settings import Settings
 
-from naviernet.data.preprocess import usable_frame_numbers
+from naviernet.data.preprocess import BAKED_CONDITION_FIELDS, usable_frame_numbers
 
 
 def test_list_datasets(client):
@@ -200,10 +201,11 @@ def test_preprocess_write_path_end_to_end(tmp_path, monkeypatch):
     assert (tmp_path / "data" / "processed" / "highest_t" / "tensors.npz").is_file()
     assert status.has_qc
 
-    # The real preprocess records the baked-condition snapshot, and the freshly
-    # built tensors read as current (not stale).
+    # The real preprocess records the baked-condition snapshot (keyed by the
+    # canonical field list, so this fails loudly if that list changes), and the
+    # freshly built tensors read as current (not stale).
     meta = datasets_service.tensors_meta(settings, "highest_t")
-    assert set(meta["baked_conditions"]) == {"dt_frame_ms", "channel_width_um", "U_ref"}
+    assert set(meta["baked_conditions"]) == set(BAKED_CONDITION_FIELDS)
     assert datasets_service.conditions_applied(settings, "highest_t") is True
 
 
@@ -385,6 +387,23 @@ def test_unprocessed_series_is_not_flagged_stale(client):
     detail = client.get("/api/datasets/sample").json()
     assert detail["processed"] is False
     assert detail["conditions_applied"] is True
+
+
+def test_legacy_tensors_without_snapshot_are_not_flagged_stale(repo_root):
+    """Tensors written before baked-condition snapshots existed must not raise a
+    false staleness alarm (no snapshot to compare against)."""
+    import numpy as np
+
+    processed = repo_root / "data" / "processed" / "sample"
+    processed.mkdir(parents=True, exist_ok=True)
+    # A meta record with no `baked_conditions` key, as older runs produced.
+    np.savez_compressed(
+        processed / "tensors.npz",
+        meta=json.dumps({"dataset": "sample"}),
+        alpha=np.zeros((1, 2, 2), dtype=np.float32),
+    )
+    settings = Settings(repo_root=repo_root)
+    assert datasets_service.conditions_applied(settings, "sample") is True
 
 
 def test_fluid_id_is_allow_listed_not_a_path(client):

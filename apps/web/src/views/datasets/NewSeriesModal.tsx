@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button, Callout } from "../../components";
 import { useToast } from "../../components/Toast";
@@ -55,7 +55,6 @@ export function NewSeriesModal({
   const [fluidId, setFluidId] = useState(DEFAULT_FLUID_ID);
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState<string | null>(null);
-  const attached = useRef(false);
   const toast = useToast();
 
   const fluidList = useMemo(
@@ -141,7 +140,6 @@ export function NewSeriesModal({
       const updated = await api.updateProject(project.id, {
         datasets: [...project.datasets, name],
       });
-      attached.current = true;
       onAttached(updated, name);
     } catch (err) {
       setError(`Uploaded, but linking the series failed: ${errorMessage(err)}`);
@@ -220,7 +218,8 @@ export function NewSeriesModal({
 
           <div className="modal-section">
             <h3 className="modal-section-hd">
-              Measurements <span>frame interval & width bake into the tensors</span>
+              Measurements{" "}
+              <span>frame interval & width bake into the tensors</span>
             </h3>
             <div className="frm">
               {REQUIRED_CONDITIONS.map((spec) => (

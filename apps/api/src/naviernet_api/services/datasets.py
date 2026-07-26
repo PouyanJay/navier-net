@@ -15,6 +15,7 @@ from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
 
+from naviernet.data.preprocess import BAKED_CONDITION_FIELDS
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import DatasetDetail, DatasetSummary, OperatingConditions
 from naviernet_api.services.config_service import compose_cfg
@@ -63,13 +64,10 @@ CONDITION_FIELDS: dict[str, tuple[str, float, float]] = {
 # under this key in conditions.json.
 FLUID_KEY = "fluid"
 
-# Condition fields baked into the preprocessed tensors (verified in
-# naviernet.data.preprocess): the frame interval sets the time axis, the channel
-# width sets um/px, and the reference velocity sets the reference time. Editing
-# one makes the saved tensors stale until a re-preprocess. Every other condition
-# (fluid, wall heat flux, flow rate, channel height) only feeds the dimensionless
-# groups / Stage-B physics and applies live.
-BAKED_CONDITION_FIELDS = ("dt_frame_ms", "channel_width_um", "U_ref")
+# BAKED_CONDITION_FIELDS (imported at the top from the pipeline) names the
+# condition fields written into the tensors; editing one makes them stale until a
+# re-preprocess. Everything else (fluid, wall heat flux, flow rate, channel
+# height) only feeds the dimensionless groups / Stage-B physics and applies live.
 
 
 def is_valid_dataset_id(dataset: str) -> bool:

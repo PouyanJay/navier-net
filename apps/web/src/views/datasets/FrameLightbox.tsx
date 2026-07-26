@@ -128,7 +128,9 @@ export function FrameLightbox({
                 aria-hidden="true"
               >
                 <path
-                  d={boundary.rings.map((ring) => ringPath(ring, geo)).join(" ")}
+                  d={boundary.rings
+                    .map((ring) => ringPath(ring, geo))
+                    .join(" ")}
                 />
               </svg>
             )}

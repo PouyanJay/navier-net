@@ -902,7 +902,9 @@
   margin-left: auto;
   align-self: center;
 }
-/* The re-preprocess action inside the staleness callout. */
-.ds-conditions-reprocess {
-  margin-top: var(--s2);
+/* The staleness callout plus its re-preprocess action, stacked. */
+.ds-reprocess {
+  display: grid;
+  gap: var(--s2);
+  justify-items: start;
 }

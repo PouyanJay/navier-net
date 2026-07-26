@@ -19,7 +19,8 @@ interface DatasetsViewProps {
 
 /** The datasets stage: the project's series library plus the selected series'
  * frames + preprocessing QC (one card) and its dimensionless groups. Operating
- * conditions are set per series in the upload modal, not edited here. */
+ * conditions are set at upload and editable per series from the library card;
+ * editing a tensor-baked condition prompts a re-preprocess. */
 export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   const data = useDatasetData(project.datasets[0] ?? null);
   const trainedIds = useTrainedIds();

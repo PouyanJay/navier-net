@@ -347,7 +347,9 @@ describe("DatasetsView", () => {
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // Open the editor from the read-only conditions summary.
-    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
     );
@@ -373,7 +375,9 @@ describe("DatasetsView", () => {
     const calls = mockApi({ processed: true });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
     );
@@ -392,7 +396,9 @@ describe("DatasetsView", () => {
   it("keeps save disabled for an out-of-range condition", async () => {
     mockApi({ processed: true });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
     );
@@ -409,7 +415,9 @@ describe("DatasetsView", () => {
   it("flags a baked field inline while editing a processed series", async () => {
     mockApi({ processed: true });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
     );
@@ -424,7 +432,9 @@ describe("DatasetsView", () => {
   it("closes the editor on cancel without saving", async () => {
     const calls = mockApi({ processed: true });
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: /Edit .*conditions/,
     });
@@ -447,15 +457,20 @@ describe("DatasetsView", () => {
     fetchMock.mockImplementation(
       async (url: string | URL, opts?: RequestInit) => {
         if (String(url).endsWith("/conditions") && opts?.method === "PATCH") {
-          return new Response(JSON.stringify({ detail: "q_wall out of range" }), {
-            status: 400,
-          });
+          return new Response(
+            JSON.stringify({ detail: "q_wall out of range" }),
+            {
+              status: 400,
+            },
+          );
         }
         return original(url, opts);
       },
     );
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
     );
@@ -481,7 +496,9 @@ describe("DatasetsView", () => {
       },
     );
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
     );
@@ -501,7 +518,9 @@ describe("DatasetsView", () => {
     // Capillary number is the default selection: it explains the group and the
     // regime its value puts the run in.
     const ca = within(
-      await screen.findByRole("region", { name: /Capillary number definition/ }),
+      await screen.findByRole("region", {
+        name: /Capillary number definition/,
+      }),
     );
     expect(ca.getByText(/Viscous drag ÷ surface tension/)).toBeInTheDocument();
     expect(ca.getByText(/Bretherton film/)).toBeInTheDocument();
@@ -511,7 +530,9 @@ describe("DatasetsView", () => {
     const re = within(
       await screen.findByRole("region", { name: /Reynolds number definition/ }),
     );
-    expect(re.getByText(/Inertial forces ÷ viscous forces/)).toBeInTheDocument();
+    expect(
+      re.getByText(/Inertial forces ÷ viscous forces/),
+    ).toBeInTheDocument();
     expect(re.getByText(/Laminar/)).toBeInTheDocument();
   });
 
@@ -1210,9 +1231,7 @@ describe("new series conditions", () => {
     const fluid = await form.findByLabelText("Working fluid");
     expect(form.getByText(/56\.6/)).toBeInTheDocument();
     // There is no editable T_sat field any more.
-    expect(
-      form.queryByRole("spinbutton", { name: /saturation/i }),
-    ).toBeNull();
+    expect(form.queryByRole("spinbutton", { name: /saturation/i })).toBeNull();
 
     // Choosing water updates the read-only saturation temperature.
     fireEvent.change(fluid, { target: { value: "water" } });
@@ -1339,7 +1358,9 @@ describe("new series conditions", () => {
 
     // No fluid to commit to → the flow cannot proceed (no silent default).
     // Wait a tick for the (empty) catalogue fetch to resolve before asserting.
-    await waitFor(() => expect(form.getByLabelText("Working fluid")).toBeEnabled());
+    await waitFor(() =>
+      expect(form.getByLabelText("Working fluid")).toBeEnabled(),
+    );
     expect(submit()).toBeDisabled();
   });
 });
@@ -1402,8 +1423,7 @@ describe("QC chart axes", () => {
 describe("frame boundary overlay", () => {
   // A calibrated, processed series is what makes the overlay possible: the
   // rings need µm/px and the raw frame size to land on real pixels.
-  const calibrated = () =>
-    mockApi({ processed: true, umPerPx: 100 });
+  const calibrated = () => mockApi({ processed: true, umPerPx: 100 });
 
   async function enlarge(frame: number) {
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
@@ -1457,9 +1477,7 @@ describe("frame boundary overlay", () => {
     mockApi({ processed: true }); // um_per_px stays null
     const dialog = await enlarge(1);
 
-    expect(
-      dialog.queryByRole("button", { name: "Boundary" }),
-    ).toBeNull();
+    expect(dialog.queryByRole("button", { name: "Boundary" })).toBeNull();
     expect(document.querySelector(".frame-overlay")).toBeNull();
   });
 });

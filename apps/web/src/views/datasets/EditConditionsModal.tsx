@@ -47,11 +47,14 @@ export function EditConditionsModal({
 }: EditConditionsModalProps) {
   const fluids = useFluids();
   const [fluidId, setFluidId] = useState<string | null>(null);
-  const [conditions, setConditions] = useState<ConditionInputs>(() =>
-    initialInputs(detail),
-  );
+  const initial = useMemo(() => initialInputs(detail), [detail]);
+  const [conditions, setConditions] = useState<ConditionInputs>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /** A field's saved (original) value, or null when it was unset/out of range. */
+  const originalValue = (spec: (typeof ALL_CONDITIONS)[number]) =>
+    parseCondition(initial[spec.key], spec.min, spec.max);
 
   // The detail carries the fluid's display name; map it back to the group id the
   // API expects, once the catalogue has loaded.
@@ -75,26 +78,26 @@ export function EditConditionsModal({
   /** A baked field the user has changed on already-processed tensors. */
   function bakedNote(key: ConditionKey): string | undefined {
     if (!detail.processed || !BAKED_KEYS.has(key)) return undefined;
-    const spec = ALL_CONDITIONS.find((s) => s.key === key);
-    const current = parseCondition(conditions[key], spec!.min, spec!.max);
-    const original = Number(initialInputs(detail)[key]);
-    if (current === null || current === original) return undefined;
+    const spec = ALL_CONDITIONS.find((s) => s.key === key)!;
+    const current = parseCondition(conditions[key], spec.min, spec.max);
+    if (current === null || current === originalValue(spec)) return undefined;
     return "Baked into the tensors — saving requires a re-preprocess.";
   }
 
   /** Only the fields the user actually changed, so an edit to one condition
    * never re-sends (and re-bakes) the others. */
   function changedUpdates(): ConditionsUpdate {
-    const initial = initialInputs(detail);
     const updates: ConditionsUpdate = {};
     for (const { spec, value } of parsed) {
-      const original = parseCondition(initial[spec.key], spec.min, spec.max);
-      if (value !== null && value !== original) updates[spec.key] = value;
+      if (value !== null && value !== originalValue(spec)) {
+        updates[spec.key] = value;
+      }
     }
     const originalFluidId = fluidList.find(
       (f) => f.name === detail.conditions.fluid,
     )?.id;
-    if (fluidId !== null && fluidId !== originalFluidId) updates.fluid = fluidId;
+    if (fluidId !== null && fluidId !== originalFluidId)
+      updates.fluid = fluidId;
     return updates;
   }
 
@@ -146,14 +149,19 @@ export function EditConditionsModal({
       >
         <div className="hd">
           <h2>Edit {detail.id} conditions</h2>
-          <span className="sub">frame interval, width & U_ref re-bake the tensors</span>
+          <span className="sub">
+            frame interval, width & U_ref re-bake the tensors
+          </span>
         </div>
         <div className="body">
           <div className="modal-section">
             <h3 className="modal-section-hd">
-              Measurements <span>frame interval & width bake into the tensors</span>
+              Measurements{" "}
+              <span>frame interval & width bake into the tensors</span>
             </h3>
-            <div className="frm">{REQUIRED_CONDITIONS.map((s) => field(s.key))}</div>
+            <div className="frm">
+              {REQUIRED_CONDITIONS.map((s) => field(s.key))}
+            </div>
           </div>
 
           <div className="modal-section">

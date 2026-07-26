@@ -28,9 +28,9 @@ interface SeriesLibraryProps {
   preprocessing: boolean;
 }
 
-/** The inputs set for a series in the upload modal, as read-only rows. The unit
- * is carried in the label (e.g. "Frame interval (ms)") so the values stay a
- * clean column of numbers. */
+/** The series' conditions as read-only summary rows (edited via the
+ * Edit-conditions modal). The unit is carried in the label (e.g. "Frame interval
+ * (ms)") so the values stay a clean column of numbers. */
 function conditionItems(detail: DatasetDetail): KV[] {
   const c = detail.conditions;
   return [
@@ -147,22 +147,22 @@ export function SeriesLibrary({
           </div>
           <DL items={conditionItems(detail)} />
           {detail.processed && !detail.conditions_applied && (
-            <Callout tone="caution" title="Re-preprocess required">
-              A tensor-baked condition (frame interval, channel width, or
-              reference velocity) changed since these tensors were built.
-              {trained
-                ? " Re-preprocessing rebuilds them and marks the trained run stale."
-                : " Re-preprocess to rebuild them from the new values."}
-              <div className="ds-conditions-reprocess">
-                <Button
-                  variant="primary"
-                  onClick={onPreprocess}
-                  disabled={preprocessing}
-                >
-                  {preprocessing ? "Re-preprocessing…" : "Re-preprocess"}
-                </Button>
-              </div>
-            </Callout>
+            <div className="ds-reprocess">
+              <Callout tone="caution" title="Re-preprocess required">
+                A tensor-baked condition (frame interval, channel width, or
+                reference velocity) changed since these tensors were built.
+                {trained
+                  ? " Re-preprocessing rebuilds them and marks the trained run stale."
+                  : " Re-preprocess to rebuild them from the new values."}
+              </Callout>
+              <Button
+                variant="primary"
+                onClick={onPreprocess}
+                disabled={preprocessing}
+              >
+                {preprocessing ? "Re-preprocessing…" : "Re-preprocess"}
+              </Button>
+            </div>
           )}
         </section>
       )}
