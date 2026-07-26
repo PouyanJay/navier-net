@@ -94,3 +94,129 @@ def boundary_losses(model, inlet_x, wall_x, u_inlet: float) -> torch.Tensor:
     inlet = ((u_in - u_inlet) ** 2).mean() + (v_in**2).mean()
     wall = (u_wall**2).mean() + (v_wall**2).mean()
     return inlet + wall
+
+
+# --- Stage B: momentum + surface tension, energy + evaporation --------------
+
+# Floor on |grad alpha| in the interface-normal and area-density calculations,
+# so curvature and the interfacial delta stay finite where alpha is flat.
+KAPPA_EPS = 1e-3
+
+
+class StageBResiduals(NamedTuple):
+    """Stage-B residual fields evaluated at a batch of collocation points."""
+
+    mom_x: torch.Tensor  # x-momentum residual
+    mom_y: torch.Tensor  # y-momentum residual
+    energy: torch.Tensor  # energy + evaporation residual
+    src_closure: torch.Tensor  # source(x) minus the evaporation closure
+    kappa: torch.Tensor  # interface curvature, for inspection
+    interface_delta: torch.Tensor  # |grad alpha| area-density delta, for inspection
+
+
+def mixture(alpha: torch.Tensor, ratio: float) -> torch.Tensor:
+    """Arithmetic property blend, scaled so liquid (alpha=0) reads 1.
+
+    ``alpha`` is the vapour fraction, so the blend runs from 1 in liquid to
+    ``1/ratio`` in vapour (``ratio`` is the liquid/vapour property ratio).
+    """
+    return (1.0 - alpha) + alpha / ratio
+
+
+def _interface_normal(alpha: torch.Tensor, x: torch.Tensor, eps: float):
+    """Unit interface normal ``grad alpha / |grad alpha|`` and the floored
+    magnitude ``|grad alpha|`` (the interfacial area density)."""
+    a_x, a_y, _ = gradients(alpha, x)
+    grad_mag = torch.sqrt(a_x**2 + a_y**2 + eps**2)
+    return a_x, a_y, a_x / grad_mag, a_y / grad_mag, grad_mag
+
+
+def curvature(alpha: torch.Tensor, x: torch.Tensor, eps: float = KAPPA_EPS) -> torch.Tensor:
+    """Interface curvature ``kappa = -div(grad alpha / |grad alpha|)``.
+
+    The sign is chosen so a compact vapour bubble (alpha high inside) yields a
+    positive curvature, hence a positive Laplace pressure jump.
+    """
+    _, _, nx, ny, _ = _interface_normal(alpha, x, eps)
+    nx_x, _, _ = gradients(nx, x)
+    _, ny_y, _ = gradients(ny, x)
+    return -(nx_x + ny_y)
+
+
+def _laplacian(field: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    f_x, f_y, _ = gradients(field, x)
+    f_xx, _, _ = gradients(f_x, x)
+    _, f_yy, _ = gradients(f_y, x)
+    return f_xx + f_yy
+
+
+def stage_b_residuals(
+    model, x: torch.Tensor, groups: dict, r_int_star: float = 1.0, eps: float = KAPPA_EPS
+) -> StageBResiduals:
+    """Evaluate the Stage-B residuals at collocation points ``x``.
+
+    Every coefficient comes from ``groups`` (never a literal), so the residuals
+    stay consistent with the non-dimensionalisation. ``r_int_star`` is the
+    non-dimensional interfacial resistance closing the evaporation flux; it is a
+    trainable inverse unknown supplied by the trainer.
+    """
+    re = groups["Re"]
+    we = groups["We"]
+    pe = groups["Pe"]
+    c_hs = groups["hele_shaw"]
+    rho_ratio = groups["rho_ratio"]
+    mu_ratio = groups["mu_ratio"]
+    stefan = groups["Ja"]  # Stefan/Jakob number at the actual superheat
+    q_wall = groups["q_wall_star"]
+
+    alpha = model.alpha(x)
+    u, v = model.velocity(x)
+    p = model.pressure(x)
+    theta = model.temperature(x)  # non-dimensional superheat (T - T_sat)/dT_ref
+    s = model.source(x)
+
+    rho_t = mixture(alpha, rho_ratio)
+    mu_t = mixture(alpha, mu_ratio)
+
+    a_x, a_y, nx, ny, grad_mag = _interface_normal(alpha, x, eps)
+    nx_x, _, _ = gradients(nx, x)
+    _, ny_y, _ = gradients(ny, x)
+    kappa = -(nx_x + ny_y)
+    delta = grad_mag  # interfacial area density (normalised |grad alpha|)
+
+    u_x, u_y, u_t = gradients(u, x)
+    v_x, v_y, v_t = gradients(v, x)
+    p_x, p_y, _ = gradients(p, x)
+    mom_x = (
+        rho_t * (u_t + u * u_x + v * u_y)
+        + p_x
+        - (1.0 / re) * _laplacian(u, x)
+        + c_hs * mu_t * u
+        - (1.0 / we) * kappa * a_x
+    )
+    mom_y = (
+        rho_t * (v_t + u * v_x + v * v_y)
+        + p_y
+        - (1.0 / re) * _laplacian(v, x)
+        + c_hs * mu_t * v
+        - (1.0 / we) * kappa * a_y
+    )
+
+    # Hardt-Wondra evaporation flux and its closures. The mass source dilates
+    # the continuity field; the same flux removes latent heat in energy.
+    j = theta / r_int_star
+    evap = stefan * j * delta
+    s_closure = (rho_ratio - 1.0) * evap
+    src_closure = s - s_closure
+
+    t_x, t_y, t_t = gradients(theta, x)
+    energy = (
+        t_t
+        + u * t_x
+        + v * t_y
+        - (1.0 / pe) * _laplacian(theta, x)
+        - q_wall * (1.0 - alpha)  # wall heating, gated by liquid contact
+        + evap  # latent-heat sink at the interface
+    )
+
+    return StageBResiduals(mom_x, mom_y, energy, src_closure, kappa, delta)
