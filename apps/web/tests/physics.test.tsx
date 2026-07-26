@@ -134,4 +134,39 @@ describe("PhysicsModelView", () => {
     render(<PhysicsModelView datasets={[]} />);
     expect(screen.getByText(/No datasets yet/)).toBeInTheDocument();
   });
+
+  it("applying the Large preset grows the parameter budget", async () => {
+    mockApi();
+    render(<PhysicsModelView datasets={DATASETS} />);
+    const before = (await screen.findByText(/networks · /)).textContent ?? "";
+
+    fireEvent.click(screen.getByRole("radio", { name: /Large/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/networks · /).textContent).not.toEqual(before),
+    );
+    expect(screen.getByText("unsaved changes")).toBeInTheDocument();
+  });
+
+  it("editing a per-field width marks it overridden with a reset control", async () => {
+    mockApi();
+    render(<PhysicsModelView datasets={DATASETS} />);
+    const widthInput = (await screen.findByLabelText("φ→α width")) as HTMLInputElement;
+
+    fireEvent.change(widthInput, { target: { value: "200" } });
+
+    // The override chip appears with a reset-all control.
+    expect(await screen.findByText(/overridden/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "reset all" })).toBeInTheDocument();
+  });
+
+  it("flags an interface epsilon that is too small", async () => {
+    mockApi();
+    render(<PhysicsModelView datasets={DATASETS} />);
+    const eps = (await screen.findByLabelText(/Interface ε/)) as HTMLInputElement;
+
+    fireEvent.change(eps, { target: { value: "0.001" } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/ε/);
+  });
 });
