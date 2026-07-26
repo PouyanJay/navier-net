@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from naviernet_api.services import jobs as jobs_service
 from naviernet_api.services.config_service import compose_cfg
 from naviernet_api.settings import Settings
 
-from naviernet.data.preprocess import usable_frame_numbers
+from naviernet.data.preprocess import BAKED_CONDITION_FIELDS, usable_frame_numbers
 
 
 def test_list_datasets(client):
@@ -200,6 +201,13 @@ def test_preprocess_write_path_end_to_end(tmp_path, monkeypatch):
     assert (tmp_path / "data" / "processed" / "highest_t" / "tensors.npz").is_file()
     assert status.has_qc
 
+    # The real preprocess records the baked-condition snapshot (keyed by the
+    # canonical field list, so this fails loudly if that list changes), and the
+    # freshly built tensors read as current (not stale).
+    meta = datasets_service.tensors_meta(settings, "highest_t")
+    assert set(meta["baked_conditions"]) == set(BAKED_CONDITION_FIELDS)
+    assert datasets_service.conditions_applied(settings, "highest_t") is True
+
 
 def test_patch_conditions_saves_and_recomputes_groups(client):
     baseline = client.get("/api/datasets/sample/groups").json()
@@ -339,6 +347,63 @@ def test_fluid_choice_reaches_the_run_config(repo_root):
     datasets_service.save_conditions(settings, "sample", {"fluid": "hfe7100"})
     overrides = datasets_service.series_overrides(settings, "sample")
     assert "fluid=hfe7100" in overrides
+
+
+# --- baked-condition staleness -----------------------------------------------
+
+
+def test_processed_tensors_start_current(sample_processed, client):
+    """A freshly processed series' tensors match its baked conditions."""
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["processed"] is True
+    assert detail["conditions_applied"] is True
+
+
+def test_editing_a_baked_condition_marks_tensors_stale(sample_processed, client):
+    """Frame interval is baked into the time axis: editing it needs a re-run."""
+    r = client.patch("/api/datasets/sample/conditions", json={"dt_frame_ms": 0.25})
+    assert r.status_code == 200
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["conditions_applied"] is False  # re-preprocess required
+
+
+def test_editing_a_cheap_condition_keeps_tensors_current(sample_processed, client):
+    """Wall heat flux only affects groups/physics, not the tensors: no re-run."""
+    r = client.patch("/api/datasets/sample/conditions", json={"q_wall_W_cm2": 3.5})
+    assert r.status_code == 200
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["conditions_applied"] is True
+
+
+def test_editing_channel_height_is_cheap(sample_processed, client):
+    """Channel height feeds only the dimensionless groups, not the tensors."""
+    r = client.patch("/api/datasets/sample/conditions", json={"channel_height_um": 200.0})
+    assert r.status_code == 200
+    assert client.get("/api/datasets/sample").json()["conditions_applied"] is True
+
+
+def test_unprocessed_series_is_not_flagged_stale(client):
+    """A series with no tensors yet has nothing to be stale about."""
+    detail = client.get("/api/datasets/sample").json()
+    assert detail["processed"] is False
+    assert detail["conditions_applied"] is True
+
+
+def test_legacy_tensors_without_snapshot_are_not_flagged_stale(repo_root):
+    """Tensors written before baked-condition snapshots existed must not raise a
+    false staleness alarm (no snapshot to compare against)."""
+    import numpy as np
+
+    processed = repo_root / "data" / "processed" / "sample"
+    processed.mkdir(parents=True, exist_ok=True)
+    # A meta record with no `baked_conditions` key, as older runs produced.
+    np.savez_compressed(
+        processed / "tensors.npz",
+        meta=json.dumps({"dataset": "sample"}),
+        alpha=np.zeros((1, 2, 2), dtype=np.float32),
+    )
+    settings = Settings(repo_root=repo_root)
+    assert datasets_service.conditions_applied(settings, "sample") is True
 
 
 def test_fluid_id_is_allow_listed_not_a_path(client):

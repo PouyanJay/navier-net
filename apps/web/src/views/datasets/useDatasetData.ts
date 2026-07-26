@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   ApiError,
+  type ConditionsUpdate,
   type DatasetDetail,
   type DatasetSummary,
   type DimensionlessGroups,
@@ -27,6 +28,9 @@ export interface DatasetData {
   /** A rejected or failed exclusion edit, for the sequence panel to surface. */
   exclusionError: string | null;
   runPreprocess: () => Promise<void>;
+  /** Persist an edit to the selected series' operating conditions, then refresh
+   * the detail (incl. the baked-condition staleness flag) and groups. */
+  saveConditions: (updates: ConditionsUpdate) => Promise<void>;
   /** Re-fetch the dataset list (e.g. after a new series is uploaded). */
   refresh: () => Promise<void>;
 }
@@ -174,6 +178,18 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     [selected, loadSelected, setError],
   );
 
+  const saveConditions = useCallback(
+    async (updates: ConditionsUpdate) => {
+      if (!selected) return;
+      await api.updateConditions(selected, updates);
+      // Re-read so the conditions summary, groups, and the baked-condition
+      // staleness flag all reflect the edit.
+      await loadSelected(selected);
+      await refresh();
+    },
+    [selected, loadSelected, refresh],
+  );
+
   return {
     datasets,
     selected,
@@ -185,6 +201,7 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     toggleExcludedFrame,
     exclusionError,
     runPreprocess,
+    saveConditions,
     refresh,
   };
 }

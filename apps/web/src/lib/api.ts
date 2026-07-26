@@ -169,6 +169,9 @@ export interface DatasetDetail extends DatasetSummary {
   excluded_frames: number[];
   /** False when the exclusions above still need a preprocessing re-run. */
   exclusions_applied: boolean;
+  /** False when a tensor-baked condition (frame interval, channel width, or
+   * reference velocity) was edited and the tensors need a re-preprocess. */
+  conditions_applied: boolean;
 }
 
 export type DimensionlessGroups = Record<string, number>;

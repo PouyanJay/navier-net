@@ -49,6 +49,7 @@ const DETAIL = {
   notes: "Frames 1-10 continuous growth.",
   excluded_frames: [] as number[],
   exclusions_applied: false,
+  conditions_applied: true,
   conditions: {
     fluid: "FC-72",
     T_sat_C: 56.6,
@@ -180,6 +181,10 @@ function mockApi({
   };
   // The endpoint replaces the set, so the mock keeps the series' current one.
   let excludedFrames = excluded;
+  // Baked-condition edits make the tensors stale until a re-preprocess, mirroring
+  // the server's conditions_applied flag.
+  const bakedKeys = new Set(["dt_frame_ms", "channel_width_um", "U_ref"]);
+  let conditionsApplied = true;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string | URL, opts?: RequestInit) => {
@@ -217,6 +222,9 @@ function mockApi({
       if (u.endsWith("/conditions") && opts?.method === "PATCH") {
         const body = JSON.parse(String(opts.body));
         calls.conditionPatches.push(body);
+        if (Object.keys(body).some((k) => bakedKeys.has(k))) {
+          conditionsApplied = false; // a baked edit needs a re-preprocess
+        }
         return json({
           conditions: { ...DETAIL.conditions, ...body },
           groups: { ...GROUPS, Re: 431.0 },
@@ -237,6 +245,7 @@ function mockApi({
       if (pre) {
         if (post) {
           calls.startPreprocess.push(pre[1]);
+          conditionsApplied = true; // a re-preprocess re-bakes the current conditions
           return json({ ...IDLE, dataset: pre[1], state: "running" });
         }
         // Once started, the job settles immediately so polling flows finish.
@@ -280,6 +289,7 @@ function mockApi({
           processed,
           holdout_frame: holdout,
           excluded_frames: excludedFrames,
+          conditions_applied: conditionsApplied,
           um_per_px: umPerPx ?? DETAIL.um_per_px,
         });
       }
@@ -332,6 +342,175 @@ describe("DatasetsView", () => {
     expect(inputs.getByText("Reference velocity (m·s⁻¹)")).toBeInTheDocument();
   });
 
+  it("edits a cheap condition live, without requiring a re-preprocess", async () => {
+    const calls = mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // Open the editor from the read-only conditions summary.
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Wall heat flux/), {
+      target: { value: "3.5" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+
+    await waitFor(() =>
+      expect(calls.conditionPatches).toContainEqual(
+        expect.objectContaining({ q_wall_W_cm2: 3.5 }),
+      ),
+    );
+    // A cheap edit does not make the tensors stale.
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Re-preprocess required/i),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("warns and requires a re-preprocess after a baked-condition edit", async () => {
+    const calls = mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+
+    // The stale banner appears with a re-preprocess action…
+    const banner = await screen.findByText(/Re-preprocess required/i);
+    expect(banner).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Re-preprocess/i }));
+    await waitFor(() => expect(calls.startPreprocess).toContain("sample"));
+  });
+
+  it("keeps save disabled for an out-of-range condition", async () => {
+    mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Frame interval/), {
+      target: { value: "-1" }, // below the server's lower bound
+    });
+    expect(dialog.getByLabelText(/Frame interval/)).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(dialog.getByRole("button", { name: /Save/ })).toBeDisabled();
+  });
+
+  it("flags a baked field inline while editing a processed series", async () => {
+    mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    // No note until a baked value actually changes.
+    expect(dialog.queryByText(/requires a re-preprocess/i)).toBeNull();
+    fireEvent.change(dialog.getByLabelText(/Channel width/), {
+      target: { value: "350" },
+    });
+    expect(dialog.getByText(/requires a re-preprocess/i)).toBeInTheDocument();
+  });
+
+  it("closes the editor on cancel without saving", async () => {
+    const calls = mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Edit .*conditions/,
+    });
+    fireEvent.change(within(dialog).getByLabelText(/Wall heat flux/), {
+      target: { value: "9.9" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Cancel/ }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: /Edit .*conditions/ }),
+      ).toBeNull(),
+    );
+    expect(calls.conditionPatches).toEqual([]);
+  });
+
+  it("surfaces a failed conditions save", async () => {
+    mockApi({ processed: true });
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/conditions") && opts?.method === "PATCH") {
+          return new Response(
+            JSON.stringify({ detail: "q_wall out of range" }),
+            {
+              status: 400,
+            },
+          );
+        }
+        return original(url, opts);
+      },
+    );
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Wall heat flux/), {
+      target: { value: "3.5" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      /Could not save the conditions/,
+    );
+  });
+
+  it("warns that a baked edit marks the trained run stale", async () => {
+    mockApi({ processed: true });
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/api/runs")) {
+          return json([{ id: "r1", dataset: "sample", status: "trained" }]);
+        }
+        return original(url, opts);
+      },
+    );
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Reference velocity/), {
+      target: { value: "0.4" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+    expect(
+      await screen.findByText(/marks the trained run stale/i),
+    ).toBeInTheDocument();
+  });
+
   it("defines a dimensionless group and reads back its value on selection", async () => {
     mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
@@ -339,7 +518,9 @@ describe("DatasetsView", () => {
     // Capillary number is the default selection: it explains the group and the
     // regime its value puts the run in.
     const ca = within(
-      await screen.findByRole("region", { name: /Capillary number definition/ }),
+      await screen.findByRole("region", {
+        name: /Capillary number definition/,
+      }),
     );
     expect(ca.getByText(/Viscous drag ÷ surface tension/)).toBeInTheDocument();
     expect(ca.getByText(/Bretherton film/)).toBeInTheDocument();
@@ -349,7 +530,9 @@ describe("DatasetsView", () => {
     const re = within(
       await screen.findByRole("region", { name: /Reynolds number definition/ }),
     );
-    expect(re.getByText(/Inertial forces ÷ viscous forces/)).toBeInTheDocument();
+    expect(
+      re.getByText(/Inertial forces ÷ viscous forces/),
+    ).toBeInTheDocument();
     expect(re.getByText(/Laminar/)).toBeInTheDocument();
   });
 
@@ -1048,9 +1231,7 @@ describe("new series conditions", () => {
     const fluid = await form.findByLabelText("Working fluid");
     expect(form.getByText(/56\.6/)).toBeInTheDocument();
     // There is no editable T_sat field any more.
-    expect(
-      form.queryByRole("spinbutton", { name: /saturation/i }),
-    ).toBeNull();
+    expect(form.queryByRole("spinbutton", { name: /saturation/i })).toBeNull();
 
     // Choosing water updates the read-only saturation temperature.
     fireEvent.change(fluid, { target: { value: "water" } });
@@ -1177,7 +1358,9 @@ describe("new series conditions", () => {
 
     // No fluid to commit to → the flow cannot proceed (no silent default).
     // Wait a tick for the (empty) catalogue fetch to resolve before asserting.
-    await waitFor(() => expect(form.getByLabelText("Working fluid")).toBeEnabled());
+    await waitFor(() =>
+      expect(form.getByLabelText("Working fluid")).toBeEnabled(),
+    );
     expect(submit()).toBeDisabled();
   });
 });
@@ -1240,8 +1423,7 @@ describe("QC chart axes", () => {
 describe("frame boundary overlay", () => {
   // A calibrated, processed series is what makes the overlay possible: the
   // rings need µm/px and the raw frame size to land on real pixels.
-  const calibrated = () =>
-    mockApi({ processed: true, umPerPx: 100 });
+  const calibrated = () => mockApi({ processed: true, umPerPx: 100 });
 
   async function enlarge(frame: number) {
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
@@ -1295,9 +1477,7 @@ describe("frame boundary overlay", () => {
     mockApi({ processed: true }); // um_per_px stays null
     const dialog = await enlarge(1);
 
-    expect(
-      dialog.queryByRole("button", { name: "Boundary" }),
-    ).toBeNull();
+    expect(dialog.queryByRole("button", { name: "Boundary" })).toBeNull();
     expect(document.querySelector(".frame-overlay")).toBeNull();
   });
 });
