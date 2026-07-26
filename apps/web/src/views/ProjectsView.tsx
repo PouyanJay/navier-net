@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Button, Callout, Chip } from "../components";
 import { useToast } from "../components/Toast";
@@ -349,11 +350,13 @@ function DeleteProjectDialog({
     });
   };
 
-  return (
+  // Portalled to <body> so the fixed overlay is positioned against the viewport,
+  // not the card: `.pcard-clickable`'s hover transform makes the card a
+  // containing block, which would anchor the modal to it (and jitter with hover).
+  return createPortal(
     <div
       className="modal-ov"
       role="presentation"
-      onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
@@ -388,7 +391,8 @@ function DeleteProjectDialog({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
