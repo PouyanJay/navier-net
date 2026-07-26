@@ -389,6 +389,111 @@ describe("DatasetsView", () => {
     await waitFor(() => expect(calls.startPreprocess).toContain("sample"));
   });
 
+  it("keeps save disabled for an out-of-range condition", async () => {
+    mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Frame interval/), {
+      target: { value: "-1" }, // below the server's lower bound
+    });
+    expect(dialog.getByLabelText(/Frame interval/)).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(dialog.getByRole("button", { name: /Save/ })).toBeDisabled();
+  });
+
+  it("flags a baked field inline while editing a processed series", async () => {
+    mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    // No note until a baked value actually changes.
+    expect(dialog.queryByText(/requires a re-preprocess/i)).toBeNull();
+    fireEvent.change(dialog.getByLabelText(/Channel width/), {
+      target: { value: "350" },
+    });
+    expect(dialog.getByText(/requires a re-preprocess/i)).toBeInTheDocument();
+  });
+
+  it("closes the editor on cancel without saving", async () => {
+    const calls = mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    const dialog = await screen.findByRole("dialog", {
+      name: /Edit .*conditions/,
+    });
+    fireEvent.change(within(dialog).getByLabelText(/Wall heat flux/), {
+      target: { value: "9.9" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Cancel/ }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: /Edit .*conditions/ }),
+      ).toBeNull(),
+    );
+    expect(calls.conditionPatches).toEqual([]);
+  });
+
+  it("surfaces a failed conditions save", async () => {
+    mockApi({ processed: true });
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/conditions") && opts?.method === "PATCH") {
+          return new Response(JSON.stringify({ detail: "q_wall out of range" }), {
+            status: 400,
+          });
+        }
+        return original(url, opts);
+      },
+    );
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Wall heat flux/), {
+      target: { value: "3.5" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      /Could not save the conditions/,
+    );
+  });
+
+  it("warns that a baked edit marks the trained run stale", async () => {
+    mockApi({ processed: true });
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(
+      async (url: string | URL, opts?: RequestInit) => {
+        if (String(url).endsWith("/api/runs")) {
+          return json([{ id: "r1", dataset: "sample", status: "trained" }]);
+        }
+        return original(url, opts);
+      },
+    );
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit conditions/ }));
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Reference velocity/), {
+      target: { value: "0.4" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+    expect(
+      await screen.findByText(/marks the trained run stale/i),
+    ).toBeInTheDocument();
+  });
+
   it("defines a dimensionless group and reads back its value on selection", async () => {
     mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
