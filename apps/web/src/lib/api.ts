@@ -416,6 +416,8 @@ export const api = {
       "PATCH",
       fields,
     ),
+  deleteProject: (id: string) =>
+    send<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`, "DELETE"),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),

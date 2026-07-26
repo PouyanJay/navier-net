@@ -86,6 +86,11 @@ export function ProjectsView({
     onChanged?.();
   };
 
+  const removeProject = (id: string) => {
+    setProjects((current) => (current ?? []).filter((p) => p.id !== id));
+    onChanged?.();
+  };
+
   return (
     <div className="project-grid">
       {projects.map((project) => (
@@ -101,6 +106,7 @@ export function ProjectsView({
           }}
           onOpen={onOpen}
           onSaved={replaceProject}
+          onDeleted={removeProject}
         />
       ))}
       {creating ? (
@@ -168,13 +174,17 @@ function ProjectCard({
   facts,
   onOpen,
   onSaved,
+  onDeleted,
 }: {
   facts: ProjectFacts;
   onOpen: (project: ProjectSummary) => void;
   onSaved: (project: ProjectSummary) => void;
+  onDeleted: (id: string) => void;
 }) {
   const { project } = facts;
+  const toast = useToast();
   const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const dots = stageDots(facts);
 
   if (editing) {
@@ -225,6 +235,18 @@ function ProjectCard({
         <span className="pfoot-actions">
           <button
             type="button"
+            className="btn ghost danger picon"
+            aria-label={`Delete ${project.name}`}
+            title="Delete project"
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmingDelete(true);
+            }}
+          >
+            <TrashIcon />
+          </button>
+          <button
+            type="button"
             className="btn ghost"
             onClick={(e) => {
               e.stopPropagation();
@@ -244,6 +266,127 @@ function ProjectCard({
             Open →
           </button>
         </span>
+      </div>
+      {confirmingDelete && (
+        <DeleteProjectDialog
+          project={project}
+          datasetCount={facts.datasets.length}
+          runCount={facts.runs.length}
+          onClose={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await api.deleteProject(project.id);
+            toast("Project deleted", project.name, "ok");
+            onDeleted(project.id);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Recycle-bin glyph, drawn in the house SVG style (16-grid, 1.4 stroke). */
+function TrashIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M2.6 4.1h10.8" />
+      <path d="M6.4 4.1V2.7h3.2v1.4" />
+      <path d="M4 4.1l.55 8.1a1 1 0 0 0 1 .93h4.9a1 1 0 0 0 1-.93L12 4.1" />
+      <path d="M6.5 6.6v4M9.5 6.6v4" />
+    </svg>
+  );
+}
+
+/** Confirm-and-delete overlay: a project's data and runs are removed for good,
+ * so the destructive action is gated behind an explicit confirmation. */
+function DeleteProjectDialog({
+  project,
+  datasetCount,
+  runCount,
+  onClose,
+  onConfirm,
+}: {
+  project: ProjectSummary;
+  datasetCount: number;
+  runCount: number;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
+
+  const owned = [
+    datasetCount > 0
+      ? `${datasetCount} dataset${datasetCount === 1 ? "" : "s"}`
+      : null,
+    runCount > 0 ? `${runCount} run${runCount === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+
+  const runDelete = () => {
+    setBusy(true);
+    setError(null);
+    // On success the card unmounts, taking this dialog with it, so we leave
+    // `busy` set; only a failure returns control here to surface the reason.
+    onConfirm().catch((err) => {
+      setError(errorMessage(err));
+      setBusy(false);
+    });
+  };
+
+  return (
+    <div
+      className="modal-ov"
+      role="presentation"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
+    >
+      <div
+        className="modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="del-title"
+        aria-describedby="del-desc"
+      >
+        <div className="hd">
+          <h2 id="del-title">Delete project</h2>
+          <span className="sub">permanent</span>
+        </div>
+        <div className="body">
+          <p id="del-desc" className="del-msg">
+            Delete <b>{project.name}</b>
+            {owned.length > 0 ? <> and its {owned.join(" and ")}</> : null}? Its
+            data and outputs are removed from disk. Anything still shared with
+            another project is kept.
+          </p>
+          <Callout tone="caution">This cannot be undone.</Callout>
+          {error && <Callout tone="error">{error}</Callout>}
+          <div className="pform-actions">
+            <Button variant="danger" onClick={runDelete} disabled={busy}>
+              {busy ? "Deleting…" : "Delete project"}
+            </Button>
+            <Button onClick={onClose} disabled={busy} autoFocus>
+              Cancel
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );

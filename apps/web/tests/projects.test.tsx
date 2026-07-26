@@ -25,11 +25,12 @@ function json(body: unknown) {
 interface Calls {
   created: { name: string; description: string }[];
   patched: { id: string; body: Record<string, unknown> }[];
+  deleted: string[];
   uploads: string[];
 }
 
 function mockApi(): Calls {
-  const calls: Calls = { created: [], patched: [], uploads: [] };
+  const calls: Calls = { created: [], patched: [], deleted: [], uploads: [] };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string | URL, opts?: RequestInit) => {
@@ -43,12 +44,16 @@ function mockApi(): Calls {
         );
       }
       if (u.endsWith("/api/projects")) return json([LINKED, EMPTY]);
-      const patch = u.match(/\/api\/projects\/([0-9a-f]{32})$/);
-      if (patch && opts?.method === "PATCH") {
+      const byId = u.match(/\/api\/projects\/([0-9a-f]{32})$/);
+      if (byId && opts?.method === "PATCH") {
         const body = JSON.parse(String(opts.body));
-        calls.patched.push({ id: patch[1], body });
-        const base = patch[1] === LINKED.id ? LINKED : EMPTY;
+        calls.patched.push({ id: byId[1], body });
+        const base = byId[1] === LINKED.id ? LINKED : EMPTY;
         return json({ ...base, ...body });
+      }
+      if (byId && opts?.method === "DELETE") {
+        calls.deleted.push(byId[1]);
+        return json(byId[1] === LINKED.id ? LINKED : EMPTY);
       }
       if (u.endsWith("/api/datasets")) {
         return json([
@@ -154,6 +159,50 @@ describe("ProjectsView", () => {
     );
     expect(await screen.findByText("Condensing slug")).toBeInTheDocument();
     expect(onCreatingChange).toHaveBeenCalledWith(false);
+  });
+
+  it("deletes a project only after the confirmation is accepted", async () => {
+    const calls = mockApi();
+    render(<ProjectsView onOpen={vi.fn()} {...noCreate} />);
+
+    await screen.findByText("Microchannel FC-72");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete Microchannel FC-72" }),
+    );
+
+    // The confirmation gates the destructive call; nothing is sent yet.
+    expect(
+      await screen.findByText("This cannot be undone."),
+    ).toBeInTheDocument();
+    expect(calls.deleted).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete project" }));
+
+    await waitFor(() => expect(calls.deleted).toEqual([LINKED.id]));
+    // The card is gone; the untouched project stays.
+    await waitFor(() =>
+      expect(screen.queryByText("Microchannel FC-72")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Film boiling sweep")).toBeInTheDocument();
+  });
+
+  it("keeps the project when the confirmation is cancelled", async () => {
+    const calls = mockApi();
+    render(<ProjectsView onOpen={vi.fn()} {...noCreate} />);
+
+    await screen.findByText("Microchannel FC-72");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete Microchannel FC-72" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("This cannot be undone."),
+      ).not.toBeInTheDocument(),
+    );
+    expect(calls.deleted).toEqual([]);
+    expect(screen.getByText("Microchannel FC-72")).toBeInTheDocument();
   });
 
   it("shows the API's rejection instead of silently failing", async () => {

@@ -3,13 +3,15 @@
 A "run" is a directory under `outputs/` that the pipeline produced. This module
 locates its artifacts through the reused `RunPaths` layout (constructed directly,
 no Hydra composition needed) and reads the JSON the pipeline already writes. It
-performs no training and never mutates a run.
+performs no training; the only run it mutates is one it deletes wholesale
+(:func:`delete_run`).
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,6 +47,19 @@ def _safe_run_dir(settings: Settings, run_id: str) -> Path | None:
     if not run_dir.is_relative_to(outputs) or not run_dir.is_dir():
         return None
     return run_dir
+
+
+def delete_run(settings: Settings, run_id: str) -> bool:
+    """Remove a run's output directory. Returns True if it existed.
+
+    Confined to `outputs/` (SECURITY.md §3); an invalid or unknown id is a no-op.
+    """
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        return False
+    shutil.rmtree(run_dir)
+    log.info("deleted run %s", run_id)
+    return True
 
 
 def _run_paths(settings: Settings, run_id: str, dataset: str | None) -> RunPaths:

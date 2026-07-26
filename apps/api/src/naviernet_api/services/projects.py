@@ -21,6 +21,7 @@ from pathlib import Path
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import ProjectSummary, ProjectUpdate
 from naviernet_api.services import datasets as datasets_service
+from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings
 
 log = get_logger(__name__)
@@ -191,3 +192,44 @@ def update_project(
         )
         _write(settings, updated)
     return updated
+
+
+def _datasets_of_other_projects(settings: Settings, exclude_id: str) -> set[str]:
+    """Every dataset referenced by a project other than `exclude_id`.
+
+    Reads the project files directly (no materialization), so it is safe to call
+    while already holding `_lock` — unlike `list_projects`, which takes it.
+    """
+    shared: set[str] = set()
+    if settings.projects_dir.is_dir():
+        for path in settings.projects_dir.glob("*.json"):
+            if path.stem == exclude_id:
+                continue
+            other = _read(path)
+            if other is not None:
+                shared.update(other.datasets)
+    return shared
+
+
+def delete_project(settings: Settings, project_id: str) -> ProjectSummary | None:
+    """Delete a project and the data and outputs it exclusively owns.
+
+    A dataset still referenced by another project — and that dataset's runs —
+    is preserved; only series this project alone holds have their raw and
+    processed directories and their runs removed. Returns the deleted project,
+    or None if the id is unknown (mirrors `update_project`, so the route can 404).
+    """
+    with _lock:
+        project = get_project(settings, project_id)
+        if project is None:
+            return None
+        shared = _datasets_of_other_projects(settings, project_id)
+        owned = [dataset for dataset in project.datasets if dataset not in shared]
+        for run in runs_service.list_runs(settings):
+            if run.dataset in owned:
+                runs_service.delete_run(settings, run.id)
+        for dataset in owned:
+            datasets_service.delete_dataset(settings, dataset)
+        _path(settings, project_id).unlink(missing_ok=True)
+    log.info("deleted project %s (%d owned dataset(s) removed)", project_id, len(owned))
+    return project

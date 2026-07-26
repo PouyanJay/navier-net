@@ -186,6 +186,61 @@ def test_list_is_sorted_oldest_first(repo_root: Path):
     assert ids.index(a.id) < ids.index(b.id)
 
 
+def _materialized_sample_id(client) -> str:
+    """The id of the project auto-created for the `sample` raw dataset."""
+    materialized = [p for p in client.get("/api/projects").json() if "sample" in p["datasets"]]
+    assert len(materialized) == 1
+    return materialized[0]["id"]
+
+
+def _stage_run(repo_root: Path, run_name: str, dataset: str) -> Path:
+    """A minimal run directory under `outputs/` tied to `dataset`."""
+    run = repo_root / "outputs" / run_name
+    run.mkdir(parents=True)
+    (run / "metrics.json").write_text(json.dumps({"run_name": run_name, "dataset": dataset}))
+    return run
+
+
+def test_delete_project_removes_file_and_owned_data(client, sample_processed, repo_root: Path):
+    project_id = _materialized_sample_id(client)
+    run = _stage_run(repo_root, "sample_run", "sample")
+    raw = repo_root / "data" / "raw" / "sample"
+    processed = repo_root / "data" / "processed" / "sample"
+    assert raw.is_dir() and processed.is_dir() and run.is_dir()
+
+    r = client.delete(f"/api/projects/{project_id}")
+    assert r.status_code == 200
+    assert r.json()["id"] == project_id
+
+    # The project file and everything it exclusively owned are gone from disk.
+    assert not (repo_root / "projects" / f"{project_id}.json").exists()
+    assert not raw.exists()
+    assert not processed.exists()
+    assert not run.exists()
+    # A second delete finds nothing to remove.
+    assert client.delete(f"/api/projects/{project_id}").status_code == 404
+
+
+def test_delete_keeps_a_dataset_shared_with_another_project(client, repo_root: Path):
+    first = client.post("/api/projects", json={"name": "keeper"}).json()
+    second = client.post("/api/projects", json={"name": "goner"}).json()
+    for project in (first, second):
+        client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample"]})
+
+    assert client.delete(f"/api/projects/{second['id']}").status_code == 200
+
+    # The shared series and its raw data survive for the project still using it.
+    assert (repo_root / "data" / "raw" / "sample").is_dir()
+    kept = client.get(f"/api/projects/{first['id']}").json()
+    assert kept["datasets"] == ["sample"]
+
+
+def test_delete_unknown_or_malformed_id_is_404(client):
+    assert client.delete(f"/api/projects/{'0' * 32}").status_code == 404
+    # Not uuid4().hex-shaped: rejected before it can touch the filesystem.
+    assert client.delete("/api/projects/not-a-uuid").status_code == 404
+
+
 def test_patch_validates_every_dataset_in_the_list(client, tiff_bytes):
     files = [("files", ("1.tif", tiff_bytes, "image/tiff"))]
     assert client.post("/api/datasets/second/upload", files=files).status_code == 200

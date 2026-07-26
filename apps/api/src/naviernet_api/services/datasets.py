@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -95,6 +96,20 @@ def _raw_dir(settings: Settings, dataset: str) -> Path | None:
 
 def _processed_dir(settings: Settings, dataset: str) -> Path | None:
     return _confined(settings.repo_root / "data" / "processed", dataset)
+
+
+def delete_dataset(settings: Settings, dataset: str) -> bool:
+    """Remove a dataset's raw and processed directories from disk.
+
+    Returns whether the raw directory existed. Both paths are confined to the
+    data roots (SECURITY.md §3), so an invalid or out-of-tree id is a no-op.
+    """
+    raw = _raw_dir(settings, dataset)
+    existed = raw is not None and raw.is_dir()
+    for directory in (raw, _processed_dir(settings, dataset)):
+        if directory is not None and directory.is_dir():
+            shutil.rmtree(directory)
+    return existed
 
 
 def _count_frames(raw_dir: Path) -> int:

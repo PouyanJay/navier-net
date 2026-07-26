@@ -751,6 +751,14 @@
   gap: var(--s1);
 }
 
+/* Confirm-delete dialog message: readable prose above the destructive action. */
+.modal .del-msg {
+  margin: 0;
+  color: var(--ink2);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 /* Inline name/description editing (create + edit share this form) */
 .pform {
   display: flex;

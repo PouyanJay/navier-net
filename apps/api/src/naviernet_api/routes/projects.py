@@ -51,3 +51,16 @@ def update_project(
     if updated is None:
         raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
     return updated
+
+
+@router.delete("/{project_id}", response_model=ProjectSummary)
+def delete_project(
+    project_id: str, settings: Settings = Depends(get_settings)
+) -> ProjectSummary:
+    """Delete a project and the data and outputs it exclusively owns. Datasets
+    shared with another project (and their runs) are left intact. Returns the
+    deleted project."""
+    deleted = projects_service.delete_project(settings, project_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail=f"project {project_id!r} not found")
+    return deleted
