@@ -192,7 +192,17 @@ export function App() {
             onProjectChanged={handleProjectChanged}
           />
         )}
-        {active === "physics" && <PhysicsModelView />}
+        {active === "physics" && (
+          <PhysicsModelView
+            datasets={
+              repo
+                ? project
+                  ? repo.datasets.filter((d) => project.datasets.includes(d.id))
+                  : repo.datasets
+                : []
+            }
+          />
+        )}
         {active === "solver" && <SolverView onRunState={handleRunState} />}
       </div>
     </AppShell>

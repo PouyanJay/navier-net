@@ -1,0 +1,24 @@
+# Stage B architecture: the Stage-A fields plus pressure (unlocked by the
+# momentum residual) and temperature (unlocked by energy + evaporation).
+#
+# The interface field phi carries the highest spectral load; p and T are
+# smoother, so they default to smaller per-field networks (deltas from the
+# shared architecture -- absent keys fall back to the globals below).
+
+defaults:
+  - base_model
+
+hidden: 96
+layers: 4
+
+fourier_feats: 64
+fourier_scale: 3.0 # std-dev of the Gaussian frequency matrix
+
+alpha_eps: 0.05 # interface half-thickness (non-dimensional)
+nodewise_activation: true # per-neuron adaptive tanh slopes
+
+fields: [phi, u, v, s, p, T]
+
+per_field:
+  p: { hidden: 64, layers: 3 }
+  T: { hidden: 64, layers: 3 }

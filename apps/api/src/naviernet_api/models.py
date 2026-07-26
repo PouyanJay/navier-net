@@ -335,6 +335,15 @@ class SweepStatus(BaseModel):
     children: list[RunJobStatus]
 
 
+class PerFieldArch(BaseModel):
+    """A per-field architecture override; unset keys fall back to the globals."""
+
+    model_config = {"extra": "forbid"}  # a stray/typo'd key is a client bug, not silence
+
+    hidden: int | None = Field(default=None, ge=8, le=1024)
+    layers: int | None = Field(default=None, ge=1, le=32)
+
+
 class ModelArchitecture(BaseModel):
     """The PINN field-ensemble architecture (from the model config)."""
 
@@ -345,6 +354,61 @@ class ModelArchitecture(BaseModel):
     fourier_scale: float
     alpha_eps: float
     nodewise_activation: bool
+    per_field: dict[str, PerFieldArch] = Field(default_factory=dict)
+
+
+class ModelUpdate(BaseModel):
+    """A model-architecture edit: any global left unset keeps its current value;
+    ``per_field`` maps a field name to its width/depth override.
+
+    Bounds mirror ``datasets.MODEL_ARCH_FIELDS`` so field-level 422s and the
+    service's 400s agree on the same limits.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    hidden: int | None = Field(default=None, ge=8, le=1024)
+    layers: int | None = Field(default=None, ge=1, le=32)
+    fourier_feats: int | None = Field(default=None, ge=4, le=512)
+    fourier_scale: float | None = Field(default=None, ge=0.1, le=100.0)
+    alpha_eps: float | None = Field(default=None, ge=1e-4, le=1.0)
+    per_field: dict[str, PerFieldArch] | None = None
+
+
+class EquationState(BaseModel):
+    """One governing equation as the Physics view shows it: its metadata from the
+    registry plus whether it is currently active and its loss weight."""
+
+    id: str
+    name: str
+    stage: Literal["A", "B"]
+    tex: str
+    weight_key: str
+    fields_required: list[str]
+    fields_added: list[str]
+    groups: list[str]
+    core: bool
+    enabled: bool
+    weight: float
+
+
+class PhysicsState(BaseModel):
+    """The equation set for a dataset, its resulting fields, and the live groups."""
+
+    dataset: str
+    equations: list[EquationState]
+    fields: list[str]
+    groups: dict[str, float]
+
+
+class PhysicsUpdate(BaseModel):
+    """A physics edit: which toggleable Stage-B equations are on, and any
+    Stage-B per-equation loss-weight overrides."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: list[str] = Field(default_factory=list)
+    weights: dict[str, float] = Field(default_factory=dict)
 
 
 class PhysicsValidation(BaseModel):

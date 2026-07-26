@@ -17,7 +17,7 @@ so they can never drift out of sync with the values they depend on.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
@@ -110,6 +110,17 @@ class ScalesConfig:
 
 
 @dataclass
+class FieldArch:
+    """Per-field architecture override. Any field left ``None`` falls back to the
+    global ``ModelConfig`` value, so a per-field entry stores only its deltas."""
+
+    hidden: Optional[int] = None  # noqa: UP045 -- OmegaConf needs Optional, not X | None
+    layers: Optional[int] = None  # noqa: UP045
+    fourier_feats: Optional[int] = None  # noqa: UP045
+    fourier_scale: Optional[float] = None  # noqa: UP045
+
+
+@dataclass
 class ModelConfig:
     """Fourier-feature MLP ensemble -- one network per physical field."""
 
@@ -122,17 +133,25 @@ class ModelConfig:
     alpha_eps: float = MISSING
     nodewise_activation: bool = True  # per-neuron adaptive tanh slopes
     fields: list[str] = MISSING
+    # Optional per-field architecture overrides, keyed by field name. Absent =
+    # every field uses the global architecture above (Stage-A behaviour).
+    per_field: dict[str, FieldArch] = field(default_factory=dict)
 
 
 @dataclass
 class LossWeights:
-    """Initial multipliers; ``vof``/``div``/``bc`` are rebalanced during training."""
+    """Initial multipliers; ``vof``/``div``/``bc`` (and Stage-B ``mom``/``energy``)
+    are rebalanced during training. Stage-B terms default to 1.0 so Stage-A
+    configs compose unchanged -- they are inert while their equations are off."""
 
     data: float = MISSING
     vof: float = MISSING
     div: float = MISSING
     src: float = MISSING
     bc: float = MISSING
+    mom: float = 1.0  # Stage B: momentum
+    energy: float = 1.0  # Stage B: energy
+    evap: float = 1.0  # Stage B: evaporation mass-closure penalty
 
 
 @dataclass
@@ -151,6 +170,10 @@ class TrainingConfig:
 
     weights: LossWeights = MISSING
     rebalance_every: int = MISSING  # gradient-norm loss rebalancing period
+    # Stage B: steps over which the evaporation mass-closure ramps in while the
+    # off-interface source penalty decays (soft -> hard curriculum). 0 disables
+    # the schedule (the penalty and closure keep their static weights).
+    curriculum_steps: int = 0
 
     seed: int = 0
     device: str = "cpu"

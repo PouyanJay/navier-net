@@ -26,31 +26,27 @@ import torch
 
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BubblePINN
+from naviernet.physics import registry
 from naviernet.physics.groups import compute_groups
-from naviernet.physics.residuals import boundary_losses, source_penalty, stage_a_residuals
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
 log = get_logger(__name__)
 
-# Loss terms whose weights the rebalancer adjusts. `data` is the reference
-# scale; `src` is a deliberate soft penalty and stays where it is put.
-REBALANCED_TERMS = ("vof", "div", "bc")
+# Loss terms whose weights the rebalancer adjusts, derived from the registry for
+# the Stage-A field set: `data` is the reference scale and `src` is a deliberate
+# soft penalty, so both stay out. Kept as a module constant for callers that
+# rebalance a Stage-A weight dict directly.
+STAGE_A_FIELDS = ("phi", "u", "v", "s")
+REBALANCED_TERMS = registry.rebalanced_terms(registry.enabled_equations(STAGE_A_FIELDS))
 
 
-def _initial_state(cfg) -> dict:
+def _initial_state(cfg, equations) -> dict:
     weights = cfg.training.weights
-    return {
-        "done": 0,
-        "hist": [],
-        "w": {
-            "data": float(weights.data),
-            "vof": float(weights.vof),
-            "div": float(weights.div),
-            "src": float(weights.src),
-            "bc": float(weights.bc),
-        },
-    }
+    w = {"data": float(weights.data)}
+    for eq in equations:
+        w[eq.weight_key] = float(getattr(weights, eq.weight_key))
+    return {"done": 0, "hist": [], "w": w}
 
 
 def _gradient_norms(model, losses: dict[str, torch.Tensor], opt) -> dict[str, float]:
@@ -65,10 +61,27 @@ def _gradient_norms(model, losses: dict[str, torch.Tensor], opt) -> dict[str, fl
     return norms
 
 
-def _rebalance(weights: dict[str, float], norms: dict[str, float]) -> None:
+def _curriculum(step: int, curriculum_steps: int) -> tuple[float, float]:
+    """Soft -> hard evaporation schedule: ``(src_factor, evap_factor)``.
+
+    Over ``curriculum_steps`` the off-interface source penalty decays 1 -> 0 while
+    the evaporation mass-closure ramps 0 -> 1, so the converged state is the hard
+    closure without the early gradient shock. ``0`` disables the schedule.
+    """
+    if curriculum_steps <= 0:
+        return 1.0, 1.0
+    frac = min(1.0, step / curriculum_steps)
+    return 1.0 - frac, frac
+
+
+def _rebalance(
+    weights: dict[str, float],
+    norms: dict[str, float],
+    terms: tuple[str, ...] = REBALANCED_TERMS,
+) -> None:
     """Nudge weights so each term's gradient matches the data term's. In place."""
     reference = norms["data"] * weights["data"]
-    for name in REBALANCED_TERMS:
+    for name in terms:
         target = reference / norms[name]
         # Half-step towards the target: full steps oscillate.
         weights[name] = float(np.clip(0.5 * weights[name] + 0.5 * target, 1e-2, 1e3))
@@ -92,18 +105,39 @@ def train(
     paths.ensure()
     torch.manual_seed(tcfg.seed)
 
-    u_inlet = compute_groups(cfg)["u_inlet_star"]
+    groups = compute_groups(cfg)
+    u_inlet = groups["u_inlet_star"]
     data = BubbleDataset(cfg, paths, device=str(device))
     model = BubblePINN(cfg).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
-    state = _initial_state(cfg)
+    equations = registry.enabled_equations(cfg.model.fields)
+    rebalanced = registry.rebalanced_terms(equations)
+    state = _initial_state(cfg, equations)
     if paths.checkpoint.exists():
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model"])
-        opt.load_state_dict(ckpt["opt"])
-        state = ckpt["state"]
-        log.info("resuming from %s at step %d", paths.checkpoint, state["done"])
+        incompatible = model.load_state_dict(ckpt["model"], strict=False)
+        if incompatible.unexpected_keys:
+            raise RuntimeError(
+                f"checkpoint {paths.checkpoint} has parameters not in this model: "
+                f"{incompatible.unexpected_keys}"
+            )
+        if incompatible.missing_keys:
+            # Warm start: e.g. a Stage-A checkpoint feeding a Stage-B run. Keep the
+            # loaded fields, initialise the new ones fresh, start the optimiser
+            # over, and carry the step count and Stage-A weights forward.
+            log.info(
+                "warm start from %s: %d fresh parameters for new fields",
+                paths.checkpoint,
+                len(incompatible.missing_keys),
+            )
+            state["w"].update(ckpt["state"]["w"])
+            state["done"] = ckpt["state"]["done"]
+            state["hist"] = ckpt["state"]["hist"]
+        else:
+            opt.load_state_dict(ckpt["opt"])
+            state = ckpt["state"]
+            log.info("resuming from %s at step %d", paths.checkpoint, state["done"])
 
     # Offset the seed by completed steps so a resumed run does not replay the
     # same sample sequence it already saw.
@@ -124,20 +158,20 @@ def train(
         x_coll = data.sample_collocation(tcfg.n_coll, rng)
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
 
-        residuals = stage_a_residuals(model, x_coll)
-        losses = {
-            "data": ((model.alpha(x_data) - alpha_target) ** 2).mean(),
-            "vof": (residuals.vof**2).mean(),
-            "div": (residuals.div**2).mean(),
-            "src": source_penalty(residuals),
-            "bc": boundary_losses(model, inlet, walls, u_inlet),
-        }
+        ctx = registry.LossContext(model, x_coll, inlet, walls, u_inlet, groups)
+        losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
+        for eq in equations:
+            losses[eq.weight_key] = eq.term(ctx)
 
         if step % tcfg.rebalance_every == 0:
-            _rebalance(weights, _gradient_norms(model, losses, opt))
+            _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
-        total = sum(weights[name] * loss for name, loss in losses.items())
+        src_factor, evap_factor = _curriculum(step, tcfg.curriculum_steps)
+        schedule = {"src": src_factor, "evap": evap_factor}
+        total = sum(
+            weights[name] * schedule.get(name, 1.0) * loss for name, loss in losses.items()
+        )
         total.backward()
         opt.step()
 

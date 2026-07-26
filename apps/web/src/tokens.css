@@ -58,6 +58,18 @@
   --console-ok: #4ec08a;
   --console-em: #7fa6f7;
   --console-dim: #586a8a;
+
+  /* Muted caption/label text on the always-dark view canvas (theme-independent). */
+  --viewtxt: #8b97ae;
+
+  /* Per-field hues for the network ensemble. Like the console tones these live
+     only on the always-dark view canvas, so they do not vary with the theme. */
+  --f-phi: #60a5fa;
+  --f-u: #34d399;
+  --f-v: #2dd4bf;
+  --f-s: #fbbf24;
+  --f-p: #a78bfa;
+  --f-t: #fb7185;
   --console-err: #fb7185;
 
   /* Elevation / geometry */

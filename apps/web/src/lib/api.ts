@@ -183,6 +183,12 @@ export interface PreprocessStatus {
   has_qc: boolean;
 }
 
+/** A per-field width/depth override; unset keys fall back to the globals. */
+export interface PerFieldArch {
+  hidden?: number | null;
+  layers?: number | null;
+}
+
 export interface ModelArchitecture {
   fields: string[];
   hidden: number;
@@ -191,6 +197,45 @@ export interface ModelArchitecture {
   fourier_scale: number;
   alpha_eps: number;
   nodewise_activation: boolean;
+  per_field: Record<string, PerFieldArch>;
+}
+
+/** A model-architecture edit; any unset global keeps its current value. */
+export interface ModelUpdate {
+  hidden?: number;
+  layers?: number;
+  fourier_feats?: number;
+  fourier_scale?: number;
+  alpha_eps?: number;
+  per_field?: Record<string, PerFieldArch>;
+}
+
+/** One governing equation as the Physics view shows it (from the registry). */
+export interface EquationState {
+  id: string;
+  name: string;
+  stage: "A" | "B";
+  tex: string;
+  weight_key: string;
+  fields_required: string[];
+  fields_added: string[];
+  groups: string[];
+  core: boolean;
+  enabled: boolean;
+  weight: number;
+}
+
+export interface PhysicsState {
+  dataset: string;
+  equations: EquationState[];
+  fields: string[];
+  groups: Record<string, number>;
+}
+
+/** A physics edit: which toggleable Stage-B equations train, and weight overrides. */
+export interface PhysicsUpdate {
+  enabled: string[];
+  weights: Record<string, number>;
 }
 
 /** Initial loss-term weights for a run (`cfg.training.weights`). */
@@ -400,6 +445,20 @@ export const api = {
 
   getModel: (id: string) =>
     getJson<ModelArchitecture>(`/api/model/${encodeURIComponent(id)}`),
+  updateModel: (id: string, update: ModelUpdate) =>
+    sendJson<ModelArchitecture>(
+      `/api/model/${encodeURIComponent(id)}`,
+      "PUT",
+      update,
+    ),
+  getPhysics: (id: string) =>
+    getJson<PhysicsState>(`/api/physics/${encodeURIComponent(id)}`),
+  updatePhysics: (id: string, update: PhysicsUpdate) =>
+    sendJson<PhysicsState>(
+      `/api/physics/${encodeURIComponent(id)}`,
+      "PUT",
+      update,
+    ),
 
   /** The catalogue of characterised working fluids for the new-series form. */
   listFluids: () => getJson<Fluid[]>("/api/fluids"),

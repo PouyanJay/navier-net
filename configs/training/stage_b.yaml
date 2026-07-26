@@ -1,0 +1,37 @@
+# Stage B optimisation: the Stage-A objective plus momentum, energy, and the
+# evaporation mass closure. The closure is ramped in over `curriculum_steps`
+# while the off-interface source penalty decays (soft -> hard), so the optimiser
+# is not shocked when the free source becomes a hard evaporation constraint.
+#
+# Typically warm-started from a Stage-A checkpoint (point at the same run dir):
+# phi/u/v/s load, p/T and the evaporation unknowns initialise fresh.
+
+defaults:
+  - base_training
+
+steps: 3000
+lr: 2.0e-3
+lr_halflife: 800
+
+n_data: 3072
+n_coll: 3072
+n_bc: 512
+
+holdout_frame: 5
+
+weights:
+  data: 10.0
+  vof: 1.0
+  div: 1.0
+  src: 0.1 # penalises the free source away from the interface (decays over the curriculum)
+  bc: 5.0
+  mom: 1.0
+  energy: 1.0
+  evap: 1.0 # evaporation mass-closure penalty (ramps in over the curriculum)
+
+rebalance_every: 500
+curriculum_steps: 1500 # soft -> hard evaporation schedule
+
+seed: 0
+device: cpu
+log_every: 200

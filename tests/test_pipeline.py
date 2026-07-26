@@ -35,6 +35,153 @@ def test_rebalance_stays_within_bounds():
         assert 1e-2 <= weights[term] <= 1e3
 
 
+def test_stage_a_training_is_byte_for_byte_unchanged(tmp_path):
+    """Guards the equation-registry refactor.
+
+    The Stage-A loss trajectory and rebalanced weights must match the golden
+    captured from the pre-registry trainer. If deriving the active terms from
+    the registry ever changes a number, this fails loudly.
+    """
+    import json
+    from pathlib import Path
+
+    from naviernet.training import train
+
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "stage_a_golden.json").read_text()
+    )
+    cfg = make_config([f"paths.root={tmp_path}", *golden["overrides"]])
+    paths = RunPaths.from_config(cfg)
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    _write_tensors(paths.tensors, list(range(1, 9)), n_event=8)
+
+    _, _, state = train(cfg, paths)
+
+    assert len(state["hist"]) == len(golden["hist"])
+    for got, want in zip(state["hist"], golden["hist"], strict=True):
+        assert got.keys() == want.keys()
+        for key, wanted in want.items():
+            assert got[key] == pytest.approx(wanted, rel=1e-6, abs=1e-8), f"{key} drifted"
+    for key, wanted in golden["w"].items():
+        assert state["w"][key] == pytest.approx(wanted, rel=1e-6, abs=1e-8), (
+            f"weight {key} drifted"
+        )
+
+
+def test_curriculum_ramps_evaporation_in_as_the_source_penalty_decays():
+    """Soft -> hard: at the start the penalty is full and the closure off; by the
+    end the closure is full and the penalty gone. Disabled (0) leaves both at 1."""
+    from naviernet.training import _curriculum
+
+    assert _curriculum(0, 100) == (1.0, 0.0)
+    assert _curriculum(50, 100) == (0.5, 0.5)
+    assert _curriculum(100, 100) == (0.0, 1.0)
+    assert _curriculum(150, 100) == (0.0, 1.0), "clamped past the end"
+    assert _curriculum(50, 0) == (1.0, 1.0), "0 disables the schedule"
+
+
+def test_curriculum_schedule_targets_real_weight_keys():
+    """The trainer applies the schedule by the names 'src' and 'evap'; guard those
+    strings against drifting from the registry's weight keys (else it silently
+    no-ops via schedule.get(name, 1.0))."""
+    from naviernet.physics.registry import REGISTRY
+
+    keys = {e.weight_key for e in REGISTRY}
+    assert {"src", "evap"} <= keys
+
+
+_TINY_TRAIN = [
+    "model.hidden=8",
+    "model.layers=2",
+    "model.fourier_feats=4",
+    "training.n_data=16",
+    "training.n_coll=16",
+    "training.n_bc=8",
+]
+_TINY_STAGE_B = [
+    "model=stage_b",
+    "training=stage_b",
+    "model.per_field.p.hidden=8",
+    "model.per_field.p.layers=2",
+    "model.per_field.T.hidden=8",
+    "model.per_field.T.layers=2",
+]
+
+
+def _stage(paths):
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    _write_tensors(paths.tensors, list(range(1, 9)), n_event=8)
+
+
+def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):
+    """A tiny Stage-B run builds the p/T networks, activates momentum + energy +
+    evaporation, and takes real steps without producing a NaN."""
+    import math
+
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_STAGE_B,
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.rebalance_every=2",
+            "training.curriculum_steps=2",
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    model, _, state = train(cfg, paths)
+
+    assert {"p", "T"} <= set(model.fields)
+    assert {"mom", "energy", "evap"} <= set(state["hist"][-1])
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"{name} was not finite"
+    assert paths.checkpoint.exists()
+
+
+def test_stage_b_warm_starts_from_a_stage_a_checkpoint(tmp_path, caplog):
+    """A Stage-A checkpoint seeds a Stage-B run: phi/u/v/s load, p/T and the
+    evaporation unknowns initialise fresh, and the step count carries forward."""
+    import logging
+
+    from naviernet.training import train
+
+    cfg_a = make_config([f"paths.root={tmp_path}", "training.steps=2", *_TINY_TRAIN])
+    paths = RunPaths.from_config(cfg_a)
+    _stage(paths)
+    _, _, state_a = train(cfg_a, paths)
+    assert state_a["done"] == 2 and "p" not in state_a["w"]
+
+    cfg_b = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_STAGE_B,
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.curriculum_steps=2",
+        ]
+    )
+    with caplog.at_level(logging.INFO, logger="naviernet.training"):
+        model, _, state_b = train(cfg_b, RunPaths.from_config(cfg_b))
+
+    # The warm-start branch ran: it loaded phi/u/v/s (strict=False with only the
+    # new p/T/evaporation params missing) rather than starting from scratch. The
+    # unexpected-key guard would have raised had the checkpoint not matched.
+    assert "warm start" in caplog.text
+    assert {"p", "T"} <= set(model.fields)
+    assert state_b["done"] == 4, "warm start carries the Stage-A step count forward"
+    assert {"mom", "energy", "evap"} <= set(state_b["w"])
+    # The data loss at the first Stage-B step continues from where Stage A left
+    # off (phi loaded), not a fresh-random-net value.
+    assert state_b["hist"][0]["data"] == pytest.approx(state_a["hist"][-1]["data"], rel=0.5)
+
+
 def test_unknown_stage_is_rejected(tiny_cfg):
     with pytest.raises(ValueError, match="unknown stage"):
         Pipeline(tiny_cfg).run("trian")
