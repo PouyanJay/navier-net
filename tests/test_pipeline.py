@@ -81,6 +81,87 @@ def test_curriculum_ramps_evaporation_in_as_the_source_penalty_decays():
     assert _curriculum(50, 0) == (1.0, 1.0), "0 disables the schedule"
 
 
+_TINY_TRAIN = [
+    "model.hidden=8",
+    "model.layers=2",
+    "model.fourier_feats=4",
+    "training.n_data=16",
+    "training.n_coll=16",
+    "training.n_bc=8",
+]
+_TINY_STAGE_B = [
+    "model=stage_b",
+    "training=stage_b",
+    "model.per_field.p.hidden=8",
+    "model.per_field.p.layers=2",
+    "model.per_field.T.hidden=8",
+    "model.per_field.T.layers=2",
+]
+
+
+def _stage(paths):
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    _write_tensors(paths.tensors, list(range(1, 9)), n_event=8)
+
+
+def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):
+    """A tiny Stage-B run builds the p/T networks, activates momentum + energy +
+    evaporation, and takes real steps without producing a NaN."""
+    import math
+
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_STAGE_B,
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.rebalance_every=2",
+            "training.curriculum_steps=2",
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    model, _, state = train(cfg, paths)
+
+    assert {"p", "T"} <= set(model.fields)
+    assert {"mom", "energy", "evap"} <= set(state["hist"][-1])
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"{name} was not finite"
+    assert paths.checkpoint.exists()
+
+
+def test_stage_b_warm_starts_from_a_stage_a_checkpoint(tmp_path):
+    """A Stage-A checkpoint seeds a Stage-B run: phi/u/v/s load, p/T and the
+    evaporation unknowns initialise fresh, and the step count carries forward."""
+    from naviernet.training import train
+
+    cfg_a = make_config([f"paths.root={tmp_path}", "training.steps=2", *_TINY_TRAIN])
+    paths = RunPaths.from_config(cfg_a)
+    _stage(paths)
+    _, _, state_a = train(cfg_a, paths)
+    assert state_a["done"] == 2 and "p" not in state_a["w"]
+
+    cfg_b = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_STAGE_B,
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.curriculum_steps=2",
+        ]
+    )
+    model, _, state_b = train(cfg_b, RunPaths.from_config(cfg_b))
+
+    assert {"p", "T"} <= set(model.fields)
+    assert state_b["done"] == 4, "warm start carries the Stage-A step count forward"
+    assert {"mom", "energy", "evap"} <= set(state_b["w"])
+
+
 def test_unknown_stage_is_rejected(tiny_cfg):
     with pytest.raises(ValueError, match="unknown stage"):
         Pipeline(tiny_cfg).run("trian")
