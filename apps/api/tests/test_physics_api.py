@@ -72,5 +72,22 @@ def test_unknown_equation_is_rejected(client):
 
 
 def test_negative_weight_is_rejected(client):
-    r = client.put("/api/physics/sample", json={"enabled": [], "weights": {"vof": -1.0}})
+    r = client.put("/api/physics/sample", json={"enabled": ["mom"], "weights": {"mom": -1.0}})
     assert r.status_code == 400
+
+
+def test_stage_a_weight_is_not_editable_here(client):
+    """Stage-A weights are owned by the run-launch form, not the physics page."""
+    r = client.put("/api/physics/sample", json={"enabled": [], "weights": {"vof": 2.0}})
+    assert r.status_code == 400
+    assert "vof" in r.json()["detail"]
+
+
+def test_absurd_weight_is_capped(client):
+    r = client.put("/api/physics/sample", json={"enabled": ["mom"], "weights": {"mom": 1e300}})
+    assert r.status_code == 400
+
+
+def test_unknown_field_is_forbidden(client):
+    r = client.put("/api/physics/sample", json={"enabled": [], "weights": {}, "typo": 1})
+    assert r.status_code == 422  # extra="forbid"

@@ -293,15 +293,34 @@ MODEL_ARCH_FIELDS: dict[str, tuple[str, float, float]] = {
     "fourier_scale": ("model.fourier_scale", 0.1, 100.0),
     "alpha_eps": ("model.alpha_eps", 1e-4, 1.0),
 }
+# The Stage-A field set the base architecture always trains (mirrors
+# `configs/model/stage_a.yaml`; a small, stable fact not worth a compose to read).
 _STAGE_A_FIELDS = ("phi", "u", "v", "s")
 FIELD_NAMES = ("phi", "u", "v", "s", "p", "T")
 # The Stage-B equations a series can toggle, keyed by id -> the fields they add.
 _TOGGLEABLE = {e.id: e.fields_added for e in REGISTRY if not e.core and e.fields_added}
-_WEIGHT_KEYS = {e.weight_key for e in REGISTRY}
+# Only the Stage-B equations' loss weights are owned here. The Stage-A weights
+# (data/vof/div/src/bc) belong to the run-launch form (LossWeightsInput); keeping
+# them out of the saved physics config avoids a silent precedence conflict when a
+# run composes both.
+_STAGE_B_WEIGHT_KEYS = {e.weight_key for e in REGISTRY if e.stage == "B"}
+_WEIGHT_MAX = 1e4  # server-side weight bound, matching LossWeightsInput (SECURITY.md §4)
 
 
 class ModelConfigError(ValueError):
     """A rejected model or physics edit (unknown field/equation, bad value)."""
+
+
+def _require_finite(value: object, label: str, lo: float, hi: float) -> None:
+    """Reject a value that is not a finite, in-range, non-bool number."""
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+    ):
+        raise ModelConfigError(f"{label} must be a finite number, got {value!r}")
+    if not lo <= value <= hi:
+        raise ModelConfigError(f"{label} must be within [{lo}, {hi}], got {value!r}")
 
 
 def _model_config_path(settings: Settings, dataset: str) -> Path | None:
@@ -323,19 +342,11 @@ def read_model_config(settings: Settings, dataset: str) -> dict:
 
 
 def _validate_arch(arch: dict) -> None:
-    globals_ = {k: v for k, v in arch.items() if k != "per_field"}
-    for key, value in globals_.items():
+    for key, value in ((k, v) for k, v in arch.items() if k != "per_field"):
         if key not in MODEL_ARCH_FIELDS:
             raise ModelConfigError(f"unknown model field {key!r}")
         _, lo, hi = MODEL_ARCH_FIELDS[key]
-        if (
-            not isinstance(value, (int, float))
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-        ):
-            raise ModelConfigError(f"{key} must be a finite number, got {value!r}")
-        if not lo <= value <= hi:
-            raise ModelConfigError(f"{key} must be within [{lo}, {hi}], got {value!r}")
+        _require_finite(value, key, lo, hi)
     for name, sub in arch.get("per_field", {}).items():
         if name not in FIELD_NAMES:
             raise ModelConfigError(f"unknown field {name!r} in per_field")
@@ -343,35 +354,44 @@ def _validate_arch(arch: dict) -> None:
             if key not in ("hidden", "layers"):
                 raise ModelConfigError(f"per_field.{name}.{key} is not overridable")
             _, lo, hi = MODEL_ARCH_FIELDS[key]
-            if not isinstance(value, int) or isinstance(value, bool) or not lo <= value <= hi:
-                raise ModelConfigError(f"per_field.{name}.{key} must be in [{lo}, {hi}]")
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ModelConfigError(f"per_field.{name}.{key} must be an integer")
+            _require_finite(value, f"per_field.{name}.{key}", lo, hi)
 
 
 def save_model_arch(settings: Settings, dataset: str, arch: dict) -> dict:
-    """Merge validated model-architecture edits (globals + per_field) into the
-    series' model config; returns the full saved config."""
+    """Replace the series' model-architecture config (globals + per_field) with a
+    validated edit; returns the full saved config.
+
+    Full replacement, not a deep merge: the client sends the complete architecture
+    it wants (mirroring ``save_excluded_frames``), so ``per_field`` here is the
+    whole map, and a field the client omits is deliberately no longer overridden.
+    """
     _validate_arch(arch)
     merged = {**read_model_config(settings, dataset), **arch}
     return _write_model_config(settings, dataset, merged)
 
 
-def save_physics(settings: Settings, dataset: str, enabled: list[str], weights: dict) -> dict:
-    """Merge validated physics edits -- which Stage-B equations are on and their
-    loss weights -- into the series' model config; returns the full saved config."""
+def save_physics(settings: Settings, dataset: str, physics: dict) -> dict:
+    """Replace the series' physics config -- which Stage-B equations are on and
+    their loss weights -- with a validated edit; returns the full saved config.
+
+    ``physics`` carries ``enabled`` (equation ids) and ``weights`` (weight_key ->
+    value). Full replacement of both (the client sends the complete set each
+    time). Only Stage-B weights are accepted; Stage-A weights are owned by the
+    run-launch form.
+    """
+    enabled = list(physics.get("enabled", []))
+    weights = dict(physics.get("weights", {}))
     for eid in enabled:
         if eid not in _TOGGLEABLE:
             raise ModelConfigError(f"{eid!r} is not a toggleable equation")
     for key, value in weights.items():
-        if key not in _WEIGHT_KEYS:
-            raise ModelConfigError(f"unknown loss weight {key!r}")
-        if (
-            not isinstance(value, (int, float))
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-        ):
-            raise ModelConfigError(f"weight {key} must be a finite number, got {value!r}")
-        if value < 0:
-            raise ModelConfigError(f"weight {key} must be non-negative, got {value!r}")
+        if key not in _STAGE_B_WEIGHT_KEYS:
+            raise ModelConfigError(
+                f"loss weight {key!r} is not editable here (Stage-A weights are set at run launch)"
+            )
+        _require_finite(value, f"weight {key}", 0.0, _WEIGHT_MAX)
     merged = {
         **read_model_config(settings, dataset),
         "enabled": sorted(set(enabled)),
@@ -391,10 +411,15 @@ def _write_model_config(settings: Settings, dataset: str, config: dict) -> dict:
     return config
 
 
-def series_fields(settings: Settings, dataset: str) -> list[str]:
+def series_fields(settings: Settings, dataset: str, cfg: dict | None = None) -> list[str]:
     """The model fields this series trains: the Stage-A base plus whatever the
-    enabled Stage-B equations add (pressure for momentum, temperature for energy)."""
-    enabled = read_model_config(settings, dataset).get("enabled", [])
+    enabled Stage-B equations add (pressure for momentum, temperature for energy).
+
+    ``cfg`` may be a pre-read model config, to avoid re-reading model.json.
+    """
+    enabled = (cfg if cfg is not None else read_model_config(settings, dataset)).get(
+        "enabled", []
+    )
     added = [f for eid in enabled if eid in _TOGGLEABLE for f in _TOGGLEABLE[eid]]
     return list(_STAGE_A_FIELDS) + added
 
@@ -422,7 +447,7 @@ def model_overrides(settings: Settings, dataset: str) -> list[str]:
         if key in cfg:
             overrides.append(f"{path}={cfg[key]}")
     if cfg.get("enabled") is not None:
-        overrides.append(f"model.fields=[{','.join(series_fields(settings, dataset))}]")
+        overrides.append(f"model.fields=[{','.join(series_fields(settings, dataset, cfg))}]")
     if cfg.get("per_field"):
         overrides.append(f"+model.per_field={_inline_per_field(cfg['per_field'])}")
     for key, value in sorted((cfg.get("weights") or {}).items()):
@@ -488,6 +513,9 @@ def series_overrides(settings: Settings, dataset: str) -> list[str]:
     excluded = read_excluded_frames(settings, dataset)
     if excluded:
         overrides.append(f"experiment.excluded_frames=[{','.join(map(str, excluded))}]")
+    # Model/physics overrides fold into the one series override list too. They
+    # only touch cfg.model / cfg.training.weights, which preprocessing and groups
+    # ignore, so a single list stays cheapest to keep in sync across compose sites.
     overrides.extend(model_overrides(settings, dataset))
     return overrides
 

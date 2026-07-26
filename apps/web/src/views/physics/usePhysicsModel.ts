@@ -13,9 +13,9 @@ import {
   type FieldName,
   fieldParams,
   FIELDS,
+  derivePerField,
   PRESETS,
   type PresetName,
-  STAGE_A_FIELDS,
 } from "./model";
 
 interface Globals {
@@ -177,6 +177,11 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
     setSaving(true);
     setSaveError(null);
     const enabledIds = [...TOGGLEABLE].filter((id) => edit.enabled[id]);
+    // Only Stage-B weights are owned here; Stage-A weights are set at run launch.
+    const weights: Record<string, number> = {};
+    for (const e of edit.equations) {
+      if (e.stage === "B") weights[e.weight_key] = edit.weights[e.weight_key] ?? e.weight;
+    }
     const base = edit.perField.phi;
     const per_field: Record<string, { hidden: number; layers: number }> = {};
     for (const f of ALL_FIELDS) {
@@ -186,7 +191,7 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
       }
     }
     Promise.all([
-      api.updatePhysics(edit.dataset, { enabled: enabledIds, weights: edit.weights }),
+      api.updatePhysics(edit.dataset, { enabled: enabledIds, weights }),
       api.updateModel(edit.dataset, {
         hidden: base.width,
         layers: base.depth,
@@ -205,16 +210,36 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
   if (error) return { status: "error", message: error };
   if (!edit) return { status: "loading" };
 
+  const model: PhysicsModel = {
+    dataset: edit.dataset,
+    groups: edit.groups,
+    preset: edit.preset,
+    perField: edit.perField,
+    globals: edit.globals,
+    activeFields,
+    dirty: edit.dirty,
+    saving,
+    saveError,
+    hydraCommand: buildHydra(edit, activeFields, edit.perField.phi),
+    save,
+    ...deriveView(edit, activeFields),
+    ...buildActions(edit, patch),
+  };
+  return { status: "ready", model };
+}
+
+/** The read-only derived values a view needs: field helpers, counts, and the
+ * equation display list. Pure in ``edit`` + ``activeFields``. */
+function deriveView(edit: EditState, activeFields: FieldName[]) {
   const fieldOn = (f: FieldName) =>
     FIELDS[f].needs === null || edit.enabled[FIELDS[f].needs as string];
   const fieldParamCount = (f: FieldName) =>
     fieldParams(edit.perField[f], edit.globals.ff, edit.globals.nodewise);
-  const totalParams = activeFields.reduce((sum, f) => sum + fieldParamCount(f), 0);
-
   const fieldOverridden = (f: FieldName) =>
     edit.perField[f].width !== edit.baseline.perField[f].width ||
     edit.perField[f].depth !== edit.baseline.perField[f].depth;
-  const globalOverridden = (key: "ff" | "ffScale") => edit.globals[key] !== edit.baseline.globals[key];
+  const globalOverridden = (key: "ff" | "ffScale") =>
+    edit.globals[key] !== edit.baseline.globals[key];
   const overrideCount =
     ALL_FIELDS.reduce(
       (n, f) =>
@@ -225,38 +250,33 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
     ) +
     (globalOverridden("ff") ? 1 : 0) +
     (globalOverridden("ffScale") ? 1 : 0);
-
   const equations: EquationDisplay[] = edit.equations.map((e) => ({
     ...e,
     on: e.core ? true : (edit.enabled[e.id] ?? e.enabled),
     liveWeight: edit.weights[e.weight_key] ?? e.weight,
     toggleable: TOGGLEABLE.has(e.id),
   }));
-
-  const model: PhysicsModel = {
-    dataset: edit.dataset,
-    equations,
-    groups: edit.groups,
-    preset: edit.preset,
-    perField: edit.perField,
-    globals: edit.globals,
-    activeFields,
+  return {
     fieldOn,
     fieldParamCount,
     fieldOverridden,
     globalOverridden,
-    totalParams,
     overrideCount,
-    dirty: edit.dirty,
-    saving,
-    saveError,
-    toggleEquation: (id) => {
+    equations,
+    totalParams: activeFields.reduce((sum, f) => sum + fieldParamCount(f), 0),
+  };
+}
+
+/** The edit actions, each producing a dirty patch over ``edit``. */
+function buildActions(edit: EditState, patch: (next: Partial<EditState>) => void) {
+  return {
+    toggleEquation: (id: string) => {
       if (!TOGGLEABLE.has(id)) return;
       patch({ enabled: { ...edit.enabled, [id]: !edit.enabled[id] } });
     },
-    setWeight: (weightKey, value) =>
+    setWeight: (weightKey: string, value: number) =>
       patch({ weights: { ...edit.weights, [weightKey]: value } }),
-    applyPreset: (preset) => {
+    applyPreset: (preset: PresetName) => {
       const d = deriveFromPreset(preset);
       // The preset becomes the new baseline: re-derived values read as 0 overrides.
       patch({
@@ -266,38 +286,23 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
         baseline: { perField: structuredClone(d.perField), globals: d.globals },
       });
     },
-    setGlobal: (key, value) => patch({ globals: { ...edit.globals, [key]: value } }),
-    setFieldArch: (field, key, value) =>
-      patch({ perField: { ...edit.perField, [field]: { ...edit.perField[field], [key]: value } } }),
+    setGlobal: <K extends keyof EditState["globals"]>(key: K, value: EditState["globals"][K]) =>
+      patch({ globals: { ...edit.globals, [key]: value } }),
+    setFieldArch: (field: FieldName, key: keyof FieldArch, value: number) =>
+      patch({
+        perField: { ...edit.perField, [field]: { ...edit.perField[field], [key]: value } },
+      }),
     resetToPreset: () =>
       patch({
         perField: structuredClone(edit.baseline.perField),
         globals: { ...edit.globals, ...edit.baseline.globals },
       }),
-    hydraCommand: buildHydra(edit, activeFields, base(edit)),
-    save,
   };
-  return { status: "ready", model };
 }
 
-function base(edit: EditState): FieldArch {
-  return edit.perField.phi;
-}
-
-function deriveFromPreset(preset: PresetName): {
-  perField: Record<FieldName, FieldArch>;
-  globals: Pick<Globals, "ff" | "ffScale">;
-} {
+function deriveFromPreset(preset: PresetName): Baseline {
   const p = PRESETS[preset];
-  const perField = {} as Record<FieldName, FieldArch>;
-  for (const f of ALL_FIELDS) {
-    const stageB = FIELDS[f].stage === "B";
-    perField[f] = {
-      width: stageB ? Math.round(p.width * 1.33) : p.width,
-      depth: stageB ? p.depth + 2 : p.depth,
-    };
-  }
-  return { perField, globals: { ff: p.ff, ffScale: p.ffScale } };
+  return { perField: derivePerField(p), globals: { ff: p.ff, ffScale: p.ffScale } };
 }
 
 function buildHydra(edit: EditState, activeFields: FieldName[], baseArch: FieldArch): string {
@@ -318,10 +323,11 @@ function buildHydra(edit: EditState, activeFields: FieldName[], baseArch: FieldA
     }
   }
   if (perField.length) parts.push(`+model.per_field={${perField.join(",")}}`);
-  for (const [key, value] of Object.entries(edit.weights)) {
-    if (value !== 1.0) parts.push(`training.weights.${key}=${value}`);
+  for (const eq of edit.equations) {
+    if (eq.stage === "B") {
+      const w = edit.weights[eq.weight_key] ?? eq.weight;
+      if (w !== 1.0) parts.push(`training.weights.${eq.weight_key}=${w}`);
+    }
   }
   return `naviernet train ${parts.join(" ")}`;
 }
-
-export { STAGE_A_FIELDS };

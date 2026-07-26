@@ -17,8 +17,49 @@ const DESC: Record<string, string> = {
 const fieldLabel = (f: string) => FIELDS[f as FieldName]?.label ?? f;
 const fmtGroup = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toPrecision(3));
 
+function EquationInfoPopover({
+  eq,
+  dataset,
+  groups,
+}: {
+  eq: EquationDisplay;
+  dataset: string;
+  groups: Record<string, number>;
+}) {
+  const shown = eq.groups.filter((g) => groups[g] !== undefined);
+  return (
+    <div className="infopop" role="tooltip">
+      <div className="eqmath">
+        <EquationBlock tex={eq.tex} />
+      </div>
+      {DESC[eq.id] && <p className="eqdesc">{DESC[eq.id]}</p>}
+      <div className="eqmeta">
+        {eq.fields_required.map((f) => (
+          <span className="fchip" key={f}>
+            {fieldLabel(f)}
+          </span>
+        ))}
+        {eq.fields_added.map((f) => (
+          <span className="fchip add" key={f}>
+            + field {fieldLabel(f)}
+          </span>
+        ))}
+      </div>
+      {shown.length > 0 && (
+        <div className="groupsline">
+          <span>{dataset}:</span>
+          {shown.map((g) => (
+            <span key={g}>
+              <b>{g}</b> = {fmtGroup(groups[g])}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EquationRow({ eq, model }: { eq: EquationDisplay; model: PhysicsModel }) {
-  const groups = eq.groups.filter((g) => model.groups[g] !== undefined);
   return (
     <div className={eq.on ? "eqrow" : "eqrow off"}>
       <button
@@ -47,41 +88,15 @@ function EquationRow({ eq, model }: { eq: EquationDisplay; model: PhysicsModel }
             step="0.1"
             min="0"
             value={eq.liveWeight}
-            disabled={!eq.on}
+            disabled={!eq.on || eq.core}
+            title={eq.core ? "Stage-A weights are set in the Solver run configuration" : undefined}
             onChange={(e) => model.setWeight(eq.weight_key, Number(e.target.value) || 0)}
           />
         </span>
         <span className="infob" aria-hidden="true">
           i
         </span>
-        <div className="infopop" role="tooltip">
-          <div className="eqmath">
-            <EquationBlock tex={eq.tex} />
-          </div>
-          {DESC[eq.id] && <p className="eqdesc">{DESC[eq.id]}</p>}
-          <div className="eqmeta">
-            {eq.fields_required.map((f) => (
-              <span className="fchip" key={f}>
-                {fieldLabel(f)}
-              </span>
-            ))}
-            {eq.fields_added.map((f) => (
-              <span className="fchip add" key={f}>
-                + field {fieldLabel(f)}
-              </span>
-            ))}
-          </div>
-          {groups.length > 0 && (
-            <div className="groupsline">
-              <span>{model.dataset}:</span>
-              {groups.map((g) => (
-                <span key={g}>
-                  <b>{g}</b> = {fmtGroup(model.groups[g])}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
+        <EquationInfoPopover eq={eq} dataset={model.dataset} groups={model.groups} />
       </div>
     </div>
   );

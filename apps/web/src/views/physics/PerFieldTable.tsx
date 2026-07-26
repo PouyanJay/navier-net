@@ -1,22 +1,30 @@
 import { NumberField, Panel } from "../../components";
-import { ALL_FIELDS, type FieldName, FIELDS, fmtCount } from "./model";
+import { ALL_FIELDS, FIELDS, fmtCount } from "./model";
 import type { PhysicsModel } from "./usePhysicsModel";
+
+// Validation thresholds, named rather than inlined in the checks below.
+const MIN_ALPHA_EPS = 0.005; // interface half-width the image supervision can resolve
+const SMALL_EPS = 0.03; // below this, σ_B must be large enough to resolve the interface
+const MIN_FF_SCALE_FOR_SMALL_EPS = 2.5;
+const MAX_STABLE_WIDTH = 256; // beyond this, CPU step cost grows quadratically
 
 function validate(model: PhysicsModel): string[] {
   const warns: string[] = [];
   const g = model.globals;
-  if (g.alphaEps < 0.005) {
+  if (g.alphaEps < MIN_ALPHA_EPS) {
     warns.push(
       `Interface ε = ${g.alphaEps} is very small; the image supervision may not resolve it. Raise ε or bin the frames.`,
     );
   }
-  if (g.ffScale < 2.5 && g.alphaEps <= 0.03) {
+  if (g.ffScale < MIN_FF_SCALE_FOR_SMALL_EPS && g.alphaEps <= SMALL_EPS) {
     warns.push(
       `σ_B = ${g.ffScale} is likely too low to resolve ε = ${g.alphaEps}; the α network will smooth the interface.`,
     );
   }
-  if (model.activeFields.some((f) => model.perField[f].width > 256)) {
-    warns.push("Width > 256 — CPU step cost grows quadratically; plan for a GPU device in Solver.");
+  if (model.activeFields.some((f) => model.perField[f].width > MAX_STABLE_WIDTH)) {
+    warns.push(
+      `Width > ${MAX_STABLE_WIDTH} — CPU step cost grows quadratically; plan for a GPU device in Solver.`,
+    );
   }
   return warns;
 }
@@ -137,5 +145,3 @@ export function PerFieldTable({ model }: { model: PhysicsModel }) {
     </Panel>
   );
 }
-
-export type { FieldName };

@@ -65,7 +65,7 @@ def update_physics(
     if datasets_service.get_dataset(settings, dataset) is None:
         raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
     try:
-        datasets_service.save_physics(settings, dataset, payload.enabled, payload.weights)
+        datasets_service.save_physics(settings, dataset, payload.model_dump())
     except ModelConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _physics_state(settings, dataset)

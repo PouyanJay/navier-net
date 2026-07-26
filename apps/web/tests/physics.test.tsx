@@ -135,17 +135,65 @@ describe("PhysicsModelView", () => {
     expect(screen.getByText(/No datasets yet/)).toBeInTheDocument();
   });
 
+  const paramK = (text: string) => Number(/·\s*([\d.]+)\s*k params/.exec(text)?.[1] ?? "0");
+
   it("applying the Large preset grows the parameter budget", async () => {
     mockApi();
     render(<PhysicsModelView datasets={DATASETS} />);
-    const before = (await screen.findByText(/networks · /)).textContent ?? "";
+    const before = paramK((await screen.findByText(/networks · /)).textContent ?? "");
 
     fireEvent.click(screen.getByRole("radio", { name: /Large/ }));
 
     await waitFor(() =>
-      expect(screen.getByText(/networks · /).textContent).not.toEqual(before),
+      expect(paramK(screen.getByText(/networks · /).textContent ?? "")).toBeGreaterThan(before),
     );
     expect(screen.getByText("unsaved changes")).toBeInTheDocument();
+  });
+
+  it("clicking a lane inspects that field", async () => {
+    mockApi();
+    render(<PhysicsModelView datasets={DATASETS} />);
+    // The u lane; the inspector starts on phi (φ→α).
+    const uLane = await screen.findByRole("button", { name: /^u network,/ });
+
+    fireEvent.click(uLane);
+
+    // The inspector (aria-live) now names u and its transform.
+    const inspector = document.querySelector(".inspector");
+    expect(inspector?.textContent).toContain("identity");
+  });
+
+  it("editing a Stage-B weight is reflected in the reproducible command", async () => {
+    mockApi();
+    render(<PhysicsModelView datasets={DATASETS} />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Momentum" }));
+
+    const momWeight = screen.getByLabelText("Momentum").parentElement?.querySelector(
+      "#w-mom",
+    ) as HTMLInputElement;
+    // The weight input is enabled for the now-on Stage-B equation.
+    expect(momWeight).not.toBeDisabled();
+    fireEvent.change(momWeight, { target: { value: "3" } });
+
+    await waitFor(() =>
+      expect(screen.getByText(/training\.weights\.mom=3/)).toBeInTheDocument(),
+    );
+  });
+
+  it("core-equation weights are not editable here (owned by the run config)", async () => {
+    mockApi();
+    render(<PhysicsModelView datasets={DATASETS} />);
+    await screen.findByText("Momentum");
+    const vofWeight = document.querySelector("#w-vof") as HTMLInputElement;
+    expect(vofWeight).toBeDisabled();
+  });
+
+  it("locked Stage-B rows name the equation that unlocks them", async () => {
+    mockApi();
+    render(<PhysicsModelView datasets={DATASETS} />);
+    await screen.findByRole("heading", { name: "Per-field architecture" });
+    expect(screen.getByText(/enable Momentum to unlock/)).toBeInTheDocument();
+    expect(screen.getByText(/enable Energy to unlock/)).toBeInTheDocument();
   });
 
   it("editing a per-field width marks it overridden with a reset control", async () => {
@@ -167,6 +215,6 @@ describe("PhysicsModelView", () => {
 
     fireEvent.change(eps, { target: { value: "0.001" } });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/ε/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/very small/);
   });
 });
