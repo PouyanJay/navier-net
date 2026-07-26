@@ -221,6 +221,21 @@ def test_delete_project_removes_file_and_owned_data(client, sample_processed, re
     assert client.delete(f"/api/projects/{project_id}").status_code == 404
 
 
+def test_delete_removes_a_run_identified_only_by_its_groups_file(client, repo_root: Path):
+    # An aborted run can have written dimensionless_groups.json but neither
+    # metrics.json nor a Hydra snapshot; its dataset must still resolve so the
+    # cascade does not leave it orphaned when its project is deleted.
+    project_id = _materialized_sample_id(client)
+    run = repo_root / "outputs" / "aborted_sample"
+    run.mkdir(parents=True)
+    (run / "dimensionless_groups.json").write_text(
+        json.dumps({"experiment": {"name": "sample"}})
+    )
+
+    assert client.delete(f"/api/projects/{project_id}").status_code == 200
+    assert not run.exists()
+
+
 def test_delete_keeps_a_dataset_shared_with_another_project(client, repo_root: Path):
     first = client.post("/api/projects", json={"name": "keeper"}).json()
     second = client.post("/api/projects", json={"name": "goner"}).json()
