@@ -35,6 +35,40 @@ def test_rebalance_stays_within_bounds():
         assert 1e-2 <= weights[term] <= 1e3
 
 
+def test_stage_a_training_is_byte_for_byte_unchanged(tmp_path):
+    """Guards the equation-registry refactor.
+
+    The Stage-A loss trajectory and rebalanced weights must match the golden
+    captured from the pre-registry trainer. If deriving the active terms from
+    the registry ever changes a number, this fails loudly.
+    """
+    import json
+    from pathlib import Path
+
+    from naviernet.training import train
+
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "stage_a_golden.json").read_text()
+    )
+    cfg = make_config([f"paths.root={tmp_path}", *golden["overrides"]])
+    paths = RunPaths.from_config(cfg)
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    _write_tensors(paths.tensors, list(range(1, 9)), n_event=8)
+
+    _, _, state = train(cfg, paths)
+
+    assert len(state["hist"]) == len(golden["hist"])
+    for got, want in zip(state["hist"], golden["hist"], strict=True):
+        assert got.keys() == want.keys()
+        for key, wanted in want.items():
+            assert got[key] == pytest.approx(wanted, rel=1e-6, abs=1e-8), f"{key} drifted"
+    for key, wanted in golden["w"].items():
+        assert state["w"][key] == pytest.approx(wanted, rel=1e-6, abs=1e-8), (
+            f"weight {key} drifted"
+        )
+
+
 def test_unknown_stage_is_rejected(tiny_cfg):
     with pytest.raises(ValueError, match="unknown stage"):
         Pipeline(tiny_cfg).run("trian")
