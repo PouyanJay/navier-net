@@ -278,12 +278,12 @@
   white-space: nowrap;
 }
 
-/* Serif figure caption under the viewport (mockup's Figure 1) */
+/* Figure caption under the viewport (mockup's Figure 1) */
 .figcap {
   margin: var(--s3) 0 0;
-  font-family: var(--serif);
+  font-family: var(--sans);
   font-style: italic;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--ink2);
 }
 .figcap b {
