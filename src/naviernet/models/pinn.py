@@ -38,18 +38,23 @@ class FieldNet(nn.Module):
     the global architecture exactly.
     """
 
-    def __init__(self, cfg, out_dim: int = 1, arch=None):
+    def __init__(self, cfg, out_dim: int = 1, arch=None, n_cond: int = 0):
         super().__init__()
         model_cfg = cfg.model
         hidden = _resolve(arch, "hidden", model_cfg.hidden)
         depth = _resolve(arch, "layers", model_cfg.layers)
+        self.n_cond = int(n_cond)
         self.ff = FourierFeatures(
             in_dim=3,
             n_feats=_resolve(arch, "fourier_feats", model_cfg.fourier_feats),
             scale=_resolve(arch, "fourier_scale", model_cfg.fourier_scale),
         )
 
-        dims = [self.ff.out_dim] + [hidden] * depth
+        # The conditioning vector is appended to the Fourier features, not fed
+        # through them: it is a per-dataset constant, so only the (x, y, t)
+        # coordinates get positional encoding and only they are differentiated in
+        # the PDE residuals. n_cond=0 reproduces the unconditioned architecture.
+        dims = [self.ff.out_dim + self.n_cond] + [hidden] * depth
         layers: list[nn.Module] = []
         for d_in, d_out in zip(dims[:-1], dims[1:], strict=True):
             layers += [
@@ -59,8 +64,11 @@ class FieldNet(nn.Module):
         layers.append(nn.Linear(dims[-1], out_dim))
         self.mlp = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.mlp(self.ff(x))
+    def forward(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        feats = self.ff(x)
+        if c is not None:
+            feats = torch.cat([feats, c], dim=-1)
+        return self.mlp(feats)
 
 
 class BubblePINN(nn.Module):
@@ -71,17 +79,21 @@ class BubblePINN(nn.Module):
     ``T`` by listing them in ``cfg.model.fields``.
 
     Every accessor takes points ``x`` of shape ``(N, 3)`` ordered ``(x, y, t)``
-    and returns columns of shape ``(N, 1)``.
+    and returns columns of shape ``(N, 1)``. When the model is conditioned
+    (``n_cond > 0``), each accessor also takes the per-point context ``c`` of
+    shape ``(N, n_cond)`` -- the point's dataset's conditioning vector. ``c`` is
+    ``None`` for an unconditioned (single-dataset) model.
     """
 
-    def __init__(self, cfg, fields: Sequence[str] | None = None):
+    def __init__(self, cfg, fields: Sequence[str] | None = None, n_cond: int = 0):
         super().__init__()
         self.cfg = cfg
         self.eps = float(cfg.model.alpha_eps)
+        self.n_cond = int(n_cond)
         names = list(fields if fields is not None else cfg.model.fields)
         per_field = getattr(cfg.model, "per_field", None) or {}
         self.nets = nn.ModuleDict(
-            {name: FieldNet(cfg, arch=per_field.get(name)) for name in names}
+            {name: FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond) for name in names}
         )
         # Stage-B inverse unknowns, present only when temperature is modelled:
         # the interfacial resistance closing evaporation and the inlet superheat.
@@ -94,24 +106,26 @@ class BubblePINN(nn.Module):
     def fields(self) -> list[str]:
         return list(self.nets.keys())
 
-    def phi(self, x: torch.Tensor) -> torch.Tensor:
+    def phi(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """Raw level-set field; its zero contour is the interface."""
-        return self.nets["phi"](x)
+        return self.nets["phi"](x, c)
 
-    def alpha(self, x: torch.Tensor) -> torch.Tensor:
+    def alpha(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """Volume fraction, bounded in (0, 1) by construction."""
-        return torch.sigmoid(self.phi(x) / self.eps)
+        return torch.sigmoid(self.phi(x, c) / self.eps)
 
-    def velocity(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.nets["u"](x), self.nets["v"](x)
+    def velocity(
+        self, x: torch.Tensor, c: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.nets["u"](x, c), self.nets["v"](x, c)
 
-    def source(self, x: torch.Tensor) -> torch.Tensor:
+    def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """Inferred volumetric dilatation from phase change."""
-        return self.nets["s"](x)
+        return self.nets["s"](x, c)
 
-    def pressure(self, x: torch.Tensor) -> torch.Tensor:
+    def pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """Stage B. Raises if the pressure field was not configured."""
-        return self._require("p")(x)
+        return self._require("p")(x, c)
 
     @property
     def r_int_star(self) -> torch.Tensor:
@@ -123,10 +137,10 @@ class BubblePINN(nn.Module):
         """Inlet superheat in (0, 1) -- saturation to wall -- a trainable unknown."""
         return torch.sigmoid(self._theta_in_raw)
 
-    def temperature(self, x: torch.Tensor) -> torch.Tensor:
+    def temperature(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """Non-dimensional superheat, bounded to (theta_in, 1) so temperature stays
         between the inlet and the wall. Stage B; raises if T was not configured."""
-        raw = self._require("T")(x)
+        raw = self._require("T")(x, c)
         return self.theta_in + (1.0 - self.theta_in) * torch.sigmoid(raw)
 
     def _require(self, name: str) -> nn.Module:

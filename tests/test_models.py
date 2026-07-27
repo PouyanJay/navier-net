@@ -66,6 +66,36 @@ def test_velocity_returns_two_components(tiny_cfg):
     assert u.shape == (9, 1) and v.shape == (9, 1)
 
 
+def test_unconditioned_model_ignores_context_exactly_as_before(tiny_cfg):
+    # n_cond=0 (the default) reproduces today's architecture: accessors take a
+    # bare (N, 3) and need no context, so single-dataset runs are unchanged.
+    model = BubblePINN(tiny_cfg)
+    assert model.alpha(torch.rand(5, 3)).shape == (5, 1)
+    u, v = model.velocity(torch.rand(5, 3))
+    assert u.shape == (5, 1) and v.shape == (5, 1)
+
+
+def test_conditioned_model_accepts_a_context_vector(tiny_cfg):
+    model = BubblePINN(tiny_cfg, n_cond=4)
+    x = torch.rand(7, 3, requires_grad=True)
+    c = torch.rand(7, 4)
+    alpha = model.alpha(x, c)
+    assert alpha.shape == (7, 1)
+    # PDE residuals differentiate w.r.t. the (x, y, t) coordinates only; the
+    # context must not add coordinate axes to differentiate against.
+    grad = torch.autograd.grad(alpha.sum(), x, create_graph=True)[0]
+    assert grad.shape == (7, 3)
+
+
+def test_conditioning_changes_the_prediction(tiny_cfg):
+    torch.manual_seed(0)
+    model = BubblePINN(tiny_cfg, n_cond=4)
+    x = torch.rand(7, 3)
+    same = model.alpha(x, torch.zeros(7, 4))
+    other = model.alpha(x, torch.ones(7, 4))
+    assert not torch.allclose(same, other)
+
+
 def test_missing_stage_b_field_raises_a_helpful_error(tiny_cfg):
     model = BubblePINN(tiny_cfg)
     with pytest.raises(KeyError, match="cfg.model.fields"):

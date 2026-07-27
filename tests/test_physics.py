@@ -14,7 +14,9 @@ import torch
 
 from naviernet.models.pinn import BubblePINN
 from naviernet.physics.groups import (
+    CONDITIONING_GROUPS,
     compute_groups,
+    conditioning_vector,
     hydraulic_diameter_m,
     inlet_velocity_m_s,
     reference_time_ms,
@@ -32,6 +34,21 @@ from naviernet.physics.residuals import (
 )
 
 from .conftest import make_config
+
+
+def test_conditioning_vector_is_ordered_and_log_scaled(cfg):
+    groups = compute_groups(cfg)
+    vec = conditioning_vector(groups)
+    assert len(vec) == len(CONDITIONING_GROUPS)
+    # Log10 compresses the several-orders-of-magnitude spread; Re leads the vector.
+    assert CONDITIONING_GROUPS[0] == "Re"
+    assert vec[0] == pytest.approx(math.log10(groups["Re"]))
+
+
+def test_conditioning_vector_excludes_dimensional_reference_quantities():
+    # Only regime-defining dimensionless numbers condition the model, not units.
+    for dimensional in ("Dh_um", "U_in_m_s", "t_ref_ms"):
+        assert dimensional not in CONDITIONING_GROUPS
 
 
 def test_reference_time(cfg):
