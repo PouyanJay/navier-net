@@ -46,6 +46,46 @@
   background: var(--amber);
 }
 
+/* Compact save action: an icon button whose label appears on hover/focus, so
+   the header stays quiet next to the page's "Continue to solver" CTA. Accent
+   when there are changes to save; the disabled (already-saved) state mutes it. */
+.pm-save {
+  position: relative;
+}
+.pm-save::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  white-space: nowrap;
+  background: var(--ink);
+  color: var(--shell);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: var(--rs);
+  box-shadow: var(--sh);
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  z-index: 30;
+}
+.pm-save:hover::after,
+.pm-save:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pm-save::after {
+    transition: none;
+    transform: none;
+  }
+}
+
 .pm-dataset {
   display: inline-flex;
   align-items: center;
