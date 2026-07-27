@@ -265,7 +265,10 @@ class RunLaunchRequest(BaseModel):
     config snapshot, and any other values sent here are ignored.
     """
 
-    dataset: str | None = None  # required for a new run
+    dataset: str | None = None  # a single-dataset run (or the primary of a joint one)
+    # Joint (transfer-learning) training: train ONE model across these datasets.
+    # Empty/absent means the single `dataset`. Use `resolved_datasets()` to read.
+    datasets: list[str] | None = None
     resume: bool = False
     run_id: str | None = None  # required when resuming
     steps: int = Field(default=1500, ge=1, le=20_000)
@@ -281,12 +284,18 @@ class RunLaunchRequest(BaseModel):
     weights: LossWeightsInput = Field(default_factory=LossWeightsInput)
     render: bool = True  # render figures + video after evaluation
 
+    def resolved_datasets(self) -> list[str]:
+        """The datasets a new run trains on: `datasets` if given, else `[dataset]`.
+        Order-preserving and deduplicated; empty only when neither was sent."""
+        names = self.datasets if self.datasets else ([self.dataset] if self.dataset else [])
+        return list(dict.fromkeys(names))
+
     @model_validator(mode="after")
     def _check_target(self) -> RunLaunchRequest:
         if self.resume and not self.run_id:
             raise ValueError("resume requires run_id")
-        if not self.resume and not self.dataset:
-            raise ValueError("a new run requires dataset")
+        if not self.resume and not self.resolved_datasets():
+            raise ValueError("a new run requires dataset or datasets")
         return self
 
 
