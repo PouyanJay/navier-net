@@ -10,7 +10,7 @@ import {
   StatusDot,
   ViewCanvas,
 } from "../components";
-import type { RunJobStatus } from "../lib/api";
+import type { ProjectSummary, RunJobStatus } from "../lib/api";
 import { LossWeightsPanel, RunConfigPanel } from "./solver/ConfigPanels";
 import {
   FORM_DEFAULTS,
@@ -27,6 +27,8 @@ import "./solver/solver.css";
 interface SolverViewProps {
   /** Reports run-state changes so the app shell can show the training pill. */
   onRunState?: (status: RunJobStatus | null) => void;
+  /** Scopes the trainable datasets to the open project (null = workspace-wide). */
+  project?: ProjectSummary | null;
 }
 
 interface DotState {
@@ -44,11 +46,11 @@ function statusDot(status: RunJobStatus | null): DotState {
 }
 
 /** The Solver: configure a run on the left, watch it live on the right. */
-export function SolverView({ onRunState }: SolverViewProps) {
+export function SolverView({ onRunState, project }: SolverViewProps) {
   const [form, setForm] = useState<SolverFormState>(FORM_DEFAULTS);
   const [sweepMode, setSweepMode] = useState(false);
   const [seedsText, setSeedsText] = useState("0, 1, 2");
-  const targets = useRunTargets();
+  const targets = useRunTargets(project?.datasets ?? null);
   const run = useSolverRun(onRunState, targets.refreshRuns);
 
   const patchForm = useCallback(
@@ -60,14 +62,18 @@ export function SolverView({ onRunState }: SolverViewProps) {
   const seeds = useMemo(() => parseSeeds(seedsText), [seedsText]);
 
   const submit = useCallback(() => {
-    const { resume, resumeRunId, dataset } = targets;
+    const { resume, resumeRunId, selected } = targets;
     if (sweepMode) {
-      if (!dataset || !seeds) return;
-      void run.startSweep({ ...toLaunchRequest(form, { dataset }), seeds });
+      // A sweep varies seeds on one dataset; use the first selected series.
+      if (selected.length === 0 || !seeds) return;
+      void run.startSweep({
+        ...toLaunchRequest(form, { datasets: [selected[0]] }),
+        seeds,
+      });
       return;
     }
-    if ((resume && !resumeRunId) || (!resume && !dataset)) return;
-    const target = resume ? { resumeRunId } : { dataset };
+    if ((resume && !resumeRunId) || (!resume && selected.length === 0)) return;
+    const target = resume ? { resumeRunId } : { datasets: selected };
     void run.start(toLaunchRequest(form, target));
   }, [run, form, targets, sweepMode, seeds]);
 
@@ -84,9 +90,10 @@ export function SolverView({ onRunState }: SolverViewProps) {
   const latest = run.hist.length > 0 ? run.hist[run.hist.length - 1] : null;
   const targetReady = targets.resume
     ? targets.resumeRunId !== ""
-    : targets.dataset !== "";
+    : targets.selected.length > 0;
   const canRun = !run.running && targetReady && (!sweepMode || seeds !== null);
-  const noDatasets = targets.datasets !== null && targets.datasets.length === 0;
+  const noDatasets =
+    targets.available !== null && targets.available.length === 0;
 
   return (
     <>
@@ -123,12 +130,10 @@ export function SolverView({ onRunState }: SolverViewProps) {
           <RunConfigPanel
             form={form}
             onForm={patchForm}
-            datasetOptions={(targets.datasets ?? []).map((d) => ({
-              value: d.id,
-              label: d.id,
-            }))}
-            dataset={targets.dataset}
-            onDataset={targets.setDataset}
+            availableDatasets={targets.available ?? []}
+            selectedDatasets={targets.selected}
+            onToggleDataset={targets.toggleDataset}
+            onSelectAllDatasets={targets.selectAll}
             resume={targets.resume}
             onResume={targets.setResume}
             resumableRuns={targets.resumableRuns}

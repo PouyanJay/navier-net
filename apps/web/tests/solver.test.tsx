@@ -125,7 +125,7 @@ describe("SolverView", () => {
   it("renders the run configuration at the pipeline's defaults", async () => {
     stubApi();
     render(<SolverView />);
-    expect(await screen.findByLabelText("Dataset")).toHaveValue("highest_t");
+    expect(await screen.findByLabelText("highest_t")).toBeChecked();
     expect(screen.getByLabelText("Steps")).toHaveValue(1500);
     expect(screen.getByLabelText(/Learning rate/)).toHaveValue(0.002);
     expect(screen.getByLabelText(/w\s*data/)).toHaveValue(10);
@@ -136,7 +136,7 @@ describe("SolverView", () => {
   it("launches a run from the form and follows it live over SSE", async () => {
     const posts = stubApi();
     render(<SolverView />);
-    await screen.findByLabelText("Dataset");
+    await screen.findByLabelText("highest_t");
 
     fireEvent.change(screen.getByLabelText("Steps"), {
       target: { value: "40" },
@@ -145,7 +145,7 @@ describe("SolverView", () => {
 
     await waitFor(() => expect(posts).toHaveLength(1));
     const body = posts[0] as Record<string, unknown>;
-    expect(body.dataset).toBe("highest_t");
+    expect(body.datasets).toEqual(["highest_t"]);
     expect(body.steps).toBe(40);
     expect(body.weights).toEqual({ data: 10, vof: 1, div: 1, src: 0.1, bc: 5 });
     expect(body.render).toBe(true);
@@ -197,10 +197,86 @@ describe("SolverView", () => {
     expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
   });
 
+  function stubMultiDataset(
+    entries: { id: string; processed: boolean }[],
+    posts: unknown[],
+  ) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
+        const path = String(url);
+        if (options?.method === "POST" && path.endsWith("/api/runs")) {
+          posts.push(JSON.parse(String(options.body)));
+          return json(LAUNCHED);
+        }
+        if (path.endsWith("/api/datasets"))
+          return json(entries.map((e) => ({ ...e, n_frames: 11 })));
+        if (path.endsWith("/api/runs/active")) return json(null);
+        if (path.endsWith("/api/runs")) return json([]);
+        return json({ detail: "not found" }, 404);
+      }),
+    );
+  }
+
+  it("multi-selects the project's datasets and launches one joint run", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+        { id: "ds_raw", processed: false }, // not preprocessed: never offered
+      ],
+      posts,
+    );
+    render(<SolverView />);
+
+    // Every processed series is selected by default; the unprocessed one is absent.
+    expect(await screen.findByLabelText("ds_a")).toBeChecked();
+    expect(screen.getByLabelText("ds_b")).toBeChecked();
+    expect(screen.queryByLabelText("ds_raw")).toBeNull();
+
+    // Clearing the selection disables Run; selecting all re-enables it.
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    // Both datasets go in one request: the API trains them jointly.
+    expect((posts[0] as Record<string, unknown>).datasets).toEqual([
+      "ds_a",
+      "ds_b",
+    ]);
+  });
+
+  it("scopes the dataset list to the open project", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "other", processed: true }, // belongs to a different project
+      ],
+      posts,
+    );
+    const project = {
+      id: "a".repeat(32),
+      name: "P",
+      description: "",
+      datasets: ["ds_a"],
+      created_at: "2026-07-24T00:00:00+00:00",
+    };
+    render(<SolverView project={project} />);
+
+    expect(await screen.findByLabelText("ds_a")).toBeInTheDocument();
+    // A processed dataset from another project must not appear here.
+    expect(screen.queryByLabelText("other")).toBeNull();
+  });
+
   it("surfaces a rejected launch as an alert", async () => {
     stubApi({ launchStatus: 409 });
     render(<SolverView />);
-    await screen.findByLabelText("Dataset");
+    await screen.findByLabelText("highest_t");
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("a training run is already in progress");
@@ -209,12 +285,12 @@ describe("SolverView", () => {
   it("resume locks the config to the original run and posts run_id", async () => {
     const posts = stubApi();
     render(<SolverView />);
-    await screen.findByLabelText("Dataset");
+    await screen.findByLabelText("highest_t");
 
     fireEvent.click(
       screen.getByRole("switch", { name: "Resume from checkpoint" }),
     );
-    expect(screen.getByLabelText("Dataset")).toBeDisabled();
+    expect(screen.getByLabelText("highest_t")).toBeDisabled();
     expect(screen.getByLabelText(/Learning rate/)).toBeDisabled();
     const resumeSelect = await screen.findByLabelText("Run to resume");
     expect(resumeSelect).toHaveValue("highest_t");
@@ -224,7 +300,7 @@ describe("SolverView", () => {
     const body = posts[0] as Record<string, unknown>;
     expect(body.resume).toBe(true);
     expect(body.run_id).toBe("highest_t");
-    expect(body.dataset).toBeUndefined();
+    expect(body.datasets).toBeUndefined();
   });
 });
 
@@ -303,7 +379,7 @@ describe("SolverView sweep mode", () => {
     );
 
     render(<SolverView />);
-    await screen.findByLabelText("Dataset");
+    await screen.findByLabelText("highest_t");
     fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
     fireEvent.change(screen.getByLabelText(/Seeds/), {
       target: { value: "3, 4" },
@@ -313,7 +389,7 @@ describe("SolverView sweep mode", () => {
     await waitFor(() => expect(posts).toHaveLength(1));
     const body = posts[0] as Record<string, unknown>;
     expect(body.seeds).toEqual([3, 4]);
-    expect(body.dataset).toBe("highest_t");
+    expect(body.datasets).toEqual(["highest_t"]);
     expect(body.resume).toBeUndefined();
 
     // The sweep panel lists both children (queued until each starts).
@@ -337,7 +413,7 @@ describe("SolverView sweep mode", () => {
   it("rejects an unparseable seed list by disabling Run", async () => {
     stubApi();
     render(<SolverView />);
-    await screen.findByLabelText("Dataset");
+    await screen.findByLabelText("highest_t");
     fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
     fireEvent.change(screen.getByLabelText(/Seeds/), {
       target: { value: "1, 1, x" },

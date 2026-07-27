@@ -34,6 +34,75 @@
   min-width: 0;
 }
 
+/* Dataset multi-select: the project's processed series to train on. */
+.ds-select {
+  border: none;
+  margin: 0 0 var(--s3);
+  padding: 0;
+  min-inline-size: 0; /* fieldset default min-width breaks the grid otherwise */
+}
+.ds-select-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+.cfg-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink2);
+  letter-spacing: 0.02em;
+  padding: 0;
+}
+.ds-joint-tag {
+  margin-left: var(--s2);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--acc);
+  background: var(--accsoft);
+  border-radius: 99px;
+  padding: 1px 7px;
+  letter-spacing: 0;
+}
+.ds-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.ds-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s2);
+  border-radius: var(--rs);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.ds-item:hover {
+  background: var(--panel2);
+}
+.ds-item input {
+  accent-color: var(--acc);
+  cursor: pointer;
+}
+.ds-select:disabled .ds-item {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.ds-hint {
+  margin: var(--s2) 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink3);
+}
+
 /* Config field grid inside the cards. */
 .cfg {
   display: grid;

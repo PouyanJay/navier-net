@@ -203,7 +203,9 @@ export function App() {
             }
           />
         )}
-        {active === "solver" && <SolverView onRunState={handleRunState} />}
+        {active === "solver" && (
+          <SolverView onRunState={handleRunState} project={project} />
+        )}
       </div>
     </AppShell>
   );

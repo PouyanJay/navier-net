@@ -57,13 +57,15 @@ export const HOLDOUT_OPTIONS = [
 
 export function toLaunchRequest(
   form: SolverFormState,
-  target: { dataset: string } | { resumeRunId: string },
+  target: { datasets: string[] } | { resumeRunId: string },
 ): RunLaunchRequest {
   const base = { ...form };
   if ("resumeRunId" in target) {
     return { ...base, resume: true, run_id: target.resumeRunId };
   }
-  return { ...base, dataset: target.dataset };
+  // One dataset trains as today; several train one model jointly (the API reads
+  // `datasets` either way).
+  return { ...base, datasets: target.datasets };
 }
 
 /** Seeds a sweep may run: 1-6 unique non-negative integers. */
