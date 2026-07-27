@@ -74,9 +74,7 @@ def interface_indicator(alpha: torch.Tensor) -> torch.Tensor:
     return 4.0 * alpha * (1.0 - alpha)
 
 
-def stage_a_residuals(
-    model, x: torch.Tensor, c: torch.Tensor | None = None
-) -> StageAResiduals:
+def stage_a_residuals(model, x: torch.Tensor, c: torch.Tensor | None = None) -> StageAResiduals:
     """Evaluate the Stage-A residuals at collocation points ``x``.
 
     ``c`` is the points' dataset's conditioning row (``None`` for an

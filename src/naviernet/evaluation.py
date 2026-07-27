@@ -80,7 +80,9 @@ def iou_report(cfg, model, data, c=None) -> dict:
     n_event = data.n_event
     holdout_row = data.holdout_row
     holdout = data.frame_numbers[holdout_row] if holdout_row >= 0 else None
-    ious = {data.frame_numbers[row]: frame_iou(cfg, model, data, row, c) for row in range(n_event)}
+    ious = {
+        data.frame_numbers[row]: frame_iou(cfg, model, data, row, c) for row in range(n_event)
+    }
     return {
         "iou_per_frame": ious,
         "iou_mean": float(np.mean(list(ious.values()))),

@@ -93,7 +93,10 @@ class BubblePINN(nn.Module):
         names = list(fields if fields is not None else cfg.model.fields)
         per_field = getattr(cfg.model, "per_field", None) or {}
         self.nets = nn.ModuleDict(
-            {name: FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond) for name in names}
+            {
+                name: FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
+                for name in names
+            }
         )
         # Stage-B inverse unknowns, present only when temperature is modelled:
         # the interfacial resistance closing evaporation and the inlet superheat.

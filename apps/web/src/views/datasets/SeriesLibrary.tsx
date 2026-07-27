@@ -174,8 +174,9 @@ export function SeriesLibrary({
         />
       )}
       <p className="note">
-        <b>Transfer learning:</b> once two or more series are configured, Stage
-        B can train jointly across heat-flux conditions.
+        <b>Transfer learning:</b> once two or more series are preprocessed,
+        select them together in the Solver to train one model jointly across
+        their operating conditions.
       </p>
     </Panel>
   );

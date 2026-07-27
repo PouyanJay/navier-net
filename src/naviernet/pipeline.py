@@ -65,12 +65,23 @@ class Pipeline:
         return evaluate(self.cfg, model, data, self.paths)
 
     def figures(self) -> None:
+        # The viz path renders a single unconditioned model; a joint run's model
+        # needs a per-dataset context, so skip rather than crash. Its per-dataset
+        # metrics are still written by evaluate.
+        if len(resolved_datasets(self.cfg)) > 1:
+            log.info("skipping figures for joint run %s (not yet supported)", self.cfg.run_name)
+            return
+
         from naviernet.viz import render_all_figures
 
         model, data = self._load()
         render_all_figures(self.cfg, model, data, self.paths)
 
     def video(self, n_t: int | None = None):
+        if len(resolved_datasets(self.cfg)) > 1:
+            log.info("skipping video for joint run %s (not yet supported)", self.cfg.run_name)
+            return None
+
         from naviernet.viz import render_video
 
         model, data = self._load()
