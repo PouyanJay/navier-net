@@ -49,6 +49,7 @@ class LossContext:
         walls: torch.Tensor,
         u_inlet: float,
         groups: dict[str, float],
+        c: torch.Tensor | None = None,
     ) -> None:
         self.model = model
         self.x_coll = x_coll
@@ -56,6 +57,10 @@ class LossContext:
         self.walls = walls
         self.u_inlet = u_inlet
         self.groups = groups
+        # The dataset's conditioning row for this batch (None when unconditioned).
+        # Every residual bundle below is evaluated with it, so one joint step is
+        # a sum of per-dataset LossContexts, each carrying its own `c`.
+        self.c = c
         self._res_a: StageAResiduals | None = None
         self._mom: MomentumResiduals | None = None
         self._energy: EnergyResiduals | None = None
@@ -63,20 +68,20 @@ class LossContext:
     @property
     def res_a(self) -> StageAResiduals:
         if self._res_a is None:
-            self._res_a = stage_a_residuals(self.model, self.x_coll)
+            self._res_a = stage_a_residuals(self.model, self.x_coll, self.c)
         return self._res_a
 
     @property
     def mom_res(self) -> MomentumResiduals:
         if self._mom is None:
-            self._mom = momentum_residuals(self.model, self.x_coll, self.groups)
+            self._mom = momentum_residuals(self.model, self.x_coll, self.groups, c=self.c)
         return self._mom
 
     @property
     def energy_res(self) -> EnergyResiduals:
         if self._energy is None:
             self._energy = energy_residuals(
-                self.model, self.x_coll, self.groups, self.model.r_int_star
+                self.model, self.x_coll, self.groups, self.model.r_int_star, c=self.c
             )
         return self._energy
 
@@ -97,7 +102,7 @@ def _src_term(ctx: LossContext) -> torch.Tensor:
 
 
 def _bc_term(ctx: LossContext) -> torch.Tensor:
-    return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet)
+    return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet, ctx.c)
 
 
 # --- Stage-B loss terms -----------------------------------------------------

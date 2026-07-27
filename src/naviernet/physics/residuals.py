@@ -58,16 +58,34 @@ def gradients(f: torch.Tensor, x: torch.Tensor):
     return grad[:, 0:1], grad[:, 1:2], grad[:, 2:3]
 
 
+def _ctx(c: torch.Tensor | None, x: torch.Tensor) -> torch.Tensor | None:
+    """Broadcast a dataset's conditioning row ``(1, n_cond)`` to this point batch.
+
+    A residual is evaluated on one dataset's points, so its context is a single
+    row expanded to match ``x``'s count -- which lets the same context serve
+    collocation, inlet, and wall batches of different sizes. ``None`` passes
+    through unchanged, leaving the unconditioned (single-dataset) path untouched.
+    """
+    return None if c is None else c.expand(x.shape[0], -1)
+
+
 def interface_indicator(alpha: torch.Tensor) -> torch.Tensor:
     """``4a(1-a)``: unity at the alpha=0.5 interface, decaying to zero in the bulk."""
     return 4.0 * alpha * (1.0 - alpha)
 
 
-def stage_a_residuals(model, x: torch.Tensor) -> StageAResiduals:
-    """Evaluate the Stage-A residuals at collocation points ``x``."""
-    alpha = model.alpha(x)
-    u, v = model.velocity(x)
-    source = model.source(x)
+def stage_a_residuals(
+    model, x: torch.Tensor, c: torch.Tensor | None = None
+) -> StageAResiduals:
+    """Evaluate the Stage-A residuals at collocation points ``x``.
+
+    ``c`` is the points' dataset's conditioning row (``None`` for an
+    unconditioned single-dataset model).
+    """
+    cx = _ctx(c, x)
+    alpha = model.alpha(x, cx)
+    u, v = model.velocity(x, cx)
+    source = model.source(x, cx)
 
     a_x, a_y, a_t = gradients(alpha, x)
     u_x, _, _ = gradients(u, x)
@@ -86,10 +104,12 @@ def source_penalty(residuals: StageAResiduals) -> torch.Tensor:
     return (((1.0 - residuals.interface_weight) * residuals.source) ** 2).mean()
 
 
-def boundary_losses(model, inlet_x, wall_x, u_inlet: float) -> torch.Tensor:
+def boundary_losses(
+    model, inlet_x, wall_x, u_inlet: float, c: torch.Tensor | None = None
+) -> torch.Tensor:
     """Inlet plug velocity and no-slip side walls (Stage A: velocity only)."""
-    u_in, v_in = model.velocity(inlet_x)
-    u_wall, v_wall = model.velocity(wall_x)
+    u_in, v_in = model.velocity(inlet_x, _ctx(c, inlet_x))
+    u_wall, v_wall = model.velocity(wall_x, _ctx(c, wall_x))
 
     inlet = ((u_in - u_inlet) ** 2).mean() + (v_in**2).mean()
     wall = (u_wall**2).mean() + (v_wall**2).mean()
@@ -176,26 +196,32 @@ class EnergyResiduals(NamedTuple):
 
 
 def momentum_residuals(
-    model, x: torch.Tensor, groups: dict[str, float], eps: float = KAPPA_EPS
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    eps: float = KAPPA_EPS,
+    c: torch.Tensor | None = None,
 ) -> MomentumResiduals:
     """x/y momentum with Hele-Shaw drag and CSF surface tension. Needs ``p``.
 
-    Every coefficient comes from ``groups`` (never a literal).
+    Every coefficient comes from ``groups`` (never a literal). ``c`` is the
+    points' dataset's conditioning row (``None`` when unconditioned).
     """
     re = groups["Re"]
     we = groups["We"]
     c_hs = groups["hele_shaw"]
-    alpha = model.alpha(x)
+    cx = _ctx(c, x)
+    alpha = model.alpha(x, cx)
     rho_t = mixture(alpha, groups["rho_ratio"])
     mu_t = mixture(alpha, groups["mu_ratio"])
 
     a_x, a_y, nx, ny, _ = _interface_normal(alpha, x, eps)
     kappa = -_normal_divergence(nx, ny, x)
 
-    u, v = model.velocity(x)
+    u, v = model.velocity(x, cx)
     u_x, u_y, u_t = gradients(u, x)
     v_x, v_y, v_t = gradients(v, x)
-    p_x, p_y, _ = gradients(model.pressure(x), x)
+    p_x, p_y, _ = gradients(model.pressure(x, cx), x)
     mom_x = (
         rho_t * (u_t + u * u_x + v * u_y)
         + p_x
@@ -214,28 +240,35 @@ def momentum_residuals(
 
 
 def energy_residuals(
-    model, x: torch.Tensor, groups: dict[str, float], r_int_star, eps: float = KAPPA_EPS
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    r_int_star,
+    eps: float = KAPPA_EPS,
+    c: torch.Tensor | None = None,
 ) -> EnergyResiduals:
     """Energy advection-diffusion with wall heating and the two-way evaporation
     closure. Needs ``T`` (and the ``s`` field for the mass consistency).
 
     ``r_int_star`` is the non-dimensional interfacial resistance closing the
     evaporation flux -- a trainable inverse unknown supplied by the trainer.
+    ``c`` is the points' dataset's conditioning row (``None`` when unconditioned).
     """
     pe = groups["Pe"]
     q_wall = groups["q_wall_star"]
     rho_ratio = groups["rho_ratio"]
 
-    alpha = model.alpha(x)
+    cx = _ctx(c, x)
+    alpha = model.alpha(x, cx)
     a_x, a_y, _ = gradients(alpha, x)
     delta = torch.sqrt(a_x**2 + a_y**2 + eps**2)  # interfacial area density
 
-    theta = model.temperature(x)  # non-dimensional superheat (T - T_sat)/dT_ref
+    theta = model.temperature(x, cx)  # non-dimensional superheat (T - T_sat)/dT_ref
     # Hardt-Wondra flux; the same flux dilates mass and removes latent heat.
     evap = groups["Ja"] * (theta / r_int_star) * delta
-    src_closure = model.source(x) - (rho_ratio - 1.0) * evap
+    src_closure = model.source(x, cx) - (rho_ratio - 1.0) * evap
 
-    u, v = model.velocity(x)
+    u, v = model.velocity(x, cx)
     t_x, t_y, t_t = gradients(theta, x)
     energy = (
         t_t
@@ -249,11 +282,16 @@ def energy_residuals(
 
 
 def stage_b_residuals(
-    model, x: torch.Tensor, groups: dict[str, float], r_int_star=1.0, eps: float = KAPPA_EPS
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    r_int_star=1.0,
+    eps: float = KAPPA_EPS,
+    c: torch.Tensor | None = None,
 ) -> StageBResiduals:
     """Convenience combiner of momentum + energy, for the full Stage-B set."""
-    mom = momentum_residuals(model, x, groups, eps)
-    en = energy_residuals(model, x, groups, r_int_star, eps)
+    mom = momentum_residuals(model, x, groups, eps, c)
+    en = energy_residuals(model, x, groups, r_int_star, eps, c)
     return StageBResiduals(
         mom.mom_x, mom.mom_y, en.energy, en.src_closure, mom.kappa, en.interface_delta
     )

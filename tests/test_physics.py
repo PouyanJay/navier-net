@@ -15,12 +15,14 @@ import torch
 from naviernet.models.pinn import BubblePINN
 from naviernet.physics.groups import (
     CONDITIONING_GROUPS,
+    N_COND,
     compute_groups,
     conditioning_vector,
     hydraulic_diameter_m,
     inlet_velocity_m_s,
     reference_time_ms,
 )
+from naviernet.physics.registry import LossContext
 from naviernet.physics.residuals import (
     KAPPA_EPS,
     boundary_losses,
@@ -49,6 +51,34 @@ def test_conditioning_vector_excludes_dimensional_reference_quantities():
     # Only regime-defining dimensionless numbers condition the model, not units.
     for dimensional in ("Dh_um", "U_in_m_s", "t_ref_ms"):
         assert dimensional not in CONDITIONING_GROUPS
+
+
+def test_stage_a_residuals_thread_the_conditioning_context(tiny_cfg):
+    model = BubblePINN(tiny_cfg, n_cond=N_COND)
+    x = torch.rand(16, 3, requires_grad=True)
+    res = stage_a_residuals(model, x, torch.rand(1, N_COND))
+    assert res.vof.shape == (16, 1)
+    # The residual genuinely depends on the dataset's context, not just the point.
+    other = stage_a_residuals(model, x, torch.zeros(1, N_COND))
+    assert not torch.allclose(res.vof, other.vof)
+
+
+def test_boundary_losses_accept_conditioning_for_differently_sized_point_sets(tiny_cfg):
+    model = BubblePINN(tiny_cfg, n_cond=N_COND)
+    inlet = torch.rand(8, 3)
+    wall = torch.rand(5, 3)  # a different count from inlet: the context must broadcast
+    loss = boundary_losses(model, inlet, wall, 1.0, torch.rand(1, N_COND))
+    assert loss.ndim == 0
+
+
+def test_loss_context_threads_conditioning_to_its_residuals(tiny_cfg):
+    model = BubblePINN(tiny_cfg, n_cond=N_COND)
+    groups = compute_groups(tiny_cfg)
+    x = torch.rand(12, 3, requires_grad=True)
+    ctx = LossContext(
+        model, x, torch.rand(4, 3), torch.rand(4, 3), 1.0, groups, c=torch.rand(1, N_COND)
+    )
+    assert ctx.res_a.vof.shape == (12, 1)
 
 
 def test_reference_time(cfg):
@@ -180,7 +210,7 @@ def test_boundary_loss_is_zero_for_a_perfect_solution(tiny_cfg):
     u_inlet = 0.1542
 
     class PerfectAtBoundaries:
-        def velocity(self, x):
+        def velocity(self, x, c=None):
             # u = u_inlet on the inlet batch, 0 on the wall batch; v = 0 always.
             n = x.shape[0]
             return torch.full((n, 1), u_inlet if n == 4 else 0.0), torch.zeros(n, 1)
@@ -208,23 +238,25 @@ class _Analytic:
     def _r(self, x):
         return torch.sqrt(x[:, 0:1] ** 2 + x[:, 1:2] ** 2 + 1e-9)
 
-    def alpha(self, x):  # a compact vapour bubble at the origin
+    # Accessors mirror BubblePINN's, including the optional conditioning `c`
+    # (ignored here: these are closed-form fields of the coordinates alone).
+    def alpha(self, x, c=None):  # a compact vapour bubble at the origin
         return torch.sigmoid((0.3 - self._r(x)) / self.eps)
 
-    def velocity(self, x):
+    def velocity(self, x, c=None):
         u = torch.sin(2.0 * x[:, 0:1]) * torch.cos(x[:, 1:2]) + 0.3 * x[:, 2:3]
         v = torch.cos(x[:, 0:1]) * torch.sin(2.0 * x[:, 1:2])
         return u, v
 
-    def pressure(self, x):
+    def pressure(self, x, c=None):
         # Asymmetric in x/y, so a p_x <-> p_y transposition in the residual is
         # detectable (p_x = cos x, p_y = -0.5 sin y are not interchangeable).
         return torch.sin(x[:, 0:1]) + 0.5 * torch.cos(x[:, 1:2])
 
-    def temperature(self, x):
+    def temperature(self, x, c=None):
         return 0.5 * torch.sin(x[:, 0:1]) + 0.2 * x[:, 1:2] ** 2 + 0.1 * x[:, 2:3]
 
-    def source(self, x):
+    def source(self, x, c=None):
         return 0.2 * torch.cos(x[:, 0:1])
 
 
@@ -380,7 +412,7 @@ def test_source_closure_vanishes_when_the_source_matches_evaporation():
     x = (torch.rand(24, 3) * 0.6 + 0.05).requires_grad_(True)
 
     class _MatchedSource(_Analytic):
-        def source(self, xx):
+        def source(self, xx, c=None):
             a_x, a_y, _ = gradients(self.alpha(xx), xx)
             delta = torch.sqrt(a_x**2 + a_y**2 + KAPPA_EPS**2)
             j = self.temperature(xx) / 3.0
