@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Button, Callout } from "../components";
+import { Callout } from "../components";
 import type { DatasetSummary } from "../lib/api";
 import { EnsembleCanvas } from "./physics/EnsembleCanvas";
 import { EquationsPanel } from "./physics/EquationsPanel";
@@ -12,6 +12,26 @@ import "./physics/physics.css";
 
 interface PhysicsModelViewProps {
   datasets: DatasetSummary[];
+}
+
+/** Floppy-disk save glyph, drawn in the house SVG style (16-grid, 1.4 stroke). */
+function SaveIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 2.7h5.3L13.3 6.7v5.3a1.3 1.3 0 0 1-1.3 1.3H4a1.3 1.3 0 0 1-1.3-1.3V4A1.3 1.3 0 0 1 4 2.7Z" />
+      <path d="M5.6 2.7v3h3.2v-3" />
+      <path d="M5 13.3V9.6h6v3.7" />
+    </svg>
+  );
 }
 
 export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
@@ -61,13 +81,16 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
               {model.dirty ? "unsaved changes" : "saved"}
             </span>
           )}
-          <Button
-            variant="primary"
+          <button
+            type="button"
+            className="btn ghost icon-only pm-save"
+            data-tip={model?.saving ? "Saving…" : "Save configuration"}
+            aria-label={model?.saving ? "Saving configuration" : "Save configuration"}
             disabled={!model || !model.dirty || model.saving}
             onClick={() => model?.save()}
           >
-            {model?.saving ? "Saving…" : "Save configuration"}
-          </Button>
+            <SaveIcon />
+          </button>
         </div>
       </div>
 
