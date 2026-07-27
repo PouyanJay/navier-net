@@ -221,6 +221,11 @@ class Config:
     dataset: str = "highest_t"
     run_name: str = "${dataset}"
 
+    # Joint (transfer-learning) training reads several datasets at once. Empty
+    # means "just `dataset`", so every single-dataset run is the 1-element case
+    # and existing configs are unchanged. Use `resolved_datasets(cfg)` to read it.
+    datasets: list[str] = field(default_factory=list)
+
     stage: str = "all"
 
     experiment: ExperimentConfig = MISSING
@@ -245,6 +250,17 @@ class Config:
             {"training": "stage_a"},
         ]
     )
+
+
+def resolved_datasets(cfg) -> list[str]:
+    """The datasets a run trains on: ``cfg.datasets`` if set, else ``[cfg.dataset]``.
+
+    Order-preserving and deduplicated, so callers get a clean list whether the run
+    is single- or multi-dataset. This is the one place the two config fields are
+    reconciled, so every stage sees the same resolved list.
+    """
+    names = list(cfg.datasets) if cfg.datasets else [cfg.dataset]
+    return list(dict.fromkeys(names))
 
 
 def register_configs() -> None:

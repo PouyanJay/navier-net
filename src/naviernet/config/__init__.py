@@ -17,6 +17,7 @@ from naviernet.config.schema import (
     TrainingConfig,
     VideoConfig,
     register_configs,
+    resolved_datasets,
 )
 
 
@@ -59,4 +60,5 @@ __all__ = [
     "TrainingConfig",
     "VideoConfig",
     "register_configs",
+    "resolved_datasets",
 ]
