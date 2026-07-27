@@ -24,13 +24,23 @@ from naviernet.utils.paths import RunPaths
 log = get_logger(__name__)
 
 
+def _context(c, points) -> torch.Tensor | None:
+    """Broadcast a dataset's conditioning row to a batch of points (``None`` for
+    an unconditioned model)."""
+    return None if c is None else c.expand(points.shape[0], -1)
+
+
 @torch.no_grad()
-def predict_alpha(model, data, t_star: float, stride: int = 4) -> np.ndarray:
-    """Volume fraction on a strided pixel grid at an arbitrary time."""
+def predict_alpha(model, data, t_star: float, stride: int = 4, c=None) -> np.ndarray:
+    """Volume fraction on a strided pixel grid at an arbitrary time.
+
+    ``c`` is the dataset's conditioning row when the model is a joint,
+    condition-aware one; ``None`` for a plain single-dataset model.
+    """
     points, _, shape = data.frame_grid(0, stride)
     points = points.clone()
     points[:, 2] = float(t_star)  # any time, not just a camera instant
-    return model.alpha(points).cpu().numpy().reshape(shape)
+    return model.alpha(points, _context(c, points)).cpu().numpy().reshape(shape)
 
 
 @torch.no_grad()
@@ -50,14 +60,33 @@ def predict_alpha_fullres(model, data, t_star: float, chunk: int = 45_000) -> np
     return np.concatenate(predictions).reshape(height, width)
 
 
-def frame_iou(cfg, model, data, frame: int) -> float:
+def frame_iou(cfg, model, data, frame: int, c=None) -> float:
     """Intersection over union between predicted and measured masks."""
     stride = cfg.evaluation.stride
     threshold = cfg.evaluation.threshold
-    predicted = predict_alpha(model, data, data.t[frame], stride) > threshold
+    predicted = predict_alpha(model, data, data.t[frame], stride, c) > threshold
     measured = data.alpha[frame, ::stride, ::stride] > threshold
     union = (predicted | measured).sum()
     return float((predicted & measured).sum() / max(union, 1))
+
+
+def iou_report(cfg, model, data, c=None) -> dict:
+    """Per-frame IoU, its mean, and the held-out frame's IoU for one dataset.
+
+    Shared by single-dataset :func:`evaluate` (``c=None``) and the joint report
+    (one call per dataset, each with its conditioning row), so the headline
+    generalisation metric is computed identically either way.
+    """
+    n_event = data.n_event
+    holdout_row = data.holdout_row
+    holdout = data.frame_numbers[holdout_row] if holdout_row >= 0 else None
+    ious = {data.frame_numbers[row]: frame_iou(cfg, model, data, row, c) for row in range(n_event)}
+    return {
+        "iou_per_frame": ious,
+        "iou_mean": float(np.mean(list(ious.values()))),
+        "iou_holdout": ious.get(holdout) if holdout is not None else None,
+        "holdout_frame": holdout,
+    }
 
 
 class GrowthTrajectory(NamedTuple):
@@ -114,12 +143,9 @@ def measured_trajectory(cfg, data) -> GrowthTrajectory:
 def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     """Full evaluation report; also written to ``metrics.json`` in the run dir."""
     paths.ensure()  # artifacts below need the run directory to exist
-    n_event = data.n_event
-    holdout_row = data.holdout_row
-    holdout = data.frame_numbers[holdout_row] if holdout_row >= 0 else None
 
-    # Keyed by 1-based physical frame number, matching the TIFF filenames.
-    ious = {data.frame_numbers[row]: frame_iou(cfg, model, data, row) for row in range(n_event)}
+    ious_report = iou_report(cfg, model, data)
+    ious = ious_report["iou_per_frame"]
 
     predicted = nose_trajectory(cfg, model, data)
     _write_trajectory(cfg, data, paths, predicted)
@@ -132,10 +158,7 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     report = {
         "run_name": cfg.run_name,
         "dataset": cfg.dataset,
-        "iou_per_frame": ious,
-        "iou_mean": float(np.mean(list(ious.values()))),
-        "iou_holdout": ious.get(holdout) if holdout is not None else None,
-        "holdout_frame": holdout,
+        **ious_report,
         "nose_speed_star": mean_speed_star,
         "nose_speed_mm_s": mean_speed_star * cfg.scales.U_ref * 1e3,
     }
@@ -151,6 +174,35 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
 
     paths.metrics_json.write_text(json.dumps(report, indent=2))
     log.info("metrics written to %s", paths.metrics_json)
+    return report
+
+
+def evaluate_joint(cfg, model, contexts, paths: RunPaths) -> dict:
+    """Evaluate a joint (transfer-learning) run: each dataset scored with its own
+    conditioning row, into one metrics.json with per-dataset IoU and an aggregate.
+
+    ``contexts`` are the run's datasets, each carrying its tensors (``.data``),
+    name (``.name``), and conditioning row (``.c``) — as the joint trainer built
+    them. The holdout IoU is still the headline number, now reported per dataset
+    and averaged, so a joint model is judged on generalisation across conditions.
+    """
+    paths.ensure()
+
+    per_dataset = {cx.name: iou_report(cfg, model, cx.data, cx.c) for cx in contexts}
+    holdouts = [d["iou_holdout"] for d in per_dataset.values() if d["iou_holdout"] is not None]
+
+    report = {
+        "run_name": cfg.run_name,
+        "datasets": [cx.name for cx in contexts],
+        "per_dataset": per_dataset,
+        "iou_mean": float(np.mean([d["iou_mean"] for d in per_dataset.values()])),
+        "iou_holdout_mean": float(np.mean(holdouts)) if holdouts else None,
+    }
+
+    for name, d in per_dataset.items():
+        log.info("dataset %s: IoU mean %.3f, holdout %s", name, d["iou_mean"], d["iou_holdout"])
+    paths.metrics_json.write_text(json.dumps(report, indent=2))
+    log.info("joint metrics for %d datasets written to %s", len(contexts), paths.metrics_json)
     return report
 
 

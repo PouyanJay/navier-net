@@ -359,12 +359,32 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
             f"  naviernet stage=train run_name={cfg.run_name}"
         )
     device = torch.device(cfg.training.device)
-    data = BubbleDataset(cfg, paths, device=str(device))
-    model = BubblePINN(cfg).to(device)
     ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
+    data = BubbleDataset(cfg, paths, device=str(device))
+    # `n_cond` (0 for a single-dataset checkpoint) rebuilds the right architecture,
+    # so a conditioned joint checkpoint loads without a shape mismatch.
+    model = BubblePINN(cfg, n_cond=int(ckpt.get("n_cond", 0))).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, data, ckpt["state"]
+
+
+def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset]]:
+    """The conditioned model and its per-dataset contexts, for evaluating a joint
+    run. Mirrors :func:`load_model` but returns every dataset the run spans, each
+    with its conditioning row, so evaluation scores them all."""
+    if not paths.checkpoint.exists():
+        raise FileNotFoundError(
+            f"{paths.checkpoint} not found -- run the train stage first:\n"
+            f"  naviernet stage=train run_name={cfg.run_name}"
+        )
+    device = torch.device(cfg.training.device)
+    ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
+    contexts = _load_joint_datasets(cfg, paths, device)
+    model = BubblePINN(cfg, n_cond=int(ckpt.get("n_cond", N_COND))).to(device)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+    return model, contexts
 
 
 def _fmt(weights: dict[str, float]) -> str:

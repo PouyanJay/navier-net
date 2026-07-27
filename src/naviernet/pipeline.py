@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from naviernet.config.schema import STAGES
+from naviernet.config.schema import STAGES, resolved_datasets
 from naviernet.data.preprocess import preprocess
 from naviernet.physics.groups import save_groups
 from naviernet.utils.logging import format_mapping, get_logger
@@ -50,6 +50,15 @@ class Pipeline:
         return state
 
     def evaluate(self) -> dict:
+        # A joint (multi-dataset) run scores every dataset it spans, each with its
+        # own conditioning; a single-dataset run keeps the original report.
+        if len(resolved_datasets(self.cfg)) > 1:
+            from naviernet import training
+            from naviernet.evaluation import evaluate_joint
+
+            model, contexts = training.load_joint(self.cfg, self.paths)
+            return evaluate_joint(self.cfg, model, contexts, self.paths)
+
         from naviernet.evaluation import evaluate
 
         model, data = self._load()

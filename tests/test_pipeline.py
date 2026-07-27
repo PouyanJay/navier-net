@@ -107,6 +107,43 @@ def test_joint_training_over_two_datasets_writes_one_conditioned_checkpoint(tmp_
     assert saved["n_cond"] == N_COND
 
 
+def test_joint_evaluation_reports_per_dataset_iou(tmp_path):
+    """A joint run evaluates each dataset with its own conditioning and writes one
+    metrics.json carrying per-dataset IoU plus an aggregate."""
+    import json
+
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    for name, q_wall in (("ds_a", 2.0), ("ds_b", 5.0)):
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
+
+    train(cfg, run_paths)
+    model, contexts = load_joint(cfg, run_paths)  # rebuilds the conditioned model
+    report = evaluate_joint(cfg, model, contexts, run_paths)
+
+    assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
+    for name in ("ds_a", "ds_b"):
+        assert 0.0 <= report["per_dataset"][name]["iou_mean"] <= 1.0
+    assert 0.0 <= report["iou_mean"] <= 1.0  # aggregate over the datasets
+    on_disk = json.loads(run_paths.metrics_json.read_text())
+    assert on_disk["datasets"] == ["ds_a", "ds_b"]
+
+
 def test_joint_training_needs_groups_in_each_datasets_tensors(tmp_path):
     """A dataset preprocessed before groups were recorded can't join a conditioned
     run; the trainer says so instead of silently mis-conditioning."""
