@@ -12,7 +12,13 @@ import type {
   LossWeightsInput,
   RunSummary,
 } from "../../lib/api";
-import { FORM_BOUNDS, HOLDOUT_OPTIONS, type SolverFormState } from "./form";
+import {
+  FORM_BOUNDS,
+  HOLDOUT_OPTIONS,
+  VAL_FRACTION_OPTIONS,
+  VAL_STRATEGY_OPTIONS,
+  type SolverFormState,
+} from "./form";
 
 /** The numeric run-config fields, in display order. Each maps 1:1 onto a
  * `cfg.training` value; bounds come from FORM_BOUNDS by the same key. */
@@ -50,6 +56,8 @@ interface RunConfigPanelProps {
   selectedDatasets: string[];
   onToggleDataset: (id: string) => void;
   onSelectAllDatasets: (on: boolean) => void;
+  heldoutDatasets: string[];
+  onToggleHeldout: (id: string) => void;
   resume: boolean;
   onResume: (on: boolean) => void;
   resumableRuns: RunSummary[];
@@ -65,21 +73,27 @@ interface RunConfigPanelProps {
 }
 
 /** The project's processed datasets as a checkbox group with "select all".
- * One selected trains as usual; several train one model jointly. Wrapped in a
+ * One selected trains as usual; several train one model jointly. When joint,
+ * each selected row can be flipped train ↔ hold-out: a held-out condition (axis
+ * B) is loaded but never supervised, scored as a transfer test. Wrapped in a
  * <fieldset> so resume disables the whole group at once. */
 function DatasetMultiSelect({
   available,
   selected,
+  heldout,
   allSelected,
   onToggle,
   onSelectAll,
+  onToggleHeldout,
   disabled,
 }: {
   available: DatasetSummary[];
   selected: string[];
+  heldout: string[];
   allSelected: boolean;
   onToggle: (id: string) => void;
   onSelectAll: (on: boolean) => void;
+  onToggleHeldout: (id: string) => void;
   disabled: boolean;
 }) {
   if (available.length === 0) {
@@ -93,6 +107,7 @@ function DatasetMultiSelect({
     );
   }
   const joint = selected.length > 1;
+  const trainingCount = selected.length - heldout.length;
   return (
     <fieldset className="ds-select" disabled={disabled}>
       <div className="ds-select-hd">
@@ -112,24 +127,54 @@ function DatasetMultiSelect({
         </button>
       </div>
       <ul className="ds-list">
-        {available.map((d) => (
-          <li key={d.id}>
-            <label className="ds-item">
-              <input
-                type="checkbox"
-                checked={selected.includes(d.id)}
-                onChange={() => onToggle(d.id)}
-                disabled={disabled}
-              />
-              <span className="mono">{d.id}</span>
-            </label>
-          </li>
-        ))}
+        {available.map((d) => {
+          const isSelected = selected.includes(d.id);
+          const isHeld = heldout.includes(d.id);
+          // Don't let the last training dataset be held out — nothing would train.
+          const lockTrain = !isHeld && trainingCount <= 1;
+          return (
+            <li key={d.id} className={isHeld ? "ds-row held" : "ds-row"}>
+              <label className="ds-item">
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => onToggle(d.id)}
+                  disabled={disabled}
+                />
+                <span className="mono">{d.id}</span>
+              </label>
+              {joint && isSelected && (
+                <button
+                  type="button"
+                  className={isHeld ? "ds-holdout on" : "ds-holdout"}
+                  onClick={() => onToggleHeldout(d.id)}
+                  disabled={disabled || lockTrain}
+                  aria-pressed={isHeld}
+                  aria-label={`${isHeld ? "Return to training" : "Hold out"} ${d.id}`}
+                >
+                  {isHeld ? "held out" : "train"}
+                </button>
+              )}
+            </li>
+          );
+        })}
       </ul>
       {joint && (
         <p className="ds-hint">
-          Trains one model jointly across the selected datasets — transfer
-          learning across their operating conditions.
+          {heldout.length > 0 ? (
+            <>
+              {trainingCount} train · {heldout.length} held out. Held-out
+              conditions are never supervised — scored on every frame as a
+              transfer test (can the model predict a condition it never trained
+              on?).
+            </>
+          ) : (
+            <>
+              Trains one model jointly across the selected datasets — transfer
+              learning across their operating conditions. Flip a row to “held
+              out” to keep a whole condition out of training as a transfer test.
+            </>
+          )}
         </p>
       )}
     </fieldset>
@@ -148,6 +193,8 @@ export function RunConfigPanel({
   selectedDatasets,
   onToggleDataset,
   onSelectAllDatasets,
+  heldoutDatasets,
+  onToggleHeldout,
   resume,
   onResume,
   resumableRuns,
@@ -176,9 +223,11 @@ export function RunConfigPanel({
       <DatasetMultiSelect
         available={availableDatasets}
         selected={selectedDatasets}
+        heldout={heldoutDatasets}
         allSelected={allSelected}
         onToggle={onToggleDataset}
         onSelectAll={onSelectAllDatasets}
+        onToggleHeldout={onToggleHeldout}
         disabled={fixedByResume}
       />
       <div className="cfg">
@@ -198,12 +247,32 @@ export function RunConfigPanel({
         ))}
         <SelectField
           label="Holdout frame"
-          hint="generalization metric"
+          hint="single-frame check"
           value={String(form.holdout_frame)}
           onChange={(value) => onForm({ holdout_frame: Number(value) })}
           options={HOLDOUT_OPTIONS}
           disabled={fixedByResume}
         />
+        <SelectField
+          label="Validation split"
+          hint="per dataset · held from training"
+          value={String(form.val_fraction)}
+          onChange={(value) => onForm({ val_fraction: Number(value) })}
+          options={VAL_FRACTION_OPTIONS}
+          disabled={fixedByResume}
+        />
+        {form.val_fraction > 0 && (
+          <SelectField
+            label="Split strategy"
+            hint="which frames"
+            value={form.val_strategy}
+            onChange={(value) =>
+              onForm({ val_strategy: value as SolverFormState["val_strategy"] })
+            }
+            options={VAL_STRATEGY_OPTIONS}
+            disabled={fixedByResume}
+          />
+        )}
       </div>
       <div className="switch-rows">
         <Switch

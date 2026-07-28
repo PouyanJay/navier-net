@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   Button,
@@ -14,6 +14,7 @@ import type { ProjectSummary, RunJobStatus } from "../lib/api";
 import { LossWeightsPanel, RunConfigPanel } from "./solver/ConfigPanels";
 import {
   FORM_DEFAULTS,
+  JOINT_VAL_FRACTION,
   parseSeeds,
   toLaunchRequest,
   type SolverFormState,
@@ -61,8 +62,22 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
 
   const seeds = useMemo(() => parseSeeds(seedsText), [seedsText]);
 
+  // A joint run (more than one dataset) pre-fills a standard 80/20 validation
+  // split; a single-dataset run stays at 0 so its behaviour is unchanged. Only
+  // nudges an untouched (0) fraction, so an explicit choice is never overridden.
+  const isJoint = targets.selected.length > 1;
+  useEffect(() => {
+    setForm((prev) => {
+      if (isJoint && prev.val_fraction === 0)
+        return { ...prev, val_fraction: JOINT_VAL_FRACTION };
+      if (!isJoint && prev.val_fraction === JOINT_VAL_FRACTION)
+        return { ...prev, val_fraction: 0 };
+      return prev;
+    });
+  }, [isJoint]);
+
   const submit = useCallback(() => {
-    const { resume, resumeRunId, selected } = targets;
+    const { resume, resumeRunId, selected, heldout } = targets;
     if (sweepMode) {
       // A sweep varies seeds on one dataset; use the first selected series.
       if (selected.length === 0 || !seeds) return;
@@ -73,7 +88,7 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
       return;
     }
     if ((resume && !resumeRunId) || (!resume && selected.length === 0)) return;
-    const target = resume ? { resumeRunId } : { datasets: selected };
+    const target = resume ? { resumeRunId } : { datasets: selected, heldout };
     void run.start(toLaunchRequest(form, target));
   }, [run, form, targets, sweepMode, seeds]);
 
@@ -134,6 +149,8 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             selectedDatasets={targets.selected}
             onToggleDataset={targets.toggleDataset}
             onSelectAllDatasets={targets.selectAll}
+            heldoutDatasets={targets.heldout}
+            onToggleHeldout={targets.toggleHeldout}
             resume={targets.resume}
             onResume={targets.setResume}
             resumableRuns={targets.resumableRuns}

@@ -9,6 +9,10 @@ export interface RunTargets {
   selected: string[];
   toggleDataset: (id: string) => void;
   selectAll: (on: boolean) => void;
+  /** Selected datasets marked as held-out conditions (axis B): loaded, never
+   * supervised, scored as a transfer test. Always a subset of `selected`. */
+  heldout: string[];
+  toggleHeldout: (id: string) => void;
   resume: boolean;
   setResume: (on: boolean) => void;
   resumableRuns: RunSummary[];
@@ -29,6 +33,7 @@ export interface RunTargets {
 export function useRunTargets(projectDatasets: string[] | null): RunTargets {
   const [available, setAvailable] = useState<DatasetSummary[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  const [heldout, setHeldout] = useState<string[]>([]);
   const [resume, setResume] = useState(false);
   const [resumableRuns, setResumableRuns] = useState<RunSummary[]>([]);
   const [resumeRunId, setResumeRunId] = useState("");
@@ -63,6 +68,7 @@ export function useRunTargets(projectDatasets: string[] | null): RunTargets {
         setAvailable(processed);
         // Default to training the whole project; the user can narrow it.
         setSelected(processed.map((entry) => entry.id));
+        setHeldout([]);
       })
       .catch(() =>
         setLoadError("Could not load datasets; is the API running?"),
@@ -77,20 +83,31 @@ export function useRunTargets(projectDatasets: string[] | null): RunTargets {
     setSelected((cur) =>
       cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
     );
+    // A dataset no longer in the run cannot be a held-out condition of it.
+    setHeldout((cur) => cur.filter((x) => x !== id));
   }, []);
 
   const selectAll = useCallback(
     (on: boolean) => {
       setSelected(on ? (available ?? []).map((entry) => entry.id) : []);
+      if (!on) setHeldout([]);
     },
     [available],
   );
+
+  const toggleHeldout = useCallback((id: string) => {
+    setHeldout((cur) =>
+      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
+    );
+  }, []);
 
   return {
     available,
     selected,
     toggleDataset,
     selectAll,
+    heldout,
+    toggleHeldout,
     resume,
     setResume,
     resumableRuns,

@@ -252,6 +252,8 @@ export interface RunLaunchRequest {
   dataset?: string | null;
   /** Joint (transfer-learning) training: one model across these datasets. */
   datasets?: string[] | null;
+  /** Whole datasets kept OUT of training and scored as a transfer test (axis B). */
+  heldout_datasets?: string[] | null;
   resume?: boolean;
   run_id?: string | null;
   steps: number;
@@ -261,6 +263,10 @@ export interface RunLaunchRequest {
   n_coll: number;
   n_bc: number;
   holdout_frame: number;
+  /** Per-dataset fraction of frames held out as an in-distribution validation set. */
+  val_fraction: number;
+  /** How the split picks frames: "tail" (extrapolation) | "scatter" (interpolation). */
+  val_strategy: "tail" | "scatter";
   rebalance_every: number;
   log_every: number;
   weights: LossWeightsInput;

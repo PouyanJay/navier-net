@@ -14,6 +14,8 @@ export interface SolverFormState {
   n_coll: number;
   n_bc: number;
   holdout_frame: number;
+  val_fraction: number;
+  val_strategy: "tail" | "scatter";
   rebalance_every: number;
   log_every: number;
   weights: LossWeightsInput;
@@ -28,11 +30,33 @@ export const FORM_DEFAULTS: SolverFormState = {
   n_coll: 3072,
   n_bc: 512,
   holdout_frame: 5,
+  // Off by default so a single-dataset run is unchanged; the joint pre-fill
+  // (see JOINT_VAL_FRACTION) raises it to 0.2 when more than one dataset trains.
+  val_fraction: 0,
+  val_strategy: "tail",
   rebalance_every: 500,
   log_every: 200,
   weights: { data: 10, vof: 1, div: 1, src: 0.1, bc: 5 },
   render: true,
 };
+
+/** The validation split a joint run pre-fills: a standard 80/20, tail (the honest
+ * extrapolation test for a growth series). A single-dataset run stays at 0. */
+export const JOINT_VAL_FRACTION = 0.2;
+
+/** Validation-split options: a per-dataset fraction of frames held from training. */
+export const VAL_FRACTION_OPTIONS = [
+  { value: "0", label: "none · train on every frame" },
+  { value: "0.1", label: "10% · in-distribution validation" },
+  { value: "0.2", label: "20% · in-distribution validation" },
+  { value: "0.3", label: "30% · in-distribution validation" },
+];
+
+/** Which frames the split holds out. */
+export const VAL_STRATEGY_OPTIONS = [
+  { value: "tail", label: "tail · extrapolation" },
+  { value: "scatter", label: "scatter · interpolation" },
+];
 
 /** Bounds shown on the inputs; the API enforces the same ranges. */
 export const FORM_BOUNDS = {
@@ -57,15 +81,20 @@ export const HOLDOUT_OPTIONS = [
 
 export function toLaunchRequest(
   form: SolverFormState,
-  target: { datasets: string[] } | { resumeRunId: string },
+  target: { datasets: string[]; heldout?: string[] } | { resumeRunId: string },
 ): RunLaunchRequest {
   const base = { ...form };
   if ("resumeRunId" in target) {
     return { ...base, resume: true, run_id: target.resumeRunId };
   }
   // One dataset trains as today; several train one model jointly (the API reads
-  // `datasets` either way).
-  return { ...base, datasets: target.datasets };
+  // `datasets` either way). Held-out conditions (axis B) travel only when marked.
+  const heldout = target.heldout ?? [];
+  return {
+    ...base,
+    datasets: target.datasets,
+    ...(heldout.length > 0 ? { heldout_datasets: heldout } : {}),
+  };
 }
 
 /** Seeds a sweep may run: 1-6 unique non-negative integers. */

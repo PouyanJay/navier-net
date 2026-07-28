@@ -250,6 +250,79 @@ describe("SolverView", () => {
     ]);
   });
 
+  it("a joint run pre-fills a 20% validation split and posts it", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+      ],
+      posts,
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    // Two datasets => joint => the split control pre-fills the standard 80/20.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Validation split/)).toHaveValue("0.2"),
+    );
+    expect(screen.getByLabelText(/Split strategy/)).toHaveValue("tail");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.val_fraction).toBe(0.2);
+    expect(body.val_strategy).toBe("tail");
+    // Nothing held out unless the user marks it.
+    expect(body.heldout_datasets).toBeUndefined();
+  });
+
+  it("a single-dataset run keeps the split off and offers no hold-out", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.getByLabelText(/Validation split/)).toHaveValue("0");
+    // Split strategy only appears once a split is chosen.
+    expect(screen.queryByLabelText(/Split strategy/)).toBeNull();
+    // Axis B is a joint-only concept: no per-row hold-out toggle for one dataset.
+    expect(
+      screen.queryByRole("button", { name: /Hold out/ }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.val_fraction).toBe(0);
+    expect(body.heldout_datasets).toBeUndefined();
+  });
+
+  it("marks a dataset as held out and posts it as a transfer condition", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+      ],
+      posts,
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    // Flip ds_b to held-out; ds_a must stay training (nothing else would train).
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
+    expect(
+      screen.getByRole("button", { name: "Return to training ds_b" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Hold out ds_a" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.datasets).toEqual(["ds_a", "ds_b"]);
+    expect(body.heldout_datasets).toEqual(["ds_b"]);
+  });
+
   it("scopes the dataset list to the open project", async () => {
     const posts: unknown[] = [];
     stubMultiDataset(
