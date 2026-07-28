@@ -138,7 +138,7 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             onToggleDataset={targets.toggleDataset}
             onSelectAllDatasets={targets.selectAll}
             heldout={targets.heldout}
-            onHeldout={targets.setHeldout}
+            onToggleHeldout={targets.toggleHeldout}
             resume={targets.resume}
             onResume={targets.setResume}
             resumableRuns={targets.resumableRuns}

@@ -278,14 +278,13 @@ describe("SolverView", () => {
     expect(body.heldout_datasets).toBeUndefined();
   });
 
-  it("a single series disables hold-out and offers no frame holdout", async () => {
+  it("a single series offers no hold-out toggle and no frame holdout", async () => {
     const posts = stubApi();
     render(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    // Hold-out is a series concept: unavailable (None) with only one series.
-    expect(screen.getByLabelText(/Hold out/)).toBeDisabled();
-    expect(screen.getByLabelText(/Hold out/)).toHaveValue("");
+    // Hold-out is a series concept: with one series there's nothing to hold out.
+    expect(screen.queryByRole("button", { name: /Hold out/ })).toBeNull();
     // The legacy per-frame "Holdout frame" control is gone from the Solver.
     expect(screen.queryByLabelText(/Holdout frame/)).toBeNull();
 
@@ -297,7 +296,7 @@ describe("SolverView", () => {
     expect(body.heldout_datasets).toBeUndefined();
   });
 
-  it("holds out a whole series and posts it as a transfer condition", async () => {
+  it("holds out a whole series from its row and posts it as a transfer condition", async () => {
     const posts: unknown[] = [];
     stubMultiDataset(
       [
@@ -309,10 +308,11 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("ds_a");
 
-    // Two series -> hold-out enabled; pick ds_b to hold out, ds_a trains.
-    const holdOut = screen.getByLabelText(/Hold out/);
-    expect(holdOut).toBeEnabled();
-    fireEvent.change(holdOut, { target: { value: "ds_b" } });
+    // Two series -> each row gets a hold-out toggle; hold ds_b out, ds_a trains.
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
+    expect(
+      screen.getByRole("button", { name: "Return to training ds_b" }),
+    ).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -321,7 +321,30 @@ describe("SolverView", () => {
     expect(body.heldout_datasets).toEqual(["ds_b"]);
   });
 
-  it("clears the held-out series when deselecting would leave nothing to train", async () => {
+  it("holding out a different series moves the single hold-out", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+        { id: "ds_c", processed: true },
+      ],
+      posts,
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
+    // Marking ds_c clears ds_b — only one series is ever held out.
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_c" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.heldout_datasets).toEqual(["ds_c"]);
+  });
+
+  it("clears the held-out series when it is deselected from the run", async () => {
     const posts: unknown[] = [];
     stubMultiDataset(
       [
@@ -335,9 +358,7 @@ describe("SolverView", () => {
 
     // Hold out ds_b, then uncheck ds_a — ds_b must not be left as the sole,
     // held-out series (which the API would reject on submit).
-    fireEvent.change(screen.getByLabelText(/Hold out/), {
-      target: { value: "ds_b" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
     fireEvent.click(screen.getByLabelText("ds_a"));
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));

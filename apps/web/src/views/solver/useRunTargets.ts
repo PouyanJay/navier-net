@@ -12,7 +12,9 @@ export interface RunTargets {
   /** The one selected series held out of training (axis B): loaded, never
    * supervised, scored as a transfer test. "" = none. Always one of `selected`. */
   heldout: string;
-  setHeldout: (id: string) => void;
+  /** Flip a series train ↔ held-out. Single hold-out: marking one clears any
+   * other, and it must leave at least one series training. */
+  toggleHeldout: (id: string) => void;
   resume: boolean;
   setResume: (on: boolean) => void;
   resumableRuns: RunSummary[];
@@ -102,13 +104,19 @@ export function useRunTargets(projectDatasets: string[] | null): RunTargets {
     [available],
   );
 
+  const toggleHeldout = useCallback((id: string) => {
+    // Single hold-out: marking a series clears any other; clicking the held-out
+    // one returns it to training.
+    setHeldout((cur) => (cur === id ? "" : id));
+  }, []);
+
   return {
     available,
     selected,
     toggleDataset,
     selectAll,
     heldout,
-    setHeldout,
+    toggleHeldout,
     resume,
     setResume,
     resumableRuns,

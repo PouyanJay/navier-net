@@ -51,7 +51,7 @@ interface RunConfigPanelProps {
   onToggleDataset: (id: string) => void;
   onSelectAllDatasets: (on: boolean) => void;
   heldout: string;
-  onHeldout: (id: string) => void;
+  onToggleHeldout: (id: string) => void;
   resume: boolean;
   onResume: (on: boolean) => void;
   resumableRuns: RunSummary[];
@@ -66,23 +66,29 @@ interface RunConfigPanelProps {
   locked: boolean;
 }
 
-/** The project's processed datasets (series) as a checkbox group with "select
- * all". One selected trains as usual; several train one model jointly. Which
- * series to hold out, and the validation split, are separate controls below.
- * Wrapped in a <fieldset> so resume disables the whole group at once. */
+/** The project's processed series as one control: a checkbox picks whether a
+ * series is in the run at all, and — once at least two are in — a per-row toggle
+ * flips it train ↔ held-out. A held-out series is loaded but never supervised,
+ * scored on every frame as the transfer test. One place for each series' role,
+ * so "in the run", "training", and "held out" are all visible at once. Wrapped in
+ * a <fieldset> so resume disables the whole group at once. */
 function DatasetMultiSelect({
   available,
   selected,
+  heldout,
   allSelected,
   onToggle,
   onSelectAll,
+  onToggleHeldout,
   disabled,
 }: {
   available: DatasetSummary[];
   selected: string[];
+  heldout: string;
   allSelected: boolean;
   onToggle: (id: string) => void;
   onSelectAll: (on: boolean) => void;
+  onToggleHeldout: (id: string) => void;
   disabled: boolean;
 }) {
   if (available.length === 0) {
@@ -96,6 +102,7 @@ function DatasetMultiSelect({
     );
   }
   const joint = selected.length > 1;
+  const trainingCount = selected.length - (heldout ? 1 : 0);
   return (
     <fieldset className="ds-select" disabled={disabled}>
       <div className="ds-select-hd">
@@ -115,24 +122,50 @@ function DatasetMultiSelect({
         </button>
       </div>
       <ul className="ds-list">
-        {available.map((d) => (
-          <li key={d.id}>
-            <label className="ds-item">
-              <input
-                type="checkbox"
-                checked={selected.includes(d.id)}
-                onChange={() => onToggle(d.id)}
-                disabled={disabled}
-              />
-              <span className="mono">{d.id}</span>
-            </label>
-          </li>
-        ))}
+        {available.map((d) => {
+          const isSelected = selected.includes(d.id);
+          const isHeld = heldout === d.id;
+          return (
+            <li key={d.id} className={isHeld ? "ds-row held" : "ds-row"}>
+              <label className="ds-item">
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => onToggle(d.id)}
+                  disabled={disabled}
+                />
+                <span className="mono">{d.id}</span>
+              </label>
+              {joint && isSelected && (
+                <button
+                  type="button"
+                  className={isHeld ? "ds-holdout on" : "ds-holdout"}
+                  onClick={() => onToggleHeldout(d.id)}
+                  disabled={disabled}
+                  aria-pressed={isHeld}
+                  aria-label={`${isHeld ? "Return to training" : "Hold out"} ${d.id}`}
+                >
+                  {isHeld ? "held out" : "hold out"}
+                </button>
+              )}
+            </li>
+          );
+        })}
       </ul>
       {joint && (
         <p className="ds-hint">
-          Trains one model jointly across the selected series — transfer learning
-          across their operating conditions.
+          {heldout ? (
+            <>
+              {trainingCount} train · 1 held out. The held-out series is never
+              supervised — scored on every frame as a transfer test (can the model
+              predict a condition it never trained on?).
+            </>
+          ) : (
+            <>
+              Trains one model jointly across the selected series. Hold one out to
+              keep a whole condition out of training as a transfer test.
+            </>
+          )}
         </p>
       )}
     </fieldset>
@@ -152,7 +185,7 @@ export function RunConfigPanel({
   onToggleDataset,
   onSelectAllDatasets,
   heldout,
-  onHeldout,
+  onToggleHeldout,
   resume,
   onResume,
   resumableRuns,
@@ -176,22 +209,16 @@ export function RunConfigPanel({
     availableDatasets.length > 0 &&
     selectedDatasets.length === availableDatasets.length;
 
-  // Hold-out (axis B) needs at least two series selected, so one can be kept out
-  // while the others train. With one series it is unavailable and pinned to None.
-  const canHoldOut = selectedDatasets.length > 1;
-  const holdoutOptions = [
-    { value: "", label: "none" },
-    ...selectedDatasets.map((id) => ({ value: id, label: id })),
-  ];
-
   return (
     <Panel title="Run configuration" subtitle="inputs to this run">
       <DatasetMultiSelect
         available={availableDatasets}
         selected={selectedDatasets}
+        heldout={heldout}
         allSelected={allSelected}
         onToggle={onToggleDataset}
         onSelectAll={onSelectAllDatasets}
+        onToggleHeldout={onToggleHeldout}
         disabled={fixedByResume}
       />
       <div className="cfg">
@@ -209,14 +236,6 @@ export function RunConfigPanel({
             disabled={spec.editableOnResume ? locked : fixedByResume}
           />
         ))}
-        <SelectField
-          label="Hold out"
-          hint="series · transfer"
-          value={heldout}
-          onChange={onHeldout}
-          options={holdoutOptions}
-          disabled={fixedByResume || !canHoldOut}
-        />
         <SelectField
           label="Validation split"
           hint="frames / series"
