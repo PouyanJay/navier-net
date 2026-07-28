@@ -288,10 +288,24 @@ def validate_trainable_dataset(settings: Settings, dataset: str | None) -> str:
 
 
 def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> list[str]:
-    """The datasets for a new run, each checked trainable (preprocessed)."""
+    """The datasets for a new run, each checked trainable (preprocessed).
+
+    Held-out conditions (axis B) are validated first: they must be among the run's
+    datasets and cannot be all of them, so an impossible split is rejected before
+    anything is scheduled. Held-out datasets are still checked trainable -- they
+    are loaded (never supervised) to score transfer.
+    """
     names = request.resolved_datasets()
     if not names:
         raise LaunchRejected(400, "a new run requires a dataset")
+
+    heldout = list(dict.fromkeys(request.heldout_datasets or []))
+    unknown = [name for name in heldout if name not in names]
+    if unknown:
+        raise LaunchRejected(400, f"held-out datasets are not in the run: {unknown}")
+    if heldout and not [name for name in names if name not in set(heldout)]:
+        raise LaunchRejected(400, "cannot hold out every dataset; nothing left to train")
+
     return [validate_trainable_dataset(settings, name) for name in names]
 
 
@@ -463,6 +477,8 @@ def _configure(
         f"training.n_coll={request.n_coll}",
         f"training.n_bc={request.n_bc}",
         f"training.holdout_frame={request.holdout_frame}",
+        f"training.val_fraction={request.val_fraction}",
+        f"training.val_strategy={request.val_strategy}",
         f"training.rebalance_every={request.rebalance_every}",
         f"training.log_every={request.log_every}",
         f"training.seed={request.seed}",
@@ -483,6 +499,10 @@ def _configure(
     datasets = request.datasets or [dataset]
     if len(datasets) > 1:
         overrides.append(f"datasets=[{','.join(datasets)}]")
+    # Held-out conditions (axis B): whole datasets loaded but never supervised.
+    heldout = request.heldout_datasets or []
+    if heldout:
+        overrides.append(f"heldout_datasets=[{','.join(heldout)}]")
     return compose_cfg_once(dataset, overrides=overrides), 0
 
 
