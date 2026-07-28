@@ -37,6 +37,14 @@ export interface RunMetrics {
   transfer?: TransferMetrics | null; // held-out conditions, scored over every frame
 }
 
+/** The single generalization number to headline for a run: the single-dataset
+ * holdout-frame IoU, or a joint run's in-distribution validation IoU (metrics.json
+ * v2 has no `iou_holdout`). Mirrors the backend's `_headline_iou` so every surface
+ * shows the same number for the same run. */
+export function headlineIou(metrics: RunMetrics | null | undefined): number | null {
+  return metrics?.iou_holdout ?? metrics?.val_iou_mean ?? null;
+}
+
 export interface RunDetail {
   id: string;
   dataset: string | null;

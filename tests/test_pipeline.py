@@ -133,8 +133,8 @@ def test_joint_evaluation_reports_per_dataset_iou(tmp_path):
         _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
 
     train(cfg, run_paths)
-    model, contexts = load_joint(cfg, run_paths)  # rebuilds the conditioned model
-    report = evaluate_joint(cfg, model, contexts, run_paths)
+    model, contexts, heldout = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths, heldout_datasets=heldout)
 
     assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
     for name in ("ds_a", "ds_b"):
@@ -283,8 +283,8 @@ def test_joint_metrics_report_validation_and_transfer(tmp_path):
     _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
 
     train(cfg, run_paths)
-    model, contexts = load_joint(cfg, run_paths)
-    report = evaluate_joint(cfg, model, contexts, run_paths)
+    model, contexts, heldout = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths, heldout_datasets=heldout)
 
     assert report["datasets"] == ["ds_a", "ds_b", "ds_c"]
     assert report["training_datasets"] == ["ds_a", "ds_b"]
@@ -293,7 +293,7 @@ def test_joint_metrics_report_validation_and_transfer(tmp_path):
     assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
     for name in ("ds_a", "ds_b"):
         d = report["per_dataset"][name]
-        assert d["val_frames"] == [7, 8]  # tail 0.25 of 8 frames
+        assert d["validation_frames"] == [7, 8]  # tail 0.25 of 8 frames
         assert 0.0 <= d["iou_val"] <= 1.0
     assert 0.0 <= report["val_iou_mean"] <= 1.0
     # transfer: the held-out condition, scored over ALL its frames.
@@ -323,8 +323,8 @@ def test_joint_metrics_omit_transfer_when_nothing_is_held_out(tmp_path):
     _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0)))
 
     train(cfg, run_paths)
-    model, contexts = load_joint(cfg, run_paths)
-    report = evaluate_joint(cfg, model, contexts, run_paths)
+    model, contexts, heldout = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths, heldout_datasets=heldout)
 
     assert "transfer" not in report
     assert report["heldout_datasets"] == []
@@ -352,13 +352,59 @@ def test_val_iou_folds_in_the_legacy_holdout_frame(tmp_path):
     _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0)))
 
     train(cfg, run_paths)
-    model, contexts = load_joint(cfg, run_paths)
-    report = evaluate_joint(cfg, model, contexts, run_paths)
+    model, contexts, heldout = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths, heldout_datasets=heldout)
 
     for name in ("ds_a", "ds_b"):
         d = report["per_dataset"][name]
-        assert d["val_frames"] == [6]  # only the legacy holdout frame
+        assert d["validation_frames"] == [6]  # only the legacy holdout frame
         assert d["iou_val"] == pytest.approx(d["iou_per_frame"][6])
+
+
+def test_single_dataset_train_rejects_holding_out_its_only_dataset(tmp_path):
+    """The split guard fires on the single-dataset path too (before any I/O), so a
+    misconfigured CLI run fails loudly instead of training as if nothing was set."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [f"paths.root={tmp_path}", "dataset=solo", "heldout_datasets=[solo]", *_TINY_TRAIN]
+    )
+    with pytest.raises(ValueError, match="hold out every dataset"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_joint_evaluation_uses_the_checkpoints_split_not_the_current_config(tmp_path):
+    """A standalone evaluate must classify datasets by how the model was trained
+    (the checkpoint's held-out split), not by whatever cfg a re-run composes."""
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b,ds_c]",
+            "heldout_datasets=[ds_c]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
+    train(cfg, run_paths)
+
+    # Re-compose as a bare `stage=evaluate` would: same run, but no heldout override.
+    eval_cfg = make_config(
+        [f"paths.root={tmp_path}", "datasets=[ds_a,ds_b,ds_c]", "run_name=joint", *_TINY_TRAIN]
+    )
+    model, contexts, heldout = load_joint(eval_cfg, run_paths)
+    assert heldout == ["ds_c"], "held-out split comes from the checkpoint"
+    report = evaluate_joint(eval_cfg, model, contexts, run_paths, heldout_datasets=heldout)
+
+    # ds_c is still scored as transfer, not folded into the training set.
+    assert report["heldout_datasets"] == ["ds_c"]
+    assert set(report["transfer"]["per_dataset"]) == {"ds_c"}
+    assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
 
 
 def test_joint_training_needs_groups_in_each_datasets_tensors(tmp_path):
@@ -640,8 +686,8 @@ def test_no_validation_split_holds_out_only_the_legacy_frame(tmp_path):
     # val_fraction=0 (the default) -> axis A is inert; behaviour is unchanged.
     data = _dataset(tmp_path, [1, 2, 3, 4, 5, 6, 7, 8], 8, ["training.val_fraction=0.0"])
 
-    assert data.val_rows == []
-    assert data.val_frames == []
+    assert data.split_rows == []
+    assert data.split_frames == []
 
 
 def test_tail_validation_holds_out_the_last_event_frames(tmp_path):
@@ -657,9 +703,9 @@ def test_tail_validation_holds_out_the_last_event_frames(tmp_path):
         ],
     )
 
-    assert data.val_rows == [6, 7]
-    assert data.val_frames == [7, 8]
-    for row in data.val_rows:
+    assert data.split_rows == [6, 7]
+    assert data.split_frames == [7, 8]
+    for row in data.split_rows:
         assert row not in data._ti[data._train_idx], "a val row was supervised"
 
 
@@ -676,9 +722,9 @@ def test_scatter_validation_spreads_across_the_event(tmp_path):
         ],
     )
 
-    assert len(data.val_rows) == 2
-    assert data.val_rows != [6, 7], "scatter must not collapse to the tail"
-    assert max(data.val_rows) < 7, "scatter holds interior frames, not the last"
+    assert len(data.split_rows) == 2
+    assert data.split_rows != [6, 7], "scatter must not collapse to the tail"
+    assert max(data.split_rows) < 7, "scatter holds interior frames, not the last"
 
 
 def test_validation_split_operates_on_kept_frames_after_exclusions(tmp_path):
@@ -696,7 +742,7 @@ def test_validation_split_operates_on_kept_frames_after_exclusions(tmp_path):
     )
 
     # ceil(0.3 * 7) = 3 tail rows -> camera frames 6, 7, 8.
-    assert data.val_frames == [6, 7, 8]
+    assert data.split_frames == [6, 7, 8]
 
 
 def test_validation_split_composes_with_the_legacy_holdout_frame(tmp_path):
@@ -712,9 +758,9 @@ def test_validation_split_composes_with_the_legacy_holdout_frame(tmp_path):
         ],
     )
 
-    held = set(data.val_rows) | {data.holdout_row}
+    held = set(data.split_rows) | {data.holdout_row}
     assert data.holdout_row == 5  # camera frame 6
-    assert data.val_rows == [6, 7]
+    assert data.split_rows == [6, 7]
     for row in held:
         assert row not in data._ti[data._train_idx]
 
@@ -732,7 +778,7 @@ def test_validation_split_leaves_at_least_one_training_frame(tmp_path):
         ],
     )
 
-    assert len(data.val_rows) == 3, "capped so one training frame survives"
+    assert len(data.split_rows) == 3, "capped so one training frame survives"
     event_rows = {r for r in data._ti[data._train_idx] if r < data.n_event}
     assert event_rows, "at least one event frame is still supervised"
 
@@ -750,9 +796,46 @@ def test_scatter_validation_rows_are_never_supervised(tmp_path):
         ],
     )
 
-    assert len(data.val_rows) >= 1
-    for row in data.val_rows:
+    assert len(data.split_rows) >= 1
+    for row in data.split_rows:
         assert row not in data._ti[data._train_idx], "a scatter val row was supervised"
+
+
+def test_scatter_never_holds_an_endpoint_or_collapses(tmp_path):
+    # Even an aggressive fraction keeps both endpoints trained and returns distinct
+    # interior rows (no silent collision), so it stays a genuine interpolation test.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.9",
+            "training.val_strategy=scatter",
+        ],
+    )
+
+    assert len(data.split_rows) == len(set(data.split_rows)), "rows collapsed onto each other"
+    assert data.split_rows == sorted(data.split_rows)
+    assert 0 not in data.split_rows and (data.n_event - 1) not in data.split_rows
+    assert len(data.split_rows) <= data.n_event - 2  # only interior rows are eligible
+
+
+def test_scatter_on_a_two_frame_event_holds_nothing(tmp_path):
+    # No interior frame exists, so scatter cannot hold one out without training on
+    # an endpoint -- it holds nothing rather than break its interpolation contract.
+    data = _dataset(
+        tmp_path,
+        [1, 2],
+        2,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.5",
+            "training.val_strategy=scatter",
+        ],
+    )
+
+    assert data.split_rows == []
 
 
 def test_tiny_split_floors_to_one_validation_frame(tmp_path):
@@ -768,7 +851,7 @@ def test_tiny_split_floors_to_one_validation_frame(tmp_path):
         ],
     )
 
-    assert len(data.val_rows) == 1
+    assert len(data.split_rows) == 1
 
 
 # --- tests below need the real dataset -------------------------------------

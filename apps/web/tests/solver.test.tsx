@@ -324,6 +324,88 @@ describe("SolverView", () => {
     expect(body.heldout_datasets).toEqual(["ds_b"]);
   });
 
+  it("clears a held-out mark when deselecting would leave nothing to train", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+      ],
+      posts,
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    // Hold out ds_b, then uncheck ds_a — ds_b must not be left as the sole,
+    // held-out dataset (which the API would reject on submit).
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
+    fireEvent.click(screen.getByLabelText("ds_a"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.datasets).toEqual(["ds_b"]);
+    expect(body.heldout_datasets).toBeUndefined();
+  });
+
+  it("a finished joint run surfaces its validation and transfer IoU in the monitor", async () => {
+    // End-to-end wiring: launch → SSE done → useSolverRun fetches the finished
+    // run's metrics.json v2 and MonitorPanel renders both generalization axes.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
+        const path = String(url);
+        if (options?.method === "POST" && path.endsWith("/api/runs")) {
+          return json(LAUNCHED);
+        }
+        if (path.endsWith("/api/datasets"))
+          return json([
+            { id: "ds_a", n_frames: 11, processed: true },
+            { id: "ds_b", n_frames: 11, processed: true },
+          ]);
+        if (path.endsWith("/api/runs/active")) return json(null);
+        if (path.endsWith("/api/runs/run-test"))
+          return json({
+            id: "run-test",
+            dataset: "ds_a",
+            status: "trained",
+            steps: 40,
+            metrics: { val_iou_mean: 0.86, transfer: { mean: 0.71 } },
+            config: null,
+            artifacts: {
+              checkpoint: true,
+              metrics: true,
+              groups: false,
+              video: false,
+              figures: [],
+            },
+          });
+        if (path.endsWith("/api/runs")) return json([]);
+        return json({ detail: "not found" }, 404);
+      }),
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => {
+      FakeEventSource.instances[0].emit("status", {
+        ...LAUNCHED,
+        state: "done",
+        stage: null,
+        steps_done: 40,
+      });
+    });
+
+    // Both numbers come from the finished run's metrics via the real hook.
+    expect(await screen.findByText("0.860")).toBeInTheDocument();
+    expect(screen.getByText("Validation IoU")).toBeInTheDocument();
+    expect(await screen.findByText("0.710")).toBeInTheDocument();
+    expect(screen.getByText("Transfer IoU")).toBeInTheDocument();
+    expect(screen.queryByText("Holdout IoU")).toBeNull();
+  });
+
   it("scopes the dataset list to the open project", async () => {
     const posts: unknown[] = [];
     stubMultiDataset(
@@ -556,6 +638,7 @@ describe("solver components", () => {
       <MonitorPanel
         status={monitorStatus}
         latest={null}
+        joint={false}
         holdoutIou={0.9}
         valIou={null}
         transferIou={null}
@@ -572,6 +655,7 @@ describe("solver components", () => {
       <MonitorPanel
         status={monitorStatus}
         latest={null}
+        joint
         holdoutIou={null}
         valIou={0.86}
         transferIou={0.71}
@@ -591,6 +675,7 @@ describe("solver components", () => {
       <MonitorPanel
         status={monitorStatus}
         latest={null}
+        joint
         holdoutIou={null}
         valIou={0.86}
         transferIou={null}
@@ -598,6 +683,23 @@ describe("solver components", () => {
     );
     expect(screen.getByText("Validation IoU")).toBeInTheDocument();
     expect(screen.queryByText("Transfer IoU")).toBeNull();
+  });
+
+  it("MonitorPanel labels a running joint run 'Validation IoU' before metrics load", () => {
+    // A live joint run has no metrics yet (val/transfer null) — it must still be
+    // labelled by the run type, not fall back to the single-dataset 'Holdout IoU'.
+    render(
+      <MonitorPanel
+        status={{ ...monitorStatus, state: "running", steps_done: 5 }}
+        latest={null}
+        joint
+        holdoutIou={null}
+        valIou={null}
+        transferIou={null}
+      />,
+    );
+    expect(screen.getByText("Validation IoU")).toBeInTheDocument();
+    expect(screen.queryByText("Holdout IoU")).toBeNull();
   });
 
   it("LossChart draws one line per loss term once two records exist", () => {

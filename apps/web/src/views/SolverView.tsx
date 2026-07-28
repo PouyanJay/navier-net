@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   Button,
@@ -54,11 +54,15 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
   const targets = useRunTargets(project?.datasets ?? null);
   const run = useSolverRun(onRunState, targets.refreshRuns);
 
-  const patchForm = useCallback(
-    (patch: Partial<SolverFormState>) =>
-      setForm((prev) => ({ ...prev, ...patch })),
-    [],
-  );
+  // Tracks whether the current val_fraction was auto-filled for a joint run (vs
+  // deliberately chosen), so leaving joint mode only clears the auto-fill.
+  const autoFilledSplit = useRef(false);
+
+  const patchForm = useCallback((patch: Partial<SolverFormState>) => {
+    // Any manual edit to the split disowns the auto-fill — the user now owns it.
+    if ("val_fraction" in patch) autoFilledSplit.current = false;
+    setForm((prev) => ({ ...prev, ...patch }));
+  }, []);
 
   const seeds = useMemo(() => parseSeeds(seedsText), [seedsText]);
 
@@ -68,10 +72,14 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
   const isJoint = targets.selected.length > 1;
   useEffect(() => {
     setForm((prev) => {
-      if (isJoint && prev.val_fraction === 0)
+      if (isJoint && prev.val_fraction === 0) {
+        autoFilledSplit.current = true;
         return { ...prev, val_fraction: JOINT_VAL_FRACTION };
-      if (!isJoint && prev.val_fraction === JOINT_VAL_FRACTION)
+      }
+      if (!isJoint && autoFilledSplit.current) {
+        autoFilledSplit.current = false;
         return { ...prev, val_fraction: 0 };
+      }
       return prev;
     });
   }, [isJoint]);
@@ -178,6 +186,7 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
           <MonitorPanel
             status={run.status}
             latest={latest}
+            joint={isJoint || run.valIou != null || run.transferIou != null}
             holdoutIou={run.holdoutIou}
             valIou={run.valIou}
             transferIou={run.transferIou}

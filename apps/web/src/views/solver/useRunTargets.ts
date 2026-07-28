@@ -80,11 +80,19 @@ export function useRunTargets(projectDatasets: string[] | null): RunTargets {
   }, [refreshRuns, scopeKey]);
 
   const toggleDataset = useCallback((id: string) => {
-    setSelected((cur) =>
-      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
-    );
-    // A dataset no longer in the run cannot be a held-out condition of it.
-    setHeldout((cur) => cur.filter((x) => x !== id));
+    setSelected((cur) => {
+      const next = cur.includes(id)
+        ? cur.filter((x) => x !== id)
+        : [...cur, id];
+      // Keep held-out ⊆ selected, and never leave *every* remaining dataset held
+      // out (nothing would train) -- deselecting one dataset must not strand the
+      // others in a held-out-only state the user can't see or undo.
+      setHeldout((held) => {
+        const kept = held.filter((x) => next.includes(x));
+        return kept.length >= next.length ? [] : kept;
+      });
+      return next;
+    });
   }, []);
 
   const selectAll = useCallback(

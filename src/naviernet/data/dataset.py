@@ -85,11 +85,11 @@ class BubbleDataset:
         )
 
         # Validation axis A: a fraction of the event's frames, held out of
-        # supervision as an in-distribution validation set (see `_validation_rows`).
+        # supervision as an in-distribution validation set (see `_split_rows`).
         # Excluded frames are already gone from the archive, so this is taken over
         # the rows that remain. Composes with `holdout_row`: the held-out set below
         # is their union, so a frame counted twice is harmless.
-        self.val_rows: list[int] = self._validation_rows(
+        self.split_rows: list[int] = self._split_rows(
             float(cfg.training.val_fraction), str(cfg.training.val_strategy)
         )
 
@@ -115,7 +115,7 @@ class BubbleDataset:
         # Every row held out of supervision: the split (axis A) and the legacy
         # single frame, composed. This union is the honest in-distribution
         # validation set -- the frames whose IoU is never a memorisation statement.
-        held_out = set(self.val_rows)
+        held_out = set(self.split_rows)
         if self.holdout_row >= 0:
             held_out.add(self.holdout_row)
         self.validation_rows: list[int] = sorted(held_out)
@@ -124,8 +124,8 @@ class BubbleDataset:
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
 
-    def _validation_rows(self, fraction: float, strategy: str) -> list[int]:
-        """Rows of the event held out as the in-distribution validation set.
+    def _split_rows(self, fraction: float, strategy: str) -> list[int]:
+        """Rows of the event held out as the axis-A validation split.
 
         ``fraction`` of the ``n_event`` growth frames, chosen by ``strategy``:
         ``tail`` holds the last frames (extrapolation), ``scatter`` holds interior
@@ -137,23 +137,28 @@ class BubbleDataset:
             return []
 
         count = max(1, math.ceil(fraction * self.n_event))
-        count = min(count, self.n_event - 1)
 
+        if strategy == "tail":
+            count = min(count, self.n_event - 1)
+            return list(range(self.n_event - count, self.n_event))
         if strategy == "scatter":
-            # Interior points, so the endpoints stay in training and the model
-            # interpolates between frames it has seen.
-            positions = np.linspace(0, self.n_event - 1, count + 2)[1:-1]
-            rows = sorted({int(round(p)) for p in positions})
-        elif strategy == "tail":
-            rows = list(range(self.n_event - count, self.n_event))
-        else:
-            raise ValueError(f"unknown val_strategy: {strategy!r} (want 'tail' or 'scatter')")
-        return rows
+            # Choose from the interior rows only, so both endpoints stay in
+            # training and the model genuinely interpolates. There are exactly
+            # ``n_event - 2`` interior rows, so cap the count at that (a series too
+            # short to hold an interior frame gets no scatter split) and pick
+            # evenly-spaced *distinct* rows -- never collapsing onto one another.
+            interior = list(range(1, self.n_event - 1))
+            count = min(count, len(interior))
+            if count == 0:
+                return []
+            picks = np.linspace(0, len(interior) - 1, count)
+            return sorted({interior[int(round(p))] for p in picks})
+        raise ValueError(f"unknown val_strategy: {strategy!r} (want 'tail' or 'scatter')")
 
     @property
-    def val_frames(self) -> list[int]:
-        """Camera frame numbers of the validation-split rows (axis A only)."""
-        return [self.frame_numbers[row] for row in self.val_rows]
+    def split_frames(self) -> list[int]:
+        """Camera frame numbers of the axis-A validation-split rows only."""
+        return [self.frame_numbers[row] for row in self.split_rows]
 
     @property
     def validation_frames(self) -> list[int]:

@@ -10,6 +10,10 @@ const formatIou = (value: number | null) =>
 interface MonitorPanelProps {
   status: RunJobStatus | null;
   latest: LossRecord | null;
+  /** Whether the run being monitored is joint — decided by the run, not by
+   * whether its metrics have arrived yet, so a live joint run is labelled right
+   * before evaluation finishes. */
+  joint: boolean;
   holdoutIou: number | null;
   valIou: number | null;
   transferIou: number | null;
@@ -22,6 +26,7 @@ interface MonitorPanelProps {
 export function MonitorPanel({
   status,
   latest,
+  joint,
   holdoutIou,
   valIou,
   transferIou,
@@ -30,7 +35,6 @@ export function MonitorPanel({
   // Status events only arrive on stage changes; between them the freshest step
   // count is the latest streamed loss record's.
   const done = Math.max(status?.steps_done ?? 0, latest?.step ?? 0);
-  const joint = valIou != null || transferIou != null;
   return (
     <Panel title="Run monitor" subtitle="live from the solver">
       <div className="statrow">

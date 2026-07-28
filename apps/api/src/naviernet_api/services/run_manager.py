@@ -22,6 +22,7 @@ from typing import Literal
 
 from omegaconf import DictConfig
 
+from naviernet.config.schema import validate_split
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import RunJobStatus, RunLaunchRequest
 from naviernet_api.services import datasets as datasets_service
@@ -299,12 +300,12 @@ def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> list[str
     if not names:
         raise LaunchRejected(400, "a new run requires a dataset")
 
-    heldout = list(dict.fromkeys(request.heldout_datasets or []))
-    unknown = [name for name in heldout if name not in names]
-    if unknown:
-        raise LaunchRejected(400, f"held-out datasets are not in the run: {unknown}")
-    if heldout and not [name for name in names if name not in set(heldout)]:
-        raise LaunchRejected(400, "cannot hold out every dataset; nothing left to train")
+    # One shared validator with the CLI (schema.validate_split), so the split rules
+    # (held-out subset of the run, training set non-empty) can never drift apart.
+    try:
+        validate_split(names, request.heldout_datasets or [])
+    except ValueError as exc:
+        raise LaunchRejected(400, str(exc)) from exc
 
     return [validate_trainable_dataset(settings, name) for name in names]
 

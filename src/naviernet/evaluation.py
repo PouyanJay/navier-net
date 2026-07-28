@@ -18,7 +18,6 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
-from naviernet.config.schema import training_datasets
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -190,7 +189,7 @@ def _validation_iou(report: dict, data) -> tuple[float | None, list[int]]:
     return (float(np.mean(ious)) if ious else None), frames
 
 
-def evaluate_joint(cfg, model, contexts, paths: RunPaths) -> dict:
+def evaluate_joint(cfg, model, contexts, paths: RunPaths, heldout_datasets=None) -> dict:
     """Evaluate a joint (transfer-learning) run into one metrics.json (v2), each
     dataset scored with its own conditioning row along two validation axes:
 
@@ -199,36 +198,40 @@ def evaluate_joint(cfg, model, contexts, paths: RunPaths) -> dict:
     - **Transfer** (``transfer``): every frame of the *held-out* datasets (axis B)
       -- conditions the model never trained on, predicted from conditioning alone.
 
-    ``contexts`` are every dataset the run spans (training + held-out); the split
-    is read from ``cfg`` so evaluation scores each on the right axis.
+    ``contexts`` are every dataset the run spans (training + held-out).
+    ``heldout_datasets`` is the split the model was *trained* with -- pass the value
+    recorded in its checkpoint (via :func:`~naviernet.training.load_joint`) so a
+    standalone ``stage=evaluate`` classifies each dataset by how it was actually
+    trained, not by whatever ``cfg`` a re-run happens to compose. Falls back to
+    ``cfg.heldout_datasets`` only when a checkpoint predates that record.
     """
     paths.ensure()
 
-    train_names = set(training_datasets(cfg))
+    heldout = set(cfg.heldout_datasets if heldout_datasets is None else heldout_datasets)
     reports = {cx.name: iou_report(cfg, model, cx.data, cx.c) for cx in contexts}
 
     per_dataset: dict[str, dict] = {}
     transfer: dict[str, float] = {}
     for cx in contexts:
         rep = reports[cx.name]
-        if cx.name in train_names:
-            iou_val, val_frames = _validation_iou(rep, cx.data)
+        if cx.name in heldout:
+            # Held out of training entirely: every frame is a transfer prediction.
+            transfer[cx.name] = rep["iou_mean"]
+        else:
+            iou_val, validation_frames = _validation_iou(rep, cx.data)
             per_dataset[cx.name] = {
                 "iou_mean": rep["iou_mean"],
                 "iou_val": iou_val,
-                "val_frames": val_frames,
+                "validation_frames": validation_frames,
                 "iou_per_frame": rep["iou_per_frame"],
             }
-        else:
-            # Held out of training entirely: every frame is a transfer prediction.
-            transfer[cx.name] = rep["iou_mean"]
 
     val_ious = [d["iou_val"] for d in per_dataset.values() if d["iou_val"] is not None]
     report = {
         "run_name": cfg.run_name,
         "datasets": [cx.name for cx in contexts],
-        "training_datasets": [cx.name for cx in contexts if cx.name in train_names],
-        "heldout_datasets": [cx.name for cx in contexts if cx.name not in train_names],
+        "training_datasets": [cx.name for cx in contexts if cx.name not in heldout],
+        "heldout_datasets": [cx.name for cx in contexts if cx.name in heldout],
         "per_dataset": per_dataset,
         "iou_mean": float(np.mean([d["iou_mean"] for d in per_dataset.values()])),
         "val_iou_mean": float(np.mean(val_ious)) if val_ious else None,

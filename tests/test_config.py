@@ -104,6 +104,14 @@ def test_held_out_dataset_must_be_one_of_the_datasets():
         training_datasets(cfg)
 
 
+def test_single_dataset_run_still_validates_its_held_out_split():
+    # A single-dataset CLI run never reaches the joint trainer, but a bad
+    # `heldout_datasets` must still be caught rather than silently ignored.
+    cfg = make_config(["dataset=solo", "heldout_datasets=[solo]"])
+    with pytest.raises(ValueError, match="hold out every dataset"):
+        training_datasets(cfg)
+
+
 def test_ensure_creates_every_writable_directory(tmp_path):
     cfg = make_config([f"paths.root={tmp_path}"])
     paths = RunPaths.from_config(cfg).ensure()

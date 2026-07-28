@@ -177,6 +177,12 @@ class TrainingConfig:
     # frames (extrapolation, the honest test for a growth series); "scatter" holds
     # evenly spaced frames (interpolation, easier). Held-out frames are the union
     # of this split, the ``holdout_frame``, and (already-dropped) excluded frames.
+    # ``val_strategy`` is a plain ``str`` (validated at use in ``BubbleDataset``),
+    # not a ``Literal["tail", "scatter"]``: OmegaConf rejects ``Literal`` annotations
+    # in structured configs, so ``str`` + a runtime check is the supported pattern.
+    # NB the *aggregate* val IoU is surfaced only for joint runs (``evaluate_joint``);
+    # a single-dataset CLI run honours ``val_fraction`` in training but ``evaluate``
+    # does not report a separate ``iou_val`` for it.
     val_fraction: float = 0.0
     val_strategy: str = "tail"  # "tail" (extrapolation) | "scatter" (interpolation)
 
@@ -282,25 +288,31 @@ def resolved_datasets(cfg) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def validate_split(names: list[str], heldout: list[str]) -> list[str]:
+    """The training datasets for a run: ``names`` minus the held-out conditions
+    (validation axis B), validated.
+
+    Every held-out name must be one of ``names``, and at least one dataset must
+    remain to train on. Both failures raise ``ValueError`` -- an invalid split is a
+    config error, not a silent no-op. Order-preserving. This is the single source of
+    truth for the split rules, shared by the CLI (:func:`training_datasets`) and the
+    API's launch validation so the two can never drift.
+    """
+    heldout = list(dict.fromkeys(heldout))
+    unknown = [name for name in heldout if name not in names]
+    if unknown:
+        raise ValueError(f"held-out datasets are not in the run: {unknown}")
+
+    training = [name for name in names if name not in set(heldout)]
+    if not training:
+        raise ValueError("cannot hold out every dataset; no training datasets remain")
+    return training
+
+
 def training_datasets(cfg) -> list[str]:
     """The datasets actually supervised: ``resolved_datasets(cfg)`` minus the
-    held-out conditions (validation axis B).
-
-    Order-preserving, and validated: every held-out name must be one of the run's
-    datasets, and at least one dataset must remain to train on. Both failures raise
-    ``ValueError`` -- an invalid split is a config error, not a silent no-op.
-    """
-    resolved = resolved_datasets(cfg)
-    heldout = list(dict.fromkeys(cfg.heldout_datasets))
-
-    unknown = [name for name in heldout if name not in resolved]
-    if unknown:
-        raise ValueError(f"heldout_datasets not in datasets: {unknown}")
-
-    training = [name for name in resolved if name not in set(heldout)]
-    if not training:
-        raise ValueError("no training datasets remain: every dataset is held out")
-    return training
+    held-out conditions. Thin wrapper over :func:`validate_split`."""
+    return validate_split(resolved_datasets(cfg), list(cfg.heldout_datasets))
 
 
 def register_configs() -> None:

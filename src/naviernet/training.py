@@ -100,6 +100,10 @@ def train(
     ``on_log``, when given, receives a copy of each history record as it is
     logged, so a caller can observe progress while the run is still going.
     """
+    # Validate the held-out split up front, so a misconfigured `heldout_datasets`
+    # fails loudly on every path -- including a single-dataset CLI run, which never
+    # reaches `_train_joint` and its own guard.
+    training_datasets(cfg)
     if len(resolved_datasets(cfg)) > 1:
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
@@ -217,7 +221,9 @@ class _JointDataset:
     u_inlet: float
 
 
-def _load_joint_datasets(cfg, paths: RunPaths, device, names=None) -> list[_JointDataset]:
+def _load_joint_datasets(
+    cfg, paths: RunPaths, device, names: list[str] | None = None
+) -> list[_JointDataset]:
     """Load the named datasets of a joint run, each with its conditioning row.
 
     ``names`` defaults to every dataset the run spans; the trainer passes only the
@@ -285,8 +291,9 @@ def _train_joint(
     # The datasets actually supervised: held-out conditions (axis B) are loaded
     # only at evaluation, never here, so they contribute nothing to the loss. This
     # also validates the split (rejects an all-held-out run) before any I/O.
+    spanned = resolved_datasets(cfg)
     train_names = training_datasets(cfg)
-    heldout = [name for name in resolved_datasets(cfg) if name not in set(train_names)]
+    heldout = [name for name in spanned if name not in set(train_names)]
 
     paths.ensure()
     torch.manual_seed(tcfg.seed)
@@ -354,7 +361,7 @@ def _train_joint(
             "model": model.state_dict(),
             "opt": opt.state_dict(),
             "state": state,
-            "datasets": resolved_datasets(cfg),  # every series the run spans
+            "datasets": spanned,  # every series the run spans
             "training_datasets": names,  # the ones actually supervised
             "heldout_datasets": heldout,  # kept out for the transfer test (axis B)
             "n_cond": N_COND,  # so evaluation rebuilds the conditioned architecture
@@ -388,10 +395,16 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
     return model, data, ckpt["state"]
 
 
-def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset]]:
-    """The conditioned model and its per-dataset contexts, for evaluating a joint
-    run. Mirrors :func:`load_model` but returns every dataset the run spans, each
-    with its conditioning row, so evaluation scores them all."""
+def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset], list[str]]:
+    """The conditioned model, its per-dataset contexts, and the held-out split, for
+    evaluating a joint run. Mirrors :func:`load_model` but returns every dataset the
+    run spans (each with its conditioning row) plus the ``heldout_datasets`` the
+    model was *trained* with.
+
+    The dataset list and the split come from the checkpoint, not a freshly composed
+    ``cfg``: a standalone ``stage=evaluate`` must score each dataset by how it was
+    actually trained, regardless of the overrides the re-run happens to compose.
+    Pre-split checkpoints fall back to ``cfg`` (``datasets``/``heldout_datasets``)."""
     if not paths.checkpoint.exists():
         raise FileNotFoundError(
             f"{paths.checkpoint} not found -- run the train stage first:\n"
@@ -399,11 +412,13 @@ def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset]]:
         )
     device = torch.device(cfg.training.device)
     ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
-    contexts = _load_joint_datasets(cfg, paths, device)
+    names = list(ckpt.get("datasets") or resolved_datasets(cfg))
+    heldout = list(ckpt.get("heldout_datasets", cfg.heldout_datasets))
+    contexts = _load_joint_datasets(cfg, paths, device, names)
     model = BubblePINN(cfg, n_cond=int(ckpt.get("n_cond", N_COND))).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
-    return model, contexts
+    return model, contexts, heldout
 
 
 def _fmt(weights: dict[str, float]) -> str:
