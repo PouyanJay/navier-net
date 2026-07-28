@@ -171,6 +171,7 @@ function mockApi({
   holdout = 6,
   excluded = [] as number[],
   exclusionStatus = 200,
+  labelStatus = 200,
   umPerPx = null as number | null,
 } = {}): Calls {
   const calls: Calls = {
@@ -211,6 +212,7 @@ function mockApi({
             n_frames: 5,
             processed: false,
             conditions_set: false,
+            label: null,
             frame_px: [16, 12],
             dt_frame_ms: 0.5,
           });
@@ -269,6 +271,11 @@ function mockApi({
       if (u.endsWith("/label") && opts?.method === "PUT") {
         const body = JSON.parse(String(opts.body)) as { label: string };
         calls.labelPuts.push(body.label);
+        if (labelStatus !== 200) {
+          return new Response(JSON.stringify({ detail: "bad label" }), {
+            status: labelStatus,
+          });
+        }
         label = body.label.trim() || null;
         return json({
           ...DETAIL,
@@ -408,11 +415,70 @@ describe("DatasetsView", () => {
 
     // The label is PUT to the series, and the id is never sent as a rename.
     await waitFor(() => expect(calls.labelPuts).toEqual(["High-T FC-72"]));
+    // A label-only edit must not touch the conditions.
+    expect(calls.conditionPatches).toEqual([]);
     // The card now shows the label, with the immutable id still visible.
     expect((await screen.findAllByText("High-T FC-72")).length).toBeGreaterThan(
       0,
     );
     expect(screen.getAllByText("sample").length).toBeGreaterThan(0);
+  });
+
+  it("clears the label, falling back to the id as the name", async () => {
+    const calls = mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // Give it a label first.
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    fireEvent.change(
+      within(await screen.findByRole("dialog")).getByLabelText("Display name"),
+      { target: { value: "Temp name" } },
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /Save/ }),
+    );
+    await screen.findAllByText("Temp name");
+
+    // Re-open and blank the field to clear it.
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    fireEvent.change(
+      within(await screen.findByRole("dialog")).getByLabelText("Display name"),
+      { target: { value: "" } },
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /Save/ }),
+    );
+
+    // The blank clears the label back to the id; the old name is gone.
+    await waitFor(() => expect(calls.labelPuts).toEqual(["Temp name", ""]));
+    await waitFor(() =>
+      expect(screen.queryByText("Temp name")).not.toBeInTheDocument(),
+    );
+    expect(screen.getAllByText("sample").length).toBeGreaterThan(0);
+  });
+
+  it("surfaces a failed label save and keeps the editor open", async () => {
+    mockApi({ labelStatus: 400 });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText("Display name"), {
+      target: { value: "Broken" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+
+    // A label-only save failure surfaces the shared error and keeps the modal open.
+    expect(await dialog.findByRole("alert")).toHaveTextContent(
+      /Could not save the changes/,
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("warns and requires a re-preprocess after a baked-condition edit", async () => {

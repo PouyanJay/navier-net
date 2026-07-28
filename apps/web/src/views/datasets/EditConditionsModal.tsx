@@ -24,6 +24,7 @@ interface EditConditionsModalProps {
   onSaveLabel: (label: string) => Promise<void>;
 }
 
+// Keep in sync with LabelUpdate.label (max_length) in apps/api .../models.py.
 const MAX_LABEL_LEN = 80;
 
 /** The current conditions as form strings. U_ref is reported as `U_ref_m_s`. */
@@ -112,10 +113,23 @@ export function EditConditionsModal({
   const cleanedLabel = label.trim().replace(/\s+/g, " ");
   const labelChanged = cleanedLabel !== (detail.label ?? "");
 
+  // Whether the user has touched any condition field or the fluid (regardless of
+  // validity), so a label-only rename isn't blocked by a condition it never
+  // edited -- but an in-progress, invalid conditions edit still is.
+  const originalFluidId = fluidList.find(
+    (f) => f.name === detail.conditions.fluid,
+  )?.id;
+  const conditionsDirty =
+    ALL_CONDITIONS.some((s) => conditions[s.key] !== initial[s.key]) ||
+    (fluidId !== null && fluidId !== originalFluidId);
+  const conditionsBlocked =
+    conditionsDirty && (!conditionsValid || !fluidReady || fluidId === null);
+
   async function save() {
-    if (!conditionsValid || !fluidReady || fluidId === null) return;
+    if (conditionsBlocked) return;
     const updates = changedUpdates();
-    if (Object.keys(updates).length === 0 && !labelChanged) {
+    const hasConditionUpdates = Object.keys(updates).length > 0;
+    if (!hasConditionUpdates && !labelChanged) {
       onClose(); // nothing changed
       return;
     }
@@ -123,7 +137,7 @@ export function EditConditionsModal({
     setError(null);
     try {
       if (labelChanged) await onSaveLabel(cleanedLabel);
-      if (Object.keys(updates).length > 0) await onSave(updates);
+      if (hasConditionUpdates) await onSave(updates);
       onClose();
     } catch (err) {
       setError(`Could not save the changes: ${errorMessage(err)}`);
@@ -157,10 +171,10 @@ export function EditConditionsModal({
         className="modal series-modal"
         role="dialog"
         aria-modal="true"
-        aria-label={`Edit ${detail.id} conditions`}
+        aria-label={`Edit ${detail.label ?? detail.id} conditions`}
       >
         <div className="hd">
-          <h2>Edit {detail.id} conditions</h2>
+          <h2>Edit {detail.label ?? detail.id} conditions</h2>
           <span className="sub">
             frame interval, width & U_ref re-bake the tensors
           </span>
@@ -170,7 +184,7 @@ export function EditConditionsModal({
             <h3 className="modal-section-hd">
               Display name <span>what the UI shows · the id stays fixed</span>
             </h3>
-            <label className="ds-label-field">
+            <div className="ds-label-field">
               <input
                 type="text"
                 value={label}
@@ -180,8 +194,10 @@ export function EditConditionsModal({
                 disabled={saving}
                 onChange={(e) => setLabel(e.target.value)}
               />
-              <span className="mono ds-id">{detail.id}</span>
-            </label>
+              <span className="mono ds-id" aria-label={`id: ${detail.id}`}>
+                {detail.id}
+              </span>
+            </div>
           </div>
 
           <div className="modal-section">
@@ -215,9 +231,9 @@ export function EditConditionsModal({
             <Button
               variant="primary"
               onClick={() => void save()}
-              disabled={saving || !conditionsValid || !fluidReady}
+              disabled={saving || conditionsBlocked}
             >
-              {saving ? "Saving…" : "Save conditions"}
+              {saving ? "Saving…" : "Save changes"}
             </Button>
             <Button onClick={onClose} disabled={saving}>
               Cancel

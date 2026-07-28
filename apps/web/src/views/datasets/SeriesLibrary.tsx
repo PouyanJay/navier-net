@@ -118,7 +118,9 @@ export function SeriesLibrary({
             <span className="m">
               <b>{seriesName(summary)}</b>
               {summary.label && (
-                <span className="mono ds-id">{summary.id}</span>
+                <span className="mono ds-id" aria-label={`id: ${summary.id}`}>
+                  {summary.id}
+                </span>
               )}
               <span className="mono">{seriesMeta(summary)}</span>
             </span>
@@ -150,7 +152,11 @@ export function SeriesLibrary({
             <h3 className={detail.label ? undefined : "mono"}>
               {seriesName(detail)}
             </h3>
-            {detail.label && <span className="mono ds-id">{detail.id}</span>}
+            {detail.label && (
+              <span className="mono ds-id" aria-label={`id: ${detail.id}`}>
+                {detail.id}
+              </span>
+            )}
             <span className="sub">inputs</span>
             <Button
               className="ds-conditions-edit"

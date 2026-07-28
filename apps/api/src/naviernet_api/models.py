@@ -238,10 +238,15 @@ class ExclusionsUpdate(BaseModel):
     excluded_frames: list[int]
 
 
+# The single source of truth for the series display-name length cap, shared by
+# the request model (transport gate) and the service (defence for direct callers).
+MAX_LABEL_LEN = 80
+
+
 class LabelUpdate(BaseModel):
     """A series' editable display name. Blank clears it back to the id."""
 
-    label: str = Field(default="", max_length=80)
+    label: str = Field(default="", max_length=MAX_LABEL_LEN)
 
 
 class PreprocessStatus(BaseModel):

@@ -21,7 +21,12 @@ from omegaconf import DictConfig, OmegaConf
 from naviernet.data.preprocess import BAKED_CONDITION_FIELDS
 from naviernet.physics.registry import REGISTRY
 from naviernet.utils.logging import get_logger
-from naviernet_api.models import DatasetDetail, DatasetSummary, OperatingConditions
+from naviernet_api.models import (
+    MAX_LABEL_LEN,
+    DatasetDetail,
+    DatasetSummary,
+    OperatingConditions,
+)
 from naviernet_api.services.config_service import compose_cfg
 from naviernet_api.services.fluids import available_fluid_ids, is_known_fluid
 from naviernet_api.settings import Settings
@@ -72,8 +77,8 @@ FLUID_KEY = "fluid"
 # conditions under this reserved key. The series id stays the immutable filesystem
 # key (data/raw/<id>); the label is purely what the UI shows. `read_conditions`
 # projects out only CONDITION_FIELDS, so the label never leaks into the physics.
+# The length cap lives on the request model (MAX_LABEL_LEN, imported above).
 LABEL_KEY = "label"
-MAX_LABEL_LEN = 80
 
 # BAKED_CONDITION_FIELDS (imported at the top from the pipeline) names the
 # condition fields written into the tensors; editing one makes them stale until a
@@ -176,7 +181,10 @@ def read_series_label(settings: Settings, dataset: str) -> str | None:
     """The series' editable display name, or None when none is set (so the UI
     falls back to the id). A blank or non-string saved value degrades to None."""
     label = _read_raw_conditions(settings, dataset).get(LABEL_KEY)
-    if not isinstance(label, str):
+    if label is not None and not isinstance(label, str):
+        log.warning("ignoring non-string label for %s: %r", dataset, label)
+        return None
+    if label is None:
         return None
     label = " ".join(label.split())
     return label or None
@@ -189,6 +197,8 @@ def save_series_label(settings: Settings, dataset: str, label: str) -> str | Non
     path = _conditions_path(settings, dataset)
     if path is None or not path.parent.is_dir():
         raise ConditionsError(f"dataset {dataset!r} not found")
+    if len(label) > MAX_LABEL_LEN:  # defence for direct callers; the API also bounds it
+        raise ConditionsError(f"label must be at most {MAX_LABEL_LEN} characters")
 
     label = " ".join(label.split())  # trim + collapse internal whitespace/newlines
     merged = _read_raw_conditions(settings, dataset)

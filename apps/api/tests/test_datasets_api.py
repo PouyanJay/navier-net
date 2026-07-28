@@ -645,3 +645,27 @@ def test_overlong_label_is_rejected(client):
 
 def test_label_on_unknown_dataset_is_404(client):
     assert client.put("/api/datasets/nope/label", json={"label": "x"}).status_code == 404
+
+
+def test_whitespace_only_label_clears_it(client):
+    client.put("/api/datasets/sample/label", json={"label": "Named"})
+    r = client.put("/api/datasets/sample/label", json={"label": "   \n  "})
+    assert r.status_code == 200
+    assert r.json()["label"] is None
+
+
+def test_label_at_the_length_limit_is_accepted(client):
+    at_limit = "x" * 80  # MAX_LABEL_LEN
+    r = client.put("/api/datasets/sample/label", json={"label": at_limit})
+    assert r.status_code == 200
+    assert r.json()["label"] == at_limit
+
+
+def test_service_rejects_an_overlong_label(repo_root):
+    """The length cap is enforced in the service too, not only at the request
+    model, so a direct caller can't bypass it."""
+    from naviernet_api.services.datasets import ConditionsError
+
+    settings = Settings(repo_root=repo_root)
+    with pytest.raises(ConditionsError, match="at most"):
+        datasets_service.save_series_label(settings, "sample", "x" * 81)
