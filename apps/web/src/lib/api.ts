@@ -16,6 +16,12 @@ export interface ArtifactFlags {
   figures: string[];
 }
 
+/** A joint run's held-out transfer scores (metrics.json v2). */
+export interface TransferMetrics {
+  per_dataset?: Record<string, number>;
+  mean?: number | null;
+}
+
 export interface RunMetrics {
   iou_per_frame?: Record<string, number>;
   iou_mean?: number;
@@ -24,6 +30,11 @@ export interface RunMetrics {
   nose_speed_mm_s?: number;
   dataset?: string;
   run_name?: string;
+  // Joint (two-axis validation) fields; absent on single-dataset runs.
+  training_datasets?: string[];
+  heldout_datasets?: string[];
+  val_iou_mean?: number | null; // in-distribution: mean of training datasets' val IoU
+  transfer?: TransferMetrics | null; // held-out conditions, scored over every frame
 }
 
 export interface RunDetail {

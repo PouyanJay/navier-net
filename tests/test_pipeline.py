@@ -301,7 +301,9 @@ def test_joint_metrics_report_validation_and_transfer(tmp_path):
     assert 0.0 <= report["transfer"]["mean"] <= 1.0
 
     on_disk = json.loads(run_paths.metrics_json.read_text())
-    assert on_disk["transfer"]["per_dataset"]["ds_c"] == report["transfer"]["per_dataset"]["ds_c"]
+    assert (
+        on_disk["transfer"]["per_dataset"]["ds_c"] == report["transfer"]["per_dataset"]["ds_c"]
+    )
 
 
 def test_joint_metrics_omit_transfer_when_nothing_is_held_out(tmp_path):
@@ -648,7 +650,11 @@ def test_tail_validation_holds_out_the_last_event_frames(tmp_path):
         tmp_path,
         [1, 2, 3, 4, 5, 6, 7, 8],
         8,
-        ["training.holdout_frame=-1", "training.val_fraction=0.25", "training.val_strategy=tail"],
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.25",
+            "training.val_strategy=tail",
+        ],
     )
 
     assert data.val_rows == [6, 7]
@@ -663,7 +669,11 @@ def test_scatter_validation_spreads_across_the_event(tmp_path):
         tmp_path,
         [1, 2, 3, 4, 5, 6, 7, 8],
         8,
-        ["training.holdout_frame=-1", "training.val_fraction=0.25", "training.val_strategy=scatter"],
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.25",
+            "training.val_strategy=scatter",
+        ],
     )
 
     assert len(data.val_rows) == 2
@@ -678,7 +688,11 @@ def test_validation_split_operates_on_kept_frames_after_exclusions(tmp_path):
         tmp_path,
         [1, 2, 4, 5, 6, 7, 8],  # camera frame 3 excluded at preprocess
         7,
-        ["training.holdout_frame=-1", "training.val_fraction=0.3", "training.val_strategy=tail"],
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.3",
+            "training.val_strategy=tail",
+        ],
     )
 
     # ceil(0.3 * 7) = 3 tail rows -> camera frames 6, 7, 8.
@@ -691,7 +705,11 @@ def test_validation_split_composes_with_the_legacy_holdout_frame(tmp_path):
         tmp_path,
         [1, 2, 3, 4, 5, 6, 7, 8],
         8,
-        ["training.holdout_frame=5", "training.val_fraction=0.25", "training.val_strategy=tail"],
+        [
+            "training.holdout_frame=5",
+            "training.val_fraction=0.25",
+            "training.val_strategy=tail",
+        ],
     )
 
     held = set(data.val_rows) | {data.holdout_row}
@@ -707,12 +725,34 @@ def test_validation_split_leaves_at_least_one_training_frame(tmp_path):
         tmp_path,
         [1, 2, 3, 4],
         4,
-        ["training.holdout_frame=-1", "training.val_fraction=0.9", "training.val_strategy=tail"],
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.9",
+            "training.val_strategy=tail",
+        ],
     )
 
     assert len(data.val_rows) == 3, "capped so one training frame survives"
     event_rows = {r for r in data._ti[data._train_idx] if r < data.n_event}
     assert event_rows, "at least one event frame is still supervised"
+
+
+def test_scatter_validation_rows_are_never_supervised(tmp_path):
+    # The interpolation split must also keep its frames out of the training index.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.4",
+            "training.val_strategy=scatter",
+        ],
+    )
+
+    assert len(data.val_rows) >= 1
+    for row in data.val_rows:
+        assert row not in data._ti[data._train_idx], "a scatter val row was supervised"
 
 
 def test_tiny_split_floors_to_one_validation_frame(tmp_path):
@@ -721,7 +761,11 @@ def test_tiny_split_floors_to_one_validation_frame(tmp_path):
         tmp_path,
         [1, 2, 3, 4, 5, 6, 7, 8],
         8,
-        ["training.holdout_frame=-1", "training.val_fraction=0.05", "training.val_strategy=tail"],
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.05",
+            "training.val_strategy=tail",
+        ],
     )
 
     assert len(data.val_rows) == 1

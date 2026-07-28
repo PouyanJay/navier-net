@@ -176,6 +176,31 @@ def test_launch_joint_run_with_a_held_out_condition(client: TestClient, repo_roo
     assert list(cfg["heldout_datasets"]) == ["third"]
 
 
+def test_joint_run_lists_its_validation_iou_as_the_headline(
+    client: TestClient, repo_root: Path
+):
+    """metrics.json v2 has no `iou_holdout`; the runs list falls back to the joint
+    run's in-distribution validation IoU so its row isn't blank."""
+    from conftest import write_synthetic_tensors
+
+    processed = repo_root / "data" / "processed" / "second"
+    processed.mkdir(parents=True)
+    write_synthetic_tensors(processed / "tensors.npz")
+
+    joint = {
+        **TINY_RUN,
+        "dataset": None,
+        "datasets": ["highest_t", "second"],
+        "val_fraction": 0.2,
+    }
+    run_id = client.post("/api/runs", json=joint).json()["run_id"]
+    read_stream(client, run_id)
+
+    listed = {run["id"]: run for run in client.get("/api/runs").json()}
+    detail = client.get(f"/api/runs/{run_id}").json()
+    assert listed[run_id]["iou_holdout"] == detail["metrics"]["val_iou_mean"]
+
+
 def test_launch_rejects_holding_out_every_dataset(client: TestClient, repo_root: Path):
     """Nothing left to train on is a 400, before anything is scheduled."""
     from conftest import write_synthetic_tensors

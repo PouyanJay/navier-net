@@ -179,6 +179,8 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             status={run.status}
             latest={latest}
             holdoutIou={run.holdoutIou}
+            valIou={run.valIou}
+            transferIou={run.transferIou}
           />
           <Panel title="Loss history" subtitle="log₁₀ · rebalance markers">
             <ViewCanvas>

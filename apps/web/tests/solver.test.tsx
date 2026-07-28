@@ -14,6 +14,7 @@ import { LossChart } from "../src/components/charts/LossChart";
 import { Meter } from "../src/components/Meter";
 import { Switch } from "../src/components/Switch";
 import { SolverView } from "../src/views/SolverView";
+import { MonitorPanel } from "../src/views/solver/MonitorPanel";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -538,6 +539,65 @@ describe("solver components", () => {
     const bar = screen.getByRole("progressbar", { name: "Training progress" });
     expect(bar).toHaveAttribute("aria-valuenow", "10");
     expect(bar).toHaveAttribute("aria-valuemax", "40");
+  });
+
+  const monitorStatus = {
+    run_id: "r",
+    dataset: "d",
+    state: "done" as const,
+    stage: null,
+    message: null,
+    steps_done: 40,
+    steps_total: 40,
+  };
+
+  it("MonitorPanel shows the holdout IoU for a single-dataset run", () => {
+    render(
+      <MonitorPanel
+        status={monitorStatus}
+        latest={null}
+        holdoutIou={0.9}
+        valIou={null}
+        transferIou={null}
+      />,
+    );
+    expect(screen.getByText("Holdout IoU")).toBeInTheDocument();
+    expect(screen.getByText("0.900")).toBeInTheDocument();
+    expect(screen.queryByText("Transfer IoU")).toBeNull();
+    expect(screen.queryByText("Validation IoU")).toBeNull();
+  });
+
+  it("MonitorPanel surfaces validation and transfer IoU distinctly for a joint run", () => {
+    render(
+      <MonitorPanel
+        status={monitorStatus}
+        latest={null}
+        holdoutIou={null}
+        valIou={0.86}
+        transferIou={0.71}
+      />,
+    );
+    // The two generalization numbers answer different questions — both shown.
+    expect(screen.getByText("Validation IoU")).toBeInTheDocument();
+    expect(screen.getByText("0.860")).toBeInTheDocument();
+    expect(screen.getByText("Transfer IoU")).toBeInTheDocument();
+    expect(screen.getByText("0.710")).toBeInTheDocument();
+    // Holdout is retired in the joint view.
+    expect(screen.queryByText("Holdout IoU")).toBeNull();
+  });
+
+  it("MonitorPanel omits transfer when no condition is held out", () => {
+    render(
+      <MonitorPanel
+        status={monitorStatus}
+        latest={null}
+        holdoutIou={null}
+        valIou={0.86}
+        transferIou={null}
+      />,
+    );
+    expect(screen.getByText("Validation IoU")).toBeInTheDocument();
+    expect(screen.queryByText("Transfer IoU")).toBeNull();
   });
 
   it("LossChart draws one line per loss term once two records exist", () => {
