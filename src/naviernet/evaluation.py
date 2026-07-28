@@ -149,6 +149,11 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     ious_report = iou_report(cfg, model, data)
     ious = ious_report["iou_per_frame"]
 
+    # In-distribution validation IoU over the frames held out of supervision (the
+    # axis-A split and/or the legacy holdout frame), so a single-dataset run with a
+    # validation split still surfaces the metric rather than silently dropping it.
+    iou_val, validation_frames = _validation_iou(ious_report, data)
+
     predicted = nose_trajectory(cfg, model, data)
     _write_trajectory(cfg, data, paths, predicted)
     speed = np.gradient(predicted.nose, predicted.times)
@@ -161,6 +166,8 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
         "run_name": cfg.run_name,
         "dataset": cfg.dataset,
         **ious_report,
+        "iou_val": iou_val,
+        "validation_frames": validation_frames,
         "nose_speed_star": mean_speed_star,
         "nose_speed_mm_s": mean_speed_star * cfg.scales.U_ref * 1e3,
     }

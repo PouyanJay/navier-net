@@ -9,10 +9,10 @@ export interface RunTargets {
   selected: string[];
   toggleDataset: (id: string) => void;
   selectAll: (on: boolean) => void;
-  /** Selected datasets marked as held-out conditions (axis B): loaded, never
-   * supervised, scored as a transfer test. Always a subset of `selected`. */
-  heldout: string[];
-  toggleHeldout: (id: string) => void;
+  /** The one selected series held out of training (axis B): loaded, never
+   * supervised, scored as a transfer test. "" = none. Always one of `selected`. */
+  heldout: string;
+  setHeldout: (id: string) => void;
   resume: boolean;
   setResume: (on: boolean) => void;
   resumableRuns: RunSummary[];
@@ -33,7 +33,7 @@ export interface RunTargets {
 export function useRunTargets(projectDatasets: string[] | null): RunTargets {
   const [available, setAvailable] = useState<DatasetSummary[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
-  const [heldout, setHeldout] = useState<string[]>([]);
+  const [heldout, setHeldout] = useState<string>("");
   const [resume, setResume] = useState(false);
   const [resumableRuns, setResumableRuns] = useState<RunSummary[]>([]);
   const [resumeRunId, setResumeRunId] = useState("");
@@ -68,7 +68,7 @@ export function useRunTargets(projectDatasets: string[] | null): RunTargets {
         setAvailable(processed);
         // Default to training the whole project; the user can narrow it.
         setSelected(processed.map((entry) => entry.id));
-        setHeldout([]);
+        setHeldout("");
       })
       .catch(() =>
         setLoadError("Could not load datasets; is the API running?"),
@@ -84,13 +84,12 @@ export function useRunTargets(projectDatasets: string[] | null): RunTargets {
       const next = cur.includes(id)
         ? cur.filter((x) => x !== id)
         : [...cur, id];
-      // Keep held-out ⊆ selected, and never leave *every* remaining dataset held
-      // out (nothing would train) -- deselecting one dataset must not strand the
-      // others in a held-out-only state the user can't see or undo.
-      setHeldout((held) => {
-        const kept = held.filter((x) => next.includes(x));
-        return kept.length >= next.length ? [] : kept;
-      });
+      // Hold-out must stay one of the selected series, and needs at least two
+      // selected (something left to train on) -- otherwise clear it, so a
+      // deselection can never strand the run in an all-held-out state.
+      setHeldout((held) =>
+        held && next.includes(held) && next.length > 1 ? held : "",
+      );
       return next;
     });
   }, []);
@@ -98,16 +97,10 @@ export function useRunTargets(projectDatasets: string[] | null): RunTargets {
   const selectAll = useCallback(
     (on: boolean) => {
       setSelected(on ? (available ?? []).map((entry) => entry.id) : []);
-      if (!on) setHeldout([]);
+      if (!on) setHeldout("");
     },
     [available],
   );
-
-  const toggleHeldout = useCallback((id: string) => {
-    setHeldout((cur) =>
-      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
-    );
-  }, []);
 
   return {
     available,
@@ -115,7 +108,7 @@ export function useRunTargets(projectDatasets: string[] | null): RunTargets {
     toggleDataset,
     selectAll,
     heldout,
-    toggleHeldout,
+    setHeldout,
     resume,
     setResume,
     resumableRuns,

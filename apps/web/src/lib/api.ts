@@ -30,11 +30,13 @@ export interface RunMetrics {
   nose_speed_mm_s?: number;
   dataset?: string;
   run_name?: string;
-  // Joint (two-axis validation) fields; absent on single-dataset runs.
+  // Two-axis validation fields.
+  iou_val?: number | null; // single-series: in-distribution validation IoU
+  validation_frames?: number[];
   training_datasets?: string[];
   heldout_datasets?: string[];
-  val_iou_mean?: number | null; // in-distribution: mean of training datasets' val IoU
-  transfer?: TransferMetrics | null; // held-out conditions, scored over every frame
+  val_iou_mean?: number | null; // joint: mean of training series' validation IoU
+  transfer?: TransferMetrics | null; // held-out series, scored over every frame
 }
 
 /** The single generalization number to headline for a run: the single-dataset

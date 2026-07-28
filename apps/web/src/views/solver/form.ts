@@ -29,9 +29,12 @@ export const FORM_DEFAULTS: SolverFormState = {
   n_data: 3072,
   n_coll: 3072,
   n_bc: 512,
-  holdout_frame: 5,
-  // Off by default so a single-dataset run is unchanged; the joint pre-fill
-  // (see JOINT_VAL_FRACTION) raises it to 0.2 when more than one dataset trains.
+  // The Solver no longer exposes a single-frame holdout; generalization is the
+  // series hold-out and the validation split. -1 disables the legacy frame knob.
+  holdout_frame: -1,
+  // Off by default (train on every frame); the user opts into a split. Always
+  // "tail": hold the last frames of each kept series -- the honest extrapolation
+  // test, never a random/interior frame the neighbours already pin down.
   val_fraction: 0,
   val_strategy: "tail",
   rebalance_every: 500,
@@ -40,22 +43,13 @@ export const FORM_DEFAULTS: SolverFormState = {
   render: true,
 };
 
-/** The validation split a joint run pre-fills: a standard 80/20, tail (the honest
- * extrapolation test for a growth series). A single-dataset run stays at 0. */
-export const JOINT_VAL_FRACTION = 0.2;
-
-/** Validation-split options: a per-dataset fraction of frames held from training. */
+/** Validation-split options: a fraction of each kept-in series' frames held from
+ * training as an in-distribution validation set (deterministic, tail). */
 export const VAL_FRACTION_OPTIONS = [
   { value: "0", label: "none · train on every frame" },
-  { value: "0.1", label: "10% · in-distribution validation" },
-  { value: "0.2", label: "20% · in-distribution validation" },
-  { value: "0.3", label: "30% · in-distribution validation" },
-];
-
-/** Which frames the split holds out. */
-export const VAL_STRATEGY_OPTIONS = [
-  { value: "tail", label: "tail · extrapolation" },
-  { value: "scatter", label: "scatter · interpolation" },
+  { value: "0.1", label: "10% · validation" },
+  { value: "0.2", label: "20% · validation" },
+  { value: "0.3", label: "30% · validation" },
 ];
 
 /** Bounds shown on the inputs; the API enforces the same ranges. */

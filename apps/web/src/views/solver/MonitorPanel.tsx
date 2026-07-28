@@ -10,23 +10,25 @@ const formatIou = (value: number | null) =>
 interface MonitorPanelProps {
   status: RunJobStatus | null;
   latest: LossRecord | null;
-  /** Whether the run being monitored is joint — decided by the run, not by
-   * whether its metrics have arrived yet, so a live joint run is labelled right
-   * before evaluation finishes. */
-  joint: boolean;
+  /** Show the in-distribution validation IoU (a validation split is configured). */
+  showVal: boolean;
+  /** Show the transfer IoU (a whole series is held out of training). */
+  showTransfer: boolean;
   holdoutIou: number | null;
   valIou: number | null;
   transferIou: number | null;
 }
 
 /** Live run stats: step progress, the headline loss terms, and generalization.
- * A single-dataset run reports the holdout-frame IoU; a joint (two-axis) run
- * reports the in-distribution validation IoU and, when a condition is held out,
- * the transfer IoU — kept visually distinct (they answer different questions). */
+ * Which generalization stats appear follows the run's configuration: the
+ * validation split gives an in-distribution validation IoU; a held-out series
+ * gives a transfer IoU. With neither, the legacy holdout-frame IoU (if any).
+ * Kept visually distinct — they answer different questions. */
 export function MonitorPanel({
   status,
   latest,
-  joint,
+  showVal,
+  showTransfer,
   holdoutIou,
   valIou,
   transferIou,
@@ -45,24 +47,23 @@ export function MonitorPanel({
         />
         <Stat label="Data loss · α" value={formatLoss(latest?.data)} />
         <Stat label="PDE residual · VOF" value={formatLoss(latest?.vof)} />
-        {joint ? (
-          <>
-            <Stat
-              label="Validation IoU"
-              value={formatIou(valIou)}
-              tone={valIou != null ? "green" : "default"}
-              hint="held-out frames · in-distribution"
-            />
-            {transferIou != null && (
-              <Stat
-                label="Transfer IoU"
-                value={formatIou(transferIou)}
-                tone="amber"
-                hint="held-out condition · never trained"
-              />
-            )}
-          </>
-        ) : (
+        {showVal && (
+          <Stat
+            label="Validation IoU"
+            value={formatIou(valIou)}
+            tone={valIou != null ? "green" : "default"}
+            hint="held-out frames · in-distribution"
+          />
+        )}
+        {showTransfer && (
+          <Stat
+            label="Transfer IoU"
+            value={formatIou(transferIou)}
+            tone="amber"
+            hint="held-out series · never trained"
+          />
+        )}
+        {!showVal && !showTransfer && (
           <Stat
             label="Holdout IoU"
             value={formatIou(holdoutIou)}

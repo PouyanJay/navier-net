@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import {
   Button,
@@ -14,7 +14,6 @@ import type { ProjectSummary, RunJobStatus } from "../lib/api";
 import { LossWeightsPanel, RunConfigPanel } from "./solver/ConfigPanels";
 import {
   FORM_DEFAULTS,
-  JOINT_VAL_FRACTION,
   parseSeeds,
   toLaunchRequest,
   type SolverFormState,
@@ -54,35 +53,13 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
   const targets = useRunTargets(project?.datasets ?? null);
   const run = useSolverRun(onRunState, targets.refreshRuns);
 
-  // Tracks whether the current val_fraction was auto-filled for a joint run (vs
-  // deliberately chosen), so leaving joint mode only clears the auto-fill.
-  const autoFilledSplit = useRef(false);
-
-  const patchForm = useCallback((patch: Partial<SolverFormState>) => {
-    // Any manual edit to the split disowns the auto-fill — the user now owns it.
-    if ("val_fraction" in patch) autoFilledSplit.current = false;
-    setForm((prev) => ({ ...prev, ...patch }));
-  }, []);
+  const patchForm = useCallback(
+    (patch: Partial<SolverFormState>) =>
+      setForm((prev) => ({ ...prev, ...patch })),
+    [],
+  );
 
   const seeds = useMemo(() => parseSeeds(seedsText), [seedsText]);
-
-  // A joint run (more than one dataset) pre-fills a standard 80/20 validation
-  // split; a single-dataset run stays at 0 so its behaviour is unchanged. Only
-  // nudges an untouched (0) fraction, so an explicit choice is never overridden.
-  const isJoint = targets.selected.length > 1;
-  useEffect(() => {
-    setForm((prev) => {
-      if (isJoint && prev.val_fraction === 0) {
-        autoFilledSplit.current = true;
-        return { ...prev, val_fraction: JOINT_VAL_FRACTION };
-      }
-      if (!isJoint && autoFilledSplit.current) {
-        autoFilledSplit.current = false;
-        return { ...prev, val_fraction: 0 };
-      }
-      return prev;
-    });
-  }, [isJoint]);
 
   const submit = useCallback(() => {
     const { resume, resumeRunId, selected, heldout } = targets;
@@ -96,7 +73,10 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
       return;
     }
     if ((resume && !resumeRunId) || (!resume && selected.length === 0)) return;
-    const target = resume ? { resumeRunId } : { datasets: selected, heldout };
+    // One series may be held out of training (axis B) as a transfer test.
+    const target = resume
+      ? { resumeRunId }
+      : { datasets: selected, heldout: heldout ? [heldout] : [] };
     void run.start(toLaunchRequest(form, target));
   }, [run, form, targets, sweepMode, seeds]);
 
@@ -157,8 +137,8 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             selectedDatasets={targets.selected}
             onToggleDataset={targets.toggleDataset}
             onSelectAllDatasets={targets.selectAll}
-            heldoutDatasets={targets.heldout}
-            onToggleHeldout={targets.toggleHeldout}
+            heldout={targets.heldout}
+            onHeldout={targets.setHeldout}
             resume={targets.resume}
             onResume={targets.setResume}
             resumableRuns={targets.resumableRuns}
@@ -186,7 +166,10 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
           <MonitorPanel
             status={run.status}
             latest={latest}
-            joint={isJoint || run.valIou != null || run.transferIou != null}
+            // Show a stat once it's configured (so a running run is labelled
+            // right) or once its value arrives from the finished run's metrics.
+            showVal={form.val_fraction > 0 || run.valIou != null}
+            showTransfer={targets.heldout !== "" || run.transferIou != null}
             holdoutIou={run.holdoutIou}
             valIou={run.valIou}
             transferIou={run.transferIou}

@@ -74,7 +74,10 @@ export function useSolverRun(
             // Single-dataset runs report a holdout frame; joint runs report the
             // two-axis validation numbers (in-distribution val + transfer).
             setHoldoutIou(detail.metrics?.iou_holdout ?? null);
-            setValIou(detail.metrics?.val_iou_mean ?? null);
+            // Joint runs report val_iou_mean; a single-series run reports iou_val.
+            setValIou(
+              detail.metrics?.val_iou_mean ?? detail.metrics?.iou_val ?? null,
+            );
             setTransferIou(detail.metrics?.transfer?.mean ?? null);
           })
           .catch(() => {

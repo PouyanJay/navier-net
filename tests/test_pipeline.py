@@ -107,6 +107,38 @@ def test_joint_training_over_two_datasets_writes_one_conditioned_checkpoint(tmp_
     assert saved["n_cond"] == N_COND
 
 
+def test_single_dataset_evaluate_reports_a_validation_split_iou(tmp_path):
+    """A single-series run with a validation split surfaces its in-distribution
+    IoU (over the held-out tail frames), rather than silently dropping the metric."""
+    import json
+
+    from naviernet.evaluation import evaluate
+    from naviernet.training import load_model, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "dataset=solo",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.25",
+            "training.val_strategy=tail",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _stage(run_paths)  # 8 event frames
+
+    train(cfg, run_paths)
+    model, data, _ = load_model(cfg, run_paths)
+    report = evaluate(cfg, model, data, run_paths)
+
+    assert report["validation_frames"] == [7, 8]  # tail 0.25 of 8 frames
+    assert 0.0 <= report["iou_val"] <= 1.0
+    on_disk = json.loads(run_paths.metrics_json.read_text())
+    assert on_disk["iou_val"] == report["iou_val"]
+
+
 def test_joint_evaluation_reports_per_dataset_iou(tmp_path):
     """A joint run evaluates each dataset with its own conditioning and writes one
     metrics.json carrying per-dataset IoU plus an aggregate."""
