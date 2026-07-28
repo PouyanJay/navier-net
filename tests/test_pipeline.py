@@ -258,6 +258,107 @@ def test_joint_training_rejects_every_dataset_held_out(tmp_path):
         train(cfg, run_paths)
 
 
+def test_joint_metrics_report_validation_and_transfer(tmp_path):
+    """metrics.json v2: training datasets carry an in-distribution val IoU; a
+    held-out condition is scored over every frame as a separate transfer IoU."""
+    import json
+
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b,ds_c]",
+            "heldout_datasets=[ds_c]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.25",
+            "training.val_strategy=tail",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
+
+    train(cfg, run_paths)
+    model, contexts = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths)
+
+    assert report["datasets"] == ["ds_a", "ds_b", "ds_c"]
+    assert report["training_datasets"] == ["ds_a", "ds_b"]
+    assert report["heldout_datasets"] == ["ds_c"]
+    # per_dataset covers the datasets that trained; each has an in-distribution val.
+    assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
+    for name in ("ds_a", "ds_b"):
+        d = report["per_dataset"][name]
+        assert d["val_frames"] == [7, 8]  # tail 0.25 of 8 frames
+        assert 0.0 <= d["iou_val"] <= 1.0
+    assert 0.0 <= report["val_iou_mean"] <= 1.0
+    # transfer: the held-out condition, scored over ALL its frames.
+    assert set(report["transfer"]["per_dataset"]) == {"ds_c"}
+    assert 0.0 <= report["transfer"]["mean"] <= 1.0
+
+    on_disk = json.loads(run_paths.metrics_json.read_text())
+    assert on_disk["transfer"]["per_dataset"]["ds_c"] == report["transfer"]["per_dataset"]["ds_c"]
+
+
+def test_joint_metrics_omit_transfer_when_nothing_is_held_out(tmp_path):
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0)))
+
+    train(cfg, run_paths)
+    model, contexts = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths)
+
+    assert "transfer" not in report
+    assert report["heldout_datasets"] == []
+    assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
+
+
+def test_val_iou_folds_in_the_legacy_holdout_frame(tmp_path):
+    """With no split fraction but the legacy holdout frame set, the in-distribution
+    val IoU still reports that frame -- the metric is never silently dropped."""
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.holdout_frame=5",  # camera frame 6
+            "training.val_fraction=0.0",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0)))
+
+    train(cfg, run_paths)
+    model, contexts = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths)
+
+    for name in ("ds_a", "ds_b"):
+        d = report["per_dataset"][name]
+        assert d["val_frames"] == [6]  # only the legacy holdout frame
+        assert d["iou_val"] == pytest.approx(d["iou_per_frame"][6])
+
+
 def test_joint_training_needs_groups_in_each_datasets_tensors(tmp_path):
     """A dataset preprocessed before groups were recorded can't join a conditioned
     run; the trainer says so instead of silently mis-conditioning."""

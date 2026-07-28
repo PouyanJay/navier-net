@@ -18,6 +18,7 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
+from naviernet.config.schema import training_datasets
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -179,30 +180,69 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     return report
 
 
-def evaluate_joint(cfg, model, contexts, paths: RunPaths) -> dict:
-    """Evaluate a joint (transfer-learning) run: each dataset scored with its own
-    conditioning row, into one metrics.json with per-dataset IoU and an aggregate.
+def _validation_iou(report: dict, data) -> tuple[float | None, list[int]]:
+    """In-distribution validation IoU for one training dataset: the mean IoU over
+    the frames held out of supervision (the split plus the legacy holdout frame),
+    and those frame numbers. ``None`` when the dataset held nothing out."""
+    frames = data.validation_frames
+    per_frame = report["iou_per_frame"]
+    ious = [per_frame[f] for f in frames if f in per_frame]
+    return (float(np.mean(ious)) if ious else None), frames
 
-    ``contexts`` are the run's datasets, each carrying its tensors (``.data``),
-    name (``.name``), and conditioning row (``.c``) — as the joint trainer built
-    them. The holdout IoU is still the headline number, now reported per dataset
-    and averaged, so a joint model is judged on generalisation across conditions.
+
+def evaluate_joint(cfg, model, contexts, paths: RunPaths) -> dict:
+    """Evaluate a joint (transfer-learning) run into one metrics.json (v2), each
+    dataset scored with its own conditioning row along two validation axes:
+
+    - **In-distribution** (``iou_val``): the *training* datasets' held-out frames
+      -- unseen time instants of a condition the model trained on.
+    - **Transfer** (``transfer``): every frame of the *held-out* datasets (axis B)
+      -- conditions the model never trained on, predicted from conditioning alone.
+
+    ``contexts`` are every dataset the run spans (training + held-out); the split
+    is read from ``cfg`` so evaluation scores each on the right axis.
     """
     paths.ensure()
 
-    per_dataset = {cx.name: iou_report(cfg, model, cx.data, cx.c) for cx in contexts}
-    holdouts = [d["iou_holdout"] for d in per_dataset.values() if d["iou_holdout"] is not None]
+    train_names = set(training_datasets(cfg))
+    reports = {cx.name: iou_report(cfg, model, cx.data, cx.c) for cx in contexts}
 
+    per_dataset: dict[str, dict] = {}
+    transfer: dict[str, float] = {}
+    for cx in contexts:
+        rep = reports[cx.name]
+        if cx.name in train_names:
+            iou_val, val_frames = _validation_iou(rep, cx.data)
+            per_dataset[cx.name] = {
+                "iou_mean": rep["iou_mean"],
+                "iou_val": iou_val,
+                "val_frames": val_frames,
+                "iou_per_frame": rep["iou_per_frame"],
+            }
+        else:
+            # Held out of training entirely: every frame is a transfer prediction.
+            transfer[cx.name] = rep["iou_mean"]
+
+    val_ious = [d["iou_val"] for d in per_dataset.values() if d["iou_val"] is not None]
     report = {
         "run_name": cfg.run_name,
         "datasets": [cx.name for cx in contexts],
+        "training_datasets": [cx.name for cx in contexts if cx.name in train_names],
+        "heldout_datasets": [cx.name for cx in contexts if cx.name not in train_names],
         "per_dataset": per_dataset,
         "iou_mean": float(np.mean([d["iou_mean"] for d in per_dataset.values()])),
-        "iou_holdout_mean": float(np.mean(holdouts)) if holdouts else None,
+        "val_iou_mean": float(np.mean(val_ious)) if val_ious else None,
     }
+    if transfer:
+        report["transfer"] = {
+            "per_dataset": transfer,
+            "mean": float(np.mean(list(transfer.values()))),
+        }
 
     for name, d in per_dataset.items():
-        log.info("dataset %s: IoU mean %.3f, holdout %s", name, d["iou_mean"], d["iou_holdout"])
+        log.info("dataset %s: IoU mean %.3f, val %s", name, d["iou_mean"], d["iou_val"])
+    for name, iou in transfer.items():
+        log.info("held-out %s: transfer IoU %.3f (never trained)", name, iou)
     paths.metrics_json.write_text(json.dumps(report, indent=2))
     log.info("joint metrics for %d datasets written to %s", len(contexts), paths.metrics_json)
     return report

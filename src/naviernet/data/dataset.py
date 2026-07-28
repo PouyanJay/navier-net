@@ -112,10 +112,14 @@ class BubbleDataset:
         weights = np.exp(-((self.sdf / (4 * self.eps)) ** 2)) + 0.02
         weights = (weights * self.valid).ravel()
 
+        # Every row held out of supervision: the split (axis A) and the legacy
+        # single frame, composed. This union is the honest in-distribution
+        # validation set -- the frames whose IoU is never a memorisation statement.
         held_out = set(self.val_rows)
         if self.holdout_row >= 0:
             held_out.add(self.holdout_row)
-        trainable = ~np.isin(self._ti, list(held_out)) & (weights > 0)
+        self.validation_rows: list[int] = sorted(held_out)
+        trainable = ~np.isin(self._ti, self.validation_rows) & (weights > 0)
         self._train_idx = np.where(trainable)[0]
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
@@ -148,8 +152,15 @@ class BubbleDataset:
 
     @property
     def val_frames(self) -> list[int]:
-        """Camera frame numbers of the held-out validation rows (axis A)."""
+        """Camera frame numbers of the validation-split rows (axis A only)."""
         return [self.frame_numbers[row] for row in self.val_rows]
+
+    @property
+    def validation_frames(self) -> list[int]:
+        """Camera frame numbers of every frame held out of supervision -- the
+        validation split and the legacy holdout frame, composed. This is the set
+        the in-distribution validation IoU is scored over."""
+        return [self.frame_numbers[row] for row in self.validation_rows]
 
     @property
     def shape(self) -> tuple[int, int, int]:
