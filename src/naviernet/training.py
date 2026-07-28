@@ -25,7 +25,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from naviernet.config.schema import resolved_datasets
+from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BubblePINN
 from naviernet.physics import registry
@@ -217,14 +217,18 @@ class _JointDataset:
     u_inlet: float
 
 
-def _load_joint_datasets(cfg, paths: RunPaths, device) -> list[_JointDataset]:
-    """Load every dataset a joint run trains on, each with its conditioning row.
+def _load_joint_datasets(cfg, paths: RunPaths, device, names=None) -> list[_JointDataset]:
+    """Load the named datasets of a joint run, each with its conditioning row.
 
-    Each dataset's regime comes from the groups recorded in its tensors, so no
-    per-dataset Hydra recomposition is needed at train time.
+    ``names`` defaults to every dataset the run spans; the trainer passes only the
+    training datasets (holding conditions out), and evaluation loads the held-out
+    ones separately. Each dataset's regime comes from the groups recorded in its
+    tensors, so no per-dataset Hydra recomposition is needed at train time.
     """
+    if names is None:
+        names = resolved_datasets(cfg)
     contexts: list[_JointDataset] = []
-    for name in resolved_datasets(cfg):
+    for name in names:
         data = BubbleDataset(cfg, paths.for_dataset(name), device=str(device))
         groups = data.groups
         if groups is None:
@@ -278,10 +282,16 @@ def _train_joint(
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
 
+    # The datasets actually supervised: held-out conditions (axis B) are loaded
+    # only at evaluation, never here, so they contribute nothing to the loss. This
+    # also validates the split (rejects an all-held-out run) before any I/O.
+    train_names = training_datasets(cfg)
+    heldout = [name for name in resolved_datasets(cfg) if name not in set(train_names)]
+
     paths.ensure()
     torch.manual_seed(tcfg.seed)
 
-    contexts = _load_joint_datasets(cfg, paths, device)
+    contexts = _load_joint_datasets(cfg, paths, device, train_names)
     names = [cx.name for cx in contexts]
     model = BubblePINN(cfg, n_cond=N_COND).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
@@ -294,7 +304,14 @@ def _train_joint(
     weights = state["w"]
     first_step = state["done"] + 1
     last_step = state["done"] + steps
-    log.info("joint training steps %d-%d on %s over %s", first_step, last_step, device, names)
+    log.info(
+        "joint training steps %d-%d on %s over %s%s",
+        first_step,
+        last_step,
+        device,
+        names,
+        f" (holding out {heldout})" if heldout else "",
+    )
 
     for step in range(first_step, last_step + 1):
         lr = tcfg.lr * (0.5 ** (step // tcfg.lr_halflife))
@@ -337,7 +354,9 @@ def _train_joint(
             "model": model.state_dict(),
             "opt": opt.state_dict(),
             "state": state,
-            "datasets": names,  # which series this joint model spans
+            "datasets": resolved_datasets(cfg),  # every series the run spans
+            "training_datasets": names,  # the ones actually supervised
+            "heldout_datasets": heldout,  # kept out for the transfer test (axis B)
             "n_cond": N_COND,  # so evaluation rebuilds the conditioned architecture
         },
         paths.checkpoint,

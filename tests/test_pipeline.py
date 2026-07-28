@@ -144,6 +144,120 @@ def test_joint_evaluation_reports_per_dataset_iou(tmp_path):
     assert on_disk["datasets"] == ["ds_a", "ds_b"]
 
 
+def _write_joint_datasets(run_paths, specs):
+    """Write synthetic tensors for several datasets, each with distinct groups."""
+    from naviernet.physics.groups import compute_groups
+
+    for name, q_wall in specs:
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
+
+
+def test_joint_checkpoint_records_the_training_and_held_out_split(tmp_path):
+    """A run with a held-out condition records which datasets trained and which
+    were kept out, so evaluation can score transfer separately."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b,ds_c]",
+            "heldout_datasets=[ds_c]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
+
+    train(cfg, run_paths)
+
+    saved = torch.load(run_paths.checkpoint, map_location="cpu", weights_only=False)
+    assert saved["datasets"] == ["ds_a", "ds_b", "ds_c"]
+    assert saved["training_datasets"] == ["ds_a", "ds_b"]
+    assert saved["heldout_datasets"] == ["ds_c"]
+
+
+def test_held_out_condition_never_enters_the_loss(tmp_path):
+    """Training on [a, b, c] with c held out is byte-for-byte identical to training
+    on [a, b] -- proof the held-out dataset contributes nothing to supervision."""
+    from naviernet.training import train
+
+    def train_model(root, datasets, heldout):
+        overrides = [
+            f"paths.root={root}",
+            f"datasets=[{','.join(datasets)}]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=3",
+        ]
+        if heldout:
+            overrides.append(f"heldout_datasets=[{','.join(heldout)}]")
+        cfg = make_config(overrides)
+        run_paths = RunPaths.from_config(cfg)
+        _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
+        model, _, _ = train(cfg, run_paths)
+        return model
+
+    withheld = train_model(tmp_path / "withheld", ["ds_a", "ds_b", "ds_c"], ["ds_c"])
+    pair = train_model(tmp_path / "pair", ["ds_a", "ds_b"], [])
+
+    for (name, a), (_, b) in zip(
+        withheld.state_dict().items(), pair.state_dict().items(), strict=True
+    ):
+        assert torch.equal(a, b), f"{name} differs -- the held-out dataset leaked into training"
+
+
+def test_joint_run_with_one_training_dataset_still_checkpoints(tmp_path):
+    """Holding out all but one dataset leaves a single training condition; the
+    conditioned joint path still runs and writes a checkpoint."""
+    from naviernet.physics.groups import N_COND
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "heldout_datasets=[ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0)))
+
+    model, _, state = train(cfg, run_paths)
+
+    assert run_paths.checkpoint.exists()
+    assert model.n_cond == N_COND
+    saved = torch.load(run_paths.checkpoint, map_location="cpu", weights_only=False)
+    assert saved["training_datasets"] == ["ds_a"]
+    assert saved["heldout_datasets"] == ["ds_b"]
+
+
+def test_joint_training_rejects_every_dataset_held_out(tmp_path):
+    """Nothing left to train on -> fail loudly (the config guard fires)."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "heldout_datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+
+    with pytest.raises(ValueError, match="training"):
+        train(cfg, run_paths)
+
+
 def test_joint_training_needs_groups_in_each_datasets_tensors(tmp_path):
     """A dataset preprocessed before groups were recorded can't join a conditioned
     run; the trainer says so instead of silently mis-conditioning."""
