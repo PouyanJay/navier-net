@@ -165,8 +165,20 @@ class TrainingConfig:
     n_bc: int = MISSING  # boundary points per step
 
     # Frame withheld from supervision entirely (0-based) and used as the
-    # honest generalisation test. Set to -1 to train on every frame.
+    # honest generalisation test. Set to -1 to train on every frame. This is the
+    # legacy single-frame knob; ``val_fraction`` below is the general axis and the
+    # two compose (both frames are held out).
     holdout_frame: int = MISSING
+
+    # Validation axis A: a per-dataset *fraction* of event frames held out of
+    # supervision as an in-distribution validation set. 0.0 (the default) keeps
+    # every existing run byte-for-byte unchanged; the Solver dials this to 0.2 for
+    # new joint runs. ``val_strategy`` picks which frames: "tail" holds the last
+    # frames (extrapolation, the honest test for a growth series); "scatter" holds
+    # evenly spaced frames (interpolation, easier). Held-out frames are the union
+    # of this split, the ``holdout_frame``, and (already-dropped) excluded frames.
+    val_fraction: float = 0.0
+    val_strategy: str = "tail"  # "tail" (extrapolation) | "scatter" (interpolation)
 
     weights: LossWeights = MISSING
     rebalance_every: int = MISSING  # gradient-norm loss rebalancing period
@@ -226,6 +238,13 @@ class Config:
     # and existing configs are unchanged. Use `resolved_datasets(cfg)` to read it.
     datasets: list[str] = field(default_factory=list)
 
+    # Validation axis B: whole datasets kept OUT of training and scored on every
+    # frame as a transfer test ("can it predict a condition it never trained on?").
+    # A subset of ``datasets`` -- never all of them, or nothing is left to train.
+    # Possible only because the model is conditioned on dimensionless groups, so a
+    # held-out dataset still has a valid conditioning vector. Empty = train on all.
+    heldout_datasets: list[str] = field(default_factory=list)
+
     stage: str = "all"
 
     experiment: ExperimentConfig = MISSING
@@ -261,6 +280,27 @@ def resolved_datasets(cfg) -> list[str]:
     """
     names = list(cfg.datasets) if cfg.datasets else [cfg.dataset]
     return list(dict.fromkeys(names))
+
+
+def training_datasets(cfg) -> list[str]:
+    """The datasets actually supervised: ``resolved_datasets(cfg)`` minus the
+    held-out conditions (validation axis B).
+
+    Order-preserving, and validated: every held-out name must be one of the run's
+    datasets, and at least one dataset must remain to train on. Both failures raise
+    ``ValueError`` -- an invalid split is a config error, not a silent no-op.
+    """
+    resolved = resolved_datasets(cfg)
+    heldout = list(dict.fromkeys(cfg.heldout_datasets))
+
+    unknown = [name for name in heldout if name not in resolved]
+    if unknown:
+        raise ValueError(f"heldout_datasets not in datasets: {unknown}")
+
+    training = [name for name in resolved if name not in set(heldout)]
+    if not training:
+        raise ValueError("no training datasets remain: every dataset is held out")
+    return training
 
 
 def register_configs() -> None:
