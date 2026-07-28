@@ -11,7 +11,7 @@ import {
   ViewCanvas,
 } from "../components";
 import type { ProjectSummary, RunJobStatus } from "../lib/api";
-import { LossWeightsPanel, RunConfigPanel } from "./solver/ConfigPanels";
+import { RunConfigPanel } from "./solver/ConfigPanels";
 import {
   FORM_DEFAULTS,
   parseSeeds,
@@ -153,12 +153,6 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             onSeedsText={setSeedsText}
             seedsValid={seeds !== null}
             locked={run.running}
-          />
-          <LossWeightsPanel
-            weights={form.weights}
-            rebalanceEvery={form.rebalance_every}
-            onForm={patchForm}
-            locked={run.running || targets.resume}
           />
         </div>
         <div className="solver-col">

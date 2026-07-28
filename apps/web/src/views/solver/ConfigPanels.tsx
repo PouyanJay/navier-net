@@ -273,24 +273,32 @@ export function RunConfigPanel({
           disabled={locked || sweepMode}
         />
       </div>
+      <LossWeightsSection
+        weights={form.weights}
+        rebalanceEvery={form.rebalance_every}
+        onForm={onForm}
+        locked={fixedByResume}
+      />
     </Panel>
   );
 }
 
-interface LossWeightsPanelProps {
+interface LossWeightsSectionProps {
   weights: LossWeightsInput;
   rebalanceEvery: number;
   onForm: (patch: Partial<SolverFormState>) => void;
   locked: boolean;
 }
 
-/** "Loss weights": the initial per-term weights, rebalanced live by the trainer. */
-export function LossWeightsPanel({
+/** The initial per-term loss weights, rebalanced live by the trainer. Rendered as
+ * a section inside the run-configuration card (not its own panel), under a labelled
+ * divider — one left-hand card for the whole run setup. */
+function LossWeightsSection({
   weights,
   rebalanceEvery,
   onForm,
   locked,
-}: LossWeightsPanelProps) {
+}: LossWeightsSectionProps) {
   const weightField = (term: keyof LossWeightsInput, label: ReactNode) => (
     <NumberField
       label={label}
@@ -304,7 +312,11 @@ export function LossWeightsPanel({
   );
 
   return (
-    <Panel title="Loss weights" subtitle="initial · rebalanced live">
+    <>
+      <div className="cfg-subhead">
+        <span className="cfg-label">Loss weights</span>
+        <span className="cfg-subnote">initial · rebalanced live</span>
+      </div>
       <div className="cfg cfg-narrow">
         {weightField(
           "data",
@@ -348,6 +360,6 @@ export function LossWeightsPanel({
           disabled={locked}
         />
       </div>
-    </Panel>
+    </>
   );
 }

@@ -12,19 +12,29 @@
 .solver-head .actions {
   margin-left: auto;
   display: flex;
-  gap: var(--s3);
+  gap: var(--s2);
+}
+/* Reset/Run as pills, matching the Physics & model action row (the rounded
+   subtle-bordered chip + button language). Reset stays subtle, Run is the accent. */
+.solver-head .actions .btn {
+  border-radius: 99px;
+  padding: 5px 18px;
+  font-size: 12px;
 }
 
-/* Two-column solver layout: narrow config, wide monitor (mockup's .solx). */
+/* Two-column solver layout: narrow config, wide monitor (mockup's .solx). The
+   columns stretch to a shared height so the single left card's bottom edge lines
+   up with the monitor/history/console stack on the right. */
 .solx {
   display: grid;
   grid-template-columns: minmax(300px, 350px) minmax(0, 1fr);
   gap: var(--s5);
-  align-items: start;
+  align-items: stretch;
 }
 @media (max-width: 1080px) {
   .solx {
     grid-template-columns: 1fr;
+    align-items: start;
   }
 }
 .solver-col {
@@ -32,6 +42,27 @@
   flex-direction: column;
   gap: var(--s5);
   min-width: 0;
+}
+/* The left column is now one card; let it grow to fill the shared column height. */
+.solver-col:first-child > .card {
+  flex: 1 1 auto;
+}
+
+/* Labelled divider between the run-config fields and the loss-weights section,
+   now that both share one card. */
+.cfg-subhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin: var(--s4) 0 var(--s3);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line2);
+}
+.cfg-subnote {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink3);
 }
 
 /* Dataset multi-select: the project's processed series to train on. */
