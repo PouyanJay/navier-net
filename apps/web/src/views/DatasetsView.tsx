@@ -64,6 +64,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
           data.refresh().catch(() => {});
         }}
         onSaveConditions={data.saveConditions}
+        onSaveLabel={data.saveLabel}
         onPreprocess={() => void data.runPreprocess()}
         preprocessing={data.preprocess?.state === "running"}
       />

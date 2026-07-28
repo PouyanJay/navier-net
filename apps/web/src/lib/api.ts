@@ -96,10 +96,12 @@ export interface ProjectSummary {
 }
 
 export interface DatasetSummary {
-  id: string;
+  id: string; // immutable filesystem key
   n_frames: number;
   processed: boolean;
   conditions_set: boolean;
+  /** Editable display name; null = show the id. */
+  label: string | null;
   frame_px: [number, number] | null;
   dt_frame_ms: number | null;
 }
@@ -463,6 +465,10 @@ export const api = {
     sendJson<DatasetDetail>(`${datasetPath(id)}/excluded-frames`, "PUT", {
       excluded_frames: frames,
     }),
+  /** Set (or, with a blank string, clear) the series' display name. The id is
+   * immutable; this only changes what the UI shows. */
+  setSeriesLabel: (id: string, label: string) =>
+    sendJson<DatasetDetail>(`${datasetPath(id)}/label`, "PUT", { label }),
   getQcData: (id: string) => getJson<QcData>(`${datasetPath(id)}/qc-data`),
   getPreprocessStatus: (id: string) =>
     getJson<PreprocessStatus>(`${datasetPath(id)}/preprocess`),

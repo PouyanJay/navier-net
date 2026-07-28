@@ -881,6 +881,41 @@
   color: var(--ink3);
 }
 
+/* The immutable series id, shown muted alongside an editable display name. */
+.ds-id {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+.dsrow .m .ds-id {
+  display: block;
+}
+
+/* Editable display-name row in the edit modal: the input plus the fixed id. */
+.ds-label-field {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.ds-label-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+  padding: var(--s2);
+}
+.ds-label-field input:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+.ds-label-field .ds-id {
+  flex: none;
+}
+
 /* Selected-series inputs, read-only, in the series-library side card. */
 .ds-conditions {
   border-top: 1px solid var(--line2);

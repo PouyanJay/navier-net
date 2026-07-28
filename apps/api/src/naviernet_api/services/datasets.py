@@ -68,6 +68,13 @@ CONDITION_FIELDS: dict[str, tuple[str, float, float]] = {
 # under this key in conditions.json.
 FLUID_KEY = "fluid"
 
+# An optional human-readable display name for the series, stored alongside the
+# conditions under this reserved key. The series id stays the immutable filesystem
+# key (data/raw/<id>); the label is purely what the UI shows. `read_conditions`
+# projects out only CONDITION_FIELDS, so the label never leaks into the physics.
+LABEL_KEY = "label"
+MAX_LABEL_LEN = 80
+
 # BAKED_CONDITION_FIELDS (imported at the top from the pipeline) names the
 # condition fields written into the tensors; editing one makes them stale until a
 # re-preprocess. Everything else (fluid, wall heat flux, flow rate, channel
@@ -163,6 +170,38 @@ def read_conditions(settings: Settings, dataset: str) -> dict[str, float]:
     """The series' saved scalar condition values ({} when none saved)."""
     saved = _read_raw_conditions(settings, dataset)
     return {k: v for k, v in saved.items() if k in CONDITION_FIELDS}
+
+
+def read_series_label(settings: Settings, dataset: str) -> str | None:
+    """The series' editable display name, or None when none is set (so the UI
+    falls back to the id). A blank or non-string saved value degrades to None."""
+    label = _read_raw_conditions(settings, dataset).get(LABEL_KEY)
+    if not isinstance(label, str):
+        return None
+    label = " ".join(label.split())
+    return label or None
+
+
+def save_series_label(settings: Settings, dataset: str, label: str) -> str | None:
+    """Set (or, with a blank string, clear) the series' display name in its
+    conditions file. Returns the stored label, or None when cleared. The id is
+    never touched -- this only renames what the UI shows."""
+    path = _conditions_path(settings, dataset)
+    if path is None or not path.parent.is_dir():
+        raise ConditionsError(f"dataset {dataset!r} not found")
+
+    label = " ".join(label.split())  # trim + collapse internal whitespace/newlines
+    merged = _read_raw_conditions(settings, dataset)
+    if label:
+        merged[LABEL_KEY] = label
+    else:
+        merged.pop(LABEL_KEY, None)  # blank clears it, back to the id
+
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(merged, indent=2))
+    tmp.replace(path)
+    log.info("saved label for %s: %r", dataset, label or None)
+    return label or None
 
 
 def read_series_fluid(settings: Settings, dataset: str) -> str | None:
@@ -643,6 +682,7 @@ def list_datasets(settings: Settings) -> list[DatasetSummary]:
                 n_frames=_count_frames(entry),
                 processed=_is_processed(settings, entry.name),
                 conditions_set=bool(read_conditions(settings, entry.name)),
+                label=read_series_label(settings, entry.name),
                 frame_px=_frame_dimensions(entry),
                 dt_frame_ms=_dt_frame_ms(settings, entry.name),
             )
@@ -677,6 +717,7 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
         has_qc=qc_path(settings, dataset) is not None,
         conditions=conditions_from_cfg(cfg),
         conditions_set=bool(read_conditions(settings, dataset)),
+        label=read_series_label(settings, dataset),
         frame_px=_frame_dimensions(raw_dir),
         # Config stores the 0-based tensor index; report the 1-based camera
         # frame (f06), matching evaluation's metrics.json convention. -1 means
@@ -721,6 +762,7 @@ def get_dataset_summary(settings: Settings, dataset: str) -> DatasetSummary | No
         n_frames=_count_frames(raw_dir),
         processed=_is_processed(settings, dataset),
         conditions_set=bool(read_conditions(settings, dataset)),
+        label=read_series_label(settings, dataset),
         frame_px=_frame_dimensions(raw_dir),
         dt_frame_ms=_dt_frame_ms(settings, dataset),
     )

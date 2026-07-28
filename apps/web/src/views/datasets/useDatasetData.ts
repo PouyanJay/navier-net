@@ -31,6 +31,8 @@ export interface DatasetData {
   /** Persist an edit to the selected series' operating conditions, then refresh
    * the detail (incl. the baked-condition staleness flag) and groups. */
   saveConditions: (updates: ConditionsUpdate) => Promise<void>;
+  /** Set (or clear) the selected series' editable display name, then refresh. */
+  saveLabel: (label: string) => Promise<void>;
   /** Re-fetch the dataset list (e.g. after a new series is uploaded). */
   refresh: () => Promise<void>;
 }
@@ -190,6 +192,17 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     [selected, loadSelected, refresh],
   );
 
+  const saveLabel = useCallback(
+    async (label: string) => {
+      if (!selected) return;
+      await api.setSeriesLabel(selected, label);
+      // Refresh the detail and the list so the new name shows everywhere.
+      await loadSelected(selected);
+      await refresh();
+    },
+    [selected, loadSelected, refresh],
+  );
+
   return {
     datasets,
     selected,
@@ -202,6 +215,7 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     exclusionError,
     runPreprocess,
     saveConditions,
+    saveLabel,
     refresh,
   };
 }

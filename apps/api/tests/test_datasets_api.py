@@ -596,3 +596,52 @@ def test_a_series_with_its_own_config_keeps_its_declared_counts(repo_root):
     assert not [o for o in overrides if o.startswith("experiment.n_frames")]
     cfg = compose_cfg("highest_t", overrides=overrides)
     assert (cfg.experiment.n_frames_usable, cfg.experiment.n_frames_event) == (11, 10)
+
+
+def test_series_label_defaults_to_none(client):
+    """A series with no label set reports none, so the UI falls back to the id."""
+    assert client.get("/api/datasets/sample").json()["label"] is None
+    listed = {d["id"]: d for d in client.get("/api/datasets").json()}
+    assert listed["sample"]["label"] is None
+
+
+def test_put_series_label_sets_an_editable_display_name(client):
+    r = client.put("/api/datasets/sample/label", json={"label": "High-T FC-72"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["label"] == "High-T FC-72"
+    assert body["id"] == "sample", "the id is immutable; only the label changes"
+    # It shows up on the list and the detail without touching the id.
+    assert client.get("/api/datasets/sample").json()["label"] == "High-T FC-72"
+    listed = {d["id"]: d for d in client.get("/api/datasets").json()}
+    assert listed["sample"]["label"] == "High-T FC-72"
+
+
+def test_empty_label_clears_it_back_to_the_id(client):
+    client.put("/api/datasets/sample/label", json={"label": "Renamed"})
+    r = client.put("/api/datasets/sample/label", json={"label": ""})
+    assert r.status_code == 200
+    assert r.json()["label"] is None
+
+
+def test_label_whitespace_is_trimmed_and_collapsed(client):
+    r = client.put("/api/datasets/sample/label", json={"label": "  High   T \n run "})
+    assert r.status_code == 200
+    assert r.json()["label"] == "High T run"
+
+
+def test_label_saving_does_not_disturb_conditions(client):
+    client.patch("/api/datasets/sample/conditions", json={"q_wall_W_cm2": 3.5})
+    before = client.get("/api/datasets/sample").json()["conditions"]
+    client.put("/api/datasets/sample/label", json={"label": "Keep my conditions"})
+    after = client.get("/api/datasets/sample").json()["conditions"]
+    assert after == before
+
+
+def test_overlong_label_is_rejected(client):
+    r = client.put("/api/datasets/sample/label", json={"label": "x" * 200})
+    assert r.status_code == 422
+
+
+def test_label_on_unknown_dataset_is_404(client):
+    assert client.put("/api/datasets/nope/label", json={"label": "x"}).status_code == 404

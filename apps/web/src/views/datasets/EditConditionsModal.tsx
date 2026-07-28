@@ -21,7 +21,10 @@ interface EditConditionsModalProps {
   detail: DatasetDetail;
   onClose: () => void;
   onSave: (updates: ConditionsUpdate) => Promise<void>;
+  onSaveLabel: (label: string) => Promise<void>;
 }
+
+const MAX_LABEL_LEN = 80;
 
 /** The current conditions as form strings. U_ref is reported as `U_ref_m_s`. */
 function initialInputs(detail: DatasetDetail): ConditionInputs {
@@ -44,11 +47,14 @@ export function EditConditionsModal({
   detail,
   onClose,
   onSave,
+  onSaveLabel,
 }: EditConditionsModalProps) {
   const fluids = useFluids();
   const [fluidId, setFluidId] = useState<string | null>(null);
   const initial = useMemo(() => initialInputs(detail), [detail]);
   const [conditions, setConditions] = useState<ConditionInputs>(initial);
+  // The editable display name; the id (detail.id) is the immutable filesystem key.
+  const [label, setLabel] = useState(detail.label ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,20 +107,26 @@ export function EditConditionsModal({
     return updates;
   }
 
+  // Trim + collapse whitespace to match how the API stores the label, so a
+  // no-op edit (e.g. trailing spaces) doesn't count as a change.
+  const cleanedLabel = label.trim().replace(/\s+/g, " ");
+  const labelChanged = cleanedLabel !== (detail.label ?? "");
+
   async function save() {
     if (!conditionsValid || !fluidReady || fluidId === null) return;
     const updates = changedUpdates();
-    if (Object.keys(updates).length === 0) {
+    if (Object.keys(updates).length === 0 && !labelChanged) {
       onClose(); // nothing changed
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      await onSave(updates);
+      if (labelChanged) await onSaveLabel(cleanedLabel);
+      if (Object.keys(updates).length > 0) await onSave(updates);
       onClose();
     } catch (err) {
-      setError(`Could not save the conditions: ${errorMessage(err)}`);
+      setError(`Could not save the changes: ${errorMessage(err)}`);
       setSaving(false);
     }
   }
@@ -154,6 +166,24 @@ export function EditConditionsModal({
           </span>
         </div>
         <div className="body">
+          <div className="modal-section">
+            <h3 className="modal-section-hd">
+              Display name <span>what the UI shows · the id stays fixed</span>
+            </h3>
+            <label className="ds-label-field">
+              <input
+                type="text"
+                value={label}
+                maxLength={MAX_LABEL_LEN}
+                placeholder="Display name"
+                aria-label="Display name"
+                disabled={saving}
+                onChange={(e) => setLabel(e.target.value)}
+              />
+              <span className="mono ds-id">{detail.id}</span>
+            </label>
+          </div>
+
           <div className="modal-section">
             <h3 className="modal-section-hd">
               Measurements{" "}

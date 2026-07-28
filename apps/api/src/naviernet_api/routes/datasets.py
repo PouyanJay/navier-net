@@ -12,6 +12,7 @@ from naviernet_api.models import (
     DatasetDetail,
     DatasetSummary,
     ExclusionsUpdate,
+    LabelUpdate,
     PreprocessStatus,
     QcData,
 )
@@ -94,6 +95,27 @@ def set_excluded_frames(
     detail = datasets_service.get_dataset(settings, dataset)
     if detail is None:  # saved but not found; should not happen
         raise HTTPException(status_code=500, detail="exclusions saved but dataset not found")
+    return detail
+
+
+@router.put("/{dataset}/label", response_model=DatasetDetail)
+def set_series_label(
+    dataset: str,
+    payload: LabelUpdate,
+    settings: Settings = Depends(get_settings),
+) -> DatasetDetail:
+    """Set (or, with a blank label, clear) the series' editable display name. The
+    id is immutable; this only renames what the UI shows."""
+    if datasets_service.get_dataset_summary(settings, dataset) is None:
+        raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
+    try:
+        datasets_service.save_series_label(settings, dataset, payload.label)
+    except ConditionsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    detail = datasets_service.get_dataset(settings, dataset)
+    if detail is None:  # saved but not found; should not happen
+        raise HTTPException(status_code=500, detail="label saved but dataset not found")
     return detail
 
 

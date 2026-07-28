@@ -163,6 +163,7 @@ interface Calls {
   conditionPatches: Record<string, unknown>[];
   projectPatches: Record<string, unknown>[];
   exclusionPuts: number[][];
+  labelPuts: string[];
 }
 
 function mockApi({
@@ -178,9 +179,11 @@ function mockApi({
     conditionPatches: [],
     projectPatches: [],
     exclusionPuts: [],
+    labelPuts: [],
   };
   // The endpoint replaces the set, so the mock keeps the series' current one.
   let excludedFrames = excluded;
+  let label: string | null = null; // the series' editable display name
   // Baked-condition edits make the tensors stale until a re-preprocess, mirroring
   // the server's conditions_applied flag.
   const bakedKeys = new Set(["dt_frame_ms", "channel_width_um", "U_ref"]);
@@ -196,6 +199,7 @@ function mockApi({
             id: "sample",
             n_frames: 3,
             processed,
+            label,
             conditions_set: false,
             frame_px: [16, 12],
             dt_frame_ms: 0.5,
@@ -262,6 +266,18 @@ function mockApi({
         calls.projectPatches.push(body);
         return json({ ...PROJECT, ...body });
       }
+      if (u.endsWith("/label") && opts?.method === "PUT") {
+        const body = JSON.parse(String(opts.body)) as { label: string };
+        calls.labelPuts.push(body.label);
+        label = body.label.trim() || null;
+        return json({
+          ...DETAIL,
+          processed,
+          holdout_frame: holdout,
+          excluded_frames: excludedFrames,
+          label,
+        });
+      }
       if (u.endsWith("/excluded-frames") && opts?.method === "PUT") {
         const body = JSON.parse(String(opts.body)) as {
           excluded_frames: number[];
@@ -291,6 +307,7 @@ function mockApi({
           excluded_frames: excludedFrames,
           conditions_applied: conditionsApplied,
           um_per_px: umPerPx ?? DETAIL.um_per_px,
+          label,
         });
       }
       return new Response("not found", { status: 404 });
@@ -369,6 +386,33 @@ describe("DatasetsView", () => {
         screen.queryByText(/Re-preprocess required/i),
       ).not.toBeInTheDocument(),
     );
+  });
+
+  it("renames a series with an editable display label, keeping the id visible", async () => {
+    const calls = mockApi();
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // The card starts labelled by its id.
+    expect((await screen.findAllByText("sample")).length).toBeGreaterThan(0);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText("Display name"), {
+      target: { value: "High-T FC-72" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+
+    // The label is PUT to the series, and the id is never sent as a rename.
+    await waitFor(() => expect(calls.labelPuts).toEqual(["High-T FC-72"]));
+    // The card now shows the label, with the immutable id still visible.
+    expect((await screen.findAllByText("High-T FC-72")).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getAllByText("sample").length).toBeGreaterThan(0);
   });
 
   it("warns and requires a re-preprocess after a baked-condition edit", async () => {
@@ -479,7 +523,7 @@ describe("DatasetsView", () => {
     });
     fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
     expect(await dialog.findByRole("alert")).toHaveTextContent(
-      /Could not save the conditions/,
+      /Could not save the changes/,
     );
   });
 
