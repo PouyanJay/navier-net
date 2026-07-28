@@ -250,6 +250,8 @@ export interface LossWeightsInput {
 /** A request to start (or resume) a training run. Mirrors the backend model. */
 export interface RunLaunchRequest {
   dataset?: string | null;
+  /** Joint (transfer-learning) training: one model across these datasets. */
+  datasets?: string[] | null;
   resume?: boolean;
   run_id?: string | null;
   steps: number;

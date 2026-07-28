@@ -65,6 +65,22 @@ def write_synthetic_tensors(path: Path) -> None:
             "channel_width_um": 300.0,
             "U_ref": 0.2,
         },
+        # Dimensionless groups, as preprocess records them, so these tensors can
+        # join a conditioned multi-dataset (transfer-learning) run.
+        "groups": {
+            "u_inlet_star": 0.77,
+            "Re": 215.5,
+            "We": 2.302,
+            "Ca": 0.01068,
+            "Bond": 0.0125,
+            "Pr": 9.411,
+            "Ja": 0.043,
+            "rho_ratio": 178.0,
+            "mu_ratio": 43.0,
+            "hele_shaw": 0.2228,
+            "q_wall_star": 0.31,
+            "t_star_per_frame": 0.33,
+        },
     }
     np.savez_compressed(
         path,

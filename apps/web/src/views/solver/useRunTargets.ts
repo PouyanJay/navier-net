@@ -3,9 +3,12 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type DatasetSummary, type RunSummary } from "../../lib/api";
 
 export interface RunTargets {
-  datasets: DatasetSummary[] | null;
-  dataset: string;
-  setDataset: (id: string) => void;
+  /** Processed datasets a new run can train on, scoped to the open project. */
+  available: DatasetSummary[] | null;
+  /** The subset selected to train; more than one means a joint run. */
+  selected: string[];
+  toggleDataset: (id: string) => void;
+  selectAll: (on: boolean) => void;
   resume: boolean;
   setResume: (on: boolean) => void;
   resumableRuns: RunSummary[];
@@ -16,13 +19,16 @@ export interface RunTargets {
 }
 
 /**
- * Owns what a launch can target: the processed datasets (for a new run) and
- * the trained runs (for a resume), each with its current selection. The run
- * lifecycle itself lives in `useSolverRun`.
+ * Owns what a launch can target: the project's processed datasets (multi-select
+ * for a joint run) and the trained runs (for a resume), each with its current
+ * selection. The run lifecycle itself lives in `useSolverRun`.
+ *
+ * `projectDatasets` scopes the dataset list to the open project; `null` (no
+ * project) leaves it workspace-wide.
  */
-export function useRunTargets(): RunTargets {
-  const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
-  const [dataset, setDataset] = useState("");
+export function useRunTargets(projectDatasets: string[] | null): RunTargets {
+  const [available, setAvailable] = useState<DatasetSummary[] | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
   const [resume, setResume] = useState(false);
   const [resumableRuns, setResumableRuns] = useState<RunSummary[]>([]);
   const [resumeRunId, setResumeRunId] = useState("");
@@ -42,24 +48,49 @@ export function useRunTargets(): RunTargets {
       );
   }, []);
 
+  // A stable dependency for the effect: the project's dataset set as a string.
+  const scopeKey = projectDatasets ? projectDatasets.join(",") : "";
+
   useEffect(() => {
     api
       .listDatasets()
       .then((list) => {
-        const processed = list.filter((entry) => entry.processed);
-        setDatasets(processed);
-        setDataset((cur) => cur || processed[0]?.id || "");
+        const scope = projectDatasets;
+        const processed = list.filter(
+          (entry) =>
+            entry.processed && (scope === null || scope.includes(entry.id)),
+        );
+        setAvailable(processed);
+        // Default to training the whole project; the user can narrow it.
+        setSelected(processed.map((entry) => entry.id));
       })
       .catch(() =>
         setLoadError("Could not load datasets; is the API running?"),
       );
     refreshRuns();
-  }, [refreshRuns]);
+    // scopeKey stands in for projectDatasets' identity so the effect re-runs
+    // only when the project's dataset set actually changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshRuns, scopeKey]);
+
+  const toggleDataset = useCallback((id: string) => {
+    setSelected((cur) =>
+      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
+    );
+  }, []);
+
+  const selectAll = useCallback(
+    (on: boolean) => {
+      setSelected(on ? (available ?? []).map((entry) => entry.id) : []);
+    },
+    [available],
+  );
 
   return {
-    datasets,
-    dataset,
-    setDataset,
+    available,
+    selected,
+    toggleDataset,
+    selectAll,
     resume,
     setResume,
     resumableRuns,

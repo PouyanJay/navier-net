@@ -33,6 +33,18 @@ class RunPaths:
             output_dir=Path(cfg.paths.output_dir),
         )
 
+    def for_dataset(self, dataset: str) -> RunPaths:
+        """This run's paths re-pointed at another ``dataset``'s data directories,
+        keeping the same output dir. Joint training reads several datasets'
+        tensors while writing one run's checkpoint, so it swaps the data-scoped
+        paths per dataset without disturbing where results land."""
+        data_root = self.processed_dir.parent.parent  # .../data/processed/<ds> -> .../data
+        return RunPaths(
+            raw_dir=data_root / "raw" / dataset,
+            processed_dir=data_root / "processed" / dataset,
+            output_dir=self.output_dir,
+        )
+
     # -- dataset-scoped ----------------------------------------------------
     def raw_frame(self, n: int) -> Path:
         """Path to the n-th raw TIFF (1-based, matching the camera numbering)."""

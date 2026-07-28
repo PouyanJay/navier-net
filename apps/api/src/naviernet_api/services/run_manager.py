@@ -182,7 +182,13 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
         run_id, dataset = _validate_resume(settings, request)
         request.dataset = dataset  # resolved from the run's own artifacts
     else:
-        run_id, dataset = None, _validate_new_run(settings, request)
+        run_id = None
+        datasets = _validate_new_run(settings, request)
+        # The first series is the run's primary (compose base, output naming);
+        # the full list drives joint training when there is more than one.
+        request.datasets = datasets
+        request.dataset = datasets[0]
+        dataset = datasets[0]
 
     with _lock:
         if _slot_busy():
@@ -281,9 +287,12 @@ def validate_trainable_dataset(settings: Settings, dataset: str | None) -> str:
     return dataset
 
 
-def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> str:
-    """The dataset for a new run, after checking it is trainable."""
-    return validate_trainable_dataset(settings, request.dataset)
+def _validate_new_run(settings: Settings, request: RunLaunchRequest) -> list[str]:
+    """The datasets for a new run, each checked trainable (preprocessed)."""
+    names = request.resolved_datasets()
+    if not names:
+        raise LaunchRejected(400, "a new run requires a dataset")
+    return [validate_trainable_dataset(settings, name) for name in names]
 
 
 def _validate_resume(settings: Settings, request: RunLaunchRequest) -> tuple[str, str | None]:
@@ -469,6 +478,11 @@ def _configure(
 
     # The series' saved conditions and frame exclusions travel with every run.
     overrides.extend(series_overrides(settings, dataset))
+    # Joint training: hand the pipeline the whole list. Each series' regime is
+    # read from its own tensors, so the primary's compose is enough as the base.
+    datasets = request.datasets or [dataset]
+    if len(datasets) > 1:
+        overrides.append(f"datasets=[{','.join(datasets)}]")
     return compose_cfg_once(dataset, overrides=overrides), 0
 
 

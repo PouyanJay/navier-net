@@ -8,9 +8,41 @@ therefore each PDE coefficient that uses it -- updates consistently.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 GRAVITY = 9.81  # m/s^2
+
+# The dimensionless groups a joint (transfer-learning) model is conditioned on:
+# the regime descriptors that distinguish one dataset's heat-flux condition from
+# another's, spanning momentum, heat transfer, property ratios, and confinement.
+# Dimensional reference quantities (Dh_um, U_in_m_s, t_ref_ms, dT_ref) are units,
+# not regime, so they are excluded. The order is the conditioning-vector layout
+# and is part of the checkpoint contract -- append, never reorder.
+CONDITIONING_GROUPS = (
+    "Re",
+    "We",
+    "Ca",
+    "Bond",
+    "Pr",
+    "Ja",
+    "rho_ratio",
+    "mu_ratio",
+    "hele_shaw",
+    "q_wall_star",
+    "t_star_per_frame",
+)
+N_COND = len(CONDITIONING_GROUPS)
+
+
+def conditioning_vector(groups: dict[str, float]) -> list[float]:
+    """Log10-normalised conditioning vector from a dataset's dimensionless groups.
+
+    In :data:`CONDITIONING_GROUPS` order. Log scale compresses the several-orders-
+    of-magnitude spread (Re~1e2, Ca~1e-2) into O(1) inputs the network conditions
+    on; the tiny floor guards a non-positive group from breaking the log.
+    """
+    return [math.log10(max(float(groups[key]), 1e-12)) for key in CONDITIONING_GROUPS]
 
 
 def reference_time_ms(scales) -> float:

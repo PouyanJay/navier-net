@@ -39,6 +39,7 @@ from PIL import Image
 from scipy.ndimage import gaussian_filter, map_coordinates
 
 from naviernet.data.contour import DEFAULT_WAVELENGTH_PX, fair_closed_contour
+from naviernet.physics.groups import compute_groups
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -408,6 +409,10 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         "baked_conditions": baked_conditions(cfg),
         "frames_used": _frames_used(cfg, frame_numbers),
         "x_convention": "x* runs downstream; raw camera flow is right to left",
+        # The dataset's dimensionless groups, so joint (transfer-learning)
+        # training reads each series' regime and conditioning vector straight
+        # from its tensors — no per-dataset Hydra recomposition at train time.
+        "groups": compute_groups(cfg),
     }
 
     np.savez_compressed(

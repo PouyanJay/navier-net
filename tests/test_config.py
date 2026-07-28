@@ -6,7 +6,7 @@ import pytest
 from omegaconf import OmegaConf
 from omegaconf.errors import ConfigAttributeError, ValidationError
 
-from naviernet.config.schema import STAGES
+from naviernet.config.schema import STAGES, resolved_datasets
 from naviernet.utils.paths import RunPaths
 
 from .conftest import make_config
@@ -42,6 +42,23 @@ def test_paths_interpolate_from_dataset_and_run_name():
 def test_run_name_defaults_to_dataset():
     cfg = make_config(["dataset=other"])
     assert cfg.run_name == "other"
+
+
+def test_datasets_defaults_to_the_single_dataset():
+    # Back-compat: with no `datasets`, a run trains on its one `dataset`, so every
+    # existing single-dataset run is just the 1-element case of the list form.
+    cfg = make_config(["dataset=solo"])
+    assert resolved_datasets(cfg) == ["solo"]
+
+
+def test_datasets_list_overrides_the_single_dataset():
+    cfg = make_config(["datasets=[first,second]"])
+    assert resolved_datasets(cfg) == ["first", "second"]
+
+
+def test_datasets_list_is_order_preserving_and_deduplicated():
+    cfg = make_config(["datasets=[b,a,b]"])
+    assert resolved_datasets(cfg) == ["b", "a"]
 
 
 def test_ensure_creates_every_writable_directory(tmp_path):

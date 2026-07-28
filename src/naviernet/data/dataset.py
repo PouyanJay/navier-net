@@ -113,6 +113,13 @@ class BubbleDataset:
         return self.alpha.shape
 
     @property
+    def groups(self) -> dict[str, float] | None:
+        """The dataset's dimensionless groups, recorded in its tensors at
+        preprocess time. ``None`` for archives written before that existed (they
+        must be re-preprocessed to join a multi-dataset run)."""
+        return self.meta.get("groups")
+
+    @property
     def event_frames(self) -> list[int]:
         """Camera frame numbers of the growth event, in row order."""
         return self.frame_numbers[: self.n_event]

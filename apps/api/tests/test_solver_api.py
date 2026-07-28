@@ -82,6 +82,69 @@ def test_resume_continues_from_the_checkpoint(client: TestClient, repo_root: Pat
     assert any("training steps 3-4" in line for line in lines)
 
 
+def test_launch_joint_run_trains_and_evaluates_every_dataset(
+    client: TestClient, repo_root: Path
+):
+    """A `datasets` list trains ONE conditioned model over all of them and writes
+    one metrics.json with each dataset's IoU — the transfer-learning path."""
+    import json
+
+    from conftest import write_synthetic_tensors
+
+    # A second preprocessed dataset alongside the fixture's `highest_t`.
+    second = repo_root / "data" / "processed" / "second"
+    second.mkdir(parents=True)
+    write_synthetic_tensors(second / "tensors.npz")
+
+    joint = {**TINY_RUN, "dataset": None, "datasets": ["highest_t", "second"]}
+    response = client.post("/api/runs", json=joint)
+    assert response.status_code == 202
+    launched = response.json()
+    assert launched["dataset"] == "highest_t"  # the primary series of the run
+
+    run_id = launched["run_id"]
+    events = read_stream(client, run_id)
+    final = [e["data"] for e in events if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"joint run failed: {final.get('message')}"
+
+    metrics = json.loads((repo_root / "outputs" / run_id / "metrics.json").read_text())
+    assert set(metrics["per_dataset"]) == {"highest_t", "second"}
+    assert metrics["datasets"] == ["highest_t", "second"]
+
+
+def test_joint_run_with_render_on_skips_figures_and_still_finishes(
+    client: TestClient, repo_root: Path
+):
+    """The renderer assumes an unconditioned model, so a joint run skips figures/
+    video (default render=on) rather than crashing — metrics are still written."""
+    from conftest import write_synthetic_tensors
+
+    second = repo_root / "data" / "processed" / "second"
+    second.mkdir(parents=True)
+    write_synthetic_tensors(second / "tensors.npz")
+
+    joint = {
+        **TINY_RUN,
+        "dataset": None,
+        "datasets": ["highest_t", "second"],
+        "render": True,
+    }
+    run_id = client.post("/api/runs", json=joint).json()["run_id"]
+    events = read_stream(client, run_id)
+    final = [e["data"] for e in events if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"joint render run failed: {final.get('message')}"
+
+
+def test_joint_launch_rejects_an_unpreprocessed_dataset(client: TestClient):
+    """Every dataset in a joint run must be preprocessed; one that isn't is a 409,
+    before anything is scheduled."""
+    # `sample` has raw frames in the fixture but was never preprocessed.
+    joint = {**TINY_RUN, "dataset": None, "datasets": ["highest_t", "sample"]}
+    response = client.post("/api/runs", json=joint)
+    assert response.status_code == 409
+    assert "preprocess" in response.json()["detail"]
+
+
 def test_holdout_none_trains_on_all_frames(client: TestClient, repo_root: Path):
     """holdout_frame=-1 supervises every frame; the holdout metric is absent."""
     run_id = client.post("/api/runs", json={**TINY_RUN, "holdout_frame": -1}).json()["run_id"]

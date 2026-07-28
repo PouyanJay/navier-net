@@ -69,6 +69,99 @@ def test_stage_a_training_is_byte_for_byte_unchanged(tmp_path):
         )
 
 
+def test_joint_training_over_two_datasets_writes_one_conditioned_checkpoint(tmp_path):
+    """A run with `datasets=[a, b]` trains ONE model, conditioned on each
+    dataset's dimensionless groups, and writes a single checkpoint — the joint
+    (transfer-learning) path, distinct from N separate single-dataset runs."""
+    from naviernet.physics.groups import N_COND, compute_groups
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.log_every=1",
+            "training.rebalance_every=1",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    # Two synthetic datasets with distinct regimes (different wall heat flux), each
+    # carrying its own groups in its tensors — as preprocess would have written.
+    for name, q_wall in (("ds_a", 2.0), ("ds_b", 5.0)):
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
+
+    model, _, state = train(cfg, run_paths)
+
+    assert model.n_cond == N_COND  # one conditioned model, not two plain ones
+    assert state["done"] == 2
+    assert len(state["hist"]) == 2
+    assert run_paths.checkpoint.exists()  # a single joint checkpoint
+    saved = torch.load(run_paths.checkpoint, map_location="cpu", weights_only=False)
+    assert saved["datasets"] == ["ds_a", "ds_b"]
+    assert saved["n_cond"] == N_COND
+
+
+def test_joint_evaluation_reports_per_dataset_iou(tmp_path):
+    """A joint run evaluates each dataset with its own conditioning and writes one
+    metrics.json carrying per-dataset IoU plus an aggregate."""
+    import json
+
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    for name, q_wall in (("ds_a", 2.0), ("ds_b", 5.0)):
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
+
+    train(cfg, run_paths)
+    model, contexts = load_joint(cfg, run_paths)  # rebuilds the conditioned model
+    report = evaluate_joint(cfg, model, contexts, run_paths)
+
+    assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
+    for name in ("ds_a", "ds_b"):
+        assert 0.0 <= report["per_dataset"][name]["iou_mean"] <= 1.0
+    assert 0.0 <= report["iou_mean"] <= 1.0  # aggregate over the datasets
+    on_disk = json.loads(run_paths.metrics_json.read_text())
+    assert on_disk["datasets"] == ["ds_a", "ds_b"]
+
+
+def test_joint_training_needs_groups_in_each_datasets_tensors(tmp_path):
+    """A dataset preprocessed before groups were recorded can't join a conditioned
+    run; the trainer says so instead of silently mis-conditioning."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [f"paths.root={tmp_path}", "datasets=[ds_a,ds_b]", "run_name=joint", *_TINY_TRAIN]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    for name in ("ds_a", "ds_b"):
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8)  # no groups
+
+    with pytest.raises(ValueError, match="groups"):
+        train(cfg, run_paths)
+
+
 def test_curriculum_ramps_evaporation_in_as_the_source_penalty_decays():
     """Soft -> hard: at the start the penalty is full and the closure off; by the
     end the closure is full and the penalty gone. Disabled (0) leaves both at 1."""
@@ -232,8 +325,12 @@ def test_excluding_almost_everything_is_rejected(cfg):
         usable_frame_numbers(too_few)
 
 
-def _write_tensors(path, frame_numbers: list[int], n_event: int) -> None:
-    """A minimal archive: only the keys BubbleDataset reads on construction."""
+def _write_tensors(path, frame_numbers: list[int], n_event: int, groups=None) -> None:
+    """A minimal archive: only the keys BubbleDataset reads on construction.
+
+    ``groups`` (when given) is recorded in the meta, as preprocess does, so a
+    dataset can join a conditioned multi-dataset run.
+    """
     import json
 
     import numpy as np
@@ -241,6 +338,15 @@ def _write_tensors(path, frame_numbers: list[int], n_event: int) -> None:
     n_t = len(frame_numbers)
     alpha = np.zeros((n_t, 4, 5), dtype=np.float32)
     alpha[:, 1:3, 1:3] = 1.0
+    meta = {
+        "x_pin_star": 0.5,
+        "t_ref_ms": 1.5,
+        "n_frames_usable": n_t,
+        "n_frames_event": n_event,
+        "frame_numbers": frame_numbers,
+    }
+    if groups is not None:
+        meta["groups"] = groups
     np.savez_compressed(
         path,
         alpha=alpha,
@@ -250,15 +356,7 @@ def _write_tensors(path, frame_numbers: list[int], n_event: int) -> None:
         x_star=np.linspace(0, 1, 5, dtype=np.float32),
         y_star=np.linspace(0, 1, 4, dtype=np.float32),
         t_star=((np.asarray(frame_numbers) - 1) * 0.1).astype(np.float32),
-        meta=json.dumps(
-            {
-                "x_pin_star": 0.5,
-                "t_ref_ms": 1.5,
-                "n_frames_usable": n_t,
-                "n_frames_event": n_event,
-                "frame_numbers": frame_numbers,
-            }
-        ),
+        meta=json.dumps(meta),
     )
 
 

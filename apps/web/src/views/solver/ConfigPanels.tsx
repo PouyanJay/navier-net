@@ -6,9 +6,12 @@ import {
   SelectField,
   Switch,
   TextField,
-  type SelectOption,
 } from "../../components";
-import type { LossWeightsInput, RunSummary } from "../../lib/api";
+import type {
+  DatasetSummary,
+  LossWeightsInput,
+  RunSummary,
+} from "../../lib/api";
 import { FORM_BOUNDS, HOLDOUT_OPTIONS, type SolverFormState } from "./form";
 
 /** The numeric run-config fields, in display order. Each maps 1:1 onto a
@@ -43,9 +46,10 @@ const NUMBER_FIELDS: NumberSpec[] = [
 interface RunConfigPanelProps {
   form: SolverFormState;
   onForm: (patch: Partial<SolverFormState>) => void;
-  datasetOptions: SelectOption[];
-  dataset: string;
-  onDataset: (id: string) => void;
+  availableDatasets: DatasetSummary[];
+  selectedDatasets: string[];
+  onToggleDataset: (id: string) => void;
+  onSelectAllDatasets: (on: boolean) => void;
   resume: boolean;
   onResume: (on: boolean) => void;
   resumableRuns: RunSummary[];
@@ -60,6 +64,78 @@ interface RunConfigPanelProps {
   locked: boolean;
 }
 
+/** The project's processed datasets as a checkbox group with "select all".
+ * One selected trains as usual; several train one model jointly. Wrapped in a
+ * <fieldset> so resume disables the whole group at once. */
+function DatasetMultiSelect({
+  available,
+  selected,
+  allSelected,
+  onToggle,
+  onSelectAll,
+  disabled,
+}: {
+  available: DatasetSummary[];
+  selected: string[];
+  allSelected: boolean;
+  onToggle: (id: string) => void;
+  onSelectAll: (on: boolean) => void;
+  disabled: boolean;
+}) {
+  if (available.length === 0) {
+    return (
+      <div className="ds-select">
+        <span className="cfg-label">Datasets</span>
+        <p className="state-note">
+          No preprocessed dataset in this project yet.
+        </p>
+      </div>
+    );
+  }
+  const joint = selected.length > 1;
+  return (
+    <fieldset className="ds-select" disabled={disabled}>
+      <div className="ds-select-hd">
+        <legend className="cfg-label">
+          Datasets
+          {joint && (
+            <span className="ds-joint-tag">joint · {selected.length}</span>
+          )}
+        </legend>
+        <button
+          type="button"
+          className="btn ghost sm"
+          onClick={() => onSelectAll(!allSelected)}
+          disabled={disabled}
+        >
+          {allSelected ? "Clear all" : "Select all"}
+        </button>
+      </div>
+      <ul className="ds-list">
+        {available.map((d) => (
+          <li key={d.id}>
+            <label className="ds-item">
+              <input
+                type="checkbox"
+                checked={selected.includes(d.id)}
+                onChange={() => onToggle(d.id)}
+                disabled={disabled}
+              />
+              <span className="mono">{d.id}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      {joint && (
+        <p className="ds-hint">
+          Trains one model jointly across the selected datasets — transfer
+          learning across their operating conditions.
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 /**
  * "Run configuration": every field is an input to the run, mapped 1:1 onto
  * `cfg.training`. When resuming, only Steps applies (the rest is fixed by the
@@ -68,9 +144,10 @@ interface RunConfigPanelProps {
 export function RunConfigPanel({
   form,
   onForm,
-  datasetOptions,
-  dataset,
-  onDataset,
+  availableDatasets,
+  selectedDatasets,
+  onToggleDataset,
+  onSelectAllDatasets,
   resume,
   onResume,
   resumableRuns,
@@ -90,16 +167,21 @@ export function RunConfigPanel({
       ? `ckpt.pt · step ${resumeTarget.steps}`
       : "ckpt.pt";
 
+  const allSelected =
+    availableDatasets.length > 0 &&
+    selectedDatasets.length === availableDatasets.length;
+
   return (
     <Panel title="Run configuration" subtitle="inputs to this run">
+      <DatasetMultiSelect
+        available={availableDatasets}
+        selected={selectedDatasets}
+        allSelected={allSelected}
+        onToggle={onToggleDataset}
+        onSelectAll={onSelectAllDatasets}
+        disabled={fixedByResume}
+      />
       <div className="cfg">
-        <SelectField
-          label="Dataset"
-          value={dataset}
-          onChange={onDataset}
-          options={datasetOptions}
-          disabled={fixedByResume}
-        />
         {NUMBER_FIELDS.map((spec) => (
           <NumberField
             key={spec.key}
