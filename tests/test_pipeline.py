@@ -407,6 +407,111 @@ def test_event_frames_are_camera_numbers_not_row_indices(tiny_cfg):
     assert data.event_frames == [1, 2, 4, 5, 6, 7]
 
 
+def _dataset(tmp_path, frame_numbers, n_event, overrides=None):
+    """A BubbleDataset over a synthetic archive, composed like the CLI would."""
+    from naviernet.data.dataset import BubbleDataset
+
+    cfg = make_config([f"paths.root={tmp_path}", *(overrides or [])])
+    paths = RunPaths.from_config(cfg)
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    _write_tensors(paths.tensors, frame_numbers, n_event=n_event)
+    return BubbleDataset(cfg, paths)
+
+
+def test_no_validation_split_holds_out_only_the_legacy_frame(tmp_path):
+    # val_fraction=0 (the default) -> axis A is inert; behaviour is unchanged.
+    data = _dataset(tmp_path, [1, 2, 3, 4, 5, 6, 7, 8], 8, ["training.val_fraction=0.0"])
+
+    assert data.val_rows == []
+    assert data.val_frames == []
+
+
+def test_tail_validation_holds_out_the_last_event_frames(tmp_path):
+    # 0.25 of 8 event frames -> ceil = 2 held from the tail (extrapolation).
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        ["training.holdout_frame=-1", "training.val_fraction=0.25", "training.val_strategy=tail"],
+    )
+
+    assert data.val_rows == [6, 7]
+    assert data.val_frames == [7, 8]
+    for row in data.val_rows:
+        assert row not in data._ti[data._train_idx], "a val row was supervised"
+
+
+def test_scatter_validation_spreads_across_the_event(tmp_path):
+    # Same count, but interior evenly-spaced frames (interpolation), not the tail.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        ["training.holdout_frame=-1", "training.val_fraction=0.25", "training.val_strategy=scatter"],
+    )
+
+    assert len(data.val_rows) == 2
+    assert data.val_rows != [6, 7], "scatter must not collapse to the tail"
+    assert max(data.val_rows) < 7, "scatter holds interior frames, not the last"
+
+
+def test_validation_split_operates_on_kept_frames_after_exclusions(tmp_path):
+    # Excluded frames are already gone from the archive, so the tail split is
+    # taken over the frames that remain -- rows, not raw camera indices.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 4, 5, 6, 7, 8],  # camera frame 3 excluded at preprocess
+        7,
+        ["training.holdout_frame=-1", "training.val_fraction=0.3", "training.val_strategy=tail"],
+    )
+
+    # ceil(0.3 * 7) = 3 tail rows -> camera frames 6, 7, 8.
+    assert data.val_frames == [6, 7, 8]
+
+
+def test_validation_split_composes_with_the_legacy_holdout_frame(tmp_path):
+    # holdout_frame (camera 6) AND the tail split are both held out -- a union.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        ["training.holdout_frame=5", "training.val_fraction=0.25", "training.val_strategy=tail"],
+    )
+
+    held = set(data.val_rows) | {data.holdout_row}
+    assert data.holdout_row == 5  # camera frame 6
+    assert data.val_rows == [6, 7]
+    for row in held:
+        assert row not in data._ti[data._train_idx]
+
+
+def test_validation_split_leaves_at_least_one_training_frame(tmp_path):
+    # An aggressive fraction still cannot hold out the whole event.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4],
+        4,
+        ["training.holdout_frame=-1", "training.val_fraction=0.9", "training.val_strategy=tail"],
+    )
+
+    assert len(data.val_rows) == 3, "capped so one training frame survives"
+    event_rows = {r for r in data._ti[data._train_idx] if r < data.n_event}
+    assert event_rows, "at least one event frame is still supervised"
+
+
+def test_tiny_split_floors_to_one_validation_frame(tmp_path):
+    # A fraction that would round below one frame is floored up to a single frame.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        ["training.holdout_frame=-1", "training.val_fraction=0.05", "training.val_strategy=tail"],
+    )
+
+    assert len(data.val_rows) == 1
+
+
 # --- tests below need the real dataset -------------------------------------
 
 

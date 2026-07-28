@@ -15,6 +15,7 @@ actually happens instead of being wasted on uniform bulk liquid.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -83,6 +84,15 @@ class BubbleDataset:
             else -1
         )
 
+        # Validation axis A: a fraction of the event's frames, held out of
+        # supervision as an in-distribution validation set (see `_validation_rows`).
+        # Excluded frames are already gone from the archive, so this is taken over
+        # the rows that remain. Composes with `holdout_row`: the held-out set below
+        # is their union, so a frame counted twice is harmless.
+        self.val_rows: list[int] = self._validation_rows(
+            float(cfg.training.val_fraction), str(cfg.training.val_strategy)
+        )
+
         self.domain = Domain(
             x_min=float(self.x[0]),
             x_max=float(self.x[-1]),
@@ -102,10 +112,44 @@ class BubbleDataset:
         weights = np.exp(-((self.sdf / (4 * self.eps)) ** 2)) + 0.02
         weights = (weights * self.valid).ravel()
 
-        trainable = (self._ti != self.holdout_row) & (weights > 0)
+        held_out = set(self.val_rows)
+        if self.holdout_row >= 0:
+            held_out.add(self.holdout_row)
+        trainable = ~np.isin(self._ti, list(held_out)) & (weights > 0)
         self._train_idx = np.where(trainable)[0]
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
+
+    def _validation_rows(self, fraction: float, strategy: str) -> list[int]:
+        """Rows of the event held out as the in-distribution validation set.
+
+        ``fraction`` of the ``n_event`` growth frames, chosen by ``strategy``:
+        ``tail`` holds the last frames (extrapolation), ``scatter`` holds interior
+        evenly-spaced frames (interpolation). A positive fraction always holds at
+        least one frame, and never the whole event -- at least one training frame
+        survives, so an over-large fraction cannot starve supervision.
+        """
+        if fraction <= 0.0 or self.n_event < 2:
+            return []
+
+        count = max(1, math.ceil(fraction * self.n_event))
+        count = min(count, self.n_event - 1)
+
+        if strategy == "scatter":
+            # Interior points, so the endpoints stay in training and the model
+            # interpolates between frames it has seen.
+            positions = np.linspace(0, self.n_event - 1, count + 2)[1:-1]
+            rows = sorted({int(round(p)) for p in positions})
+        elif strategy == "tail":
+            rows = list(range(self.n_event - count, self.n_event))
+        else:
+            raise ValueError(f"unknown val_strategy: {strategy!r} (want 'tail' or 'scatter')")
+        return rows
+
+    @property
+    def val_frames(self) -> list[int]:
+        """Camera frame numbers of the held-out validation rows (axis A)."""
+        return [self.frame_numbers[row] for row in self.val_rows]
 
     @property
     def shape(self) -> tuple[int, int, int]:
