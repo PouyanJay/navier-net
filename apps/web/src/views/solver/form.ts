@@ -44,12 +44,13 @@ export const FORM_DEFAULTS: SolverFormState = {
 };
 
 /** Validation-split options: a fraction of each kept-in series' frames held from
- * training as an in-distribution validation set (deterministic, tail). */
+ * training as an in-distribution validation set (deterministic, tail). Labels are
+ * kept terse so the select doesn't force its grid column wider than the card. */
 export const VAL_FRACTION_OPTIONS = [
-  { value: "0", label: "none · train on every frame" },
-  { value: "0.1", label: "10% · validation" },
-  { value: "0.2", label: "20% · validation" },
-  { value: "0.3", label: "30% · validation" },
+  { value: "0", label: "none" },
+  { value: "0.1", label: "10%" },
+  { value: "0.2", label: "20%" },
+  { value: "0.3", label: "30%" },
 ];
 
 /** Bounds shown on the inputs; the API enforces the same ranges. */

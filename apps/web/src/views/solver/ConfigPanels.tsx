@@ -180,8 +180,8 @@ export function RunConfigPanel({
   // while the others train. With one series it is unavailable and pinned to None.
   const canHoldOut = selectedDatasets.length > 1;
   const holdoutOptions = [
-    { value: "", label: "none · train on every series" },
-    ...selectedDatasets.map((id) => ({ value: id, label: `${id} · held out` })),
+    { value: "", label: "none" },
+    ...selectedDatasets.map((id) => ({ value: id, label: id })),
   ];
 
   return (
@@ -211,7 +211,7 @@ export function RunConfigPanel({
         ))}
         <SelectField
           label="Hold out"
-          hint="a whole series · transfer test"
+          hint="series · transfer"
           value={heldout}
           onChange={onHeldout}
           options={holdoutOptions}
@@ -219,7 +219,7 @@ export function RunConfigPanel({
         />
         <SelectField
           label="Validation split"
-          hint="frames per trained series"
+          hint="frames / series"
           value={String(form.val_fraction)}
           onChange={(value) => onForm({ val_fraction: Number(value) })}
           options={VAL_FRACTION_OPTIONS}
