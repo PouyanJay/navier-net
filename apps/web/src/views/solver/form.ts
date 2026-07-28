@@ -14,6 +14,8 @@ export interface SolverFormState {
   n_coll: number;
   n_bc: number;
   holdout_frame: number;
+  val_fraction: number;
+  val_strategy: "tail" | "scatter";
   rebalance_every: number;
   log_every: number;
   weights: LossWeightsInput;
@@ -27,12 +29,29 @@ export const FORM_DEFAULTS: SolverFormState = {
   n_data: 3072,
   n_coll: 3072,
   n_bc: 512,
-  holdout_frame: 5,
+  // The Solver no longer exposes a single-frame holdout; generalization is the
+  // series hold-out and the validation split. -1 disables the legacy frame knob.
+  holdout_frame: -1,
+  // Off by default (train on every frame); the user opts into a split. Always
+  // "tail": hold the last frames of each kept series -- the honest extrapolation
+  // test, never a random/interior frame the neighbours already pin down.
+  val_fraction: 0,
+  val_strategy: "tail",
   rebalance_every: 500,
   log_every: 200,
   weights: { data: 10, vof: 1, div: 1, src: 0.1, bc: 5 },
   render: true,
 };
+
+/** Validation-split options: a fraction of each kept-in series' frames held from
+ * training as an in-distribution validation set (deterministic, tail). Labels are
+ * kept terse so the select doesn't force its grid column wider than the card. */
+export const VAL_FRACTION_OPTIONS = [
+  { value: "0", label: "none" },
+  { value: "0.1", label: "10%" },
+  { value: "0.2", label: "20%" },
+  { value: "0.3", label: "30%" },
+];
 
 /** Bounds shown on the inputs; the API enforces the same ranges. */
 export const FORM_BOUNDS = {
@@ -57,15 +76,20 @@ export const HOLDOUT_OPTIONS = [
 
 export function toLaunchRequest(
   form: SolverFormState,
-  target: { datasets: string[] } | { resumeRunId: string },
+  target: { datasets: string[]; heldout?: string[] } | { resumeRunId: string },
 ): RunLaunchRequest {
   const base = { ...form };
   if ("resumeRunId" in target) {
     return { ...base, resume: true, run_id: target.resumeRunId };
   }
   // One dataset trains as today; several train one model jointly (the API reads
-  // `datasets` either way).
-  return { ...base, datasets: target.datasets };
+  // `datasets` either way). Held-out conditions (axis B) travel only when marked.
+  const heldout = target.heldout ?? [];
+  return {
+    ...base,
+    datasets: target.datasets,
+    ...(heldout.length > 0 ? { heldout_datasets: heldout } : {}),
+  };
 }
 
 /** Seeds a sweep may run: 1-6 unique non-negative integers. */

@@ -135,6 +135,99 @@ def test_joint_run_with_render_on_skips_figures_and_still_finishes(
     assert final["state"] == "done", f"joint render run failed: {final.get('message')}"
 
 
+def test_launch_joint_run_with_a_held_out_condition(client: TestClient, repo_root: Path):
+    """A joint run can keep whole conditions out of training: they never enter the
+    loss and are scored over every frame as a separate transfer IoU."""
+    import json
+
+    from conftest import write_synthetic_tensors
+
+    for name in ("second", "third"):
+        processed = repo_root / "data" / "processed" / name
+        processed.mkdir(parents=True)
+        write_synthetic_tensors(processed / "tensors.npz")
+
+    joint = {
+        **TINY_RUN,
+        "dataset": None,
+        "datasets": ["highest_t", "second", "third"],
+        "heldout_datasets": ["third"],
+        "val_fraction": 0.25,
+        "val_strategy": "tail",
+    }
+    response = client.post("/api/runs", json=joint)
+    assert response.status_code == 202
+    run_id = response.json()["run_id"]
+
+    events = read_stream(client, run_id)
+    final = [e["data"] for e in events if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"joint run failed: {final.get('message')}"
+
+    metrics = json.loads((repo_root / "outputs" / run_id / "metrics.json").read_text())
+    assert metrics["training_datasets"] == ["highest_t", "second"]
+    assert metrics["heldout_datasets"] == ["third"]
+    assert set(metrics["per_dataset"]) == {"highest_t", "second"}
+    assert set(metrics["transfer"]["per_dataset"]) == {"third"}
+
+    # The launch overrides reached the run's own config snapshot.
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["training"]["val_fraction"] == pytest.approx(0.25)
+    assert cfg["training"]["val_strategy"] == "tail"
+    assert list(cfg["heldout_datasets"]) == ["third"]
+
+
+def test_joint_run_lists_its_validation_iou_as_the_headline(
+    client: TestClient, repo_root: Path
+):
+    """metrics.json v2 has no `iou_holdout`; the runs list falls back to the joint
+    run's in-distribution validation IoU so its row isn't blank."""
+    from conftest import write_synthetic_tensors
+
+    processed = repo_root / "data" / "processed" / "second"
+    processed.mkdir(parents=True)
+    write_synthetic_tensors(processed / "tensors.npz")
+
+    joint = {
+        **TINY_RUN,
+        "dataset": None,
+        "datasets": ["highest_t", "second"],
+        "val_fraction": 0.2,
+    }
+    run_id = client.post("/api/runs", json=joint).json()["run_id"]
+    read_stream(client, run_id)
+
+    listed = {run["id"]: run for run in client.get("/api/runs").json()}
+    detail = client.get(f"/api/runs/{run_id}").json()
+    assert listed[run_id]["iou_holdout"] == detail["metrics"]["val_iou_mean"]
+
+
+def test_launch_rejects_holding_out_every_dataset(client: TestClient, repo_root: Path):
+    """Nothing left to train on is a 400, before anything is scheduled."""
+    from conftest import write_synthetic_tensors
+
+    processed = repo_root / "data" / "processed" / "second"
+    processed.mkdir(parents=True)
+    write_synthetic_tensors(processed / "tensors.npz")
+
+    joint = {
+        **TINY_RUN,
+        "dataset": None,
+        "datasets": ["highest_t", "second"],
+        "heldout_datasets": ["highest_t", "second"],
+    }
+    response = client.post("/api/runs", json=joint)
+    assert response.status_code == 400
+    assert "hold out" in response.json()["detail"]
+
+
+def test_launch_rejects_a_held_out_dataset_not_in_the_run(client: TestClient):
+    """A held-out condition must be one of the run's own datasets."""
+    joint = {**TINY_RUN, "heldout_datasets": ["ghost"]}
+    response = client.post("/api/runs", json=joint)
+    assert response.status_code == 400
+    assert "not in the run" in response.json()["detail"]
+
+
 def test_joint_launch_rejects_an_unpreprocessed_dataset(client: TestClient):
     """Every dataset in a joint run must be preprocessed; one that isn't is a 409,
     before anything is scheduled."""

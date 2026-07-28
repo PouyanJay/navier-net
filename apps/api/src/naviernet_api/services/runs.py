@@ -185,6 +185,16 @@ def _checkpoint_steps(checkpoint: Path) -> int | None:
     return int(done) if done is not None else None
 
 
+def _headline_iou(metrics: dict | None) -> float | None:
+    """The generalization number for a run's list row: the single-dataset holdout
+    IoU, or a joint run's in-distribution validation IoU (metrics.json v2 has no
+    `iou_holdout`), so a joint run isn't shown as blank."""
+    if not metrics:
+        return None
+    holdout = metrics.get("iou_holdout")
+    return holdout if holdout is not None else metrics.get("val_iou_mean")
+
+
 def list_runs(settings: Settings) -> list[RunSummary]:
     """Every run directory under `outputs/`, newest name last (sorted)."""
     if not settings.outputs_dir.is_dir():
@@ -203,7 +213,7 @@ def list_runs(settings: Settings) -> list[RunSummary]:
                 id=run_id,
                 dataset=dataset,
                 status="trained" if paths.checkpoint.is_file() else "empty",
-                iou_holdout=(metrics or {}).get("iou_holdout"),
+                iou_holdout=_headline_iou(metrics),
             )
         )
     return summaries

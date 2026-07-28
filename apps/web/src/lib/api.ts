@@ -16,6 +16,12 @@ export interface ArtifactFlags {
   figures: string[];
 }
 
+/** A joint run's held-out transfer scores (metrics.json v2). */
+export interface TransferMetrics {
+  per_dataset?: Record<string, number>;
+  mean?: number | null;
+}
+
 export interface RunMetrics {
   iou_per_frame?: Record<string, number>;
   iou_mean?: number;
@@ -24,6 +30,21 @@ export interface RunMetrics {
   nose_speed_mm_s?: number;
   dataset?: string;
   run_name?: string;
+  // Two-axis validation fields.
+  iou_val?: number | null; // single-series: in-distribution validation IoU
+  validation_frames?: number[];
+  training_datasets?: string[];
+  heldout_datasets?: string[];
+  val_iou_mean?: number | null; // joint: mean of training series' validation IoU
+  transfer?: TransferMetrics | null; // held-out series, scored over every frame
+}
+
+/** The single generalization number to headline for a run: the single-dataset
+ * holdout-frame IoU, or a joint run's in-distribution validation IoU (metrics.json
+ * v2 has no `iou_holdout`). Mirrors the backend's `_headline_iou` so every surface
+ * shows the same number for the same run. */
+export function headlineIou(metrics: RunMetrics | null | undefined): number | null {
+  return metrics?.iou_holdout ?? metrics?.val_iou_mean ?? null;
 }
 
 export interface RunDetail {
@@ -252,6 +273,8 @@ export interface RunLaunchRequest {
   dataset?: string | null;
   /** Joint (transfer-learning) training: one model across these datasets. */
   datasets?: string[] | null;
+  /** Whole datasets kept OUT of training and scored as a transfer test (axis B). */
+  heldout_datasets?: string[] | null;
   resume?: boolean;
   run_id?: string | null;
   steps: number;
@@ -261,6 +284,10 @@ export interface RunLaunchRequest {
   n_coll: number;
   n_bc: number;
   holdout_frame: number;
+  /** Per-dataset fraction of frames held out as an in-distribution validation set. */
+  val_fraction: number;
+  /** How the split picks frames: "tail" (extrapolation) | "scatter" (interpolation). */
+  val_strategy: "tail" | "scatter";
   rebalance_every: number;
   log_every: number;
   weights: LossWeightsInput;

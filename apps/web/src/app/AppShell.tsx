@@ -328,16 +328,9 @@ export function AppShell({
     <div className="shell">
       <header className="topbar">
         <div className="brandblock">
-          {/* The logo kit ships per-background marks; swap with the theme. */}
-          <img
-            className="mark"
-            src={
-              theme === "dark"
-                ? "/brand/naviernet-mark-dark.svg"
-                : "/brand/naviernet-mark-light.svg"
-            }
-            alt=""
-          />
+          {/* One transparent mark; the brand blue reads on both the light and
+              dark top bar, so it doesn't need a per-theme swap. */}
+          <img className="mark" src="/brand/navnet-mark.svg" alt="" />
           <div>
             NavierNet
             <small>PINN Solver Platform</small>

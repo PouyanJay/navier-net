@@ -12,19 +12,29 @@
 .solver-head .actions {
   margin-left: auto;
   display: flex;
-  gap: var(--s3);
+  gap: var(--s2);
+}
+/* Reset/Run as pills, matching the Physics & model action row (the rounded
+   subtle-bordered chip + button language). Reset stays subtle, Run is the accent. */
+.solver-head .actions .btn {
+  border-radius: 99px;
+  padding: 5px 18px;
+  font-size: 12px;
 }
 
-/* Two-column solver layout: narrow config, wide monitor (mockup's .solx). */
+/* Two-column solver layout: narrow config, wide monitor (mockup's .solx). The
+   columns stretch to a shared height so the single left card's bottom edge lines
+   up with the monitor/history/console stack on the right. */
 .solx {
   display: grid;
   grid-template-columns: minmax(300px, 350px) minmax(0, 1fr);
   gap: var(--s5);
-  align-items: start;
+  align-items: stretch;
 }
 @media (max-width: 1080px) {
   .solx {
     grid-template-columns: 1fr;
+    align-items: start;
   }
 }
 .solver-col {
@@ -32,6 +42,27 @@
   flex-direction: column;
   gap: var(--s5);
   min-width: 0;
+}
+/* The left column is now one card; let it grow to fill the shared column height. */
+.solver-col:first-child > .card {
+  flex: 1 1 auto;
+}
+
+/* Labelled divider between the run-config fields and the loss-weights section,
+   now that both share one card. */
+.cfg-subhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin: var(--s4) 0 var(--s3);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line2);
+}
+.cfg-subnote {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink3);
 }
 
 /* Dataset multi-select: the project's processed series to train on. */
@@ -102,6 +133,62 @@
   line-height: 1.5;
   color: var(--ink3);
 }
+
+/* A series row: the in-run checkbox plus, once the run is joint, a train ↔
+   hold-out toggle. The held-out series (axis B) is tinted amber. */
+.ds-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  border-radius: var(--rs);
+}
+.ds-row .ds-item {
+  flex: 1 1 auto;
+}
+.ds-row.held {
+  background: var(--ambersoft);
+}
+.ds-holdout {
+  flex: none;
+  margin-right: var(--s2);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink3);
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 2px 9px;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease;
+}
+.ds-holdout:hover:not(:disabled) {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.ds-holdout.on {
+  color: var(--amber);
+  background: var(--ambersoft);
+  border-color: var(--amber);
+}
+.ds-holdout:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+.ds-holdout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-holdout {
+    transition: none;
+  }
+}
+
 
 /* Config field grid inside the cards. */
 .cfg {

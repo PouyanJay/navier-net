@@ -14,6 +14,7 @@ import { LossChart } from "../src/components/charts/LossChart";
 import { Meter } from "../src/components/Meter";
 import { Switch } from "../src/components/Switch";
 import { SolverView } from "../src/views/SolverView";
+import { MonitorPanel } from "../src/views/solver/MonitorPanel";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -250,6 +251,181 @@ describe("SolverView", () => {
     ]);
   });
 
+  it("offers a validation split (off by default) and posts the chosen fraction", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+      ],
+      posts,
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    // Off by default (train on every frame); the user opts in. No strategy toggle.
+    expect(screen.getByLabelText(/Validation split/)).toHaveValue("0");
+    expect(screen.queryByLabelText(/Split strategy/)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/Validation split/), {
+      target: { value: "0.2" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.val_fraction).toBe(0.2);
+    expect(body.val_strategy).toBe("tail");
+    expect(body.heldout_datasets).toBeUndefined();
+  });
+
+  it("a single series offers no hold-out toggle and no frame holdout", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // Hold-out is a series concept: with one series there's nothing to hold out.
+    expect(screen.queryByRole("button", { name: /Hold out/ })).toBeNull();
+    // The legacy per-frame "Holdout frame" control is gone from the Solver.
+    expect(screen.queryByLabelText(/Holdout frame/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.val_fraction).toBe(0);
+    expect(body.holdout_frame).toBe(-1); // no single-frame holdout
+    expect(body.heldout_datasets).toBeUndefined();
+  });
+
+  it("holds out a whole series from its row and posts it as a transfer condition", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+      ],
+      posts,
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    // Two series -> each row gets a hold-out toggle; hold ds_b out, ds_a trains.
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
+    expect(
+      screen.getByRole("button", { name: "Return to training ds_b" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.datasets).toEqual(["ds_a", "ds_b"]);
+    expect(body.heldout_datasets).toEqual(["ds_b"]);
+  });
+
+  it("holding out a different series moves the single hold-out", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+        { id: "ds_c", processed: true },
+      ],
+      posts,
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
+    // Marking ds_c clears ds_b — only one series is ever held out.
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_c" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.heldout_datasets).toEqual(["ds_c"]);
+  });
+
+  it("clears the held-out series when it is deselected from the run", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset(
+      [
+        { id: "ds_a", processed: true },
+        { id: "ds_b", processed: true },
+      ],
+      posts,
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    // Hold out ds_b, then uncheck ds_a — ds_b must not be left as the sole,
+    // held-out series (which the API would reject on submit).
+    fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
+    fireEvent.click(screen.getByLabelText("ds_a"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.datasets).toEqual(["ds_b"]);
+    expect(body.heldout_datasets).toBeUndefined();
+  });
+
+  it("a finished joint run surfaces its validation and transfer IoU in the monitor", async () => {
+    // End-to-end wiring: launch → SSE done → useSolverRun fetches the finished
+    // run's metrics.json v2 and MonitorPanel renders both generalization axes.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
+        const path = String(url);
+        if (options?.method === "POST" && path.endsWith("/api/runs")) {
+          return json(LAUNCHED);
+        }
+        if (path.endsWith("/api/datasets"))
+          return json([
+            { id: "ds_a", n_frames: 11, processed: true },
+            { id: "ds_b", n_frames: 11, processed: true },
+          ]);
+        if (path.endsWith("/api/runs/active")) return json(null);
+        if (path.endsWith("/api/runs/run-test"))
+          return json({
+            id: "run-test",
+            dataset: "ds_a",
+            status: "trained",
+            steps: 40,
+            metrics: { val_iou_mean: 0.86, transfer: { mean: 0.71 } },
+            config: null,
+            artifacts: {
+              checkpoint: true,
+              metrics: true,
+              groups: false,
+              video: false,
+              figures: [],
+            },
+          });
+        if (path.endsWith("/api/runs")) return json([]);
+        return json({ detail: "not found" }, 404);
+      }),
+    );
+    render(<SolverView />);
+    await screen.findByLabelText("ds_a");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => {
+      FakeEventSource.instances[0].emit("status", {
+        ...LAUNCHED,
+        state: "done",
+        stage: null,
+        steps_done: 40,
+      });
+    });
+
+    // Both numbers come from the finished run's metrics via the real hook.
+    expect(await screen.findByText("0.860")).toBeInTheDocument();
+    expect(screen.getByText("Validation IoU")).toBeInTheDocument();
+    expect(await screen.findByText("0.710")).toBeInTheDocument();
+    expect(screen.getByText("Transfer IoU")).toBeInTheDocument();
+    expect(screen.queryByText("Holdout IoU")).toBeNull();
+  });
+
   it("scopes the dataset list to the open project", async () => {
     const posts: unknown[] = [];
     stubMultiDataset(
@@ -465,6 +641,89 @@ describe("solver components", () => {
     const bar = screen.getByRole("progressbar", { name: "Training progress" });
     expect(bar).toHaveAttribute("aria-valuenow", "10");
     expect(bar).toHaveAttribute("aria-valuemax", "40");
+  });
+
+  const monitorStatus = {
+    run_id: "r",
+    dataset: "d",
+    state: "done" as const,
+    stage: null,
+    message: null,
+    steps_done: 40,
+    steps_total: 40,
+  };
+
+  it("MonitorPanel shows the holdout IoU when no split or hold-out is set", () => {
+    render(
+      <MonitorPanel
+        status={monitorStatus}
+        latest={null}
+        showVal={false}
+        showTransfer={false}
+        holdoutIou={0.9}
+        valIou={null}
+        transferIou={null}
+      />,
+    );
+    expect(screen.getByText("Holdout IoU")).toBeInTheDocument();
+    expect(screen.getByText("0.900")).toBeInTheDocument();
+    expect(screen.queryByText("Transfer IoU")).toBeNull();
+    expect(screen.queryByText("Validation IoU")).toBeNull();
+  });
+
+  it("MonitorPanel surfaces validation and transfer IoU distinctly", () => {
+    render(
+      <MonitorPanel
+        status={monitorStatus}
+        latest={null}
+        showVal
+        showTransfer
+        holdoutIou={null}
+        valIou={0.86}
+        transferIou={0.71}
+      />,
+    );
+    // The two generalization numbers answer different questions — both shown.
+    expect(screen.getByText("Validation IoU")).toBeInTheDocument();
+    expect(screen.getByText("0.860")).toBeInTheDocument();
+    expect(screen.getByText("Transfer IoU")).toBeInTheDocument();
+    expect(screen.getByText("0.710")).toBeInTheDocument();
+    // Holdout is retired once the two-axis metrics are shown.
+    expect(screen.queryByText("Holdout IoU")).toBeNull();
+  });
+
+  it("MonitorPanel omits transfer when no series is held out", () => {
+    render(
+      <MonitorPanel
+        status={monitorStatus}
+        latest={null}
+        showVal
+        showTransfer={false}
+        holdoutIou={null}
+        valIou={0.86}
+        transferIou={null}
+      />,
+    );
+    expect(screen.getByText("Validation IoU")).toBeInTheDocument();
+    expect(screen.queryByText("Transfer IoU")).toBeNull();
+  });
+
+  it("MonitorPanel labels a configured run before its metrics load", () => {
+    // A live run with a validation split has no metrics yet (val null) — it must
+    // still be labelled by its config, not fall back to the 'Holdout IoU'.
+    render(
+      <MonitorPanel
+        status={{ ...monitorStatus, state: "running", steps_done: 5 }}
+        latest={null}
+        showVal
+        showTransfer={false}
+        holdoutIou={null}
+        valIou={null}
+        transferIou={null}
+      />,
+    );
+    expect(screen.getByText("Validation IoU")).toBeInTheDocument();
+    expect(screen.queryByText("Holdout IoU")).toBeNull();
   });
 
   it("LossChart draws one line per loss term once two records exist", () => {

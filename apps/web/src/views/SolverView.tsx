@@ -11,7 +11,7 @@ import {
   ViewCanvas,
 } from "../components";
 import type { ProjectSummary, RunJobStatus } from "../lib/api";
-import { LossWeightsPanel, RunConfigPanel } from "./solver/ConfigPanels";
+import { RunConfigPanel } from "./solver/ConfigPanels";
 import {
   FORM_DEFAULTS,
   parseSeeds,
@@ -62,7 +62,7 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
   const seeds = useMemo(() => parseSeeds(seedsText), [seedsText]);
 
   const submit = useCallback(() => {
-    const { resume, resumeRunId, selected } = targets;
+    const { resume, resumeRunId, selected, heldout } = targets;
     if (sweepMode) {
       // A sweep varies seeds on one dataset; use the first selected series.
       if (selected.length === 0 || !seeds) return;
@@ -73,7 +73,10 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
       return;
     }
     if ((resume && !resumeRunId) || (!resume && selected.length === 0)) return;
-    const target = resume ? { resumeRunId } : { datasets: selected };
+    // One series may be held out of training (axis B) as a transfer test.
+    const target = resume
+      ? { resumeRunId }
+      : { datasets: selected, heldout: heldout ? [heldout] : [] };
     void run.start(toLaunchRequest(form, target));
   }, [run, form, targets, sweepMode, seeds]);
 
@@ -134,6 +137,8 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             selectedDatasets={targets.selected}
             onToggleDataset={targets.toggleDataset}
             onSelectAllDatasets={targets.selectAll}
+            heldout={targets.heldout}
+            onToggleHeldout={targets.toggleHeldout}
             resume={targets.resume}
             onResume={targets.setResume}
             resumableRuns={targets.resumableRuns}
@@ -149,19 +154,19 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             seedsValid={seeds !== null}
             locked={run.running}
           />
-          <LossWeightsPanel
-            weights={form.weights}
-            rebalanceEvery={form.rebalance_every}
-            onForm={patchForm}
-            locked={run.running || targets.resume}
-          />
         </div>
         <div className="solver-col">
           {run.sweep && <SweepPanel sweep={run.sweep} />}
           <MonitorPanel
             status={run.status}
             latest={latest}
+            // Show a stat once it's configured (so a running run is labelled
+            // right) or once its value arrives from the finished run's metrics.
+            showVal={form.val_fraction > 0 || run.valIou != null}
+            showTransfer={targets.heldout !== "" || run.transferIou != null}
             holdoutIou={run.holdoutIou}
+            valIou={run.valIou}
+            transferIou={run.transferIou}
           />
           <Panel title="Loss history" subtitle="log₁₀ · rebalance markers">
             <ViewCanvas>

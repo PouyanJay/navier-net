@@ -12,7 +12,7 @@ import type {
   LossWeightsInput,
   RunSummary,
 } from "../../lib/api";
-import { FORM_BOUNDS, HOLDOUT_OPTIONS, type SolverFormState } from "./form";
+import { FORM_BOUNDS, VAL_FRACTION_OPTIONS, type SolverFormState } from "./form";
 
 /** The numeric run-config fields, in display order. Each maps 1:1 onto a
  * `cfg.training` value; bounds come from FORM_BOUNDS by the same key. */
@@ -50,6 +50,8 @@ interface RunConfigPanelProps {
   selectedDatasets: string[];
   onToggleDataset: (id: string) => void;
   onSelectAllDatasets: (on: boolean) => void;
+  heldout: string;
+  onToggleHeldout: (id: string) => void;
   resume: boolean;
   onResume: (on: boolean) => void;
   resumableRuns: RunSummary[];
@@ -64,40 +66,48 @@ interface RunConfigPanelProps {
   locked: boolean;
 }
 
-/** The project's processed datasets as a checkbox group with "select all".
- * One selected trains as usual; several train one model jointly. Wrapped in a
- * <fieldset> so resume disables the whole group at once. */
+/** The project's processed series as one control: a checkbox picks whether a
+ * series is in the run at all, and — once at least two are in — a per-row toggle
+ * flips it train ↔ held-out. A held-out series is loaded but never supervised,
+ * scored on every frame as the transfer test. One place for each series' role,
+ * so "in the run", "training", and "held out" are all visible at once. Wrapped in
+ * a <fieldset> so resume disables the whole group at once. */
 function DatasetMultiSelect({
   available,
   selected,
+  heldout,
   allSelected,
   onToggle,
   onSelectAll,
+  onToggleHeldout,
   disabled,
 }: {
   available: DatasetSummary[];
   selected: string[];
+  heldout: string;
   allSelected: boolean;
   onToggle: (id: string) => void;
   onSelectAll: (on: boolean) => void;
+  onToggleHeldout: (id: string) => void;
   disabled: boolean;
 }) {
   if (available.length === 0) {
     return (
       <div className="ds-select">
-        <span className="cfg-label">Datasets</span>
+        <span className="cfg-label">Series</span>
         <p className="state-note">
-          No preprocessed dataset in this project yet.
+          No preprocessed series in this project yet.
         </p>
       </div>
     );
   }
   const joint = selected.length > 1;
+  const trainingCount = selected.length - (heldout ? 1 : 0);
   return (
     <fieldset className="ds-select" disabled={disabled}>
       <div className="ds-select-hd">
         <legend className="cfg-label">
-          Datasets
+          Series
           {joint && (
             <span className="ds-joint-tag">joint · {selected.length}</span>
           )}
@@ -112,24 +122,50 @@ function DatasetMultiSelect({
         </button>
       </div>
       <ul className="ds-list">
-        {available.map((d) => (
-          <li key={d.id}>
-            <label className="ds-item">
-              <input
-                type="checkbox"
-                checked={selected.includes(d.id)}
-                onChange={() => onToggle(d.id)}
-                disabled={disabled}
-              />
-              <span className="mono">{d.id}</span>
-            </label>
-          </li>
-        ))}
+        {available.map((d) => {
+          const isSelected = selected.includes(d.id);
+          const isHeld = heldout === d.id;
+          return (
+            <li key={d.id} className={isHeld ? "ds-row held" : "ds-row"}>
+              <label className="ds-item">
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => onToggle(d.id)}
+                  disabled={disabled}
+                />
+                <span className="mono">{d.id}</span>
+              </label>
+              {joint && isSelected && (
+                <button
+                  type="button"
+                  className={isHeld ? "ds-holdout on" : "ds-holdout"}
+                  onClick={() => onToggleHeldout(d.id)}
+                  disabled={disabled}
+                  aria-pressed={isHeld}
+                  aria-label={`${isHeld ? "Return to training" : "Hold out"} ${d.id}`}
+                >
+                  {isHeld ? "held out" : "hold out"}
+                </button>
+              )}
+            </li>
+          );
+        })}
       </ul>
       {joint && (
         <p className="ds-hint">
-          Trains one model jointly across the selected datasets — transfer
-          learning across their operating conditions.
+          {heldout ? (
+            <>
+              {trainingCount} train · 1 held out. The held-out series is never
+              supervised — scored on every frame as a transfer test (can the model
+              predict a condition it never trained on?).
+            </>
+          ) : (
+            <>
+              Trains one model jointly across the selected series. Hold one out to
+              keep a whole condition out of training as a transfer test.
+            </>
+          )}
         </p>
       )}
     </fieldset>
@@ -148,6 +184,8 @@ export function RunConfigPanel({
   selectedDatasets,
   onToggleDataset,
   onSelectAllDatasets,
+  heldout,
+  onToggleHeldout,
   resume,
   onResume,
   resumableRuns,
@@ -176,9 +214,11 @@ export function RunConfigPanel({
       <DatasetMultiSelect
         available={availableDatasets}
         selected={selectedDatasets}
+        heldout={heldout}
         allSelected={allSelected}
         onToggle={onToggleDataset}
         onSelectAll={onSelectAllDatasets}
+        onToggleHeldout={onToggleHeldout}
         disabled={fixedByResume}
       />
       <div className="cfg">
@@ -197,11 +237,11 @@ export function RunConfigPanel({
           />
         ))}
         <SelectField
-          label="Holdout frame"
-          hint="generalization metric"
-          value={String(form.holdout_frame)}
-          onChange={(value) => onForm({ holdout_frame: Number(value) })}
-          options={HOLDOUT_OPTIONS}
+          label="Validation split"
+          hint="frames / series"
+          value={String(form.val_fraction)}
+          onChange={(value) => onForm({ val_fraction: Number(value) })}
+          options={VAL_FRACTION_OPTIONS}
           disabled={fixedByResume}
         />
       </div>
@@ -252,24 +292,32 @@ export function RunConfigPanel({
           disabled={locked || sweepMode}
         />
       </div>
+      <LossWeightsSection
+        weights={form.weights}
+        rebalanceEvery={form.rebalance_every}
+        onForm={onForm}
+        locked={fixedByResume}
+      />
     </Panel>
   );
 }
 
-interface LossWeightsPanelProps {
+interface LossWeightsSectionProps {
   weights: LossWeightsInput;
   rebalanceEvery: number;
   onForm: (patch: Partial<SolverFormState>) => void;
   locked: boolean;
 }
 
-/** "Loss weights": the initial per-term weights, rebalanced live by the trainer. */
-export function LossWeightsPanel({
+/** The initial per-term loss weights, rebalanced live by the trainer. Rendered as
+ * a section inside the run-configuration card (not its own panel), under a labelled
+ * divider — one left-hand card for the whole run setup. */
+function LossWeightsSection({
   weights,
   rebalanceEvery,
   onForm,
   locked,
-}: LossWeightsPanelProps) {
+}: LossWeightsSectionProps) {
   const weightField = (term: keyof LossWeightsInput, label: ReactNode) => (
     <NumberField
       label={label}
@@ -283,7 +331,11 @@ export function LossWeightsPanel({
   );
 
   return (
-    <Panel title="Loss weights" subtitle="initial · rebalanced live">
+    <>
+      <div className="cfg-subhead">
+        <span className="cfg-label">Loss weights</span>
+        <span className="cfg-subnote">initial · rebalanced live</span>
+      </div>
       <div className="cfg cfg-narrow">
         {weightField(
           "data",
@@ -327,6 +379,6 @@ export function LossWeightsPanel({
           disabled={locked}
         />
       </div>
-    </Panel>
+    </>
   );
 }

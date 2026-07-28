@@ -15,6 +15,7 @@ actually happens instead of being wasted on uniform bulk liquid.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -83,6 +84,15 @@ class BubbleDataset:
             else -1
         )
 
+        # Validation axis A: a fraction of the event's frames, held out of
+        # supervision as an in-distribution validation set (see `_split_rows`).
+        # Excluded frames are already gone from the archive, so this is taken over
+        # the rows that remain. Composes with `holdout_row`: the held-out set below
+        # is their union, so a frame counted twice is harmless.
+        self.split_rows: list[int] = self._split_rows(
+            float(cfg.training.val_fraction), str(cfg.training.val_strategy)
+        )
+
         self.domain = Domain(
             x_min=float(self.x[0]),
             x_max=float(self.x[-1]),
@@ -102,10 +112,60 @@ class BubbleDataset:
         weights = np.exp(-((self.sdf / (4 * self.eps)) ** 2)) + 0.02
         weights = (weights * self.valid).ravel()
 
-        trainable = (self._ti != self.holdout_row) & (weights > 0)
+        # Every row held out of supervision: the split (axis A) and the legacy
+        # single frame, composed. This union is the honest in-distribution
+        # validation set -- the frames whose IoU is never a memorisation statement.
+        held_out = set(self.split_rows)
+        if self.holdout_row >= 0:
+            held_out.add(self.holdout_row)
+        self.validation_rows: list[int] = sorted(held_out)
+        trainable = ~np.isin(self._ti, self.validation_rows) & (weights > 0)
         self._train_idx = np.where(trainable)[0]
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
+
+    def _split_rows(self, fraction: float, strategy: str) -> list[int]:
+        """Rows of the event held out as the axis-A validation split.
+
+        ``fraction`` of the ``n_event`` growth frames, chosen by ``strategy``:
+        ``tail`` holds the last frames (extrapolation), ``scatter`` holds interior
+        evenly-spaced frames (interpolation). A positive fraction always holds at
+        least one frame, and never the whole event -- at least one training frame
+        survives, so an over-large fraction cannot starve supervision.
+        """
+        if fraction <= 0.0 or self.n_event < 2:
+            return []
+
+        count = max(1, math.ceil(fraction * self.n_event))
+
+        if strategy == "tail":
+            count = min(count, self.n_event - 1)
+            return list(range(self.n_event - count, self.n_event))
+        if strategy == "scatter":
+            # Choose from the interior rows only, so both endpoints stay in
+            # training and the model genuinely interpolates. There are exactly
+            # ``n_event - 2`` interior rows, so cap the count at that (a series too
+            # short to hold an interior frame gets no scatter split) and pick
+            # evenly-spaced *distinct* rows -- never collapsing onto one another.
+            interior = list(range(1, self.n_event - 1))
+            count = min(count, len(interior))
+            if count == 0:
+                return []
+            picks = np.linspace(0, len(interior) - 1, count)
+            return sorted({interior[int(round(p))] for p in picks})
+        raise ValueError(f"unknown val_strategy: {strategy!r} (want 'tail' or 'scatter')")
+
+    @property
+    def split_frames(self) -> list[int]:
+        """Camera frame numbers of the axis-A validation-split rows only."""
+        return [self.frame_numbers[row] for row in self.split_rows]
+
+    @property
+    def validation_frames(self) -> list[int]:
+        """Camera frame numbers of every frame held out of supervision -- the
+        validation split and the legacy holdout frame, composed. This is the set
+        the in-distribution validation IoU is scored over."""
+        return [self.frame_numbers[row] for row in self.validation_rows]
 
     @property
     def shape(self) -> tuple[int, int, int]:

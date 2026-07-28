@@ -28,6 +28,10 @@ export interface SolverRun {
   hist: LossRecord[];
   lines: ConsoleLine[];
   holdoutIou: number | null;
+  /** In-distribution validation IoU (mean of a joint run's training datasets). */
+  valIou: number | null;
+  /** Transfer IoU (mean over a joint run's held-out conditions), if any. */
+  transferIou: number | null;
   error: string | null;
   start: (request: RunLaunchRequest) => Promise<void>;
   startSweep: (request: SweepLaunchRequest) => Promise<void>;
@@ -53,6 +57,8 @@ export function useSolverRun(
   const [hist, setHist] = useState<LossRecord[]>([]);
   const [lines, setLines] = useState<ConsoleLine[]>(IDLE_LINES);
   const [holdoutIou, setHoldoutIou] = useState<number | null>(null);
+  const [valIou, setValIou] = useState<number | null>(null);
+  const [transferIou, setTransferIou] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const closeStream = useRef<(() => void) | null>(null);
   const attachedChild = useRef<string | null>(null);
@@ -64,8 +70,22 @@ export function useSolverRun(
       if (next.state === "done") {
         api
           .getRun(next.run_id)
-          .then((detail) => setHoldoutIou(detail.metrics?.iou_holdout ?? null))
-          .catch(() => setHoldoutIou(null)); // metrics stay "n/a" if unreadable
+          .then((detail) => {
+            // Single-dataset runs report a holdout frame; joint runs report the
+            // two-axis validation numbers (in-distribution val + transfer).
+            setHoldoutIou(detail.metrics?.iou_holdout ?? null);
+            // Joint runs report val_iou_mean; a single-series run reports iou_val.
+            setValIou(
+              detail.metrics?.val_iou_mean ?? detail.metrics?.iou_val ?? null,
+            );
+            setTransferIou(detail.metrics?.transfer?.mean ?? null);
+          })
+          .catch(() => {
+            // Metrics stay "n/a" if unreadable.
+            setHoldoutIou(null);
+            setValIou(null);
+            setTransferIou(null);
+          });
       }
       if (next.state !== "running") onFinished?.();
     },
@@ -166,6 +186,8 @@ export function useSolverRun(
     setHist([]);
     setLines([]);
     setHoldoutIou(null);
+    setValIou(null);
+    setTransferIou(null);
     setSweep(null);
     attachedChild.current = null;
   }, []);
@@ -229,6 +251,8 @@ export function useSolverRun(
     hist,
     lines,
     holdoutIou,
+    valIou,
+    transferIou,
     error,
     start,
     startSweep,

@@ -520,6 +520,14 @@ text.chart-axis-title {
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--ink2);
+  /* Long label+hint wraps inside the field rather than spilling past the card. */
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+/* A long selected option truncates with an ellipsis instead of forcing the
+   field (and its grid column) wider than the card. */
+.fld select {
+  text-overflow: ellipsis;
 }
 .fld .fld-hint {
   font-weight: 400;

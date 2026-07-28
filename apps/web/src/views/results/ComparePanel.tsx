@@ -12,7 +12,7 @@ import {
   CompareChart,
   type CompareSeries,
 } from "../../components/charts/CompareChart";
-import type { RunSummary } from "../../lib/api";
+import { headlineIou, type RunSummary } from "../../lib/api";
 import { MAX_COMPARED, useComparison, type ComparedRun } from "./useComparison";
 
 const LOSS_TERMS = [
@@ -37,7 +37,7 @@ const METRICS_COLUMNS: Column<MetricsRow>[] = [
   { header: "Run", cell: (row) => row.id },
   { header: "Steps", cell: (row) => row.steps, num: true },
   { header: "IoU mean", cell: (row) => row.iouMean, num: true },
-  { header: "IoU holdout", cell: (row) => row.iouHoldout, num: true },
+  { header: "IoU val/holdout", cell: (row) => row.iouHoldout, num: true },
   { header: "Nose speed (mm/s)", cell: (row) => row.nose, num: true },
 ];
 
@@ -68,7 +68,9 @@ function metricsRows(runs: ComparedRun[]): MetricsRow[] {
     id: run.detail.id,
     steps: run.detail.steps != null ? String(run.detail.steps) : "n/a",
     iouMean: fmt(run.detail.metrics?.iou_mean),
-    iouHoldout: fmt(run.detail.metrics?.iou_holdout),
+    // Joint runs (metrics.json v2) have no iou_holdout; fall back to the val IoU
+    // so their row isn't blank, consistent with the runs list and the monitor.
+    iouHoldout: fmt(headlineIou(run.detail.metrics)),
     nose: fmt(run.detail.metrics?.nose_speed_mm_s, 0),
   }));
 }

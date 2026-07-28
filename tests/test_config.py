@@ -6,7 +6,7 @@ import pytest
 from omegaconf import OmegaConf
 from omegaconf.errors import ConfigAttributeError, ValidationError
 
-from naviernet.config.schema import STAGES, resolved_datasets
+from naviernet.config.schema import STAGES, resolved_datasets, training_datasets
 from naviernet.utils.paths import RunPaths
 
 from .conftest import make_config
@@ -59,6 +59,57 @@ def test_datasets_list_overrides_the_single_dataset():
 def test_datasets_list_is_order_preserving_and_deduplicated():
     cfg = make_config(["datasets=[b,a,b]"])
     assert resolved_datasets(cfg) == ["b", "a"]
+
+
+def test_validation_axes_default_to_off():
+    # Back-compat: the new axes are inert unless dialled up, so every existing
+    # run composes byte-for-byte as before (val_fraction=0, no held-out datasets).
+    cfg = make_config(["dataset=solo"])
+    assert cfg.training.val_fraction == pytest.approx(0.0)
+    assert cfg.training.val_strategy == "tail"
+    assert list(cfg.heldout_datasets) == []
+
+
+def test_validation_split_composes_with_holdout_frame():
+    # Axis A (a per-dataset frame fraction) and the legacy single holdout frame
+    # are independent, additive hold-outs -- both can be set at once.
+    cfg = make_config(["training.val_fraction=0.2", "training.val_strategy=scatter"])
+    assert cfg.training.val_fraction == pytest.approx(0.2)
+    assert cfg.training.val_strategy == "scatter"
+    assert cfg.training.holdout_frame >= -1  # legacy knob still present
+
+
+def test_training_datasets_excludes_held_out_conditions():
+    # Axis B: whole datasets kept OUT of training. training_datasets = resolved − held-out.
+    cfg = make_config(["datasets=[a,b,c]", "heldout_datasets=[c]"])
+    assert resolved_datasets(cfg) == ["a", "b", "c"]
+    assert training_datasets(cfg) == ["a", "b"]
+
+
+def test_training_datasets_is_all_datasets_when_none_held_out():
+    cfg = make_config(["datasets=[a,b]"])
+    assert training_datasets(cfg) == ["a", "b"]
+
+
+def test_all_datasets_held_out_is_rejected():
+    # Nothing left to train on -> fail loudly rather than silently no-op.
+    cfg = make_config(["datasets=[a,b]", "heldout_datasets=[a,b]"])
+    with pytest.raises(ValueError, match="training"):
+        training_datasets(cfg)
+
+
+def test_held_out_dataset_must_be_one_of_the_datasets():
+    cfg = make_config(["datasets=[a,b]", "heldout_datasets=[z]"])
+    with pytest.raises(ValueError, match="not in"):
+        training_datasets(cfg)
+
+
+def test_single_dataset_run_still_validates_its_held_out_split():
+    # A single-dataset CLI run never reaches the joint trainer, but a bad
+    # `heldout_datasets` must still be caught rather than silently ignored.
+    cfg = make_config(["dataset=solo", "heldout_datasets=[solo]"])
+    with pytest.raises(ValueError, match="hold out every dataset"):
+        training_datasets(cfg)
 
 
 def test_ensure_creates_every_writable_directory(tmp_path):

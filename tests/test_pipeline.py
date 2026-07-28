@@ -107,6 +107,38 @@ def test_joint_training_over_two_datasets_writes_one_conditioned_checkpoint(tmp_
     assert saved["n_cond"] == N_COND
 
 
+def test_single_dataset_evaluate_reports_a_validation_split_iou(tmp_path):
+    """A single-series run with a validation split surfaces its in-distribution
+    IoU (over the held-out tail frames), rather than silently dropping the metric."""
+    import json
+
+    from naviernet.evaluation import evaluate
+    from naviernet.training import load_model, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "dataset=solo",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.25",
+            "training.val_strategy=tail",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _stage(run_paths)  # 8 event frames
+
+    train(cfg, run_paths)
+    model, data, _ = load_model(cfg, run_paths)
+    report = evaluate(cfg, model, data, run_paths)
+
+    assert report["validation_frames"] == [7, 8]  # tail 0.25 of 8 frames
+    assert 0.0 <= report["iou_val"] <= 1.0
+    on_disk = json.loads(run_paths.metrics_json.read_text())
+    assert on_disk["iou_val"] == report["iou_val"]
+
+
 def test_joint_evaluation_reports_per_dataset_iou(tmp_path):
     """A joint run evaluates each dataset with its own conditioning and writes one
     metrics.json carrying per-dataset IoU plus an aggregate."""
@@ -133,8 +165,8 @@ def test_joint_evaluation_reports_per_dataset_iou(tmp_path):
         _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
 
     train(cfg, run_paths)
-    model, contexts = load_joint(cfg, run_paths)  # rebuilds the conditioned model
-    report = evaluate_joint(cfg, model, contexts, run_paths)
+    model, contexts, heldout = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths, heldout_datasets=heldout)
 
     assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
     for name in ("ds_a", "ds_b"):
@@ -142,6 +174,269 @@ def test_joint_evaluation_reports_per_dataset_iou(tmp_path):
     assert 0.0 <= report["iou_mean"] <= 1.0  # aggregate over the datasets
     on_disk = json.loads(run_paths.metrics_json.read_text())
     assert on_disk["datasets"] == ["ds_a", "ds_b"]
+
+
+def _write_joint_datasets(run_paths, specs):
+    """Write synthetic tensors for several datasets, each with distinct groups."""
+    from naviernet.physics.groups import compute_groups
+
+    for name, q_wall in specs:
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
+
+
+def test_joint_checkpoint_records_the_training_and_held_out_split(tmp_path):
+    """A run with a held-out condition records which datasets trained and which
+    were kept out, so evaluation can score transfer separately."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b,ds_c]",
+            "heldout_datasets=[ds_c]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
+
+    train(cfg, run_paths)
+
+    saved = torch.load(run_paths.checkpoint, map_location="cpu", weights_only=False)
+    assert saved["datasets"] == ["ds_a", "ds_b", "ds_c"]
+    assert saved["training_datasets"] == ["ds_a", "ds_b"]
+    assert saved["heldout_datasets"] == ["ds_c"]
+
+
+def test_held_out_condition_never_enters_the_loss(tmp_path):
+    """Training on [a, b, c] with c held out is byte-for-byte identical to training
+    on [a, b] -- proof the held-out dataset contributes nothing to supervision."""
+    from naviernet.training import train
+
+    def train_model(root, datasets, heldout):
+        overrides = [
+            f"paths.root={root}",
+            f"datasets=[{','.join(datasets)}]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=3",
+        ]
+        if heldout:
+            overrides.append(f"heldout_datasets=[{','.join(heldout)}]")
+        cfg = make_config(overrides)
+        run_paths = RunPaths.from_config(cfg)
+        _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
+        model, _, _ = train(cfg, run_paths)
+        return model
+
+    withheld = train_model(tmp_path / "withheld", ["ds_a", "ds_b", "ds_c"], ["ds_c"])
+    pair = train_model(tmp_path / "pair", ["ds_a", "ds_b"], [])
+
+    for (name, a), (_, b) in zip(
+        withheld.state_dict().items(), pair.state_dict().items(), strict=True
+    ):
+        assert torch.equal(a, b), f"{name} differs -- the held-out dataset leaked into training"
+
+
+def test_joint_run_with_one_training_dataset_still_checkpoints(tmp_path):
+    """Holding out all but one dataset leaves a single training condition; the
+    conditioned joint path still runs and writes a checkpoint."""
+    from naviernet.physics.groups import N_COND
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "heldout_datasets=[ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0)))
+
+    model, _, state = train(cfg, run_paths)
+
+    assert run_paths.checkpoint.exists()
+    assert model.n_cond == N_COND
+    saved = torch.load(run_paths.checkpoint, map_location="cpu", weights_only=False)
+    assert saved["training_datasets"] == ["ds_a"]
+    assert saved["heldout_datasets"] == ["ds_b"]
+
+
+def test_joint_training_rejects_every_dataset_held_out(tmp_path):
+    """Nothing left to train on -> fail loudly (the config guard fires)."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "heldout_datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+
+    with pytest.raises(ValueError, match="training"):
+        train(cfg, run_paths)
+
+
+def test_joint_metrics_report_validation_and_transfer(tmp_path):
+    """metrics.json v2: training datasets carry an in-distribution val IoU; a
+    held-out condition is scored over every frame as a separate transfer IoU."""
+    import json
+
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b,ds_c]",
+            "heldout_datasets=[ds_c]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.25",
+            "training.val_strategy=tail",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
+
+    train(cfg, run_paths)
+    model, contexts, heldout = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths, heldout_datasets=heldout)
+
+    assert report["datasets"] == ["ds_a", "ds_b", "ds_c"]
+    assert report["training_datasets"] == ["ds_a", "ds_b"]
+    assert report["heldout_datasets"] == ["ds_c"]
+    # per_dataset covers the datasets that trained; each has an in-distribution val.
+    assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
+    for name in ("ds_a", "ds_b"):
+        d = report["per_dataset"][name]
+        assert d["validation_frames"] == [7, 8]  # tail 0.25 of 8 frames
+        assert 0.0 <= d["iou_val"] <= 1.0
+    assert 0.0 <= report["val_iou_mean"] <= 1.0
+    # transfer: the held-out condition, scored over ALL its frames.
+    assert set(report["transfer"]["per_dataset"]) == {"ds_c"}
+    assert 0.0 <= report["transfer"]["mean"] <= 1.0
+
+    on_disk = json.loads(run_paths.metrics_json.read_text())
+    assert (
+        on_disk["transfer"]["per_dataset"]["ds_c"] == report["transfer"]["per_dataset"]["ds_c"]
+    )
+
+
+def test_joint_metrics_omit_transfer_when_nothing_is_held_out(tmp_path):
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0)))
+
+    train(cfg, run_paths)
+    model, contexts, heldout = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths, heldout_datasets=heldout)
+
+    assert "transfer" not in report
+    assert report["heldout_datasets"] == []
+    assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
+
+
+def test_val_iou_folds_in_the_legacy_holdout_frame(tmp_path):
+    """With no split fraction but the legacy holdout frame set, the in-distribution
+    val IoU still reports that frame -- the metric is never silently dropped."""
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.holdout_frame=5",  # camera frame 6
+            "training.val_fraction=0.0",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0)))
+
+    train(cfg, run_paths)
+    model, contexts, heldout = load_joint(cfg, run_paths)
+    report = evaluate_joint(cfg, model, contexts, run_paths, heldout_datasets=heldout)
+
+    for name in ("ds_a", "ds_b"):
+        d = report["per_dataset"][name]
+        assert d["validation_frames"] == [6]  # only the legacy holdout frame
+        assert d["iou_val"] == pytest.approx(d["iou_per_frame"][6])
+
+
+def test_single_dataset_train_rejects_holding_out_its_only_dataset(tmp_path):
+    """The split guard fires on the single-dataset path too (before any I/O), so a
+    misconfigured CLI run fails loudly instead of training as if nothing was set."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [f"paths.root={tmp_path}", "dataset=solo", "heldout_datasets=[solo]", *_TINY_TRAIN]
+    )
+    with pytest.raises(ValueError, match="hold out every dataset"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_joint_evaluation_uses_the_checkpoints_split_not_the_current_config(tmp_path):
+    """A standalone evaluate must classify datasets by how the model was trained
+    (the checkpoint's held-out split), not by whatever cfg a re-run composes."""
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b,ds_c]",
+            "heldout_datasets=[ds_c]",
+            "run_name=joint",
+            *_TINY_TRAIN,
+            "training.steps=2",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _write_joint_datasets(run_paths, (("ds_a", 2.0), ("ds_b", 5.0), ("ds_c", 8.0)))
+    train(cfg, run_paths)
+
+    # Re-compose as a bare `stage=evaluate` would: same run, but no heldout override.
+    eval_cfg = make_config(
+        [f"paths.root={tmp_path}", "datasets=[ds_a,ds_b,ds_c]", "run_name=joint", *_TINY_TRAIN]
+    )
+    model, contexts, heldout = load_joint(eval_cfg, run_paths)
+    assert heldout == ["ds_c"], "held-out split comes from the checkpoint"
+    report = evaluate_joint(eval_cfg, model, contexts, run_paths, heldout_datasets=heldout)
+
+    # ds_c is still scored as transfer, not folded into the training set.
+    assert report["heldout_datasets"] == ["ds_c"]
+    assert set(report["transfer"]["per_dataset"]) == {"ds_c"}
+    assert set(report["per_dataset"]) == {"ds_a", "ds_b"}
 
 
 def test_joint_training_needs_groups_in_each_datasets_tensors(tmp_path):
@@ -405,6 +700,190 @@ def test_event_frames_are_camera_numbers_not_row_indices(tiny_cfg):
 
     assert data.n_event == 6
     assert data.event_frames == [1, 2, 4, 5, 6, 7]
+
+
+def _dataset(tmp_path, frame_numbers, n_event, overrides=None):
+    """A BubbleDataset over a synthetic archive, composed like the CLI would."""
+    from naviernet.data.dataset import BubbleDataset
+
+    cfg = make_config([f"paths.root={tmp_path}", *(overrides or [])])
+    paths = RunPaths.from_config(cfg)
+    paths.ensure()
+    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
+    _write_tensors(paths.tensors, frame_numbers, n_event=n_event)
+    return BubbleDataset(cfg, paths)
+
+
+def test_no_validation_split_holds_out_only_the_legacy_frame(tmp_path):
+    # val_fraction=0 (the default) -> axis A is inert; behaviour is unchanged.
+    data = _dataset(tmp_path, [1, 2, 3, 4, 5, 6, 7, 8], 8, ["training.val_fraction=0.0"])
+
+    assert data.split_rows == []
+    assert data.split_frames == []
+
+
+def test_tail_validation_holds_out_the_last_event_frames(tmp_path):
+    # 0.25 of 8 event frames -> ceil = 2 held from the tail (extrapolation).
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.25",
+            "training.val_strategy=tail",
+        ],
+    )
+
+    assert data.split_rows == [6, 7]
+    assert data.split_frames == [7, 8]
+    for row in data.split_rows:
+        assert row not in data._ti[data._train_idx], "a val row was supervised"
+
+
+def test_scatter_validation_spreads_across_the_event(tmp_path):
+    # Same count, but interior evenly-spaced frames (interpolation), not the tail.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.25",
+            "training.val_strategy=scatter",
+        ],
+    )
+
+    assert len(data.split_rows) == 2
+    assert data.split_rows != [6, 7], "scatter must not collapse to the tail"
+    assert max(data.split_rows) < 7, "scatter holds interior frames, not the last"
+
+
+def test_validation_split_operates_on_kept_frames_after_exclusions(tmp_path):
+    # Excluded frames are already gone from the archive, so the tail split is
+    # taken over the frames that remain -- rows, not raw camera indices.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 4, 5, 6, 7, 8],  # camera frame 3 excluded at preprocess
+        7,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.3",
+            "training.val_strategy=tail",
+        ],
+    )
+
+    # ceil(0.3 * 7) = 3 tail rows -> camera frames 6, 7, 8.
+    assert data.split_frames == [6, 7, 8]
+
+
+def test_validation_split_composes_with_the_legacy_holdout_frame(tmp_path):
+    # holdout_frame (camera 6) AND the tail split are both held out -- a union.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        [
+            "training.holdout_frame=5",
+            "training.val_fraction=0.25",
+            "training.val_strategy=tail",
+        ],
+    )
+
+    held = set(data.split_rows) | {data.holdout_row}
+    assert data.holdout_row == 5  # camera frame 6
+    assert data.split_rows == [6, 7]
+    for row in held:
+        assert row not in data._ti[data._train_idx]
+
+
+def test_validation_split_leaves_at_least_one_training_frame(tmp_path):
+    # An aggressive fraction still cannot hold out the whole event.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4],
+        4,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.9",
+            "training.val_strategy=tail",
+        ],
+    )
+
+    assert len(data.split_rows) == 3, "capped so one training frame survives"
+    event_rows = {r for r in data._ti[data._train_idx] if r < data.n_event}
+    assert event_rows, "at least one event frame is still supervised"
+
+
+def test_scatter_validation_rows_are_never_supervised(tmp_path):
+    # The interpolation split must also keep its frames out of the training index.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.4",
+            "training.val_strategy=scatter",
+        ],
+    )
+
+    assert len(data.split_rows) >= 1
+    for row in data.split_rows:
+        assert row not in data._ti[data._train_idx], "a scatter val row was supervised"
+
+
+def test_scatter_never_holds_an_endpoint_or_collapses(tmp_path):
+    # Even an aggressive fraction keeps both endpoints trained and returns distinct
+    # interior rows (no silent collision), so it stays a genuine interpolation test.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.9",
+            "training.val_strategy=scatter",
+        ],
+    )
+
+    assert len(data.split_rows) == len(set(data.split_rows)), "rows collapsed onto each other"
+    assert data.split_rows == sorted(data.split_rows)
+    assert 0 not in data.split_rows and (data.n_event - 1) not in data.split_rows
+    assert len(data.split_rows) <= data.n_event - 2  # only interior rows are eligible
+
+
+def test_scatter_on_a_two_frame_event_holds_nothing(tmp_path):
+    # No interior frame exists, so scatter cannot hold one out without training on
+    # an endpoint -- it holds nothing rather than break its interpolation contract.
+    data = _dataset(
+        tmp_path,
+        [1, 2],
+        2,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.5",
+            "training.val_strategy=scatter",
+        ],
+    )
+
+    assert data.split_rows == []
+
+
+def test_tiny_split_floors_to_one_validation_frame(tmp_path):
+    # A fraction that would round below one frame is floored up to a single frame.
+    data = _dataset(
+        tmp_path,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        8,
+        [
+            "training.holdout_frame=-1",
+            "training.val_fraction=0.05",
+            "training.val_strategy=tail",
+        ],
+    )
+
+    assert len(data.split_rows) == 1
 
 
 # --- tests below need the real dataset -------------------------------------

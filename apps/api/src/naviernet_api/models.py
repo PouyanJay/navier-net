@@ -278,6 +278,14 @@ class RunLaunchRequest(BaseModel):
     n_coll: int = Field(default=3072, ge=16, le=16_384)
     n_bc: int = Field(default=512, ge=8, le=8192)
     holdout_frame: int = Field(default=5, ge=-1, le=64)  # -1 = train on all frames
+    # Validation axis A: a per-dataset fraction of frames held out as an
+    # in-distribution validation set (0 = off, unchanged). `tail` extrapolates
+    # (the honest test); `scatter` interpolates. Composes with `holdout_frame`.
+    val_fraction: float = Field(default=0.0, ge=0.0, le=0.9)
+    val_strategy: Literal["tail", "scatter"] = "tail"
+    # Validation axis B: whole datasets kept OUT of training and scored on every
+    # frame as a transfer test. A subset of `datasets`, never all of them.
+    heldout_datasets: list[str] | None = None
     rebalance_every: int = Field(default=500, ge=10, le=100_000)
     log_every: int = Field(default=200, ge=10, le=5000)  # ≥10 bounds the event stream
     seed: int = Field(default=0, ge=0, le=2**31 - 1)

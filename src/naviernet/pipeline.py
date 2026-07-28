@@ -56,8 +56,10 @@ class Pipeline:
             from naviernet import training
             from naviernet.evaluation import evaluate_joint
 
-            model, contexts = training.load_joint(self.cfg, self.paths)
-            return evaluate_joint(self.cfg, model, contexts, self.paths)
+            model, contexts, heldout = training.load_joint(self.cfg, self.paths)
+            return evaluate_joint(
+                self.cfg, model, contexts, self.paths, heldout_datasets=heldout
+            )
 
         from naviernet.evaluation import evaluate
 
