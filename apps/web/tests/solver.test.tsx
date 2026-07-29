@@ -69,7 +69,14 @@ class FakeEventSource {
   }
 }
 
-function stubApi({ launchStatus = 202 }: { launchStatus?: number } = {}) {
+function stubApi({
+  launchStatus = 202,
+  launchDetail = "a training run is already in progress",
+}: {
+  launchStatus?: number;
+  /** Error `detail` for a non-202 launch; an array mimics FastAPI's 422 shape. */
+  launchDetail?: unknown;
+} = {}) {
   const posts: unknown[] = [];
   vi.stubGlobal(
     "fetch",
@@ -79,10 +86,7 @@ function stubApi({ launchStatus = 202 }: { launchStatus?: number } = {}) {
         posts.push(JSON.parse(String(options.body)));
         return launchStatus === 202
           ? json(LAUNCHED)
-          : json(
-              { detail: "a training run is already in progress" },
-              launchStatus,
-            );
+          : json({ detail: launchDetail }, launchStatus);
       }
       if (path.endsWith("/api/datasets")) return json(DATASETS);
       if (path.endsWith("/api/runs/active")) return json(null);
@@ -493,6 +497,29 @@ describe("SolverView", () => {
     expect(alert).toHaveTextContent("a training run is already in progress");
   });
 
+  it("flattens a 422 validation error into a readable field-level alert", async () => {
+    // FastAPI reports request-body validation failures as an array of issues;
+    // rendering that array raw gives the useless "[object Object]".
+    stubApi({
+      launchStatus: 422,
+      launchDetail: [
+        {
+          type: "greater_than_equal",
+          loc: ["body", "steps"],
+          msg: "Input should be greater than or equal to 1",
+        },
+      ],
+    });
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "steps: Input should be greater than or equal to 1",
+    );
+    expect(alert).not.toHaveTextContent("[object Object]");
+  });
+
   it("resume locks the config to the original run and posts run_id", async () => {
     const posts = stubApi();
     render(<SolverView />);
@@ -759,6 +786,9 @@ describe("solver components", () => {
     );
     expect(screen.getByText("Validation IoU")).toBeInTheDocument();
     expect(screen.queryByText("Holdout IoU")).toBeNull();
+    // With no value yet, the stat must explain the wait rather than read as broken.
+    expect(screen.getByText("known after evaluation")).toBeInTheDocument();
+    expect(screen.queryByText("held-out frames · in-distribution")).toBeNull();
   });
 
   it("LossChart draws one line per loss term once two records exist", () => {

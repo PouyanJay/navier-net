@@ -52,7 +52,13 @@ export function MonitorPanel({
             label="Validation IoU"
             value={formatIou(valIou)}
             tone={valIou != null ? "green" : "default"}
-            hint="held-out frames · in-distribution"
+            // A validation IoU needs a full field evaluation, so it lands once the
+            // run reaches the evaluate stage -- not per training step.
+            hint={
+              valIou != null
+                ? "held-out frames · in-distribution"
+                : "known after evaluation"
+            }
           />
         )}
         {showTransfer && (
@@ -60,7 +66,11 @@ export function MonitorPanel({
             label="Transfer IoU"
             value={formatIou(transferIou)}
             tone="amber"
-            hint="held-out series · never trained"
+            hint={
+              transferIou != null
+                ? "held-out series · never trained"
+                : "known after evaluation"
+            }
           />
         )}
         {!showVal && !showTransfer && (
