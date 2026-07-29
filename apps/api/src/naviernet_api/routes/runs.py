@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -17,6 +18,7 @@ from naviernet_api.models import (
     RunLaunchRequest,
     RunSummary,
 )
+from naviernet_api.services import fields as fields_service
 from naviernet_api.services import physics as physics_service
 from naviernet_api.services import projects as projects_service
 from naviernet_api.services import reconstruction, run_manager
@@ -136,6 +138,25 @@ def get_trajectory(
     if trajectory is None:
         raise HTTPException(status_code=404, detail=f"no trajectory for run {run_id!r}")
     return trajectory
+
+
+@router.get("/{run_id}/field")
+def get_field(
+    run_id: str,
+    name: Literal["alpha", "u", "v", "umag", "s", "p", "T"] = Query(...),
+    t: float = Query(default=0.0),
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """One predicted field on a grid at time t* (clamped to the trained span),
+    evaluated from the run's own checkpoint. Joint runs scope by `?dataset=`."""
+    try:
+        payload = fields_service.field_map(settings, run_id, name, t, dataset)
+    except fields_service.FieldUnavailable as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"no trained model for run {run_id!r}")
+    return payload
 
 
 @router.get("/{run_id}/interface")

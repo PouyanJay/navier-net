@@ -12,6 +12,7 @@ import {
 } from "../../lib/api";
 import { isTrainedRun } from "../../lib/runs";
 import { runConditions, runHeadline, runRowMeta } from "./format";
+import { FieldsTab } from "./FieldsTab";
 import { OverviewTab } from "./OverviewTab";
 import { ReconTab } from "./ReconTab";
 import { RunHeader } from "./RunHeader";
@@ -280,6 +281,12 @@ export function ResultsPage({ project }: ResultsPageProps) {
                 validation={validation}
                 viewDataset={viewDataset}
                 datasetLabels={datasetLabels}
+              />
+            ) : activeTab === "fields" ? (
+              <FieldsTab
+                runId={selected.id}
+                dataset={viewDataset}
+                joint={runConditions(selected).all.length > 1}
               />
             ) : (
               <Panel

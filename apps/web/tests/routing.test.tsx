@@ -200,6 +200,26 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
           { status: 202 },
         );
       }
+      if (u.includes("/field?")) {
+        return json({
+          run_id: "demo_run",
+          dataset: null,
+          name: "u",
+          unit: "mm·s⁻¹",
+          t_star: 0.34,
+          t_min_star: 0,
+          t_max_star: 1.0,
+          x_um: [0, 100, 200],
+          y_um: [0, 50],
+          values: [
+            [0, 40, 80],
+            [10, 50, 90],
+          ],
+          vmin: 0,
+          vmax: 90,
+          fields_available: ["alpha", "u", "v", "umag", "s"],
+        });
+      }
       if (u.includes("/interface")) {
         return json({
           run_id: "demo_run",
@@ -425,6 +445,27 @@ describe("results routing", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /vapor area/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("fields tab evaluates the checkpoint and marks Stage B honestly", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/demo_run/fields`);
+
+    // Field chips from the checkpoint's own availability; p/T disabled.
+    const chips = await screen.findByTestId("field-chips");
+    expect(chips).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "p" })).toBeDisabled(),
+    );
+    expect(screen.getByRole("button", { name: "T" })).toBeDisabled();
+    expect(screen.getByText(/stage a only/i)).toBeInTheDocument();
+
+    // The map is real: unit + time readout from the payload.
+    expect(screen.getByText("mm·s⁻¹")).toBeInTheDocument();
+    expect(screen.getByLabelText(/field time/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /speed .u. field map/i }),
     ).toBeInTheDocument();
   });
 

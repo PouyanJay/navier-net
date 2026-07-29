@@ -400,6 +400,23 @@ export interface InterfaceFrame {
   contours: number[][][];
 }
 
+/** One predicted field evaluated on a grid at t* (the /field endpoint). */
+export interface FieldMap {
+  run_id: string;
+  dataset: string | null;
+  name: string;
+  unit: string;
+  t_star: number;
+  t_min_star: number;
+  t_max_star: number;
+  x_um: number[];
+  y_um: number[];
+  values: number[][];
+  vmin: number;
+  vmax: number;
+  fields_available: string[];
+}
+
 export interface InterfaceData {
   run_id: string;
   domain: { x_um: [number, number]; y_um: [number, number]; x_pin_um: number };
@@ -474,6 +491,11 @@ export const api = {
     getJson<Trajectory>(
       `${runPath(id)}/trajectory` +
         (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
+    ),
+  getField: (id: string, name: string, t: number, dataset?: string) =>
+    getJson<FieldMap>(
+      `${runPath(id)}/field?name=${encodeURIComponent(name)}&t=${t.toFixed(3)}` +
+        (dataset ? `&dataset=${encodeURIComponent(dataset)}` : ""),
     ),
   getInterface: (id: string, frames = 48) =>
     getJson<InterfaceData>(`${runPath(id)}/interface?frames=${frames}`),
