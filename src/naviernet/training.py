@@ -100,6 +100,24 @@ def _loss_schedule(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> dict[str, 
     return schedule
 
 
+def _causal_weights(chunk_losses: torch.Tensor, eps: float) -> torch.Tensor:
+    """Temporal causal weights (Wang et al., arXiv:2203.07404).
+
+    Given the PDE residual aggregated into time-ordered chunks
+    ``chunk_losses[i] = L_r(t_i)`` (with ``t_0 < t_1 < ...``), a chunk is weighted
+    down until all *earlier* chunks are satisfied, so the network learns forward in
+    time instead of fitting late times on an unconverged early solution (the bias
+    that hurts extrapolation to held-out late frames):
+
+        w_i = exp(-eps * sum_{k<i} L_r(t_k))
+
+    The weights are **detached** -- they steer which residuals matter now but carry
+    no gradient. ``eps=0`` returns all ones (uniform-in-time, i.e. today's loss)."""
+    with torch.no_grad():
+        exclusive_prior = torch.cumsum(chunk_losses, dim=0) - chunk_losses
+        return torch.exp(-eps * exclusive_prior)
+
+
 def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     """True only at the one step the warm-up hands off to Stage-B physics -- where
     the optimiser is restarted. Never true when the warm-up is disabled

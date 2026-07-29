@@ -497,6 +497,25 @@ def test_loss_schedule_gates_stage_b_physics_until_the_warmup_ends():
     assert "mom" not in no_warmup, "0 warm-up -> Stage-B physics on from step 1"
 
 
+def test_causal_weights_enforce_temporal_ordering():
+    """Causal weighting (Wang et al.): a time chunk is held down until earlier
+    chunks are satisfied, so the model learns forward in time. eps=0 is uniform;
+    weights decrease with time, depend only on EARLIER losses, and carry no grad."""
+    import math
+
+    from naviernet.training import _causal_weights
+
+    losses = torch.tensor([1.0, 1.0, 1.0, 1.0])
+
+    assert torch.allclose(_causal_weights(losses, 0.0), torch.ones(4)), "eps=0 -> uniform"
+
+    w = _causal_weights(losses, 1.0)
+    assert w[0].item() == pytest.approx(1.0), "first chunk has no prior -> full weight"
+    assert torch.all(w[1:] < w[:-1]), "later chunks weighted down by earlier residuals"
+    assert w[2].item() == pytest.approx(math.exp(-2.0)), "w_2 = exp(-(L0+L1)) = exp(-2)"
+    assert not w.requires_grad, "weights steer training but carry no gradient"
+
+
 def test_stage_b_engages_only_at_the_boundary_and_never_when_disabled():
     """The optimiser restart fires at exactly step warmup+1 -- and never when the
     warm-up is disabled (0) or the model has no Stage-B physics, so an ordinary
