@@ -118,8 +118,9 @@ def test_joint_run_renders_per_dataset_figures(
     """A rendered joint run writes each dataset's figures into its own subdir,
     lists them with relative names, and serves them back. ffmpeg is kept off
     PATH so the joint video path exercises its skip-not-crash guard."""
-    from conftest import write_synthetic_tensors
     from PIL import Image
+
+    from conftest import write_synthetic_tensors
 
     monkeypatch.setenv("PATH", str(repo_root))  # no ffmpeg → video skips
 

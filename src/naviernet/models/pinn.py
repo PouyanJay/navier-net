@@ -154,7 +154,7 @@ class BubblePINN(nn.Module):
             )
         return self.nets[name]
 
-    def bound(self, c: torch.Tensor) -> "BoundPINN":
+    def bound(self, c: torch.Tensor) -> BoundPINN:
         """This model with one dataset's conditioning row bound (joint viz)."""
         return BoundPINN(self, c)
 
