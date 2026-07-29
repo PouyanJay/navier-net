@@ -439,15 +439,46 @@ export class ApiError extends Error {
   }
 }
 
+/** One entry of FastAPI's 422 validation `detail` array. */
+interface ValidationIssue {
+  loc?: (string | number)[];
+  msg?: string;
+}
+
+/** Flatten a FastAPI error `detail` into one readable line.
+ *
+ * `detail` is a plain string for our own HTTPExceptions, but a request that
+ * fails request-body validation comes back as an array of `{loc, msg}` issues.
+ * Rendering that array directly gives the useless "[object Object]"; here we
+ * name the offending field(s) and the reason instead. */
+function formatDetail(detail: unknown, fallback: string): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const lines = detail
+      .map((issue: ValidationIssue) => {
+        // Drop the leading "body"/"query" scope so the field reads plainly.
+        const field = (issue.loc ?? [])
+          .filter((part) => part !== "body" && part !== "query")
+          .join(".");
+        const msg = issue.msg ?? "invalid value";
+        return field ? `${field}: ${msg}` : msg;
+      })
+      .filter(Boolean);
+    if (lines.length > 0) return lines.join("; ");
+  }
+  return fallback;
+}
+
 /** Fetch + shared error handling: failures throw the API's `detail` when the
  * error body carries one, so every caller surfaces the actionable reason. */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
+    const fallback = `${response.status} ${response.statusText}`;
+    let detail = fallback;
     try {
-      detail =
-        ((await response.json()) as { detail?: string }).detail ?? detail;
+      const body = (await response.json()) as { detail?: unknown };
+      detail = formatDetail(body.detail, fallback);
     } catch {
       /* non-JSON error body */
     }
