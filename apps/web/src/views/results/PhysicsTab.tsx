@@ -21,10 +21,13 @@ const GROUP_TILES: [key: string, label: string, unit: string][] = [
   ["bretherton_film_um", "film", "µm"],
 ];
 
+/** One consistent register for every tile: three significant figures, with
+ * scientific notation only outside [0.01, 1000) — no per-tile drift. */
 function fmtGroup(value: number): string {
-  if (Math.abs(value) >= 1000 || (value !== 0 && Math.abs(value) < 0.01))
-    return value.toExponential(1);
-  if (Math.abs(value) >= 100) return value.toFixed(0);
+  if (value === 0) return "0";
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1000 || magnitude < 0.01)
+    return value.toExponential(2).replace("e-", "e−").replace("e+", "e");
   return value.toPrecision(3);
 }
 

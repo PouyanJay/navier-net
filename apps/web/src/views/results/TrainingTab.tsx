@@ -61,6 +61,7 @@ export function TrainingTab({ runId }: TrainingTabProps) {
               series={series}
               logY
               xLabel="step"
+              yLabel="residual · log scale"
               ariaLabel="Training loss per term over optimisation steps, log scale."
               yFormat={(v) => v.toExponential(1)}
             />
@@ -76,13 +77,14 @@ export function TrainingTab({ runId }: TrainingTabProps) {
             <p className="train-final">
               final ·{" "}
               {terms
-                .map(
-                  ({ key }) =>
-                    `${String(key)} ${(last[key] as number).toExponential(1)}`,
-                )
+                .map(({ key }) => {
+                  const value = last[key];
+                  return `${String(key)} ${typeof value === "number" ? value.toExponential(1) : "—"}`;
+                })
                 .join(" · ")}
-              {" · lr "}
-              {last.lr.toExponential(1)}
+              {/* CLI-era checkpoints record no lr; never crash on it. */}
+              {typeof last.lr === "number" &&
+                ` · lr ${last.lr.toExponential(1)}`}
             </p>
           )}
           <p className="figcap">

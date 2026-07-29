@@ -234,25 +234,11 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
         );
       }
       if (u.includes("/loss-history")) {
+        // Like a real CLI-era checkpoint: no lr key at all (regression: this
+        // used to crash the whole page).
         return json([
-          {
-            step: 100,
-            lr: 2e-3,
-            data: 5e-3,
-            vof: 4e-2,
-            div: 4e-3,
-            src: 2e-3,
-            bc: 2e-3,
-          },
-          {
-            step: 200,
-            lr: 1.8e-3,
-            data: 3e-3,
-            vof: 2e-2,
-            div: 3e-3,
-            src: 1e-3,
-            bc: 1e-3,
-          },
+          { step: 100, data: 5e-3, vof: 4e-2, div: 4e-3, src: 2e-3, bc: 2e-3 },
+          { step: 200, data: 3e-3, vof: 2e-2, div: 3e-3, src: 1e-3, bc: 1e-3 },
         ]);
       }
       if (u.includes("/field?")) {
@@ -272,7 +258,15 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
           ],
           vmin: 0,
           vmax: 90,
-          fields_available: ["alpha", "u", "v", "umag", "s"],
+          fields_available: [
+            "alpha",
+            "u",
+            "v",
+            "umag",
+            "s",
+            "res_vof",
+            "res_div",
+          ],
         });
       }
       if (u.includes("/interface")) {
@@ -607,6 +601,8 @@ describe("results routing", () => {
     ).toBeInTheDocument();
     expect(await screen.findByText(/final ·/)).toBeInTheDocument();
     expect(screen.getByText(/vof · transport/)).toBeInTheDocument();
+    // No lr recorded → no lr readout, and above all no crash.
+    expect(screen.queryByText(/· lr/)).not.toBeInTheDocument();
   });
 
   it("fields tab evaluates the checkpoint and marks Stage B honestly", async () => {
@@ -627,6 +623,18 @@ describe("results routing", () => {
     expect(screen.getByLabelText(/field time/i)).toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: /speed .u. field map/i }),
+    ).toBeInTheDocument();
+
+    // Residual maps: Stage-A equations render, Stage-B ones say why not.
+    expect(
+      await screen.findByRole("img", {
+        name: /vof · interface transport residual/i,
+      }),
+    ).toBeInTheDocument();
+    expect((await screen.findAllByText(/stage b off/i)).length).toBe(2);
+    // And the field animation has a play control.
+    expect(
+      screen.getByRole("button", { name: /play field animation/i }),
     ).toBeInTheDocument();
   });
 

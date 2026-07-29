@@ -217,6 +217,7 @@ export function CompareTab({
               series={lossSeries}
               logY
               xLabel="step"
+              yLabel="data loss · log scale"
               ariaLabel="Data loss of the compared runs over optimisation steps."
               yFormat={(v) => v.toExponential(1)}
             />

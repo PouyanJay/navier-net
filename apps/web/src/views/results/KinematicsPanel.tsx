@@ -69,10 +69,12 @@ function QuantityChart({
                 trajectory.measured.t_ms,
                 trajectory.measured[field],
               ),
+              markers: true,
             },
           ]}
           xLabel="t (ms)"
-          ariaLabel={`${title}: PINN reconstruction versus measured camera instants.`}
+          yLabel={`${title.toLowerCase()} · ${unit}`}
+          ariaLabel={`${title}: continuous PINN curve versus measured camera instants (circles).`}
           yFormat={(v) => v.toFixed(0)}
         />
       </ViewCanvas>

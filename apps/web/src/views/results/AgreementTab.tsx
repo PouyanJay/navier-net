@@ -221,7 +221,11 @@ export function AgreementTab({
           </p>
         ) : (
           <>
-            <div className="agree-grid" data-testid="agreement-grid">
+            <div
+              className="agree-grid"
+              data-single={blocks.length === 1 || undefined}
+              data-testid="agreement-grid"
+            >
               {blocks.map((block) => (
                 <div
                   key={block.name}
@@ -242,6 +246,7 @@ export function AgreementTab({
                     <IouDotChart
                       frames={block.frames}
                       mean={block.mean}
+                      width={blocks.length === 1 ? 720 : 340}
                       ariaLabel={`Per-frame IoU for ${labelOf(block.name)}`}
                     />
                   </ViewCanvas>

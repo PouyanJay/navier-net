@@ -366,7 +366,8 @@ export interface SweepStatus {
 /** One per-log-step loss record, streamed live over SSE (`hist` events). */
 export interface LossRecord {
   step: number;
-  lr: number;
+  /** Absent in histories from CLI-era checkpoints. */
+  lr?: number | null;
   data: number;
   vof: number;
   div: number;

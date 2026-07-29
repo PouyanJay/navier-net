@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { Callout, Panel } from "../../components";
+import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { useToast } from "../../components/Toast";
 import {
   api,
@@ -275,74 +276,79 @@ export function ResultsPage({ project }: ResultsPageProps) {
           id={`panel-${activeTab}`}
           aria-labelledby={`tab-${activeTab}`}
         >
-          {selected ? (
-            activeTab === "overview" ? (
-              <OverviewTab
-                run={selected}
-                detail={detail}
-                validation={validation}
-                datasetLabels={datasetLabels}
-                onOpenTab={openTab}
-              />
-            ) : activeTab === "recon" ? (
-              <ReconTab
-                run={selected}
-                detail={detail}
-                validation={validation}
-                viewDataset={viewDataset}
-                datasetLabels={datasetLabels}
-              />
-            ) : activeTab === "fields" ? (
-              <FieldsTab
-                runId={selected.id}
-                dataset={viewDataset}
-                datasetName={
-                  viewDataset
-                    ? (datasetLabels.get(viewDataset) ?? viewDataset)
-                    : null
-                }
-                joint={runConditions(selected).all.length > 1}
-              />
-            ) : activeTab === "agreement" ? (
-              <AgreementTab
-                run={selected}
-                metrics={detail?.metrics ?? null}
-                validation={validation}
-                datasetLabels={datasetLabels}
-              />
-            ) : activeTab === "physics" ? (
-              <PhysicsTab
-                runId={selected.id}
-                dataset={viewDataset}
-                datasetName={
-                  viewDataset
-                    ? (datasetLabels.get(viewDataset) ?? viewDataset)
-                    : null
-                }
-                validation={validation}
-              />
-            ) : activeTab === "training" ? (
-              <TrainingTab runId={selected.id} />
-            ) : activeTab === "compare" ? (
-              <CompareTab
-                runs={runs ?? []}
-                currentId={selected.id}
-                datasetLabels={datasetLabels}
-              />
-            ) : (
-              <ExportTab
-                run={selected}
-                detail={detail}
-                viewDataset={viewDataset}
-                datasetLabels={datasetLabels}
-              />
-            )
-          ) : runs !== null ? (
-            <div className="res-empty">
-              <b>Nothing to show</b>
-              Results appear after the project's first run.
-            </div>
-          ) : null}
+          <ErrorBoundary
+            label={`The ${RESULT_TABS.find((tab) => tab.id === activeTab)!.label} tab`}
+            resetKey={`${selected?.id ?? ""}:${activeTab}`}
+          >
+            {selected ? (
+              activeTab === "overview" ? (
+                <OverviewTab
+                  run={selected}
+                  detail={detail}
+                  validation={validation}
+                  datasetLabels={datasetLabels}
+                  onOpenTab={openTab}
+                />
+              ) : activeTab === "recon" ? (
+                <ReconTab
+                  run={selected}
+                  detail={detail}
+                  validation={validation}
+                  viewDataset={viewDataset}
+                  datasetLabels={datasetLabels}
+                />
+              ) : activeTab === "fields" ? (
+                <FieldsTab
+                  runId={selected.id}
+                  dataset={viewDataset}
+                  datasetName={
+                    viewDataset
+                      ? (datasetLabels.get(viewDataset) ?? viewDataset)
+                      : null
+                  }
+                  joint={runConditions(selected).all.length > 1}
+                />
+              ) : activeTab === "agreement" ? (
+                <AgreementTab
+                  run={selected}
+                  metrics={detail?.metrics ?? null}
+                  validation={validation}
+                  datasetLabels={datasetLabels}
+                />
+              ) : activeTab === "physics" ? (
+                <PhysicsTab
+                  runId={selected.id}
+                  dataset={viewDataset}
+                  datasetName={
+                    viewDataset
+                      ? (datasetLabels.get(viewDataset) ?? viewDataset)
+                      : null
+                  }
+                  validation={validation}
+                />
+              ) : activeTab === "training" ? (
+                <TrainingTab runId={selected.id} />
+              ) : activeTab === "compare" ? (
+                <CompareTab
+                  runs={runs ?? []}
+                  currentId={selected.id}
+                  datasetLabels={datasetLabels}
+                />
+              ) : (
+                <ExportTab
+                  run={selected}
+                  detail={detail}
+                  viewDataset={viewDataset}
+                  datasetLabels={datasetLabels}
+                />
+              )
+            ) : runs !== null ? (
+              <div className="res-empty">
+                <b>Nothing to show</b>
+                Results appear after the project's first run.
+              </div>
+            ) : null}
+          </ErrorBoundary>
         </section>
       </div>
     </div>

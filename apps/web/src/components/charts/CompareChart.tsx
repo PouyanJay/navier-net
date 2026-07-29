@@ -11,6 +11,9 @@ export interface ComparePoint {
 export interface CompareSeries {
   id: string;
   points: ComparePoint[];
+  /** Draw discrete circles instead of a connected line (e.g. the measured
+   * camera instants against a continuous reconstruction). */
+  markers?: boolean;
 }
 
 const WIDTH = 640;
@@ -26,6 +29,8 @@ interface CompareChartProps {
   series: CompareSeries[];
   logY?: boolean;
   xLabel: string;
+  /** Axis caption drawn top-left (what the y numbers are, with unit). */
+  yLabel?: string;
   ariaLabel: string;
   yFormat?: (value: number) => string;
 }
@@ -96,6 +101,7 @@ export function CompareChart({
   series,
   logY = false,
   xLabel,
+  yLabel,
   ariaLabel,
   yFormat = (v) => v.toPrecision(3),
 }: CompareChartProps) {
@@ -113,8 +119,25 @@ export function CompareChart({
       .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     const { x, y } = makeScales(drawable, logY);
     drawAxes(g, x, y, logY);
+    if (yLabel)
+      g.append("text")
+        .attr("class", "chart-axis chart-ylabel")
+        .attr("x", 0)
+        .attr("y", -4)
+        .text(yLabel);
 
     drawable.forEach((s, i) => {
+      if (s.markers) {
+        g.append("g")
+          .selectAll("circle")
+          .data(s.points)
+          .join("circle")
+          .attr("class", `chart-marker series-${i % 4}`)
+          .attr("cx", (p) => x(p.x))
+          .attr("cy", (p) => y(logY ? Math.max(p.y, FLOOR) : p.y))
+          .attr("r", 4);
+        return;
+      }
       const line = d3
         .line<ComparePoint>()
         .x((p) => x(p.x))
@@ -154,7 +177,7 @@ export function CompareChart({
       },
     });
     return hide;
-  }, [series, logY, xLabel, yFormat]);
+  }, [series, logY, xLabel, yLabel, yFormat]);
 
   return (
     <div className="chart-wrap">

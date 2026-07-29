@@ -17,6 +17,10 @@ import { useApiResource } from "./useApiResource";
 
 type FrameRole = "supervised" | "validation" | "holdout" | "transfer";
 
+/** Rows kept above/below the imaged band when cropping the raw frame (the
+ * pipeline's pinn_on_image figures use the same margin). */
+const CROP_MARGIN_PX = 60;
+
 const ROLE_LABEL: Record<FrameRole, string> = {
   supervised: "supervised",
   validation: "validation · axis A",
@@ -137,6 +141,24 @@ export function FrameMatchPanel({
       ) ?? null)
     : null;
 
+  // Crop the stage to the imaged band (±ROI margin, like the pipeline's own
+  // overlay figures) — the full raw frame is mostly heater, not bubble.
+  const crop = (() => {
+    if (!geo || !qcQ.data) return null;
+    const [y0Star, y1Star] = qcQ.data.interface.y_range;
+    const bandPx = Math.abs(y1Star - y0Star) * geo.pxPerStar;
+    const top = Math.max(0, geo.yRoiTop - CROP_MARGIN_PX);
+    const bottom = Math.min(geo.height, geo.yRoiTop + bandPx + CROP_MARGIN_PX);
+    if (bottom - top <= 0 || bottom - top >= geo.height) return null;
+    const height = bottom - top;
+    return {
+      aspect: `${geo.width} / ${height}`,
+      // The full frame, scaled so the band fills the window, shifted up.
+      innerHeight: `${(geo.height / height) * 100}%`,
+      innerTop: `${(-top / height) * 100}%`,
+    };
+  })();
+
   // The PINN contour at this camera instant: the reconstructed frame nearest
   // in time (the continuous player samples far finer than the camera).
   const pinnContours = useMemo(() => {
@@ -182,42 +204,54 @@ export function FrameMatchPanel({
       ) : (
         <>
           <div className="fm-view">
-            <div className="fm-stage">
-              {layers.camera && detail && current ? (
-                <ArtifactImage
-                  src={artifactUrl.datasetFrame(dataset, current.frame)}
-                  alt={`Camera frame ${current.frame} of ${dataset}`}
-                />
-              ) : (
-                <div className="fm-dark" aria-hidden="true" />
-              )}
-              {geo && current && (
-                <svg
-                  className="fm-overlay"
-                  viewBox={`0 0 ${geo.width} ${geo.height}`}
-                  preserveAspectRatio="none"
-                  aria-hidden="true"
-                >
-                  {layers.det && detected && (
-                    <path
-                      className="fm-detected"
-                      d={detected.rings
-                        .map((ring) => ringPath(ring, geo))
-                        .join(" ")}
-                    />
-                  )}
-                  {layers.pinn &&
-                    detail?.um_per_px != null &&
-                    pinnContours &&
-                    pinnContours.contours.map((contour, i) => (
+            <div
+              className={"fm-stage" + (crop ? " cropped" : "")}
+              style={crop ? { aspectRatio: crop.aspect } : undefined}
+            >
+              <div
+                className="fm-window"
+                style={
+                  crop
+                    ? { height: crop.innerHeight, top: crop.innerTop }
+                    : undefined
+                }
+              >
+                {layers.camera && detail && current ? (
+                  <ArtifactImage
+                    src={artifactUrl.datasetFrame(dataset, current.frame)}
+                    alt={`Camera frame ${current.frame} of ${dataset}`}
+                  />
+                ) : (
+                  <div className="fm-dark" aria-hidden="true" />
+                )}
+                {geo && current && (
+                  <svg
+                    className="fm-overlay"
+                    viewBox={`0 0 ${geo.width} ${geo.height}`}
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                  >
+                    {layers.det && detected && (
                       <path
-                        key={i}
-                        className="fm-pinn"
-                        d={umPath(contour, geo, detail.um_per_px!)}
+                        className="fm-detected"
+                        d={detected.rings
+                          .map((ring) => ringPath(ring, geo))
+                          .join(" ")}
                       />
-                    ))}
-                </svg>
-              )}
+                    )}
+                    {layers.pinn &&
+                      detail?.um_per_px != null &&
+                      pinnContours &&
+                      pinnContours.contours.map((contour, i) => (
+                        <path
+                          key={i}
+                          className="fm-pinn"
+                          d={umPath(contour, geo, detail.um_per_px!)}
+                        />
+                      ))}
+                  </svg>
+                )}
+              </div>
             </div>
             <div className="fm-bar">
               <div

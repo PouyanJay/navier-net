@@ -883,3 +883,26 @@ text.chart-axis-title {
     margin-left: 100%;
   }
 }
+
+/* Discrete-sample markers on comparison charts (open circles: the "o" of a
+   measured camera instant against a continuous curve). */
+.chart-marker {
+  fill: var(--view);
+  stroke-width: 2;
+}
+.chart-marker.series-0 {
+  stroke: var(--acc);
+}
+.chart-marker.series-1 {
+  stroke: var(--green);
+}
+.chart-marker.series-2 {
+  stroke: var(--purple);
+}
+.chart-marker.series-3 {
+  stroke: var(--amber);
+}
+
+.chart-ylabel {
+  letter-spacing: 0.06em;
+}

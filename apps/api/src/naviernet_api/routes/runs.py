@@ -180,7 +180,19 @@ def export_loss(run_id: str, settings: Settings = Depends(get_settings)):
 @router.get("/{run_id}/field")
 def get_field(
     run_id: str,
-    name: Literal["alpha", "u", "v", "umag", "s", "p", "T"] = Query(...),
+    name: Literal[
+        "alpha",
+        "u",
+        "v",
+        "umag",
+        "s",
+        "p",
+        "T",
+        "res_vof",
+        "res_div",
+        "res_mom",
+        "res_energy",
+    ] = Query(...),
     t: float = Query(default=0.0),
     dataset: str | None = Query(default=None),
     settings: Settings = Depends(get_settings),

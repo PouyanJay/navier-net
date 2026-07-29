@@ -22,6 +22,9 @@ log = get_logger(__name__)
 
 # Every field the endpoint can serve; p/T only exist on Stage-B checkpoints.
 FIELD_NAMES = ("alpha", "u", "v", "umag", "s", "p", "T")
+# |residual| maps: where each governing equation is least satisfied. Stage-A
+# residuals exist on every checkpoint; momentum/energy need the p/T heads.
+RESIDUAL_NAMES = ("res_vof", "res_div", "res_mom", "res_energy")
 
 _CACHE_SIZE = 24
 _cache: dict[tuple, tuple[float, dict]] = {}
@@ -44,6 +47,7 @@ class _FieldScene:
     model: object
     data: object
     c: object  # conditioning row (None for single-dataset checkpoints)
+    cfg: object  # the run's own composed config (groups fallback for Stage B)
     stride: int
     l_ref_um: float
     u_ref_m_s: float
@@ -133,6 +137,7 @@ def _load_scene(settings: Settings, run_id: str, dataset: str | None) -> _FieldS
         model=model,
         data=data,
         c=c,
+        cfg=cfg,
         stride=stride,
         l_ref_um=float(cfg.scales.L_ref_um),
         u_ref_m_s=float(cfg.scales.U_ref),
@@ -153,10 +158,14 @@ def _evaluate(
     points, _, shape = data.frame_grid(0, scene.stride)
     points = points.clone()
     points[:, 2] = t
-    ctx = None if scene.c is None else scene.c.expand(points.shape[0], -1)
 
-    with torch.no_grad():
-        values, unit = _field_values(scene, model, points, ctx, name)
+    if name in RESIDUAL_NAMES:
+        # Residuals differentiate through the model, so no no_grad here.
+        values, unit = _residual_values(scene, model, points, name)
+    else:
+        ctx = None if scene.c is None else scene.c.expand(points.shape[0], -1)
+        with torch.no_grad():
+            values, unit = _field_values(scene, model, points, ctx, name)
     grid = values.cpu().numpy().reshape(shape)
 
     xs = (data.x[:: scene.stride] * scene.l_ref_um).tolist()
@@ -179,14 +188,13 @@ def _evaluate(
 
 
 def available_fields(model) -> list[str]:
-    """The servable field names for this checkpoint, in FIELD_NAMES order."""
-    heads = set(model.fields)
-    derived = (
-        {"alpha", "u", "v", "umag", "s"}
-        | ({"p"} if "p" in heads else set())
-        | ({"T"} if "T" in heads else set())
+    """The servable names for this checkpoint (fields then residual maps)."""
+    stage_b = {"p", "T"} <= set(model.fields)
+    derived = {"alpha", "u", "v", "umag", "s", "res_vof", "res_div"} | (
+        {"p", "T", "res_mom", "res_energy"} if stage_b else set()
     )
-    return [name for name in FIELD_NAMES if name in derived]
+    ordered = list(FIELD_NAMES) + list(RESIDUAL_NAMES)
+    return [name for name in ordered if name in derived]
 
 
 def _field_values(scene: _FieldScene, model, points, ctx, name: str):
@@ -217,3 +225,34 @@ def _field_values(scene: _FieldScene, model, points, ctx, name: str):
     except KeyError as exc:
         raise FieldUnavailable(str(exc)) from exc
     raise FieldUnavailable(f"unknown field {name!r}")
+
+
+def _residual_values(scene: _FieldScene, model, points, name: str):
+    """|residual| of one governing equation on the grid, via autograd."""
+    import torch
+
+    from naviernet.physics import residuals as residuals_mod
+
+    x = points.clone().requires_grad_(True)
+    if name in ("res_vof", "res_div"):
+        stage_a = residuals_mod.stage_a_residuals(model, x, scene.c)
+        value = stage_a.vof if name == "res_vof" else stage_a.div
+        return value.abs().detach().squeeze(-1), "|r|"
+
+    if not {"p", "T"} <= set(model.fields):
+        raise FieldUnavailable(
+            f"residual {name!r} needs the Stage-B p/T heads "
+            f"(this model has: {model.fields}). Enable momentum & energy and retrain."
+        )
+    groups = getattr(scene.data, "groups", None) or _computed_groups(scene.cfg)
+    stage_b = residuals_mod.stage_b_residuals(
+        model, x, groups, r_int_star=float(model.r_int_star), c=scene.c
+    )
+    value = torch.hypot(stage_b.mom_x, stage_b.mom_y) if name == "res_mom" else stage_b.energy
+    return value.abs().detach().squeeze(-1), "|r|"
+
+
+def _computed_groups(cfg) -> dict[str, float]:
+    from naviernet.physics.groups import compute_groups
+
+    return compute_groups(cfg)

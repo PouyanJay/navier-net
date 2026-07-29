@@ -96,3 +96,22 @@ def test_field_map_unknown_joint_dataset_is_404_not_substituted(client: TestClie
         f"/api/runs/{run_id}/field", params={"name": "alpha", "t": 0, "dataset": "nope"}
     )
     assert response.status_code == 404
+
+
+def test_residual_maps_evaluate_via_autograd(client: TestClient, trained_run: str):
+    """Stage-A residual maps (|r_vof|, |r_div|) serve on any trained run; the
+    Stage-B ones state what is missing."""
+    body = client.get(
+        f"/api/runs/{trained_run}/field", params={"name": "res_vof", "t": 0.1}
+    ).json()
+    assert body["unit"] == "|r|"
+    assert len(body["values"]) == len(body["y_um"])
+    assert body["vmin"] >= 0  # magnitudes
+    assert "res_div" in body["fields_available"]
+    assert "res_mom" not in body["fields_available"]
+
+    response = client.get(
+        f"/api/runs/{trained_run}/field", params={"name": "res_mom", "t": 0.1}
+    )
+    assert response.status_code == 404
+    assert "Stage-B" in response.json()["detail"]
