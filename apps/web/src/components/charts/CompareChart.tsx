@@ -144,7 +144,7 @@ export function CompareChart({
         .selectAll("circle")
         .data(s.points)
         .join("circle")
-        .attr("class", `chart-marker series-${i % 4}`)
+        .attr("class", `chart-sample series-${i % 4}`)
         .attr("cx", (p) => x(p.x))
         .attr("cy", (p) => y(logY ? Math.max(p.y, FLOOR) : p.y))
         .attr("r", 5)

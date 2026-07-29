@@ -884,23 +884,24 @@ text.chart-axis-title {
   }
 }
 
-/* Discrete-sample markers on comparison charts (open circles: the "o" of a
-   measured camera instant against a continuous curve). */
-.chart-marker {
-  fill: var(--view);
-  stroke-width: 2;
+/* Discrete-sample markers on comparison charts: solid, regular circles in the
+   series color with a canvas ring for separation. A class of their own —
+   .chart-marker is the loss chart's dashed event tick, not a data sample. */
+.chart-sample {
+  stroke: var(--view);
+  stroke-width: 1.6;
 }
-.chart-marker.series-0 {
-  stroke: var(--acc);
+.chart-sample.series-0 {
+  fill: var(--acc);
 }
-.chart-marker.series-1 {
-  stroke: var(--green);
+.chart-sample.series-1 {
+  fill: var(--green);
 }
-.chart-marker.series-2 {
-  stroke: var(--purple);
+.chart-sample.series-2 {
+  fill: var(--purple);
 }
-.chart-marker.series-3 {
-  stroke: var(--amber);
+.chart-sample.series-3 {
+  fill: var(--amber);
 }
 
 .chart-ylabel {
