@@ -126,18 +126,10 @@ export function CompareChart({
         .attr("y", -4)
         .text(yLabel);
 
+    // Lines first, then every marker series on top of them, so discrete
+    // samples always read as whole circles rather than notching the curves.
     drawable.forEach((s, i) => {
-      if (s.markers) {
-        g.append("g")
-          .selectAll("circle")
-          .data(s.points)
-          .join("circle")
-          .attr("class", `chart-marker series-${i % 4}`)
-          .attr("cx", (p) => x(p.x))
-          .attr("cy", (p) => y(logY ? Math.max(p.y, FLOOR) : p.y))
-          .attr("r", 4);
-        return;
-      }
+      if (s.markers) return;
       const line = d3
         .line<ComparePoint>()
         .x((p) => x(p.x))
@@ -145,6 +137,21 @@ export function CompareChart({
       g.append("path")
         .attr("class", `chart-line series-${i % 4}`)
         .attr("d", line(s.points) ?? "");
+    });
+    drawable.forEach((s, i) => {
+      if (!s.markers) return;
+      g.append("g")
+        .selectAll("circle")
+        .data(s.points)
+        .join("circle")
+        .attr("class", `chart-marker series-${i % 4}`)
+        .attr("cx", (p) => x(p.x))
+        .attr("cy", (p) => y(logY ? Math.max(p.y, FLOOR) : p.y))
+        .attr("r", 5)
+        // The chart scales down with its column; keep the ring stroke crisp
+        // instead of letting it thin into an antialiased crescent.
+        .attr("vector-effect", "non-scaling-stroke")
+        .attr("shape-rendering", "geometricPrecision");
     });
 
     // Crosshair + tooltip: nearest-x readout across every series.
