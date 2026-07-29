@@ -81,6 +81,27 @@ describe("ResultsView", () => {
     expect(screen.getByText(/holdout, never supervised/)).toBeInTheDocument();
   });
 
+  it("shows the run's series by its current display label", async () => {
+    mockApi();
+    render(
+      <ResultsView
+        datasets={[
+          {
+            id: "highest_t",
+            label: "High-T FC-72",
+            n_frames: 12,
+            processed: true,
+            conditions_set: true,
+            frame_px: null,
+            dt_frame_ms: null,
+          },
+        ]}
+      />,
+    );
+    // The run's bare dataset id resolves to the current label in the header chip.
+    expect(await screen.findByText("High-T FC-72")).toBeInTheDocument();
+  });
+
   it("shows physics validation: inferred vs measured nose speed and groups", async () => {
     mockApi();
     render(<ResultsView />);

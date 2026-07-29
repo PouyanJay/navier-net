@@ -7,6 +7,7 @@ import type {
   DatasetSummary,
   ProjectSummary,
 } from "../../lib/api";
+import { seriesName } from "../../lib/series";
 import { EditConditionsModal } from "./EditConditionsModal";
 import { NewSeriesModal } from "./NewSeriesModal";
 
@@ -53,11 +54,6 @@ function seriesChip(summary: DatasetSummary, trained: boolean) {
     return <Chip tone="amber">needs conditions</Chip>;
   if (summary.processed) return <Chip tone="green">tensors ready</Chip>;
   return <Chip>uploaded</Chip>;
-}
-
-/** What the UI calls the series: its editable label, or the id when unset. */
-function seriesName(summary: DatasetSummary): string {
-  return summary.label ?? summary.id;
 }
 
 function seriesMeta(summary: DatasetSummary): string {

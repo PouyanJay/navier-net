@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Callout } from "../components";
 import type { DatasetSummary } from "../lib/api";
+import { seriesName } from "../lib/series";
 import { EnsembleCanvas } from "./physics/EnsembleCanvas";
 import { EquationsPanel } from "./physics/EquationsPanel";
 import { ModelBuilder } from "./physics/ModelBuilder";
@@ -63,7 +64,7 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
               >
                 {datasets.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.id}
+                    {seriesName(d)}
                   </option>
                 ))}
               </select>

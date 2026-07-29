@@ -177,7 +177,9 @@ export function App() {
         )}
       </header>
       <div className="stack">
-        {active === "results" && <ResultsView />}
+        {active === "results" && (
+          <ResultsView datasets={repo?.datasets ?? []} />
+        )}
         {active === "projects" && (
           <ProjectsView
             onOpen={openProject}

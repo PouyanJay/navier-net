@@ -12,6 +12,7 @@ import type {
   LossWeightsInput,
   RunSummary,
 } from "../../lib/api";
+import { seriesName } from "../../lib/series";
 import { FORM_BOUNDS, VAL_FRACTION_OPTIONS, type SolverFormState } from "./form";
 
 /** The numeric run-config fields, in display order. Each maps 1:1 onto a
@@ -134,7 +135,7 @@ function DatasetMultiSelect({
                   onChange={() => onToggle(d.id)}
                   disabled={disabled}
                 />
-                <span className="mono">{d.id}</span>
+                <span className="mono">{seriesName(d)}</span>
               </label>
               {joint && isSelected && (
                 <button
@@ -143,7 +144,7 @@ function DatasetMultiSelect({
                   onClick={() => onToggleHeldout(d.id)}
                   disabled={disabled}
                   aria-pressed={isHeld}
-                  aria-label={`${isHeld ? "Return to training" : "Hold out"} ${d.id}`}
+                  aria-label={`${isHeld ? "Return to training" : "Hold out"} ${seriesName(d)}`}
                 >
                   {isHeld ? "held out" : "hold out"}
                 </button>

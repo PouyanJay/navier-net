@@ -1,5 +1,6 @@
 import { Callout, Chip, StatusDot } from "../components";
-import type { RunDetail, RunSummary } from "../lib/api";
+import type { DatasetSummary, RunDetail, RunSummary } from "../lib/api";
+import { seriesNameOf } from "../lib/series";
 import { AgreementPerFrame } from "./results/AgreementPerFrame";
 import { ComparePanel } from "./results/ComparePanel";
 import { Deliverables } from "./results/Deliverables";
@@ -10,7 +11,12 @@ import { useResultsData } from "./results/useResultsData";
 import "./results/results.css";
 import "./runs.css";
 
-export function ResultsView() {
+export function ResultsView({
+  datasets = [],
+}: {
+  /** Workspace datasets, so a run's series is shown by its current label. */
+  datasets?: DatasetSummary[];
+}) {
   const { runs, selected, setSelected, detail } = useResultsData();
 
   if (runs.status === "loading") {
@@ -39,6 +45,7 @@ export function ResultsView() {
     <div className="stack">
       <RunHeader
         runs={runs.runs}
+        datasets={datasets}
         selected={selected}
         onSelect={setSelected}
         detail={detail.status === "ready" ? detail.detail : null}
@@ -77,18 +84,21 @@ export function ResultsView() {
 
 interface RunHeaderProps {
   runs: RunSummary[];
+  datasets: DatasetSummary[];
   selected: string;
   onSelect: (id: string) => void;
   detail: RunDetail | null;
 }
 
-function RunHeader({ runs, selected, onSelect, detail }: RunHeaderProps) {
+function RunHeader({ runs, datasets, selected, onSelect, detail }: RunHeaderProps) {
   const current = runs.find((r) => r.id === selected);
   const statusTone = current?.status === "trained" ? "green" : "default";
   return (
     <div className="results-head">
       <span className="id">{selected}</span>
-      {current?.dataset && <Chip tone="accent">{current.dataset}</Chip>}
+      {current?.dataset && (
+        <Chip tone="accent">{seriesNameOf(datasets, current.dataset)}</Chip>
+      )}
       {current && <StatusDot tone={statusTone} label={current.status} />}
       {detail?.steps != null && (
         <span className="mono steps">{detail.steps} steps</span>
