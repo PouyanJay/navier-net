@@ -247,34 +247,40 @@ def list_runs(settings: Settings, datasets: set[str] | None = None) -> list[RunS
     for run_dir in sorted(settings.outputs_dir.iterdir()):
         if not run_dir.is_dir() or run_dir.name in _NON_RUN_DIRS:
             continue
-        run_id = run_dir.name
         metrics = _read_json(run_dir / "metrics.json")
-        if datasets is not None and not set(_datasets_of(run_dir, metrics)) & datasets:
+        spanned = _datasets_of(run_dir, metrics)
+        if datasets is not None and not set(spanned) & datasets:
             continue
-        dataset = _dataset_of(run_dir, metrics)
-        paths = _run_paths(settings, run_id, dataset)
-        live = _live_state(run_id)
-        if live is not None and live.state in ("queued", "running"):
-            status = "running"
-        elif live is not None and live.state == "error":
-            status = "failed"
-        else:
-            status = "trained" if paths.checkpoint.is_file() else "empty"
-        summaries.append(
-            RunSummary(
-                id=run_id,
-                dataset=dataset,
-                status=status,
-                iou_holdout=metrics.get("iou_holdout") if metrics else None,
-                datasets=_datasets_of(run_dir, metrics),
-                heldout_datasets=_heldout_of(run_dir, metrics),
-                val_iou_mean=metrics.get("val_iou_mean") if metrics else None,
-                date=_run_date(run_dir),
-                steps_done=live.steps_done if status == "running" else None,
-                steps_total=live.steps_total if status == "running" else None,
-            )
-        )
+        summaries.append(_summarize_run(settings, run_dir, metrics, spanned))
     return summaries
+
+
+def _summarize_run(
+    settings: Settings, run_dir: Path, metrics: dict | None, spanned: list[str]
+) -> RunSummary:
+    """One run's list row: live job state wins over the on-disk view."""
+    run_id = run_dir.name
+    dataset = _dataset_of(run_dir, metrics)
+    paths = _run_paths(settings, run_id, dataset)
+    live = _live_state(run_id)
+    if live is not None and live.state in ("queued", "running"):
+        status = "running"
+    elif live is not None and live.state == "error":
+        status = "failed"
+    else:
+        status = "trained" if paths.checkpoint.is_file() else "empty"
+    return RunSummary(
+        id=run_id,
+        dataset=dataset,
+        status=status,
+        iou_holdout=metrics.get("iou_holdout") if metrics else None,
+        datasets=spanned,
+        heldout_datasets=_heldout_of(run_dir, metrics),
+        val_iou_mean=metrics.get("val_iou_mean") if metrics else None,
+        date=_run_date(run_dir),
+        steps_done=live.steps_done if status == "running" else None,
+        steps_total=live.steps_total if status == "running" else None,
+    )
 
 
 def read_dataset_and_metrics(

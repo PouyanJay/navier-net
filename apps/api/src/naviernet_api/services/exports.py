@@ -32,35 +32,49 @@ def iou_csv(settings: Settings, run_id: str) -> str | None:
     if not metrics:
         return None
 
-    rows: list[list] = []
-    per_dataset = metrics.get("per_dataset")
-    if isinstance(per_dataset, dict):
-        for name, block in per_dataset.items():
-            validation = set(block.get("validation_frames") or [])
-            for frame, iou in sorted(
-                (int(f), v) for f, v in (block.get("iou_per_frame") or {}).items()
-            ):
-                role = "validation" if frame in validation else "supervised"
-                rows.append([name, frame, iou, role])
-        transfer = (metrics.get("transfer") or {}).get("per_frame") or {}
-        for name, per_frame in transfer.items():
-            for frame, iou in sorted((int(f), v) for f, v in per_frame.items()):
-                rows.append([name, frame, iou, "transfer"])
-    elif metrics.get("iou_per_frame"):
-        holdout = metrics.get("holdout_frame")
-        validation = set(metrics.get("validation_frames") or [])
-        for frame, iou in sorted((int(f), v) for f, v in metrics["iou_per_frame"].items()):
-            role = (
-                "holdout"
-                if frame == holdout
-                else "validation"
-                if frame in validation
-                else "supervised"
-            )
-            rows.append([dataset or run_id, frame, iou, role])
+    if isinstance(metrics.get("per_dataset"), dict):
+        rows = _iou_rows_joint(metrics)
+    else:
+        rows = _iou_rows_single(dataset or run_id, metrics)
     if not rows:
         return None
     return _csv(["dataset", "camera_frame", "iou", "role"], rows)
+
+
+def _iou_rows_joint(metrics: dict) -> list[list]:
+    """v2 metrics: every trained dataset's frames plus the transfer frames."""
+    rows: list[list] = []
+    for name, block in metrics["per_dataset"].items():
+        validation = set(block.get("validation_frames") or [])
+        for frame, iou in sorted(
+            (int(f), v) for f, v in (block.get("iou_per_frame") or {}).items()
+        ):
+            role = "validation" if frame in validation else "supervised"
+            rows.append([name, frame, iou, role])
+    transfer = (metrics.get("transfer") or {}).get("per_frame") or {}
+    for name, per_frame in transfer.items():
+        for frame, iou in sorted((int(f), v) for f, v in per_frame.items()):
+            rows.append([name, frame, iou, "transfer"])
+    return rows
+
+
+def _iou_rows_single(dataset: str, metrics: dict) -> list[list]:
+    """v1 metrics: one dataset's frames with holdout/validation roles."""
+    holdout = metrics.get("holdout_frame")
+    validation = set(metrics.get("validation_frames") or [])
+    rows: list[list] = []
+    for frame, iou in sorted(
+        (int(f), v) for f, v in (metrics.get("iou_per_frame") or {}).items()
+    ):
+        role = (
+            "holdout"
+            if frame == holdout
+            else "validation"
+            if frame in validation
+            else "supervised"
+        )
+        rows.append([dataset, frame, iou, role])
+    return rows
 
 
 def trajectory_csv(settings: Settings, run_id: str, dataset: str | None) -> str | None:

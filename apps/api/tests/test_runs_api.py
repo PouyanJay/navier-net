@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings
 
@@ -128,7 +129,7 @@ def test_summary_carries_datasets_heldout_val_iou_and_date(client, repo_root: Pa
     joint_row = rows["joint_run"]
     assert joint_row["datasets"] == ["highest_t", "second_ds"]
     assert joint_row["heldout_datasets"] == ["second_ds"]
-    assert joint_row["val_iou_mean"] == 0.941
+    assert joint_row["val_iou_mean"] == pytest.approx(0.941)
     assert joint_row["iou_holdout"] is None
     demo = rows["demo_run"]
     assert demo["datasets"] == ["highest_t"]

@@ -111,7 +111,15 @@ def _load_scene(settings: Settings, run_id: str, dataset: str | None) -> _FieldS
     try:
         if joint:
             model, contexts, _ = load_joint(cfg, paths)
-            context = next((cx for cx in contexts if cx.name == dataset), contexts[0])
+            if dataset is None:
+                context = contexts[0]  # the run's primary dataset
+            else:
+                # An unknown dataset must 404, never silently substitute
+                # another condition's values under the requested name.
+                context = next((cx for cx in contexts if cx.name == dataset), None)
+                if context is None:
+                    log.warning("run %s spans no dataset %r", run_id, dataset)
+                    return None
             data, c = context.data, context.c
         else:
             model, data, _ = load_model(cfg, paths)

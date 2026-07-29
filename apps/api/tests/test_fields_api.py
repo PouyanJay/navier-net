@@ -77,3 +77,22 @@ def test_field_map_scopes_a_joint_run_by_dataset(client: TestClient, repo_root):
     ).json()
     assert body["dataset"] == "second"
     assert len(body["values"]) == len(body["y_um"])
+
+
+def test_field_map_unknown_joint_dataset_is_404_not_substituted(client: TestClient, repo_root):
+    """Asking a joint run for a dataset it does not span must 404 — never
+    another condition's values mislabeled under the requested name."""
+    from conftest import write_synthetic_tensors
+
+    processed = repo_root / "data" / "processed" / "second"
+    processed.mkdir(parents=True)
+    write_synthetic_tensors(processed / "tensors.npz")
+
+    joint = {**TINY_RUN, "dataset": None, "datasets": ["highest_t", "second"]}
+    run_id = client.post("/api/runs", json=joint).json()["run_id"]
+    read_stream(client, run_id)
+
+    response = client.get(
+        f"/api/runs/{run_id}/field", params={"name": "alpha", "t": 0, "dataset": "nope"}
+    )
+    assert response.status_code == 404
