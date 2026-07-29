@@ -680,3 +680,35 @@
   color: var(--acc);
   border-color: var(--acc2);
 }
+
+.kin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s4);
+}
+
+@media (max-width: 1080px) {
+  .kin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kin-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.kin-chart-head h3 {
+  font-size: 12.5px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.kin-unit {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}

@@ -13,6 +13,7 @@ import {
 import { isTrainedRun } from "../../lib/runs";
 import { runConditions, runHeadline, runRowMeta } from "./format";
 import { OverviewTab } from "./OverviewTab";
+import { ReconTab } from "./ReconTab";
 import { RunHeader } from "./RunHeader";
 import { useRunDetail } from "./useRunDetail";
 import { useValidation } from "./useValidation";
@@ -271,6 +272,12 @@ export function ResultsPage({ project }: ResultsPageProps) {
                 validation={validation}
                 datasetLabels={datasetLabels}
                 onOpenTab={openTab}
+              />
+            ) : activeTab === "recon" ? (
+              <ReconTab
+                run={selected}
+                viewDataset={viewDataset}
+                datasetLabels={datasetLabels}
               />
             ) : (
               <Panel

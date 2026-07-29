@@ -470,8 +470,11 @@ export const api = {
   getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
   getLossHistory: (id: string) =>
     getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
-  getTrajectory: (id: string) =>
-    getJson<Trajectory>(`${runPath(id)}/trajectory`),
+  getTrajectory: (id: string, dataset?: string) =>
+    getJson<Trajectory>(
+      `${runPath(id)}/trajectory` +
+        (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
+    ),
   getInterface: (id: string, frames = 48) =>
     getJson<InterfaceData>(`${runPath(id)}/interface?frames=${frames}`),
 

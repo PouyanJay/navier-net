@@ -127,6 +127,58 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
           { status: 202 },
         );
       }
+      if (u.includes("/interface")) {
+        return json({
+          run_id: "demo_run",
+          domain: { x_um: [0, 1700], y_um: [0, 360], x_pin_um: 120 },
+          frames: [
+            {
+              t_ms: 0,
+              contours: [
+                [
+                  [100, 100],
+                  [300, 100],
+                  [300, 250],
+                ],
+              ],
+            },
+            {
+              t_ms: 2.5,
+              contours: [
+                [
+                  [100, 100],
+                  [700, 100],
+                  [700, 250],
+                ],
+              ],
+            },
+          ],
+          measured: [
+            {
+              t_ms: 0,
+              contours: [
+                [
+                  [100, 100],
+                  [300, 100],
+                  [300, 250],
+                ],
+              ],
+            },
+          ],
+        });
+      }
+      if (u.includes("/trajectory")) {
+        return json({
+          t_ms: [0, 1, 2, 3],
+          nose_um: [0, 220, 440, 660],
+          area_um2: [0, 50_000, 100_000, 150_000],
+          measured: {
+            t_ms: [0, 1.5, 3],
+            nose_um: [0, 330, 664],
+            area_um2: [0, 76_000, 152_000],
+          },
+        });
+      }
       const validation = u.match(/\/api\/runs\/([^/?]+)\/validation$/);
       if (validation) {
         const run = RUNS.find((r) => r.id === validation[1]);
@@ -266,6 +318,41 @@ describe("results routing", () => {
         "true",
       ),
     );
+  });
+
+  it("reconstruction tab plays the interface and charts the kinematics", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/demo_run/recon`);
+
+    // The continuous player is real (its scrubber exists), with its caption.
+    expect(
+      await screen.findByRole("heading", {
+        name: /continuous reconstruction/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/continuous pinn interface reconstruction/i),
+    ).toBeInTheDocument();
+
+    // Both kinematics quantities chart side by side — never a dual axis.
+    expect(
+      await screen.findByRole("heading", { name: /nose position/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /vapor area/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("joint runs state per-condition reconstruction honestly", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/second_run/recon`);
+
+    expect(
+      await screen.findByText(/per-condition reconstruction/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/no per-condition kinematics yet/i),
+    ).toBeInTheDocument();
   });
 
   it("shows the selected run's header: status, pedigree, config, resume", async () => {
