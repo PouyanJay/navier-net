@@ -19,11 +19,11 @@ const fmtGroup = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toPrecisi
 
 function EquationInfoPopover({
   eq,
-  dataset,
+  datasetName,
   groups,
 }: {
   eq: EquationDisplay;
-  dataset: string;
+  datasetName: string;
   groups: Record<string, number>;
 }) {
   const shown = eq.groups.filter((g) => groups[g] !== undefined);
@@ -47,7 +47,7 @@ function EquationInfoPopover({
       </div>
       {shown.length > 0 && (
         <div className="groupsline">
-          <span>{dataset}:</span>
+          <span>{datasetName}:</span>
           {shown.map((g) => (
             <span key={g}>
               <b>{g}</b> = {fmtGroup(groups[g])}
@@ -59,7 +59,15 @@ function EquationInfoPopover({
   );
 }
 
-function EquationRow({ eq, model }: { eq: EquationDisplay; model: PhysicsModel }) {
+function EquationRow({
+  eq,
+  model,
+  datasetName,
+}: {
+  eq: EquationDisplay;
+  model: PhysicsModel;
+  datasetName: string;
+}) {
   return (
     <div className={eq.on ? "eqrow" : "eqrow off"}>
       <button
@@ -103,14 +111,26 @@ function EquationRow({ eq, model }: { eq: EquationDisplay; model: PhysicsModel }
         <span className="infob" aria-hidden="true">
           i
         </span>
-        <EquationInfoPopover eq={eq} dataset={model.dataset} groups={model.groups} />
+        <EquationInfoPopover
+          eq={eq}
+          datasetName={datasetName}
+          groups={model.groups}
+        />
       </div>
     </div>
   );
 }
 
-/** The governing equations: compact toggle rows, math + detail in a popover. */
-export function EquationsPanel({ model }: { model: PhysicsModel }) {
+/** The governing equations: compact toggle rows, math + detail in a popover.
+ * ``datasetName`` is the selected series' display label (the popover shows it
+ * next to the groups); ``model.dataset`` stays the id for the API. */
+export function EquationsPanel({
+  model,
+  datasetName,
+}: {
+  model: PhysicsModel;
+  datasetName: string;
+}) {
   const active = model.equations.filter((e) => e.on).length;
   return (
     <Panel
@@ -119,7 +139,7 @@ export function EquationsPanel({ model }: { model: PhysicsModel }) {
     >
       <div role="group" aria-label="Governing equations">
         {model.equations.map((eq) => (
-          <EquationRow key={eq.id} eq={eq} model={model} />
+          <EquationRow key={eq.id} eq={eq} model={model} datasetName={datasetName} />
         ))}
       </div>
       <p className="reco-note" style={{ marginTop: "12px" }}>

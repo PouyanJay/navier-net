@@ -422,6 +422,10 @@ describe("DatasetsView", () => {
       0,
     );
     expect(screen.getAllByText("sample").length).toBeGreaterThan(0);
+    // The rename propagates to another surface: the image-sequence panel title.
+    expect(
+      screen.getByText(/Image sequence · High-T FC-72/),
+    ).toBeInTheDocument();
   });
 
   it("clears the label, falling back to the id as the name", async () => {

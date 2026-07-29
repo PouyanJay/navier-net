@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { Callout } from "../components";
 import type { DatasetSummary } from "../lib/api";
-import { seriesName } from "../lib/series";
+import { seriesName, seriesNameOf } from "../lib/series";
 import { EnsembleCanvas } from "./physics/EnsembleCanvas";
 import { EquationsPanel } from "./physics/EquationsPanel";
 import { ModelBuilder } from "./physics/ModelBuilder";
@@ -106,7 +106,10 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
         <>
           {model.saveError && <Callout tone="error">{model.saveError}</Callout>}
           <div className="pm-grid">
-            <EquationsPanel model={model} />
+            <EquationsPanel
+              model={model}
+              datasetName={seriesNameOf(datasets, model.dataset)}
+            />
             <ModelBuilder model={model} />
           </div>
           <EnsembleCanvas model={model} />
