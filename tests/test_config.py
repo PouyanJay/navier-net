@@ -142,3 +142,18 @@ def test_config_is_serialisable(cfg):
     """Every value resolves, so Hydra can snapshot the run."""
     dumped = OmegaConf.to_container(cfg, resolve=True)
     assert dumped["run_name"] == "highest_t"
+
+
+def test_accuracy_technique_defaults_are_no_ops(cfg):
+    """The opt-in accuracy knobs (causal weighting, RBA, adaptive collocation)
+    default to no-ops, so an unchanged config trains exactly as before. A change
+    to any default is a behavioural change and must trip this test."""
+    t = cfg.training
+    assert t.causal_weighting is False
+    assert t.weighting == "gradnorm"  # today's rebalancer, not RBA yet
+    assert t.adaptive_collocation is False
+    # Present and typed so later phases can dial them without schema churn.
+    assert t.causal_time_chunks == 16
+    assert list(t.causal_eps_schedule) == [1e-2, 1e-1, 1.0, 10.0, 100.0]
+    assert t.rba_gamma == pytest.approx(0.999)
+    assert t.resample_every == 500
