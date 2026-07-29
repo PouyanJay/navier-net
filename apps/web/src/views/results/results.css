@@ -1195,3 +1195,128 @@
 .envrow .chip {
   justify-self: end;
 }
+
+.physics-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s5);
+}
+
+@media (max-width: 1080px) {
+  .physics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.physics-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+
+.check-row {
+  display: flex;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line2);
+  font-size: 12.5px;
+}
+
+.check-row:last-child {
+  border-bottom: none;
+}
+
+.check-ic {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: #fff;
+}
+
+.check-ic.ok {
+  background: var(--green);
+}
+
+.check-ic.open {
+  background: var(--amber);
+}
+
+.check-row b {
+  font-weight: 600;
+}
+
+.check-row span:not(.check-ic) {
+  color: var(--ink3);
+  display: block;
+  font-size: 11.5px;
+}
+
+.group-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.gtile {
+  background: var(--panel2);
+  border: 1px solid var(--line2);
+  border-radius: var(--rs);
+  padding: 10px 12px;
+}
+
+.gtile-k {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink3);
+  text-transform: uppercase;
+}
+
+.gtile-v {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.gtile-v em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--ink3);
+}
+
+.sw-line {
+  width: 14px;
+  height: 0;
+  border-top: 2.5px solid currentColor;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.sw-line.series-0 {
+  color: var(--acc2);
+}
+.sw-line.series-1 {
+  color: var(--green);
+}
+.sw-line.series-2 {
+  color: var(--purple);
+}
+.sw-line.series-3 {
+  color: var(--amber);
+}
+.sw-line.series-4 {
+  color: var(--teal);
+}
+
+.train-final {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+  margin: var(--s2) 0 0;
+}

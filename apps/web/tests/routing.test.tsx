@@ -212,6 +212,28 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
           { status: 202 },
         );
       }
+      if (u.includes("/loss-history")) {
+        return json([
+          {
+            step: 100,
+            lr: 2e-3,
+            data: 5e-3,
+            vof: 4e-2,
+            div: 4e-3,
+            src: 2e-3,
+            bc: 2e-3,
+          },
+          {
+            step: 200,
+            lr: 1.8e-3,
+            data: 3e-3,
+            vof: 2e-2,
+            div: 3e-3,
+            src: 1e-3,
+            bc: 1e-3,
+          },
+        ]);
+      }
       if (u.includes("/field?")) {
         return json({
           run_id: "demo_run",
@@ -461,6 +483,28 @@ describe("results routing", () => {
     expect(
       screen.getByRole("heading", { name: /vapor area/i }),
     ).toBeInTheDocument();
+  });
+
+  it("physics and training tabs read real validation, groups and losses", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/demo_run/physics`);
+
+    expect(
+      await screen.findByRole("heading", { name: /physics validation/i }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/nose-speed agreement/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/mass closure — open/i)).toBeInTheDocument();
+    // Group tiles from the condition's own groups endpoint.
+    expect(await screen.findByText("320")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /training/i }));
+    expect(
+      await screen.findByRole("heading", { name: /training diagnostics/i }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(/final ·/)).toBeInTheDocument();
+    expect(screen.getByText(/vof · transport/)).toBeInTheDocument();
   });
 
   it("fields tab evaluates the checkpoint and marks Stage B honestly", async () => {

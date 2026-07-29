@@ -15,6 +15,8 @@ import { runConditions, runHeadline, runRowMeta } from "./format";
 import { AgreementTab } from "./AgreementTab";
 import { FieldsTab } from "./FieldsTab";
 import { OverviewTab } from "./OverviewTab";
+import { PhysicsTab } from "./PhysicsTab";
+import { TrainingTab } from "./TrainingTab";
 import { ReconTab } from "./ReconTab";
 import { RunHeader } from "./RunHeader";
 import { useRunDetail } from "./useRunDetail";
@@ -296,6 +298,14 @@ export function ResultsPage({ project }: ResultsPageProps) {
                 validation={validation}
                 datasetLabels={datasetLabels}
               />
+            ) : activeTab === "physics" ? (
+              <PhysicsTab
+                runId={selected.id}
+                dataset={viewDataset}
+                validation={validation}
+              />
+            ) : activeTab === "training" ? (
+              <TrainingTab runId={selected.id} />
             ) : (
               <Panel
                 title={RESULT_TABS.find((tab) => tab.id === activeTab)!.label}

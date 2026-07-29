@@ -716,6 +716,9 @@ text.chart-axis-title {
 .chart-line.series-3 {
   stroke: var(--amber);
 }
+.chart-line.series-4 {
+  stroke: var(--teal);
+}
 
 /* Pointer crosshair + tooltip on interactive charts (dark canvas) */
 .chart-wrap {
@@ -766,6 +769,9 @@ text.chart-axis-title {
 }
 .chart-tip .tip-swatch.series-2 {
   background: var(--purple);
+}
+.chart-tip .tip-swatch.series-4 {
+  background: var(--teal);
 }
 .chart-tip .tip-swatch.series-3 {
   background: var(--amber);
