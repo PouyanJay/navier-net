@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components";
 import { ArtifactImage } from "../../components/ArtifactImage";
+import { seriesName } from "../../lib/series";
 import {
   artifactUrl,
   type DatasetDetail,
@@ -102,7 +103,7 @@ export function FrameLightbox({
         className="modal lightbox"
         role="dialog"
         aria-modal="true"
-        aria-label={`Frame ${frame} of ${detail.id}`}
+        aria-label={`Frame ${frame} of ${seriesName(detail)}`}
       >
         <div className="hd">
           <h2 className="mono">f{String(frame).padStart(2, "0")}</h2>
@@ -118,7 +119,7 @@ export function FrameLightbox({
           <div className="lightbox-frame">
             <ArtifactImage
               src={artifactUrl.datasetFrame(detail.id, frame)}
-              alt={`Frame ${frame} of ${detail.id} at ${timeMs.toFixed(1)} milliseconds`}
+              alt={`Frame ${frame} of ${seriesName(detail)} at ${timeMs.toFixed(1)} milliseconds`}
             />
             {geo && showBoundary && boundary && (
               <svg

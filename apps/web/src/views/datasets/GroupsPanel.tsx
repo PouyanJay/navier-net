@@ -157,10 +157,10 @@ function shownValue(tile: Tile, groups: DimensionlessGroups): string {
 /** Dimensionless groups as mono stat tiles. Selecting a tile explains that group
  * and reads back what its value means for this run. */
 export function GroupsPanel({
-  datasetId,
+  datasetName,
   groups,
 }: {
-  datasetId: string;
+  datasetName: string;
   groups: DimensionlessGroups;
 }) {
   const present = TILES.filter((tile) => groups[tile.key] != null);
@@ -171,7 +171,7 @@ export function GroupsPanel({
   return (
     <Panel
       title="Derived dimensionless groups"
-      subtitle={`dataset: ${datasetId}`}
+      subtitle={`dataset: ${datasetName}`}
     >
       <div
         className="groups"

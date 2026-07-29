@@ -426,6 +426,36 @@ describe("SolverView", () => {
     expect(screen.queryByText("Holdout IoU")).toBeNull();
   });
 
+  it("shows a series by its display label while still launching by id", async () => {
+    const posts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
+        const path = String(url);
+        if (options?.method === "POST" && path.endsWith("/api/runs")) {
+          posts.push(JSON.parse(String(options.body)));
+          return json(LAUNCHED);
+        }
+        if (path.endsWith("/api/datasets"))
+          return json([
+            { id: "ds_a", label: "High-T FC-72", n_frames: 11, processed: true },
+          ]);
+        if (path.endsWith("/api/runs/active")) return json(null);
+        if (path.endsWith("/api/runs")) return json([]);
+        return json({ detail: "not found" }, 404);
+      }),
+    );
+    render(<SolverView />);
+
+    // The row is labelled by the display name, not the raw id.
+    expect(await screen.findByLabelText("High-T FC-72")).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    // ...but the launch still targets the immutable id.
+    expect((posts[0] as Record<string, unknown>).datasets).toEqual(["ds_a"]);
+  });
+
   it("scopes the dataset list to the open project", async () => {
     const posts: unknown[] = [];
     stubMultiDataset(

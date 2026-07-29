@@ -9,6 +9,7 @@ import {
   useWheelToHorizontal,
 } from "../../components";
 import { ArtifactImage } from "../../components/ArtifactImage";
+import { seriesName } from "../../lib/series";
 import {
   artifactUrl,
   type DatasetDetail,
@@ -119,7 +120,7 @@ export function ImageSequence({
 
   return (
     <Panel
-      title={`Image sequence · ${detail.id}`}
+      title={`Image sequence · ${seriesName(detail)}`}
       subtitle={calibrationLine(detail)}
       actions={
         <PreprocessAction

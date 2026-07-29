@@ -120,10 +120,11 @@ class ProjectUpdate(BaseModel):
 class DatasetSummary(BaseModel):
     """One row in the datasets list."""
 
-    id: str
+    id: str  # immutable filesystem key (data/raw/<id>)
     n_frames: int  # raw TIFFs present on disk
     processed: bool  # preprocessed tensors exist
     conditions_set: bool = False  # per-series conditions.json saved
+    label: str | None = None  # editable display name; None = show the id
     frame_px: tuple[int, int] | None = None  # (width, height) of the raw frames
     dt_frame_ms: float | None = None  # frame interval, from the series' config
 
@@ -210,11 +211,12 @@ class ConditionsResponse(BaseModel):
 class DatasetDetail(BaseModel):
     """Full detail for one dataset."""
 
-    id: str
+    id: str  # immutable filesystem key (data/raw/<id>)
     n_frames: int
     processed: bool
     has_qc: bool  # a preprocessing QC figure exists
     conditions_set: bool = False
+    label: str | None = None  # editable display name; None = show the id
     frame_px: tuple[int, int] | None = None
     holdout_frame: int | None = None  # 1-based camera frame that is never supervised
     um_per_px: float | None = None  # calibration, once preprocessed
@@ -234,6 +236,17 @@ class ExclusionsUpdate(BaseModel):
     """Full replacement of a series' excluded camera frames (1-based)."""
 
     excluded_frames: list[int]
+
+
+# The single source of truth for the series display-name length cap, shared by
+# the request model (transport gate) and the service (defence for direct callers).
+MAX_LABEL_LEN = 80
+
+
+class LabelUpdate(BaseModel):
+    """A series' editable display name. Blank clears it back to the id."""
+
+    label: str = Field(default="", max_length=MAX_LABEL_LEN)
 
 
 class PreprocessStatus(BaseModel):

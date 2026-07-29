@@ -1,5 +1,6 @@
 import { Callout } from "../components";
 import { type ProjectSummary } from "../lib/api";
+import { seriesName } from "../lib/series";
 import { GroupsPanel } from "./datasets/GroupsPanel";
 import { ImageSequence } from "./datasets/ImageSequence";
 import { SeriesLibrary } from "./datasets/SeriesLibrary";
@@ -64,6 +65,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
           data.refresh().catch(() => {});
         }}
         onSaveConditions={data.saveConditions}
+        onSaveLabel={data.saveLabel}
         onPreprocess={() => void data.runPreprocess()}
         preprocessing={data.preprocess?.state === "running"}
       />
@@ -86,7 +88,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
               </Callout>
             )}
             {data.groups && (
-              <GroupsPanel datasetId={detail.id} groups={data.groups} />
+              <GroupsPanel datasetName={seriesName(detail)} groups={data.groups} />
             )}
           </>
         )}

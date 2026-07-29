@@ -7,6 +7,7 @@ import type {
   DatasetSummary,
   ProjectSummary,
 } from "../../lib/api";
+import { seriesName } from "../../lib/series";
 import { EditConditionsModal } from "./EditConditionsModal";
 import { NewSeriesModal } from "./NewSeriesModal";
 
@@ -22,6 +23,8 @@ interface SeriesLibraryProps {
   onProjectChanged: (project: ProjectSummary) => void;
   /** Persist an edit to the selected series' operating conditions. */
   onSaveConditions: (updates: ConditionsUpdate) => Promise<void>;
+  /** Set (or clear) the selected series' editable display name. */
+  onSaveLabel: (label: string) => Promise<void>;
   /** Re-run preprocessing for the selected series (after a baked-field edit). */
   onPreprocess: () => void;
   /** Whether a preprocessing job is already running for the selected series. */
@@ -75,6 +78,7 @@ export function SeriesLibrary({
   onSelect,
   onProjectChanged,
   onSaveConditions,
+  onSaveLabel,
   onPreprocess,
   preprocessing,
 }: SeriesLibraryProps) {
@@ -108,7 +112,12 @@ export function SeriesLibrary({
               TIF
             </span>
             <span className="m">
-              <b>{summary.id}</b>
+              <b>{seriesName(summary)}</b>
+              {summary.label && (
+                <span className="mono ds-id" aria-label={`id: ${summary.id}`}>
+                  {summary.id}
+                </span>
+              )}
               <span className="mono">{seriesMeta(summary)}</span>
             </span>
             <span className="st">
@@ -136,7 +145,14 @@ export function SeriesLibrary({
           aria-label={`${detail.id} conditions`}
         >
           <div className="ds-conditions-hd">
-            <h3 className="mono">{detail.id}</h3>
+            <h3 className={detail.label ? undefined : "mono"}>
+              {seriesName(detail)}
+            </h3>
+            {detail.label && (
+              <span className="mono ds-id" aria-label={`id: ${detail.id}`}>
+                {detail.id}
+              </span>
+            )}
             <span className="sub">inputs</span>
             <Button
               className="ds-conditions-edit"
@@ -171,6 +187,7 @@ export function SeriesLibrary({
           detail={detail}
           onClose={() => setEditing(false)}
           onSave={onSaveConditions}
+          onSaveLabel={onSaveLabel}
         />
       )}
       <p className="note">
