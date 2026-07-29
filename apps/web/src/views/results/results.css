@@ -555,3 +555,82 @@
     opacity: 0.35;
   }
 }
+
+.run-header {
+  padding: var(--s4);
+  display: grid;
+  gap: var(--s3);
+}
+
+.run-header-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+}
+
+.run-header-id {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.run-header-date {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+}
+
+.run-header-spacer {
+  flex: 1;
+}
+
+.run-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+}
+
+.run-meta b {
+  color: var(--ink2);
+  font-weight: 600;
+}
+
+.cfgsnap {
+  border: 1px solid var(--line2);
+  border-radius: var(--rs);
+  background: var(--panel2);
+}
+
+.cfgsnap summary {
+  padding: var(--s2) var(--s3);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink2);
+  cursor: pointer;
+}
+
+.cfgsnap-hint {
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--ink3);
+}
+
+.cfgsnap pre {
+  margin: 0;
+  padding: var(--s1) var(--s3) var(--s3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--ink2);
+  overflow-x: auto;
+}

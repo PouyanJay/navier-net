@@ -50,3 +50,33 @@ export function runRowMeta(run: RunSummary): string {
   ];
   return parts.filter(Boolean).join(" · ") || run.status;
 }
+
+/** The datasets a run trained on and the ones held out (axis B). */
+export function runConditions(run: RunSummary): {
+  all: string[];
+  heldout: Set<string>;
+} {
+  const all = run.datasets?.length
+    ? run.datasets
+    : run.dataset
+      ? [run.dataset]
+      : [];
+  return { all, heldout: new Set(run.heldout_datasets ?? []) };
+}
+
+/** Render a config object as indented YAML-ish text for the snapshot viewer.
+ * Read-only display; the .hydra snapshot on disk stays the source of truth. */
+export function toYamlish(value: unknown, indent = 0): string {
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value))
+    return `[${value.map((v) => String(v)).join(", ")}]`;
+  if (typeof value !== "object") return String(value);
+  const pad = "  ".repeat(indent);
+  return Object.entries(value as Record<string, unknown>)
+    .map(([key, entry]) =>
+      entry !== null && typeof entry === "object" && !Array.isArray(entry)
+        ? `${pad}${key}:\n${toYamlish(entry, indent + 1)}`
+        : `${pad}${key}: ${toYamlish(entry)}`,
+    )
+    .join("\n");
+}

@@ -72,17 +72,68 @@ function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200 });
 }
 
+function detailOf(run: (typeof RUNS)[number]) {
+  return {
+    id: run.id,
+    dataset: run.dataset,
+    status: run.status === "trained" ? "trained" : "empty",
+    steps: run.steps,
+    metrics: {
+      iou_holdout: run.iou_holdout,
+      val_iou_mean: run.val_iou_mean,
+      heldout_datasets: run.heldout_datasets,
+      datasets: run.datasets,
+    },
+    config: {
+      dataset: run.dataset,
+      datasets: run.datasets,
+      training: {
+        steps: run.steps ?? 1500,
+        seed: 1234,
+        val_fraction: 0.2,
+        val_strategy: "tail",
+        device: "cpu",
+      },
+    },
+    artifacts: {
+      checkpoint: run.status === "trained",
+      metrics: true,
+      groups: true,
+      video: false,
+      figures: [],
+    },
+  };
+}
+
 /** The endpoints the shell + results skeleton touch; everything else 404s. */
-function mockApi(): { runListCalls: string[] } {
-  const calls = { runListCalls: [] as string[] };
+function mockApi(): { runListCalls: string[]; launches: unknown[] } {
+  const calls = { runListCalls: [] as string[], launches: [] as unknown[] };
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string | URL) => {
+    vi.fn(async (url: string | URL, opts?: RequestInit) => {
       const u = String(url);
       if (u.includes("/api/projects/" + PID)) return json(PROJECT);
       if (u.includes("/api/projects")) return json([PROJECT]);
       if (u.includes("/api/datasets")) return json(DATASETS);
       if (u.includes("/api/runs/active")) return json(null);
+      if (u.endsWith("/api/runs") && opts?.method === "POST") {
+        calls.launches.push(JSON.parse(String(opts.body)));
+        return new Response(
+          JSON.stringify({
+            run_id: "demo_run",
+            dataset: "highest_t",
+            state: "queued",
+          }),
+          { status: 202 },
+        );
+      }
+      const detail = u.match(/\/api\/runs\/([^/?]+)$/);
+      if (detail) {
+        const run = RUNS.find((r) => r.id === detail[1]);
+        return run
+          ? json(detailOf(run))
+          : new Response("not found", { status: 404 });
+      }
       if (u.includes("/api/runs")) {
         calls.runListCalls.push(u);
         return json(RUNS);
@@ -150,6 +201,37 @@ describe("results routing", () => {
       ).toBeInTheDocument();
     }
     expect(tablist).toBeInTheDocument();
+  });
+
+  it("shows the selected run's header: status, pedigree, config, resume", async () => {
+    const calls = mockApi();
+    renderAt(`/projects/${PID}/results/second_run`);
+
+    // Identity + condition chips: training conditions plus the held-out one.
+    const header = await screen.findByTestId("run-header");
+    expect(header).toHaveTextContent("second_run");
+    expect(header).toHaveTextContent(/trained/i);
+    expect(header).toHaveTextContent(/held out/i);
+
+    // Pedigree comes from the config snapshot the run actually recorded.
+    expect(header).toHaveTextContent("1234"); // seed
+    expect(header).toHaveTextContent(/20\s?% · tail/); // val split
+
+    // The reproducibility affordance: the resolved config, openable in place.
+    fireEvent.click(screen.getByText(/config snapshot/i));
+    expect(await screen.findByText(/val_fraction/)).toBeInTheDocument();
+
+    // A joint run gets a viewing-condition selector for per-condition panels.
+    const selector = screen.getByLabelText(/viewing condition/i);
+    expect(selector).toBeInTheDocument();
+
+    // Resume posts a real resume request for this run.
+    fireEvent.click(screen.getByRole("button", { name: /resume training/i }));
+    await waitFor(() => expect(calls.launches.length).toBe(1));
+    expect(calls.launches[0]).toMatchObject({
+      resume: true,
+      run_id: "second_run",
+    });
   });
 
   it("deep-links a run and tab from the URL", async () => {

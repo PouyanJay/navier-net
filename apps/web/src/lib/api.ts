@@ -286,6 +286,15 @@ export interface LossWeightsInput {
 }
 
 /** A request to start (or resume) a training run. Mirrors the backend model. */
+/** On resume the server applies only `steps` and `render`; every other value
+ * is fixed by the run's own config snapshot, so none are sent. */
+export interface RunResumeRequest {
+  resume: true;
+  run_id: string;
+  steps: number;
+  render?: boolean;
+}
+
 export interface RunLaunchRequest {
   dataset?: string | null;
   /** Joint (transfer-learning) training: one model across these datasets. */
@@ -438,7 +447,7 @@ export const api = {
   getValidation: (id: string) =>
     getJson<PhysicsValidation>(`${runPath(id)}/validation`),
 
-  startRun: (request: RunLaunchRequest) =>
+  startRun: (request: RunLaunchRequest | RunResumeRequest) =>
     sendJson<RunJobStatus>("/api/runs", "POST", request),
   getRunStatus: (id: string) => getJson<RunJobStatus>(`${runPath(id)}/status`),
   getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
