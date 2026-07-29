@@ -907,3 +907,56 @@ text.chart-axis-title {
 .chart-ylabel {
   letter-spacing: 0.06em;
 }
+
+/* ---------- chart frame: the standard controls every chart carries ------- */
+.chart-frame {
+  position: relative;
+  min-width: 0;
+}
+
+.cf-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s1);
+  margin-bottom: var(--s1);
+}
+
+.cf-btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink3);
+  border-radius: var(--rs);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.cf-btn:hover {
+  color: var(--acc);
+  border-color: var(--acc2);
+}
+
+.chart-modal {
+  width: min(1100px, 94vw);
+}
+
+.chart-modal .hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.chart-modal-body {
+  padding-top: var(--s3);
+}
+
+/* Compact segmented control: single-line labels for chart-adjacent switches
+   (the two-line label+sub variant overpowers a panel header). */
+.seg.compact .segb {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+}

@@ -47,3 +47,9 @@ globalThis.matchMedia = ((query: string) => ({
   removeListener() {},
   dispatchEvent: () => false,
 })) as never;
+
+// jsdom has no object URLs; downloads in tests capture the blob instead.
+if (!URL.createObjectURL) {
+  URL.createObjectURL = () => "blob:vitest";
+  URL.revokeObjectURL = () => {};
+}

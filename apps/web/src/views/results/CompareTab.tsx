@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Panel, ViewCanvas } from "../../components";
+import { ChartFrame } from "../../components/ChartFrame";
 import {
   CompareChart,
   type CompareSeries,
@@ -212,16 +213,29 @@ export function CompareTab({
 
       {lossSeries.some((series) => series.points.length > 0) && (
         <>
-          <ViewCanvas>
-            <CompareChart
-              series={lossSeries}
-              logY
-              xLabel="step"
-              yLabel="data loss · log scale"
-              ariaLabel="Data loss of the compared runs over optimisation steps."
-              yFormat={(v) => v.toExponential(1)}
-            />
-          </ViewCanvas>
+          <ChartFrame
+            name="compared-runs-data-loss"
+            title="Data loss of the compared runs"
+            rows={lossSeries.flatMap((series) =>
+              series.points.map((point) => ({
+                run: series.id,
+                step: point.x,
+                data_loss: point.y,
+              })),
+            )}
+            render={() => (
+              <ViewCanvas>
+                <CompareChart
+                  series={lossSeries}
+                  logY
+                  xLabel="step"
+                  yLabel="data loss · log scale"
+                  ariaLabel="Data loss of the compared runs over optimisation steps."
+                  yFormat={(v) => v.toExponential(1)}
+                />
+              </ViewCanvas>
+            )}
+          />
           <p className="figcap">
             <b>Figure 9.</b> The supervision (data) loss of each compared run,
             log-scaled; best IoU per metric row reads green in the table.

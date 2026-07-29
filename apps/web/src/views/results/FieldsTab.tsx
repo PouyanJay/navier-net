@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Callout, Panel } from "../../components";
+import { ChartFrame } from "../../components/ChartFrame";
 import { api, ApiError, type FieldMap } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import { cmap, cssGradient, type ColormapName } from "./fieldColormaps";
@@ -113,6 +114,96 @@ function paintGrid(
   context.putImageData(image, 0, 0);
 }
 
+interface FieldCanvasProps {
+  map: FieldMap;
+  cm: ColormapName;
+  lo: number;
+  hi: number;
+  ariaLabel: string;
+}
+
+/** A painted field grid that reads out position + value under the pointer. */
+function FieldCanvas({ map, cm, lo, hi, ariaLabel }: FieldCanvasProps) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [probe, setProbe] = useState<{
+    xUm: number;
+    yUm: number;
+    value: number;
+    clientX: number;
+    clientY: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (ref.current) paintGrid(ref.current, map, cm, lo, hi);
+  }, [map, cm, lo, hi]);
+
+  return (
+    <div className="field-canvas-wrap">
+      {probe && (
+        <div
+          className="chart-tip iou-tip"
+          style={{ left: probe.clientX + 12, top: probe.clientY + 12 }}
+          role="status"
+        >
+          x {probe.xUm.toFixed(0)} µm · y {probe.yUm.toFixed(0)} µm ·{" "}
+          <b>
+            {Math.abs(probe.value) >= 1000 || Math.abs(probe.value) < 0.01
+              ? probe.value.toExponential(2)
+              : probe.value.toPrecision(3)}
+          </b>{" "}
+          {map.unit}
+        </div>
+      )}
+      <canvas
+        ref={ref}
+        className="field-canvas"
+        role="img"
+        aria-label={ariaLabel}
+        onPointerMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const ix = Math.min(
+            map.x_um.length - 1,
+            Math.max(
+              0,
+              Math.floor(
+                ((event.clientX - rect.left) / rect.width) * map.x_um.length,
+              ),
+            ),
+          );
+          const iy = Math.min(
+            map.y_um.length - 1,
+            Math.max(
+              0,
+              Math.floor(
+                ((event.clientY - rect.top) / rect.height) * map.y_um.length,
+              ),
+            ),
+          );
+          setProbe({
+            xUm: map.x_um[ix],
+            yUm: map.y_um[iy],
+            value: map.values[iy][ix],
+            clientX: event.clientX,
+            clientY: event.clientY,
+          });
+        }}
+        onPointerLeave={() => setProbe(null)}
+      />
+    </div>
+  );
+}
+
+/** The field grid in export-friendly long format (x_um, y_um, value). */
+function gridRows(map: FieldMap): Record<string, unknown>[] {
+  return map.values.flatMap((row, y) =>
+    row.map((value, x) => ({
+      x_um: map.x_um[x],
+      y_um: map.y_um[y],
+      value,
+    })),
+  );
+}
+
 /** Range the colormap spans: symmetric around zero for signed fields. */
 function colorRange(def: FieldDef, map: FieldMap): [number, number] {
   if (!def.signed) return [map.vmin, map.vmax];
@@ -139,7 +230,6 @@ function ResidualMap({
   t,
   available,
 }: ResidualMapProps) {
-  const canvas = useRef<HTMLCanvasElement>(null);
   const [map, setMap] = useState<FieldMap | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -162,10 +252,7 @@ function ResidualMap({
     };
   }, [runId, dataset, name, t, available]);
 
-  useEffect(() => {
-    if (canvas.current && map)
-      paintGrid(canvas.current, map, "amber", map.vmin, map.vmax);
-  }, [map]);
+  const rows = useMemo(() => (map ? gridRows(map) : null), [map]);
 
   if (available === false)
     return (
@@ -176,23 +263,38 @@ function ResidualMap({
     );
 
   return (
-    <div className="res-map">
-      <canvas
-        ref={canvas}
-        role="img"
-        aria-label={`${label} residual magnitude map`}
-      />
-      <div className="res-map-cap">
-        <span>{label}</span>
-        <span>
-          {failed
-            ? "unavailable"
-            : map
-              ? `max ${map.vmax.toExponential(1)}`
-              : "…"}
-        </span>
-      </div>
-    </div>
+    <ChartFrame
+      name={`${runId}-${name}`}
+      title={`${label} — |residual|`}
+      raster
+      rows={rows ?? undefined}
+      json={map}
+      render={() => (
+        <div className="res-map">
+          {map ? (
+            <FieldCanvas
+              map={map}
+              cm="amber"
+              lo={map.vmin}
+              hi={map.vmax}
+              ariaLabel={`${label} residual magnitude map`}
+            />
+          ) : (
+            <div className="fm-dark" aria-hidden="true" />
+          )}
+          <div className="res-map-cap">
+            <span>{label}</span>
+            <span>
+              {failed
+                ? "unavailable"
+                : map
+                  ? `max ${map.vmax.toExponential(1)}`
+                  : "…"}
+            </span>
+          </div>
+        </div>
+      )}
+    />
   );
 }
 
@@ -223,7 +325,6 @@ export function FieldsTab({
   const [available, setAvailable] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
-  const canvas = useRef<HTMLCanvasElement>(null);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const scopedDataset = joint ? (dataset ?? undefined) : undefined;
@@ -272,12 +373,8 @@ export function FieldsTab({
     return () => clearInterval(timer);
   }, [playing]);
 
-  // Paint the grid whenever a payload lands.
-  useEffect(() => {
-    if (!canvas.current || !map) return;
-    const [lo, hi] = colorRange(field, map);
-    paintGrid(canvas.current, map, field.cm, lo, hi);
-  }, [map, field]);
+  // Export rows are sizeable (grid cells); rebuild only when the map does.
+  const fieldRows = useMemo(() => (map ? gridRows(map) : null), [map]);
 
   const stageBOff = available !== null && !available.includes("p");
   const [lo, hi] = map ? colorRange(field, map) : [0, 1];
@@ -341,24 +438,38 @@ export function FieldsTab({
             No trained model to evaluate; train this run in the Solver first.
           </p>
         )}
+        {!error && !unavailable && map && (
+          <ChartFrame
+            name={`${runId}-${field.k}`}
+            title={field.label}
+            raster
+            rows={fieldRows ?? undefined}
+            json={map}
+            render={() => (
+              <div className="field-view">
+                <FieldCanvas
+                  map={map}
+                  cm={field.cm}
+                  lo={lo}
+                  hi={hi}
+                  ariaLabel={`${field.label} field map`}
+                />
+                <div className="cbar">
+                  <span>{lo.toFixed(field.k === "alpha" ? 1 : 0)}</span>
+                  <span
+                    className="cbar-g"
+                    style={{ background: cssGradient(field.cm) }}
+                    aria-hidden="true"
+                  />
+                  <span>{hi.toFixed(field.k === "alpha" ? 1 : 0)}</span>
+                  <span className="cbar-unit">{map?.unit ?? ""}</span>
+                </div>
+              </div>
+            )}
+          />
+        )}
         {!error && !unavailable && (
-          <div className="field-view">
-            <canvas
-              ref={canvas}
-              className="field-canvas"
-              role="img"
-              aria-label={`${field.label} field map`}
-            />
-            <div className="cbar">
-              <span>{lo.toFixed(field.k === "alpha" ? 1 : 0)}</span>
-              <span
-                className="cbar-g"
-                style={{ background: cssGradient(field.cm) }}
-                aria-hidden="true"
-              />
-              <span>{hi.toFixed(field.k === "alpha" ? 1 : 0)}</span>
-              <span className="cbar-unit">{map?.unit ?? ""}</span>
-            </div>
+          <div className="field-view field-view-ctl">
             <div className="field-ctl">
               <button
                 type="button"

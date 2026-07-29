@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Chip, Panel, Stat, ViewCanvas } from "../../components";
+import { ChartFrame } from "../../components/ChartFrame";
 import {
   IouDotChart,
   type IouFramePoint,
@@ -242,14 +243,26 @@ export function AgreementTab({
                       mean {fmtIou(block.mean)}
                     </span>
                   </div>
-                  <ViewCanvas>
-                    <IouDotChart
-                      frames={block.frames}
-                      mean={block.mean}
-                      width={blocks.length === 1 ? 720 : 340}
-                      ariaLabel={`Per-frame IoU for ${labelOf(block.name)}`}
-                    />
-                  </ViewCanvas>
+                  <ChartFrame
+                    name={`${run.id}-${block.name}-iou`}
+                    title={`Per-frame IoU — ${labelOf(block.name)}`}
+                    rows={block.frames.map((frame) => ({
+                      dataset: block.name,
+                      camera_frame: frame.frame,
+                      iou: frame.iou,
+                      role: frame.role,
+                    }))}
+                    render={() => (
+                      <ViewCanvas>
+                        <IouDotChart
+                          frames={block.frames}
+                          mean={block.mean}
+                          width={blocks.length === 1 ? 720 : 340}
+                          ariaLabel={`Per-frame IoU for ${labelOf(block.name)}`}
+                        />
+                      </ViewCanvas>
+                    )}
+                  />
                 </div>
               ))}
             </div>

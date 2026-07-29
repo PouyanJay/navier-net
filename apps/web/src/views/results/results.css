@@ -1542,3 +1542,11 @@
 .res-map-off p {
   margin: var(--s1) 0 0;
 }
+
+.field-canvas-wrap {
+  position: relative;
+}
+
+.field-view-ctl {
+  margin-top: var(--s2);
+}

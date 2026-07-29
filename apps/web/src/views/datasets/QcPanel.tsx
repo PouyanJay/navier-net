@@ -1,6 +1,7 @@
 import * as d3 from "d3";
 import { useEffect, useRef, useState } from "react";
 
+import { ChartFrame } from "../../components/ChartFrame";
 import { ViewCanvas } from "../../components";
 import type { QcData, QcKinematics } from "../../lib/api";
 
@@ -30,6 +31,35 @@ interface QcChecksProps {
 /** The three preprocessing checks as interactive charts behind one switch,
  * rendered as a sub-section within the image-sequence card so the frames and
  * the QC computed from them read as one thing. */
+/** The active check's data in export-friendly long format. */
+function qcRows(qc: QcData, check: Check): Record<string, unknown>[] {
+  if (check === "kinematics")
+    return qc.kinematics.t_ms.map((t, i) => ({
+      t_ms: t,
+      length_um: qc.kinematics.length_um[i],
+      fit_slope_mm_s: qc.kinematics.fit_slope_mm_s,
+    }));
+  if (check === "interface")
+    return qc.interface.frames.flatMap((frame) =>
+      frame.rings.flatMap((ring, ringIndex) =>
+        ring.map(([xStar, yStar]) => ({
+          camera_frame: frame.camera_frame,
+          t_ms: frame.t_ms,
+          ring: ringIndex,
+          x_star: xStar,
+          y_star: yStar,
+        })),
+      ),
+    );
+  return qc.sdf.values.flatMap((row, rowIndex) =>
+    row.map((value, colIndex) => ({
+      row: rowIndex,
+      col: colIndex,
+      sdf: value,
+    })),
+  );
+}
+
 export function QcChecks({ qc, processed }: QcChecksProps) {
   const [check, setCheck] = useState<Check>("kinematics");
   return (
@@ -40,7 +70,7 @@ export function QcChecks({ qc, processed }: QcChecksProps) {
           <span className="sub">computed from the training tensors</span>
         </div>
         {qc && (
-          <div className="seg" role="tablist" aria-label="QC check">
+          <div className="seg compact" role="tablist" aria-label="QC check">
             {CHECKS.map((c) => (
               <button
                 key={c.id}
@@ -48,21 +78,28 @@ export function QcChecks({ qc, processed }: QcChecksProps) {
                 role="tab"
                 aria-selected={check === c.id}
                 className={check === c.id ? "segb on" : "segb"}
+                title={c.sub}
                 onClick={() => setCheck(c.id)}
               >
                 {c.label}
-                <span>{c.sub}</span>
               </button>
             ))}
           </div>
         )}
       </div>
       {qc ? (
-        <ViewCanvas>
-          {check === "kinematics" && <KinematicsChart qc={qc} />}
-          {check === "interface" && <InterfaceChart qc={qc} />}
-          {check === "sdf" && <SdfChart qc={qc} />}
-        </ViewCanvas>
+        <ChartFrame
+          name={`${qc.dataset}-qc-${check}`}
+          title={CHECKS.find((c) => c.id === check)?.label ?? "QC"}
+          rows={qcRows(qc, check)}
+          render={() => (
+            <ViewCanvas>
+              {check === "kinematics" && <KinematicsChart qc={qc} />}
+              {check === "interface" && <InterfaceChart qc={qc} />}
+              {check === "sdf" && <SdfChart qc={qc} />}
+            </ViewCanvas>
+          )}
+        />
       ) : (
         <p className="state-note" role="status">
           {processed

@@ -1,4 +1,5 @@
 import { Panel, ViewCanvas } from "../../components";
+import { ChartFrame } from "../../components/ChartFrame";
 import {
   CompareChart,
   type CompareSeries,
@@ -56,16 +57,23 @@ export function TrainingTab({ runId }: TrainingTabProps) {
       )}
       {history && history.length > 0 && (
         <>
-          <ViewCanvas>
-            <CompareChart
-              series={series}
-              logY
-              xLabel="step"
-              yLabel="residual · log scale"
-              ariaLabel="Training loss per term over optimisation steps, log scale."
-              yFormat={(v) => v.toExponential(1)}
-            />
-          </ViewCanvas>
+          <ChartFrame
+            name={`${runId}-loss-history`}
+            title="Training loss per term"
+            rows={history as unknown as Record<string, unknown>[]}
+            render={() => (
+              <ViewCanvas>
+                <CompareChart
+                  series={series}
+                  logY
+                  xLabel="step"
+                  yLabel="residual · log scale"
+                  ariaLabel="Training loss per term over optimisation steps, log scale."
+                  yFormat={(v) => v.toExponential(1)}
+                />
+              </ViewCanvas>
+            )}
+          />
           <div className="legend">
             {terms.map(({ key, label }, i) => (
               <span className="li" key={String(key)}>

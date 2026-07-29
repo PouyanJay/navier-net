@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Callout, Panel, ViewCanvas } from "../../components";
+import { ChartFrame } from "../../components/ChartFrame";
 import {
   CompareChart,
   type ComparePoint,
@@ -44,40 +45,59 @@ function QuantityChart({
   unit,
   trajectory,
   field,
+  exportName,
 }: {
   title: string;
   unit: string;
   trajectory: Trajectory;
   field: "nose_um" | "area_um2";
+  exportName: string;
 }) {
+  const rows = [
+    ...toSeries(trajectory.t_ms, trajectory[field]).map((point) => ({
+      series: "pinn",
+      t_ms: point.x,
+      [field]: point.y,
+    })),
+    ...toSeries(trajectory.measured.t_ms, trajectory.measured[field]).map(
+      (point) => ({ series: "measured", t_ms: point.x, [field]: point.y }),
+    ),
+  ];
   return (
     <div className="kin-chart">
       <div className="kin-chart-head">
         <h3>{title}</h3>
         <span className="kin-unit">{unit}</span>
       </div>
-      <ViewCanvas>
-        <CompareChart
-          series={[
-            {
-              id: "PINN",
-              points: toSeries(trajectory.t_ms, trajectory[field]),
-            },
-            {
-              id: "measured",
-              points: toSeries(
-                trajectory.measured.t_ms,
-                trajectory.measured[field],
-              ),
-              markers: true,
-            },
-          ]}
-          xLabel="t (ms)"
-          yLabel={`${title.toLowerCase()} · ${unit}`}
-          ariaLabel={`${title}: continuous PINN curve versus measured camera instants (circles).`}
-          yFormat={(v) => v.toFixed(0)}
-        />
-      </ViewCanvas>
+      <ChartFrame
+        name={exportName}
+        title={title}
+        rows={rows}
+        render={() => (
+          <ViewCanvas>
+            <CompareChart
+              series={[
+                {
+                  id: "PINN",
+                  points: toSeries(trajectory.t_ms, trajectory[field]),
+                },
+                {
+                  id: "measured",
+                  points: toSeries(
+                    trajectory.measured.t_ms,
+                    trajectory.measured[field],
+                  ),
+                  markers: true,
+                },
+              ]}
+              xLabel="t (ms)"
+              yLabel={`${title.toLowerCase()} · ${unit}`}
+              ariaLabel={`${title}: continuous PINN curve versus measured camera instants (circles).`}
+              yFormat={(v) => v.toFixed(0)}
+            />
+          </ViewCanvas>
+        )}
+      />
     </div>
   );
 }
@@ -135,12 +155,14 @@ export function KinematicsPanel({ runId, dataset }: KinematicsPanelProps) {
               unit="µm"
               trajectory={load.trajectory}
               field="nose_um"
+              exportName={`${runId}${dataset ? `-${dataset}` : ""}-nose`}
             />
             <QuantityChart
               title="Vapor area"
               unit="µm²"
               trajectory={load.trajectory}
               field="area_um2"
+              exportName={`${runId}${dataset ? `-${dataset}` : ""}-area`}
             />
           </div>
           <p className="figcap">
