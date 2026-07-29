@@ -50,9 +50,8 @@ export function RunHeader({
   const status = STATUS_CHIP[run.status];
   const { all, heldout } = runConditions(run);
   const labelOf = (id: string) => datasetLabels.get(id) ?? id;
-  const training = (detail?.config as Record<string, unknown> | null)?.[
-    "training"
-  ] as Record<string, unknown> | undefined;
+  const training = detail?.config?.["training"] as
+    Record<string, unknown> | undefined;
   const valFraction =
     typeof training?.val_fraction === "number" ? training.val_fraction : null;
   const valSplit =

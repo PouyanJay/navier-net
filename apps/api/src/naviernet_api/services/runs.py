@@ -330,12 +330,21 @@ def read_groups(settings: Settings, run_id: str) -> dict | None:
     return payload.get("groups") if payload else None
 
 
-def read_trajectory(settings: Settings, run_id: str) -> dict | None:
-    """The growth-kinematics arrays the evaluate stage wrote, or None."""
+def read_trajectory(settings: Settings, run_id: str, dataset: str | None = None) -> dict | None:
+    """The growth-kinematics arrays the evaluate stage wrote, or None.
+
+    With `dataset`, a joint run's per-dataset file; the name is validated
+    because it becomes part of a path.
+    """
     paths = _run_paths_or_none(settings, run_id)
     if paths is None:
         return None
-    return _read_json(paths.trajectory_json)
+    if dataset is None:
+        return _read_json(paths.trajectory_json)
+    if not _RUN_ID_RE.match(dataset):
+        log.warning("rejecting unsafe trajectory dataset name %r", dataset)
+        return None
+    return _read_json(paths.trajectory_json_for(dataset))
 
 
 def read_loss_history(settings: Settings, run_id: str) -> list[dict] | None:

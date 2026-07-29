@@ -30,16 +30,7 @@ def build_validation(
         error_pct = abs(inferred - measured) / measured * 100.0
 
     transfer = metrics.get("transfer") or {}
-    per_dataset_raw = metrics.get("per_dataset")
-    per_dataset = (
-        {
-            name: DatasetAgreement.model_validate(block)
-            for name, block in per_dataset_raw.items()
-            if isinstance(block, dict)
-        }
-        if isinstance(per_dataset_raw, dict)
-        else None
-    )
+    per_dataset = _parse_per_dataset(metrics)
 
     return PhysicsValidation(
         nose_speed_inferred_mm_s=inferred,
@@ -63,3 +54,15 @@ def build_validation(
         training_datasets=metrics.get("training_datasets"),
         heldout_datasets=metrics.get("heldout_datasets"),
     )
+
+
+def _parse_per_dataset(metrics: dict) -> dict[str, DatasetAgreement] | None:
+    """A joint run's per-dataset agreement blocks, validated; None on v1 runs."""
+    raw = metrics.get("per_dataset")
+    if not isinstance(raw, dict):
+        return None
+    return {
+        name: DatasetAgreement.model_validate(block)
+        for name, block in raw.items()
+        if isinstance(block, dict)
+    }

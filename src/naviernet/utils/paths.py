@@ -95,6 +95,11 @@ class RunPaths:
     def trajectory_json(self) -> Path:
         return self.output_dir / "trajectory.json"
 
+    def trajectory_json_for(self, dataset: str) -> Path:
+        """A joint run's per-dataset kinematics (single runs keep the legacy
+        unsuffixed name for backward compatibility)."""
+        return self.output_dir / f"trajectory_{dataset}.json"
+
     def ensure(self) -> RunPaths:
         """Create every writable directory. Safe to call repeatedly."""
         for d in (

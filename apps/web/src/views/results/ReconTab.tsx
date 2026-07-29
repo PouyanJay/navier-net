@@ -38,19 +38,10 @@ export function ReconTab({ run, viewDataset, datasetLabels }: ReconTabProps) {
           <ReconstructionPanel runId={run.id} />
         )}
       </Panel>
-      {joint ? (
-        <Panel
-          title="Growth kinematics"
-          subtitle="continuous reconstruction vs camera instants"
-        >
-          <p className="state-note">
-            Joint runs record no per-condition kinematics yet; they arrive with
-            per-dataset trajectories.
-          </p>
-        </Panel>
-      ) : (
-        <KinematicsPanel runId={run.id} />
-      )}
+      <KinematicsPanel
+        runId={run.id}
+        dataset={joint ? viewDataset : undefined}
+      />
     </>
   );
 }

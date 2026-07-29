@@ -350,8 +350,10 @@ describe("results routing", () => {
     expect(
       await screen.findByText(/per-condition reconstruction/i),
     ).toBeInTheDocument();
+    // Kinematics ARE per-condition now: the joint run charts the viewing
+    // condition's trajectory (served with ?dataset=).
     expect(
-      screen.getByText(/no per-condition kinematics yet/i),
+      await screen.findByRole("heading", { name: /nose position/i }),
     ).toBeInTheDocument();
   });
 

@@ -65,7 +65,9 @@ export function runConditions(run: RunSummary): {
 }
 
 /** Render a config object as indented YAML-ish text for the snapshot viewer.
- * Read-only display; the .hydra snapshot on disk stays the source of truth. */
+ * Read-only display; the .hydra snapshot on disk stays the source of truth.
+ * Arrays print their items via String() — exact for the config's scalar lists,
+ * deliberately not a general YAML serializer. */
 export function toYamlish(value: unknown, indent = 0): string {
   if (value === null || value === undefined) return "null";
   if (Array.isArray(value))
@@ -80,3 +82,18 @@ export function toYamlish(value: unknown, indent = 0): string {
     )
     .join("\n");
 }
+
+/** Nose-speed agreement within this band reads as a pass (README's 177 vs 180
+ * mm/s datum sits comfortably inside it). One constant for every tab. */
+export const NOSE_SPEED_TOLERANCE_PCT = 10;
+
+export function noseSpeedTone(
+  errorPct: number | null | undefined,
+): "default" | "green" | "amber" {
+  if (errorPct == null) return "default";
+  return errorPct < NOSE_SPEED_TOLERANCE_PCT ? "green" : "amber";
+}
+
+/** IoU values print with three decimals everywhere. */
+export const fmtIou = (value: number | null | undefined) =>
+  value != null ? value.toFixed(3) : "—";

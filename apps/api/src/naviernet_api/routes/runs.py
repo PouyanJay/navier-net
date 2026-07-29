@@ -125,9 +125,14 @@ def get_validation(
 
 
 @router.get("/{run_id}/trajectory")
-def get_trajectory(run_id: str, settings: Settings = Depends(get_settings)) -> dict:
-    """Continuous + measured growth kinematics (written by the evaluate stage)."""
-    trajectory = runs_service.read_trajectory(settings, run_id)
+def get_trajectory(
+    run_id: str,
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Continuous + measured growth kinematics (written by the evaluate stage).
+    Joint runs record one per spanned dataset; select it with `?dataset=`."""
+    trajectory = runs_service.read_trajectory(settings, run_id, dataset)
     if trajectory is None:
         raise HTTPException(status_code=404, detail=f"no trajectory for run {run_id!r}")
     return trajectory

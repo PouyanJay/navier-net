@@ -324,3 +324,36 @@ def test_stream_replays_fully_after_the_run_finished(client: TestClient):
     names = {event["event"] for event in events}
     assert {"status", "hist", "log"} <= names
     assert [e["data"] for e in events if e["event"] == "status"][-1]["state"] == "done"
+
+
+def test_joint_run_writes_per_dataset_trajectories(client: TestClient, repo_root: Path):
+    """A joint run records growth kinematics per spanned dataset (including the
+    held-out one) and serves them via ?dataset=; the unscoped path stays 404
+    because a joint run has no single trajectory."""
+    from conftest import write_synthetic_tensors
+
+    processed = repo_root / "data" / "processed" / "second"
+    processed.mkdir(parents=True)
+    write_synthetic_tensors(processed / "tensors.npz")
+
+    joint = {
+        **TINY_RUN,
+        "dataset": None,
+        "datasets": ["highest_t", "second"],
+        "heldout_datasets": ["second"],
+        "val_fraction": 0.2,
+    }
+    run_id = client.post("/api/runs", json=joint).json()["run_id"]
+    read_stream(client, run_id)
+
+    for name in ("highest_t", "second"):
+        assert (repo_root / "outputs" / run_id / f"trajectory_{name}.json").is_file()
+        body = client.get(f"/api/runs/{run_id}/trajectory", params={"dataset": name}).json()
+        assert body["t_ms"] and body["nose_um"]
+        assert body["measured"]["t_ms"]
+
+    assert client.get(f"/api/runs/{run_id}/trajectory").status_code == 404
+    assert (
+        client.get(f"/api/runs/{run_id}/trajectory", params={"dataset": "../evil"}).status_code
+        == 404
+    )

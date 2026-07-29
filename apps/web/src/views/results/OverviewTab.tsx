@@ -1,13 +1,7 @@
 import { Panel, Stat } from "../../components";
 import type { PhysicsValidation, RunDetail, RunSummary } from "../../lib/api";
-import { runConditions } from "./format";
+import { fmtIou, noseSpeedTone, runConditions } from "./format";
 import type { ResultTabId } from "./ResultsPage";
-
-/** Nose-speed agreement within this band reads as a pass (mockup contract). */
-const NOSE_SPEED_TOLERANCE_PCT = 10;
-
-const fmtIou = (value: number | null | undefined) =>
-  value != null ? value.toFixed(3) : "—";
 
 interface OverviewTabProps {
   run: RunSummary;
@@ -126,13 +120,7 @@ export function OverviewTab({
             label="Nose-speed error"
             value={noseErr != null ? noseErr.toFixed(1) : "—"}
             unit={noseErr != null ? "%" : undefined}
-            tone={
-              noseErr == null
-                ? "default"
-                : noseErr < NOSE_SPEED_TOLERANCE_PCT
-                  ? "green"
-                  : "amber"
-            }
+            tone={noseSpeedTone(noseErr)}
             hint={
               validation?.nose_speed_measured_mm_s != null
                 ? `inferred ${validation.nose_speed_inferred_mm_s?.toFixed(1)} vs measured ${validation.nose_speed_measured_mm_s.toFixed(0)} mm·s⁻¹`
