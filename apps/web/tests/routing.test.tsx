@@ -487,7 +487,7 @@ describe("results routing", () => {
 
   it("export tab links artifacts and CSV exports, and copies a citation", async () => {
     mockApi();
-    const writeText = vi.fn(async () => {});
+    const writeText = vi.fn(async (_text: string) => {});
     Object.assign(navigator, { clipboard: { writeText } });
     renderAt(`/projects/${PID}/results/demo_run/export`);
 
@@ -505,7 +505,7 @@ describe("results routing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /copy/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
-    expect(String(writeText.mock.calls[0]?.[0])).toContain("demo_run");
+    expect(writeText.mock.calls[0]?.[0]).toContain("demo_run");
 
     // The report bundle is declared planned, not faked.
     expect(
