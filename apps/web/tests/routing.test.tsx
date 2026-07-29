@@ -497,10 +497,13 @@ describe("results routing", () => {
       await screen.findByText(/transfer iou · all frames/i),
     ).toBeInTheDocument();
     expect(screen.getByText("0.903")).toBeInTheDocument();
-    // The envelope marks a group outside the training range as extrapolated
-    // (hele_shaw: training 1.9, held-out 5.2) and inside ones as inside.
-    expect((await screen.findAllByText(/extrapolated/i)).length).toBe(1);
-    expect(screen.getAllByText(/inside envelope/i).length).toBeGreaterThan(0);
+    // With one training dataset the envelope is a point: groups where the
+    // held-out value differs read extrapolated; the matching one (Pr) reads
+    // inside. Both states must be present and text-labeled.
+    expect(
+      (await screen.findAllByText(/extrapolated/i)).length,
+    ).toBeGreaterThan(1);
+    expect(screen.getByText(/inside envelope/i)).toBeInTheDocument();
   });
 
   it("single runs show the transfer empty state", async () => {
