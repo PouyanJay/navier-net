@@ -13,6 +13,7 @@ import {
 import { isTrainedRun } from "../../lib/runs";
 import { runConditions, runHeadline, runRowMeta } from "./format";
 import { AgreementTab } from "./AgreementTab";
+import { CompareTab } from "./CompareTab";
 import { FieldsTab } from "./FieldsTab";
 import { OverviewTab } from "./OverviewTab";
 import { PhysicsTab } from "./PhysicsTab";
@@ -306,6 +307,8 @@ export function ResultsPage({ project }: ResultsPageProps) {
               />
             ) : activeTab === "training" ? (
               <TrainingTab runId={selected.id} />
+            ) : activeTab === "compare" ? (
+              <CompareTab runs={runs ?? []} currentId={selected.id} />
             ) : (
               <Panel
                 title={RESULT_TABS.find((tab) => tab.id === activeTab)!.label}

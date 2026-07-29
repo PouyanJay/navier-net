@@ -1320,3 +1320,98 @@
   color: var(--ink3);
   margin: var(--s2) 0 0;
 }
+
+.cmp-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.cmp-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink2);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.cmp-pick[aria-pressed="true"] {
+  border-color: var(--acc);
+  background: var(--accsoft);
+  color: var(--ink);
+}
+
+.cmp-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.cmp-swatch.series-0 {
+  background: var(--acc);
+}
+.cmp-swatch.series-1 {
+  background: var(--green);
+}
+.cmp-swatch.series-2 {
+  background: var(--purple);
+}
+.cmp-swatch.series-3 {
+  background: var(--amber);
+}
+
+.cmp-table-wrap {
+  overflow-x: auto;
+  margin: var(--s4) 0;
+}
+
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cmp-table th {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cmp-table tbody th {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+  border-bottom: 1px solid var(--line2);
+}
+
+.cmp-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line2);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cmp-table tr:last-child td,
+.cmp-table tr:last-child th {
+  border-bottom: none;
+}
+
+.cmp-table td.best {
+  color: var(--green);
+  font-weight: 600;
+}

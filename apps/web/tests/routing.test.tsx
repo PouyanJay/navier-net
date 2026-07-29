@@ -485,6 +485,25 @@ describe("results routing", () => {
     ).toBeInTheDocument();
   });
 
+  it("compare tab tables the selected runs with the best cell marked", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/demo_run/compare`);
+
+    // Both trained runs preselected: their columns + the pick chips.
+    const picks = await screen.findByRole("group", {
+      name: /runs to compare/i,
+    });
+    expect(picks).toHaveTextContent("demo_run");
+    expect(picks).toHaveTextContent("second_run");
+    expect(
+      await screen.findByRole("columnheader", { name: "second_run" }),
+    ).toBeInTheDocument();
+    // The joint run's axis-A number lands in its table column (the run
+    // browser also shows it, so scope to the table).
+    const table = screen.getByRole("table");
+    await waitFor(() => expect(table).toHaveTextContent("0.941"));
+  });
+
   it("physics and training tabs read real validation, groups and losses", async () => {
     mockApi();
     renderAt(`/projects/${PID}/results/demo_run/physics`);
