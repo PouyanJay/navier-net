@@ -211,7 +211,7 @@ REGISTRY: tuple[Equation, ...] = (
         id="evap",
         stage="B",
         name="Evaporation mass closure",
-        tex=r"s = (\rho_\ell/\rho_v - 1)\,\mathrm{St}\,j\,\delta_\text{int}",
+        tex=r"s = (1 - \rho_v/\rho_\ell)\,\mathrm{St}\,j\,\delta_\text{int}",
         weight_key="evap",
         fields_required=("s", "T"),
         groups=("Ja",),

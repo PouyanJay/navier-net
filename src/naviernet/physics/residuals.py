@@ -264,7 +264,14 @@ def energy_residuals(
     theta = model.temperature(x, cx)  # non-dimensional superheat (T - T_sat)/dT_ref
     # Hardt-Wondra flux; the same flux dilates mass and removes latent heat.
     evap = groups["Ja"] * (theta / r_int_star) * delta
-    src_closure = model.source(x, cx) - (rho_ratio - 1.0) * evap
+    # Mass closure: the free dilatation source ``s`` (which enters continuity as
+    # u_x + v_y - s) must equal the volume the phase change creates. That volume is
+    # mdot*(1/rho_v - 1/rho_l); in the model's vapour-scaled source the prefactor is
+    # the O(1) fraction (1 - rho_v/rho_l), NOT (rho_l/rho_v - 1) ~ rho_ratio, which
+    # over-scales the source ~120x -> unphysical interface velocity that collapses
+    # alpha (see tests). Detach the flux target so this one-way penalty trains ``s``
+    # alone and cannot flatten the interface (delta) or perturb theta to cheat.
+    src_closure = model.source(x, cx) - (1.0 - 1.0 / rho_ratio) * evap.detach()
 
     u, v = model.velocity(x, cx)
     t_x, t_y, t_t = gradients(theta, x)
