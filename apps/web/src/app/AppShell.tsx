@@ -49,8 +49,6 @@ export const NAV_ITEMS: NavItem[] = [
 
 /** What the shell knows about the platform's real state (drives chrome). */
 export interface PlatformStatus {
-  /** Stage ids that are complete (e.g. datasets processed, model trained). */
-  done: Record<string, boolean>;
   /** Latest trained run, for the sidebar's run metadata. `name` is the
    * display name (dataset-named legacy runs follow their series' label). */
   latestRun: { id: string; name: string; steps: number | null } | null;
@@ -224,12 +222,7 @@ function Sidebar({
                 aria-current={item.id === active ? "page" : undefined}
                 onClick={() => onNavigate(item.id)}
               >
-                <span
-                  className="node"
-                  data-done={status.done[item.id] || undefined}
-                >
-                  {status.done[item.id] ? "✓" : item.stage}
-                </span>
+                <span className="node">{item.stage}</span>
                 <span className="txt">
                   <b>{item.label}</b>
                   <span>{item.sub}</span>
@@ -385,7 +378,7 @@ export function AppShell({
         )}
         <StatusChips
           project={project}
-          trained={Boolean(status.done.solver)}
+          trained={status.latestRun != null}
           projectCount={status.projects}
           running={activeRun?.state === "running"}
         />

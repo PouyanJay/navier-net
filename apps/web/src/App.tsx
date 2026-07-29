@@ -17,7 +17,7 @@ import {
   type RunJobStatus,
   type RunSummary,
 } from "./lib/api";
-import { hasEvaluation, isTrainedRun } from "./lib/runs";
+import { isTrainedRun } from "./lib/runs";
 import { seriesNameOf } from "./lib/series";
 import { DatasetsView } from "./views/DatasetsView";
 import { PhysicsModelView } from "./views/PhysicsModelView";
@@ -50,7 +50,6 @@ const CONTINUE: Record<string, { label: string; next: string }> = {
 };
 
 const IDLE_STATUS: PlatformStatus = {
-  done: { physics: true },
   latestRun: null,
   projects: 0,
 };
@@ -100,13 +99,10 @@ function Workspace() {
       .catch(() => setRepo(null)); // chrome only; views surface real errors
   }, []);
 
-  // Stage flags are scoped to the open project: an empty project shows an
+  // The run chip is scoped to the open project: an empty project shows an
   // untouched pipeline even when other projects have trained runs.
   const status = useMemo<PlatformStatus>(() => {
     if (!repo) return IDLE_STATUS;
-    const datasets = project
-      ? repo.datasets.filter((dataset) => project.datasets.includes(dataset.id))
-      : repo.datasets;
     const runs = project
       ? repo.runs.filter(
           (run) =>
@@ -122,12 +118,6 @@ function Workspace() {
         ? seriesNameOf(repo.datasets, latest.dataset)
         : latest.id);
     return {
-      done: {
-        datasets: datasets.some((dataset) => dataset.processed),
-        physics: true, // the governing equations ship with the platform
-        solver: trained.length > 0,
-        results: runs.some(hasEvaluation),
-      },
       latestRun: latest
         ? { id: latest.id, name: latestName ?? latest.id, steps: latest.steps }
         : null,

@@ -303,11 +303,6 @@
   border-color: var(--acc2);
   color: var(--acc2);
 }
-.stage .node[data-done] {
-  background: var(--green);
-  border-color: var(--green);
-  color: var(--side);
-}
 .stage + .stage::before {
   content: "";
   position: absolute;
