@@ -69,11 +69,15 @@ export function RunHeader({
   return (
     <div className="card run-header" data-testid="run-header">
       <div className="run-header-top">
-        <span className="run-header-id">{displayName}</span>
+        <span
+          className="run-header-id"
+          title={
+            displayName !== run.id ? `stored in outputs/${run.id}` : undefined
+          }
+        >
+          {displayName}
+        </span>
         <Chip tone={status.tone}>{status.label}</Chip>
-        {displayName !== run.id && (
-          <span className="run-header-raw">outputs/{run.id}</span>
-        )}
         <span className="run-header-date">{formatRunDate(run.date)}</span>
         <span className="run-header-spacer" />
         {all.length > 1 && viewDataset && (

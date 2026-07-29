@@ -111,13 +111,11 @@ export function SeriesLibrary({
             <span className="ic mono" aria-hidden="true">
               TIF
             </span>
-            <span className="m">
+            <span
+              className="m"
+              title={summary.label ? `series id: ${summary.id}` : undefined}
+            >
               <b>{seriesName(summary)}</b>
-              {summary.label && (
-                <span className="mono ds-id" aria-label={`id: ${summary.id}`}>
-                  {summary.id}
-                </span>
-              )}
               <span className="mono">{seriesMeta(summary)}</span>
             </span>
             <span className="st">
@@ -145,14 +143,12 @@ export function SeriesLibrary({
           aria-label={`${detail.id} conditions`}
         >
           <div className="ds-conditions-hd">
-            <h3 className={detail.label ? undefined : "mono"}>
+            <h3
+              className={detail.label ? undefined : "mono"}
+              title={detail.label ? `series id: ${detail.id}` : undefined}
+            >
               {seriesName(detail)}
             </h3>
-            {detail.label && (
-              <span className="mono ds-id" aria-label={`id: ${detail.id}`}>
-                {detail.id}
-              </span>
-            )}
             <span className="sub">inputs</span>
             <Button
               className="ds-conditions-edit"

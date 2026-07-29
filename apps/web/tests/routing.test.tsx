@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -714,8 +720,11 @@ describe("results routing", () => {
     expect(row).toHaveAttribute("aria-selected", "true");
     const header = await screen.findByTestId("run-header");
     expect(header).toHaveTextContent("series-1");
-    // …while the immutable id stays visible as provenance.
-    expect(header).toHaveTextContent("outputs/highest_t");
+    expect(header).not.toHaveTextContent("outputs/highest_t");
+    // …while the immutable id stays discoverable as hover provenance.
+    expect(
+      within(header).getByTitle(/stored in outputs\/highest_t/i),
+    ).toBeInTheDocument();
   });
 
   it("deep-links a run and tab from the URL", async () => {

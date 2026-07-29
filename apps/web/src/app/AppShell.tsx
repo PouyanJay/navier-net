@@ -51,8 +51,9 @@ export const NAV_ITEMS: NavItem[] = [
 export interface PlatformStatus {
   /** Stage ids that are complete (e.g. datasets processed, model trained). */
   done: Record<string, boolean>;
-  /** Latest trained run, for the sidebar's run metadata. */
-  latestRun: { id: string; steps: number | null } | null;
+  /** Latest trained run, for the sidebar's run metadata. `name` is the
+   * display name (dataset-named legacy runs follow their series' label). */
+  latestRun: { id: string; name: string; steps: number | null } | null;
   /** Number of projects in the workspace (home-mode chip). */
   projects: number;
 }
@@ -247,7 +248,7 @@ function Sidebar({
             </div>
             <div className="kv">
               <span>Run</span>
-              <span className="mono">{status.latestRun?.id ?? "n/a"}</span>
+              <span className="mono">{status.latestRun?.name ?? "n/a"}</span>
             </div>
             <div className="kv">
               <span>Backend</span>
@@ -347,7 +348,16 @@ export function AppShell({
               <span className="crumb-sep" aria-hidden="true">
                 /
               </span>
-              <span className="mono">{status.latestRun.id}</span>
+              <span
+                className="mono"
+                title={
+                  status.latestRun.name !== status.latestRun.id
+                    ? `outputs/${status.latestRun.id}`
+                    : undefined
+                }
+              >
+                {status.latestRun.name}
+              </span>
             </>
           )}
         </nav>

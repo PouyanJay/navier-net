@@ -18,6 +18,7 @@ import {
   type RunSummary,
 } from "./lib/api";
 import { hasEvaluation, isTrainedRun } from "./lib/runs";
+import { seriesNameOf } from "./lib/series";
 import { DatasetsView } from "./views/DatasetsView";
 import { PhysicsModelView } from "./views/PhysicsModelView";
 import { ProjectsView } from "./views/ProjectsView";
@@ -114,6 +115,12 @@ function Workspace() {
       : repo.runs;
     const trained = runs.filter(isTrainedRun);
     const latest = trained[trained.length - 1] ?? null;
+    // Dataset-named legacy runs follow their series' current display label.
+    const latestName =
+      latest &&
+      (latest.dataset && latest.id === latest.dataset
+        ? seriesNameOf(repo.datasets, latest.dataset)
+        : latest.id);
     return {
       done: {
         datasets: datasets.some((dataset) => dataset.processed),
@@ -121,7 +128,9 @@ function Workspace() {
         solver: trained.length > 0,
         results: runs.some(hasEvaluation),
       },
-      latestRun: latest ? { id: latest.id, steps: latest.steps } : null,
+      latestRun: latest
+        ? { id: latest.id, name: latestName ?? latest.id, steps: latest.steps }
+        : null,
       projects: repo.projectCount,
     };
   }, [repo, project]);

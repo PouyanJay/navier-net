@@ -395,7 +395,7 @@ describe("DatasetsView", () => {
     );
   });
 
-  it("renames a series with an editable display label, keeping the id visible", async () => {
+  it("renames a series; the label replaces the id everywhere visible", async () => {
     const calls = mockApi();
     render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
@@ -417,11 +417,15 @@ describe("DatasetsView", () => {
     await waitFor(() => expect(calls.labelPuts).toEqual(["High-T FC-72"]));
     // A label-only edit must not touch the conditions.
     expect(calls.conditionPatches).toEqual([]);
-    // The card now shows the label, with the immutable id still visible.
+    // The card now shows the label; the immutable id leaves the visible
+    // surface (it stays discoverable as hover provenance and in the modal).
     expect((await screen.findAllByText("High-T FC-72")).length).toBeGreaterThan(
       0,
     );
-    expect(screen.getAllByText("sample").length).toBeGreaterThan(0);
+    expect(screen.queryAllByText("sample").length).toBe(0);
+    expect(screen.getAllByTitle(/series id: sample/i).length).toBeGreaterThan(
+      0,
+    );
     // The rename propagates to another surface: the image-sequence panel title.
     expect(
       screen.getByText(/Image sequence · High-T FC-72/),
