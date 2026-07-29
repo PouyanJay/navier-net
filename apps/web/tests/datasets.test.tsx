@@ -160,6 +160,7 @@ function json(body: unknown) {
 interface Calls {
   upload: string[];
   startPreprocess: string[];
+  qcFetches: number;
   conditionPatches: Record<string, unknown>[];
   projectPatches: Record<string, unknown>[];
   exclusionPuts: number[][];
@@ -177,6 +178,7 @@ function mockApi({
   const calls: Calls = {
     upload: [],
     startPreprocess: [],
+    qcFetches: 0,
     conditionPatches: [],
     projectPatches: [],
     exclusionPuts: [],
@@ -223,6 +225,7 @@ function mockApi({
       if (u.endsWith("/api/fluids")) return json(FLUIDS);
       if (u.endsWith("/groups")) return json(GROUPS);
       if (u.endsWith("/qc-data")) {
+        calls.qcFetches += 1;
         return processed ? json(QC) : new Response("{}", { status: 404 });
       }
       if (u.endsWith("/conditions") && opts?.method === "PATCH") {
@@ -509,6 +512,38 @@ describe("DatasetsView", () => {
     expect(banner).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Re-preprocess/i }));
     await waitFor(() => expect(calls.startPreprocess).toContain("sample"));
+  });
+
+  it("refetches the QC charts after a re-preprocess settles", async () => {
+    // Regression: a RE-preprocess changes neither `selected` nor `processed`,
+    // so the QC used to keep the pre-exclusion chart until a page reload.
+    const calls = mockApi({ processed: true });
+    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // First QC load for the processed series.
+    await waitFor(() => expect(calls.qcFetches).toBeGreaterThan(0));
+    const before = calls.qcFetches;
+
+    // A baked edit → stale banner → re-preprocess; polling settles at once.
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+    fireEvent.change(dialog.getByLabelText(/Frame interval/), {
+      target: { value: "0.25" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Re-preprocess/i }),
+    );
+    await waitFor(() => expect(calls.startPreprocess).toContain("sample"));
+
+    // The settled preprocess must force a fresh QC fetch.
+    await waitFor(() => expect(calls.qcFetches).toBeGreaterThan(before), {
+      timeout: 5000,
+    });
   });
 
   it("keeps save disabled for an out-of-range condition", async () => {
