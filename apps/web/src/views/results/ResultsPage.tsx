@@ -12,8 +12,10 @@ import {
 } from "../../lib/api";
 import { isTrainedRun } from "../../lib/runs";
 import { runConditions, runHeadline, runRowMeta } from "./format";
+import { OverviewTab } from "./OverviewTab";
 import { RunHeader } from "./RunHeader";
 import { useRunDetail } from "./useRunDetail";
+import { useValidation } from "./useValidation";
 import "./results.css";
 
 /** How many further optimisation steps a header "Resume training" asks for. */
@@ -123,6 +125,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
       : "overview";
 
   const { detail } = useRunDetail(selected?.id ?? null);
+  const { validation } = useValidation(selected?.id ?? null);
 
   // Per-condition panels (viewport, kinematics, fields…) view one condition of
   // a joint run at a time; default to the run's first dataset.
@@ -261,15 +264,25 @@ export function ResultsPage({ project }: ResultsPageProps) {
           aria-labelledby={`tab-${activeTab}`}
         >
           {selected ? (
-            <Panel
-              title={RESULT_TABS.find((tab) => tab.id === activeTab)!.label}
-              subtitle={selected.id}
-            >
-              <p className="res-quiet">
-                {/* Walking skeleton: panels land tab by tab in later tasks. */}
-                Content for “{activeTab}” arrives in a later task.
-              </p>
-            </Panel>
+            activeTab === "overview" ? (
+              <OverviewTab
+                run={selected}
+                detail={detail}
+                validation={validation}
+                datasetLabels={datasetLabels}
+                onOpenTab={openTab}
+              />
+            ) : (
+              <Panel
+                title={RESULT_TABS.find((tab) => tab.id === activeTab)!.label}
+                subtitle={selected.id}
+              >
+                <p className="res-quiet">
+                  {/* Panels land tab by tab in later tasks. */}
+                  Content for “{activeTab}” arrives in a later task.
+                </p>
+              </Panel>
+            )
           ) : runs !== null ? (
             <div className="res-empty">
               <b>Nothing to show</b>

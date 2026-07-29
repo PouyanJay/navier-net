@@ -127,6 +127,43 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
           { status: 202 },
         );
       }
+      const validation = u.match(/\/api\/runs\/([^/?]+)\/validation$/);
+      if (validation) {
+        const run = RUNS.find((r) => r.id === validation[1]);
+        if (!run) return new Response("not found", { status: 404 });
+        const joint = run.id === "second_run";
+        return json({
+          nose_speed_inferred_mm_s: 177.3,
+          nose_speed_measured_mm_s: joint ? null : 180.0,
+          nose_speed_error_pct: joint ? null : 1.5,
+          bretherton_film_um: 4.9,
+          hele_shaw: 1.9,
+          reynolds: 320,
+          weber: 1.8,
+          capillary: 0.0056,
+          prandtl: 9.4,
+          iou_mean: joint ? 0.953 : 0.962,
+          iou_holdout: run.iou_holdout,
+          holdout_frame: run.iou_holdout != null ? 6 : null,
+          val_iou_mean: run.val_iou_mean,
+          iou_val: null,
+          validation_frames: [],
+          transfer_iou_mean: joint ? 0.903 : null,
+          transfer_per_dataset: joint ? { low_t: 0.903 } : null,
+          per_dataset: joint
+            ? {
+                highest_t: {
+                  iou_mean: 0.958,
+                  iou_val: 0.941,
+                  validation_frames: [8, 9, 10],
+                  iou_per_frame: { "0": 0.96, "8": 0.94 },
+                },
+              }
+            : null,
+          training_datasets: joint ? ["highest_t"] : null,
+          heldout_datasets: joint ? ["low_t"] : null,
+        });
+      }
       const detail = u.match(/\/api\/runs\/([^/?]+)$/);
       if (detail) {
         const run = RUNS.find((r) => r.id === detail[1]);
@@ -203,6 +240,34 @@ describe("results routing", () => {
     expect(tablist).toBeInTheDocument();
   });
 
+  it("overview leads with the two-axis generalization scorecard", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/second_run/overview`);
+
+    const panel = await screen.findByTestId("overview-scorecard");
+    // Axis A — in-distribution validation IoU of the trained conditions
+    // (waits: the validation fetch resolves after first paint).
+    await waitFor(() => expect(panel).toHaveTextContent("0.941"));
+    expect(panel).toHaveTextContent(/in-distribution/i);
+    // Axis B — transfer to the held-out condition.
+    expect(panel).toHaveTextContent("0.903");
+    expect(panel).toHaveTextContent(/transfer/i);
+
+    // The verdict narrative states what the numbers argue.
+    expect(
+      screen.getByText(/learned physics, not footage/i),
+    ).toBeInTheDocument();
+
+    // At-a-glance chips jump to their tab.
+    fireEvent.click(screen.getByRole("button", { name: /field maps/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /fields/i })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+  });
+
   it("shows the selected run's header: status, pedigree, config, resume", async () => {
     const calls = mockApi();
     renderAt(`/projects/${PID}/results/second_run`);
@@ -213,8 +278,9 @@ describe("results routing", () => {
     expect(header).toHaveTextContent(/trained/i);
     expect(header).toHaveTextContent(/held out/i);
 
-    // Pedigree comes from the config snapshot the run actually recorded.
-    expect(header).toHaveTextContent("1234"); // seed
+    // Pedigree comes from the config snapshot the run actually recorded
+    // (waits: the detail fetch resolves after first paint).
+    await waitFor(() => expect(header).toHaveTextContent("1234")); // seed
     expect(header).toHaveTextContent(/20\s?% · tail/); // val split
 
     // The reproducibility affordance: the resolved config, openable in place.

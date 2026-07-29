@@ -72,6 +72,14 @@ export interface RunDetail {
   artifacts: ArtifactFlags;
 }
 
+/** One dataset's agreement block inside a joint run's v2 metrics. */
+export interface DatasetAgreement {
+  iou_mean: number | null;
+  iou_val: number | null;
+  validation_frames: number[];
+  iou_per_frame: Record<string, number>;
+}
+
 export interface PhysicsValidation {
   nose_speed_inferred_mm_s: number | null;
   nose_speed_measured_mm_s: number | null;
@@ -85,6 +93,15 @@ export interface PhysicsValidation {
   iou_mean: number | null;
   iou_holdout: number | null;
   holdout_frame: number | null;
+  // Two-axis validation (metrics.json v2); null/empty on legacy runs.
+  val_iou_mean: number | null;
+  iou_val: number | null;
+  validation_frames: number[];
+  transfer_iou_mean: number | null;
+  transfer_per_dataset: Record<string, number> | null;
+  per_dataset: Record<string, DatasetAgreement> | null;
+  training_datasets: string[] | null;
+  heldout_datasets: string[] | null;
 }
 
 export interface OperatingConditions {

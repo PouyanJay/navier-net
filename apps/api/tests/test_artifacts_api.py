@@ -95,3 +95,52 @@ def test_tensors_download(client):
 )
 def test_artifacts_of_unknown_run_are_404(client, endpoint):
     assert client.get(f"/api/runs/ghost/{endpoint}").status_code == 404
+
+
+def test_validation_carries_the_two_axis_summary_for_a_joint_run(client, repo_root):
+    """A joint run's validation surfaces axis A (in-distribution), axis B
+    (transfer), and the per-dataset agreement — not just the v1 fields."""
+    import json
+
+    joint = repo_root / "outputs" / "joint_run"
+    (joint / "checkpoints").mkdir(parents=True)
+    (joint / "metrics.json").write_text(
+        json.dumps(
+            {
+                "datasets": ["highest_t", "second"],
+                "training_datasets": ["highest_t"],
+                "heldout_datasets": ["second"],
+                "iou_mean": 0.953,
+                "val_iou_mean": 0.941,
+                "per_dataset": {
+                    "highest_t": {
+                        "iou_mean": 0.958,
+                        "iou_val": 0.941,
+                        "validation_frames": [8, 9, 10],
+                        "iou_per_frame": {"0": 0.96, "8": 0.94},
+                    }
+                },
+                "transfer": {"per_dataset": {"second": 0.903}, "mean": 0.903},
+            }
+        )
+    )
+
+    body = client.get("/api/runs/joint_run/validation").json()
+
+    assert body["val_iou_mean"] == 0.941
+    assert body["transfer_iou_mean"] == 0.903
+    assert body["transfer_per_dataset"] == {"second": 0.903}
+    assert body["training_datasets"] == ["highest_t"]
+    assert body["heldout_datasets"] == ["second"]
+    assert body["per_dataset"]["highest_t"]["iou_val"] == 0.941
+    assert body["per_dataset"]["highest_t"]["validation_frames"] == [8, 9, 10]
+
+
+def test_validation_single_run_carries_axis_a_when_split_was_used(client):
+    """v1 metrics with iou_val (single-series axis A) surface it unchanged."""
+    body = client.get("/api/runs/demo_run/validation").json()
+
+    # demo_run's fixture metrics have no val split: the axis fields are null,
+    # and the legacy holdout fields still populate.
+    assert body["val_iou_mean"] is None
+    assert body["iou_holdout"] == 0.968

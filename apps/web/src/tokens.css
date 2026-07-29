@@ -80,6 +80,9 @@
   /* Type */
   --mono: "JetBrains Mono", ui-monospace, monospace;
   --sans: "Geist Variable", system-ui, -apple-system, sans-serif;
+  /* Serif voice: verdict narratives and figure captions (the mockup's
+     editorial register). */
+  --serif: "Crimson Pro", "Iowan Old Style", Palatino, Georgia, serif;
 
   /* Spacing scale (4px base) */
   --s1: 4px;
