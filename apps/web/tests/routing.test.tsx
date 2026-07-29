@@ -485,6 +485,34 @@ describe("results routing", () => {
     ).toBeInTheDocument();
   });
 
+  it("export tab links artifacts and CSV exports, and copies a citation", async () => {
+    mockApi();
+    const writeText = vi.fn(async () => {});
+    Object.assign(navigator, { clipboard: { writeText } });
+    renderAt(`/projects/${PID}/results/demo_run/export`);
+
+    expect(
+      await screen.findByRole("heading", { name: /run artifacts/i }),
+    ).toBeInTheDocument();
+    // CSV exports point at the real export endpoints.
+    const links = await screen.findAllByRole("link", { name: /download/i });
+    expect(
+      links.some((a) => a.getAttribute("href")?.includes("/export/iou.csv")),
+    ).toBe(true);
+    expect(
+      links.some((a) => a.getAttribute("href")?.includes("/export/loss.csv")),
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /copy/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    expect(String(writeText.mock.calls[0]?.[0])).toContain("demo_run");
+
+    // The report bundle is declared planned, not faked.
+    expect(
+      screen.getByText(/planned \(follow-up feature\)/i),
+    ).toBeInTheDocument();
+  });
+
   it("compare tab tables the selected runs with the best cell marked", async () => {
     mockApi();
     renderAt(`/projects/${PID}/results/demo_run/compare`);

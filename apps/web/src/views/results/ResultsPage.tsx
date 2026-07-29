@@ -14,6 +14,7 @@ import { isTrainedRun } from "../../lib/runs";
 import { runConditions, runHeadline, runRowMeta } from "./format";
 import { AgreementTab } from "./AgreementTab";
 import { CompareTab } from "./CompareTab";
+import { ExportTab } from "./ExportTab";
 import { FieldsTab } from "./FieldsTab";
 import { OverviewTab } from "./OverviewTab";
 import { PhysicsTab } from "./PhysicsTab";
@@ -310,15 +311,11 @@ export function ResultsPage({ project }: ResultsPageProps) {
             ) : activeTab === "compare" ? (
               <CompareTab runs={runs ?? []} currentId={selected.id} />
             ) : (
-              <Panel
-                title={RESULT_TABS.find((tab) => tab.id === activeTab)!.label}
-                subtitle={selected.id}
-              >
-                <p className="res-quiet">
-                  {/* Panels land tab by tab in later tasks. */}
-                  Content for “{activeTab}” arrives in a later task.
-                </p>
-              </Panel>
+              <ExportTab
+                run={selected}
+                detail={detail}
+                viewDataset={viewDataset}
+              />
             )
           ) : runs !== null ? (
             <div className="res-empty">

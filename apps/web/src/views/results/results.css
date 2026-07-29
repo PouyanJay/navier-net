@@ -1415,3 +1415,48 @@
   color: var(--green);
   font-weight: 600;
 }
+
+.dl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line2);
+}
+
+.dl-row:last-of-type {
+  border-bottom: none;
+}
+
+.dl-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.dl-name small {
+  display: block;
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+
+.btn-link {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: var(--rs);
+  padding: 4px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--sans);
+  text-decoration: none;
+  box-shadow: var(--sh);
+  cursor: pointer;
+}
+
+.btn-link:hover {
+  background: var(--panel2);
+}

@@ -144,3 +144,25 @@ def test_validation_single_run_carries_axis_a_when_split_was_used(client):
     # and the legacy holdout fields still populate.
     assert body["val_iou_mean"] is None
     assert body["iou_holdout"] == 0.968
+
+
+def test_iou_csv_exports_frames_with_roles(client):
+    response = client.get("/api/runs/demo_run/export/iou.csv")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    lines = response.text.strip().splitlines()
+    assert lines[0] == "dataset,camera_frame,iou,role"
+    assert any("highest_t,6,0.968,holdout" in line for line in lines)
+
+
+def test_loss_csv_exports_the_checkpoint_history(client):
+    response = client.get("/api/runs/demo_run/export/loss.csv")
+    assert response.status_code == 200
+    lines = response.text.strip().splitlines()
+    assert lines[0].startswith("step,lr,")
+    assert lines[1].startswith("200,")
+
+
+def test_exports_404_when_the_artifact_is_absent(client):
+    assert client.get("/api/runs/scratch/export/loss.csv").status_code == 404
+    assert client.get("/api/runs/nope/export/iou.csv").status_code == 404

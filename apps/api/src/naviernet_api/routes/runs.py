@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from naviernet_api.models import (
@@ -18,6 +18,7 @@ from naviernet_api.models import (
     RunLaunchRequest,
     RunSummary,
 )
+from naviernet_api.services import exports as exports_service
 from naviernet_api.services import fields as fields_service
 from naviernet_api.services import physics as physics_service
 from naviernet_api.services import projects as projects_service
@@ -138,6 +139,42 @@ def get_trajectory(
     if trajectory is None:
         raise HTTPException(status_code=404, detail=f"no trajectory for run {run_id!r}")
     return trajectory
+
+
+def _csv_response(body: str | None, filename: str, run_id: str) -> Response:
+    if body is None:
+        raise HTTPException(status_code=404, detail=f"nothing to export for run {run_id!r}")
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{run_id}/export/iou.csv")
+def export_iou(run_id: str, settings: Settings = Depends(get_settings)):
+    """Per-frame IoU with each frame's validation role, in long format."""
+    body = exports_service.iou_csv(settings, run_id)
+    return _csv_response(body, f"{run_id}_iou.csv", run_id)
+
+
+@router.get("/{run_id}/export/trajectory.csv")
+def export_trajectory(
+    run_id: str,
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+):
+    """Growth kinematics (PINN + measured) in long format."""
+    body = exports_service.trajectory_csv(settings, run_id, dataset)
+    suffix = f"_{dataset}" if dataset else ""
+    return _csv_response(body, f"{run_id}{suffix}_trajectory.csv", run_id)
+
+
+@router.get("/{run_id}/export/loss.csv")
+def export_loss(run_id: str, settings: Settings = Depends(get_settings)):
+    """The checkpoint's loss history, one row per logged step."""
+    body = exports_service.loss_csv(settings, run_id)
+    return _csv_response(body, f"{run_id}_loss.csv", run_id)
 
 
 @router.get("/{run_id}/field")
