@@ -88,7 +88,10 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
               </Callout>
             )}
             {data.groups && (
-              <GroupsPanel datasetName={seriesName(detail)} groups={data.groups} />
+              <GroupsPanel
+                datasetName={seriesName(detail)}
+                groups={data.groups}
+              />
             )}
           </>
         )}

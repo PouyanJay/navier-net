@@ -164,7 +164,8 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
   const activeFields = useMemo<FieldName[]>(() => {
     if (!edit) return [];
     return ALL_FIELDS.filter(
-      (f) => FIELDS[f].needs === null || edit.enabled[FIELDS[f].needs as string],
+      (f) =>
+        FIELDS[f].needs === null || edit.enabled[FIELDS[f].needs as string],
     );
   }, [edit]);
 
@@ -180,7 +181,8 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
     // Only Stage-B weights are owned here; Stage-A weights are set at run launch.
     const weights: Record<string, number> = {};
     for (const e of edit.equations) {
-      if (e.stage === "B") weights[e.weight_key] = edit.weights[e.weight_key] ?? e.weight;
+      if (e.stage === "B")
+        weights[e.weight_key] = edit.weights[e.weight_key] ?? e.weight;
     }
     const base = edit.perField.phi;
     const per_field: Record<string, { hidden: number; layers: number }> = {};
@@ -276,7 +278,10 @@ function deriveView(edit: EditState, activeFields: FieldName[]) {
 }
 
 /** The edit actions, each producing a dirty patch over ``edit``. */
-function buildActions(edit: EditState, patch: (next: Partial<EditState>) => void) {
+function buildActions(
+  edit: EditState,
+  patch: (next: Partial<EditState>) => void,
+) {
   return {
     toggleEquation: (id: string) => {
       if (!TOGGLEABLE.has(id)) return;
@@ -294,11 +299,16 @@ function buildActions(edit: EditState, patch: (next: Partial<EditState>) => void
         baseline: { perField: structuredClone(d.perField), globals: d.globals },
       });
     },
-    setGlobal: <K extends keyof EditState["globals"]>(key: K, value: EditState["globals"][K]) =>
-      patch({ globals: { ...edit.globals, [key]: value } }),
+    setGlobal: <K extends keyof EditState["globals"]>(
+      key: K,
+      value: EditState["globals"][K],
+    ) => patch({ globals: { ...edit.globals, [key]: value } }),
     setFieldArch: (field: FieldName, key: keyof FieldArch, value: number) =>
       patch({
-        perField: { ...edit.perField, [field]: { ...edit.perField[field], [key]: value } },
+        perField: {
+          ...edit.perField,
+          [field]: { ...edit.perField[field], [key]: value },
+        },
       }),
     resetToPreset: () =>
       patch({
@@ -310,10 +320,17 @@ function buildActions(edit: EditState, patch: (next: Partial<EditState>) => void
 
 function deriveFromPreset(preset: PresetName): Baseline {
   const p = PRESETS[preset];
-  return { perField: derivePerField(p), globals: { ff: p.ff, ffScale: p.ffScale } };
+  return {
+    perField: derivePerField(p),
+    globals: { ff: p.ff, ffScale: p.ffScale },
+  };
 }
 
-function buildHydra(edit: EditState, activeFields: FieldName[], baseArch: FieldArch): string {
+function buildHydra(
+  edit: EditState,
+  activeFields: FieldName[],
+  baseArch: FieldArch,
+): string {
   const parts = [
     `dataset=${edit.dataset}`,
     `model.fields=[${activeFields.join(",")}]`,

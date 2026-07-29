@@ -1,11 +1,14 @@
 import { Panel } from "../../components";
-import type { RunSummary } from "../../lib/api";
+import type { PhysicsValidation, RunDetail, RunSummary } from "../../lib/api";
 import { runConditions } from "./format";
+import { FrameMatchPanel } from "./FrameMatchPanel";
 import { KinematicsPanel } from "./KinematicsPanel";
 import { ReconstructionPanel } from "./ReconstructionPanel";
 
 interface ReconTabProps {
   run: RunSummary;
+  detail: RunDetail | null;
+  validation: PhysicsValidation | null;
   viewDataset: string | null;
   datasetLabels: Map<string, string>;
 }
@@ -15,7 +18,13 @@ interface ReconTabProps {
  * kinematics it implies. Joint runs are scoped to the viewing condition once
  * per-condition artifacts exist (T6/T7); until then they state that honestly.
  */
-export function ReconTab({ run, viewDataset, datasetLabels }: ReconTabProps) {
+export function ReconTab({
+  run,
+  detail,
+  validation,
+  viewDataset,
+  datasetLabels,
+}: ReconTabProps) {
   const { all } = runConditions(run);
   const joint = all.length > 1;
   const scope = joint
@@ -38,6 +47,13 @@ export function ReconTab({ run, viewDataset, datasetLabels }: ReconTabProps) {
           <ReconstructionPanel runId={run.id} />
         )}
       </Panel>
+      <FrameMatchPanel
+        runId={run.id}
+        dataset={joint ? viewDataset : (run.dataset ?? viewDataset)}
+        metrics={detail?.metrics ?? null}
+        validation={validation}
+        pinnAvailable={!joint}
+      />
       <KinematicsPanel
         runId={run.id}
         dataset={joint ? viewDataset : undefined}

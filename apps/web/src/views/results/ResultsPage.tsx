@@ -276,6 +276,8 @@ export function ResultsPage({ project }: ResultsPageProps) {
             ) : activeTab === "recon" ? (
               <ReconTab
                 run={selected}
+                detail={detail}
+                validation={validation}
                 viewDataset={viewDataset}
                 datasetLabels={datasetLabels}
               />

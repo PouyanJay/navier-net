@@ -18,11 +18,41 @@ export interface FieldMeta {
 }
 
 export const FIELDS: Record<FieldName, FieldMeta> = {
-  phi: { label: "φ→α", hue: "var(--f-phi)", transform: "sigmoid(φ/ε)", stage: "A", needs: null },
-  u: { label: "u", hue: "var(--f-u)", transform: "identity", stage: "A", needs: null },
-  v: { label: "v", hue: "var(--f-v)", transform: "identity", stage: "A", needs: null },
-  s: { label: "s", hue: "var(--f-s)", transform: "softplus ≥ 0", stage: "A", needs: null },
-  p: { label: "p", hue: "var(--f-p)", transform: "zero-mean gauge", stage: "B", needs: "mom" },
+  phi: {
+    label: "φ→α",
+    hue: "var(--f-phi)",
+    transform: "sigmoid(φ/ε)",
+    stage: "A",
+    needs: null,
+  },
+  u: {
+    label: "u",
+    hue: "var(--f-u)",
+    transform: "identity",
+    stage: "A",
+    needs: null,
+  },
+  v: {
+    label: "v",
+    hue: "var(--f-v)",
+    transform: "identity",
+    stage: "A",
+    needs: null,
+  },
+  s: {
+    label: "s",
+    hue: "var(--f-s)",
+    transform: "softplus ≥ 0",
+    stage: "A",
+    needs: null,
+  },
+  p: {
+    label: "p",
+    hue: "var(--f-p)",
+    transform: "zero-mean gauge",
+    stage: "B",
+    needs: "mom",
+  },
   T: {
     label: "T",
     hue: "var(--f-t)",
@@ -65,7 +95,9 @@ export function derivePerField(preset: Preset): Record<FieldName, FieldArch> {
   for (const f of ALL_FIELDS) {
     const stageB = FIELDS[f].stage === "B";
     out[f] = {
-      width: stageB ? Math.round(preset.width * STAGE_B_SCALE.width) : preset.width,
+      width: stageB
+        ? Math.round(preset.width * STAGE_B_SCALE.width)
+        : preset.width,
       depth: stageB ? preset.depth + STAGE_B_SCALE.depth : preset.depth,
     };
   }
@@ -73,7 +105,11 @@ export function derivePerField(preset: Preset): Record<FieldName, FieldArch> {
 }
 
 /** Exact trainable-parameter count for one field network. */
-export function fieldParams(arch: FieldArch, ff: number, nodewise: boolean): number {
+export function fieldParams(
+  arch: FieldArch,
+  ff: number,
+  nodewise: boolean,
+): number {
   const { width: w, depth: d } = arch;
   let n = 2 * ff * w + w; // Fourier features -> first hidden
   for (let i = 1; i < d; i++) n += w * w + w; // hidden stack

@@ -21,7 +21,9 @@ function validate(model: PhysicsModel): string[] {
       `σ_B = ${g.ffScale} is likely too low to resolve ε = ${g.alphaEps}; the α network will smooth the interface.`,
     );
   }
-  if (model.activeFields.some((f) => model.perField[f].width > MAX_STABLE_WIDTH)) {
+  if (
+    model.activeFields.some((f) => model.perField[f].width > MAX_STABLE_WIDTH)
+  ) {
     warns.push(
       `Width > ${MAX_STABLE_WIDTH} — CPU step cost grows quadratically; plan for a GPU device in Solver.`,
     );
@@ -101,7 +103,11 @@ export function PerFieldTable({ model }: { model: PhysicsModel }) {
                       disabled={!on}
                       aria-label={`${meta.label} width`}
                       onChange={(e) =>
-                        model.setFieldArch(f, "width", Number(e.target.value) || arch.width)
+                        model.setFieldArch(
+                          f,
+                          "width",
+                          Number(e.target.value) || arch.width,
+                        )
                       }
                     />
                   </td>
@@ -114,16 +120,28 @@ export function PerFieldTable({ model }: { model: PhysicsModel }) {
                       disabled={!on}
                       aria-label={`${meta.label} depth`}
                       onChange={(e) =>
-                        model.setFieldArch(f, "depth", Number(e.target.value) || arch.depth)
+                        model.setFieldArch(
+                          f,
+                          "depth",
+                          Number(e.target.value) || arch.depth,
+                        )
                       }
                     />
                   </td>
                   <td>
-                    {on ? meta.transform : <span className="locknote">enable {unlock} to unlock</span>}
+                    {on ? (
+                      meta.transform
+                    ) : (
+                      <span className="locknote">
+                        enable {unlock} to unlock
+                      </span>
+                    )}
                   </td>
                   <td>{on ? fmtCount(model.fieldParamCount(f)) : "—"}</td>
                   <td>
-                    <span className={meta.stage === "A" ? "tag a" : "tag b"}>{meta.stage}</span>
+                    <span className={meta.stage === "A" ? "tag a" : "tag b"}>
+                      {meta.stage}
+                    </span>
                   </td>
                 </tr>
               );

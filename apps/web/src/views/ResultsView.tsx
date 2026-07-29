@@ -90,7 +90,13 @@ interface RunHeaderProps {
   detail: RunDetail | null;
 }
 
-function RunHeader({ runs, datasets, selected, onSelect, detail }: RunHeaderProps) {
+function RunHeader({
+  runs,
+  datasets,
+  selected,
+  onSelect,
+  detail,
+}: RunHeaderProps) {
   const current = runs.find((r) => r.id === selected);
   const statusTone = current?.status === "trained" ? "green" : "default";
   return (

@@ -1,5 +1,10 @@
 import { Panel } from "../../components";
-import { estMemoryMB, estMinutesPer1kSteps, fmtCount, type PresetName } from "./model";
+import {
+  estMemoryMB,
+  estMinutesPer1kSteps,
+  fmtCount,
+  type PresetName,
+} from "./model";
 import type { PhysicsModel } from "./usePhysicsModel";
 
 const PRESET_META: { name: PresetName; label: string; note: string }[] = [
@@ -22,7 +27,8 @@ function recommendations(model: PhysicsModel): Reco[] {
     {
       value: `σ_B = ${g.ffScale} · ε = ${g.alphaEps}`,
       why: `Spectral scale sized so ${g.ff} Fourier pairs resolve the interface half-width.`,
-      modified: model.globalOverridden("ff") || model.globalOverridden("ffScale"),
+      modified:
+        model.globalOverridden("ff") || model.globalOverridden("ffScale"),
     },
     {
       value: `α network ${pf.phi.width} × ${pf.phi.depth}`,
@@ -32,14 +38,20 @@ function recommendations(model: PhysicsModel): Reco[] {
     {
       value: `u, v, s networks ${pf.u.width} × ${pf.u.depth}`,
       why: "Smooth hidden fields; capacity follows α at ratio 1.0.",
-      modified: model.fieldOverridden("u") || model.fieldOverridden("v") || model.fieldOverridden("s"),
+      modified:
+        model.fieldOverridden("u") ||
+        model.fieldOverridden("v") ||
+        model.fieldOverridden("s"),
     },
     {
-      value: pOn ? `p, T networks ${pf.p.width} × ${pf.p.depth}` : "p, T — locked",
+      value: pOn
+        ? `p, T networks ${pf.p.width} × ${pf.p.depth}`
+        : "p, T — locked",
       why: pOn
         ? "Stage-B fields sized +33% width, +2 depth for stiffer residuals."
         : "Enable Momentum or Energy to unlock pressure and temperature.",
-      modified: pOn && (model.fieldOverridden("p") || model.fieldOverridden("T")),
+      modified:
+        pOn && (model.fieldOverridden("p") || model.fieldOverridden("T")),
     },
   ];
 }
@@ -52,7 +64,11 @@ export function ModelBuilder({ model }: { model: PhysicsModel }) {
   const recos = recommendations(model);
 
   return (
-    <Panel title="Model builder" subtitle="preset → derived → override" className="builder">
+    <Panel
+      title="Model builder"
+      subtitle="preset → derived → override"
+      className="builder"
+    >
       <div className="seg" role="radiogroup" aria-label="Capacity preset">
         {PRESET_META.map((p) => {
           const on = model.preset === p.name;
@@ -92,8 +108,9 @@ export function ModelBuilder({ model }: { model: PhysicsModel }) {
       </div>
 
       <p className="reco-note">
-        <b>Derived from your physics.</b> Parameter count is exact; time and memory are
-        estimates. Hover a row for the reasoning; edit anything in the table below to override.
+        <b>Derived from your physics.</b> Parameter count is exact; time and
+        memory are estimates. Hover a row for the reasoning; edit anything in
+        the table below to override.
       </p>
 
       <div>
@@ -115,7 +132,8 @@ export function ModelBuilder({ model }: { model: PhysicsModel }) {
       {model.overrideCount > 0 && (
         <div className="builderfoot">
           <span className="ovrchip">
-            {model.overrideCount} value{model.overrideCount === 1 ? "" : "s"} overridden
+            {model.overrideCount} value{model.overrideCount === 1 ? "" : "s"}{" "}
+            overridden
             <button type="button" onClick={model.resetToPreset}>
               reset all
             </button>

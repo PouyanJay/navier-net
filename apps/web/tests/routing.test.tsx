@@ -83,6 +83,9 @@ function detailOf(run: (typeof RUNS)[number]) {
       val_iou_mean: run.val_iou_mean,
       heldout_datasets: run.heldout_datasets,
       datasets: run.datasets,
+      iou_per_frame: { "1": 0.973, "6": 0.968, "10": 0.921 },
+      holdout_frame: run.iou_holdout != null ? 6 : null,
+      validation_frames: [10],
     },
     config: {
       dataset: run.dataset,
@@ -114,6 +117,76 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
       const u = String(url);
       if (u.includes("/api/projects/" + PID)) return json(PROJECT);
       if (u.includes("/api/projects")) return json([PROJECT]);
+      if (u.includes("/api/datasets/highest_t/qc-data")) {
+        return json({
+          dataset: "highest_t",
+          n_frames_event: 10,
+          kinematics: {
+            t_ms: [0],
+            length_um: [0],
+            fit_slope_mm_s: 180,
+            fit_intercept_um: 0,
+          },
+          interface: {
+            x_pin_star: 0.1,
+            x_range: [0, 5.6],
+            y_range: [0, 1.2],
+            l_ref_um: 300,
+            y_roi_top: 40,
+            frames: [1, 6, 10].map((n) => ({
+              index: n - 1,
+              camera_frame: n,
+              t_ms: (n - 1) * 0.5,
+              rings: [
+                [
+                  [0.1, 0.2],
+                  [0.5, 0.2],
+                  [0.5, 0.9],
+                ],
+              ],
+            })),
+          },
+          sdf: {
+            frame_index: 0,
+            t_ms: 0,
+            x_range: [0, 5.6],
+            y_range: [0, 1.2],
+            values: [[0]],
+          },
+        });
+      }
+      if (u.match(/\/api\/datasets\/highest_t$/)) {
+        return json({
+          id: "highest_t",
+          n_frames: 12,
+          processed: true,
+          conditions_set: true,
+          label: "highest_t",
+          frame_px: [1024, 256],
+          dt_frame_ms: 0.5,
+          has_qc: true,
+          conditions: {
+            fluid: "fc72",
+            T_sat_C: 56,
+            q_wall_W_cm2: 2,
+            flow_rate_mL_hr: 10,
+            channel_width_um: 300,
+            channel_height_um: 300,
+            dt_frame_ms: 0.5,
+            flow_direction: "left",
+            n_frames_raw: 12,
+            n_frames_usable: 11,
+            n_frames_event: 10,
+            U_ref_m_s: 0.2,
+          },
+          holdout_frame: 6,
+          um_per_px: 1.685,
+          notes: null,
+          excluded_frames: [],
+          exclusions_applied: true,
+          conditions_applied: true,
+        });
+      }
       if (u.includes("/api/datasets")) return json(DATASETS);
       if (u.includes("/api/runs/active")) return json(null);
       if (u.endsWith("/api/runs") && opts?.method === "POST") {
@@ -333,6 +406,18 @@ describe("results routing", () => {
     expect(
       await screen.findByText(/continuous pinn interface reconstruction/i),
     ).toBeInTheDocument();
+
+    // Frame matching: per-frame thumbnails with IoU + role, layer toggles.
+    const strip = await screen.findByRole("group", { name: /camera frames/i });
+    expect(strip).toHaveTextContent("f01 · 0.973");
+    expect(strip).toHaveTextContent(/HOLDOUT/);
+    const layerGroup = screen.getByRole("group", { name: /overlay layers/i });
+    for (const layer of ["camera", "detected", "PINN"]) {
+      expect(
+        screen.getByRole("button", { name: new RegExp(`^${layer}$`) }),
+      ).toBeInTheDocument();
+    }
+    expect(layerGroup).toBeInTheDocument();
 
     // Both kinematics quantities chart side by side — never a dual axis.
     expect(
