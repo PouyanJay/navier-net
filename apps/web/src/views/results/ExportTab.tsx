@@ -1,7 +1,7 @@
 import { Chip, Panel } from "../../components";
 import { useToast } from "../../components/Toast";
 import { artifactUrl, type RunDetail, type RunSummary } from "../../lib/api";
-import { formatRunDate, runConditions } from "./format";
+import { formatRunDate, runConditions, runDisplayName } from "./format";
 
 const exportUrl = {
   iou: (id: string) => `/api/runs/${encodeURIComponent(id)}/export/iou.csv`,
@@ -40,11 +40,17 @@ interface ExportTabProps {
   run: RunSummary;
   detail: RunDetail | null;
   viewDataset: string | null;
+  datasetLabels: Map<string, string>;
 }
 
 /** Everything the run produced, and the flat CSVs a paper's analysis wants —
  * all regenerable from raw data plus the run's config snapshot. */
-export function ExportTab({ run, detail, viewDataset }: ExportTabProps) {
+export function ExportTab({
+  run,
+  detail,
+  viewDataset,
+  datasetLabels,
+}: ExportTabProps) {
   const toast = useToast();
   const artifacts = detail?.artifacts;
   const { all } = runConditions(run);
@@ -52,7 +58,14 @@ export function ExportTab({ run, detail, viewDataset }: ExportTabProps) {
 
   const citation = () => {
     const date = formatRunDate(run.date) ?? run.date ?? "";
-    const text = `naviernet run ${run.id} · conditions ${all.join(", ")} · ${date} · ${window.location.href}`;
+    // Labels for the reader, ids in parentheses for reproducibility.
+    const conditions = all
+      .map((id) => {
+        const label = datasetLabels.get(id) ?? id;
+        return label === id ? id : `${label} (${id})`;
+      })
+      .join(", ");
+    const text = `naviernet run ${runDisplayName(run, datasetLabels)} (outputs/${run.id}) · conditions ${conditions} · ${date} · ${window.location.href}`;
     navigator.clipboard
       ?.writeText(text)
       .then(() => toast("Citation copied", text, "ok"))
@@ -124,7 +137,7 @@ export function ExportTab({ run, detail, viewDataset }: ExportTabProps) {
         />
         <Row
           name="Growth kinematics"
-          detail={`series, t_ms, nose_um, area_um2${joint && viewDataset ? ` — ${viewDataset}` : ""}`}
+          detail={`series, t_ms, nose_um, area_um2${joint && viewDataset ? ` — ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
           href={exportUrl.trajectory(run.id, joint ? viewDataset : null)}
         />
         <Row

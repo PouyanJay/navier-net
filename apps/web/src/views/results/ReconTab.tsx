@@ -27,9 +27,8 @@ export function ReconTab({
 }: ReconTabProps) {
   const { all } = runConditions(run);
   const joint = all.length > 1;
-  const scope = joint
-    ? (datasetLabels.get(viewDataset ?? "") ?? viewDataset ?? "—")
-    : (run.dataset ?? "—");
+  const scopeId = joint ? viewDataset : (run.dataset ?? viewDataset);
+  const scope = scopeId ? (datasetLabels.get(scopeId) ?? scopeId) : "—";
 
   return (
     <>
@@ -50,6 +49,7 @@ export function ReconTab({
       <FrameMatchPanel
         runId={run.id}
         dataset={joint ? viewDataset : (run.dataset ?? viewDataset)}
+        datasetName={scope}
         metrics={detail?.metrics ?? null}
         validation={validation}
         pinnAvailable={!joint}

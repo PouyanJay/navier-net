@@ -52,6 +52,19 @@ const RUNS = [
     steps_total: 200,
   },
   {
+    // A legacy CLI run auto-named after its dataset: it must display the
+    // series' current label, never the stale id.
+    id: "highest_t",
+    dataset: "highest_t",
+    status: "trained",
+    steps: 800,
+    iou_holdout: 0.96,
+    datasets: ["highest_t"],
+    heldout_datasets: [],
+    val_iou_mean: null,
+    date: "2026-07-23T17:00:00+00:00",
+  },
+  {
     id: "dead_run",
     dataset: "highest_t",
     status: "failed",
@@ -65,7 +78,9 @@ const RUNS = [
 ];
 
 const DATASETS = [
-  { id: "highest_t", label: "highest_t", frames: 11, processed: true },
+  // The series was renamed: the id stays the immutable key, the label is
+  // what every surface must show.
+  { id: "highest_t", label: "series-1", frames: 11, processed: true },
 ];
 
 function json(body: unknown) {
@@ -688,6 +703,19 @@ describe("results routing", () => {
       resume: true,
       run_id: "second_run",
     });
+  });
+
+  it("a run auto-named after its series shows the series' current label", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/highest_t/overview`);
+
+    // The run browser row and the header lead with the display label…
+    const row = await screen.findByRole("option", { name: /series-1/i });
+    expect(row).toHaveAttribute("aria-selected", "true");
+    const header = await screen.findByTestId("run-header");
+    expect(header).toHaveTextContent("series-1");
+    // …while the immutable id stays visible as provenance.
+    expect(header).toHaveTextContent("outputs/highest_t");
   });
 
   it("deep-links a run and tab from the URL", async () => {

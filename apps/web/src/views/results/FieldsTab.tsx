@@ -77,6 +77,8 @@ interface FieldsTabProps {
   runId: string;
   /** The viewing condition for joint runs; null on single-dataset runs. */
   dataset: string | null;
+  /** The series' display label (ids stay in URLs; labels in copy). */
+  datasetName: string | null;
   joint: boolean;
 }
 
@@ -92,7 +94,12 @@ function colorRange(def: FieldDef, map: FieldMap): [number, number] {
  * checkpoint: α, the reconstructed flow, the evaporation source, and (on
  * Stage-B checkpoints) pressure and superheat.
  */
-export function FieldsTab({ runId, dataset, joint }: FieldsTabProps) {
+export function FieldsTab({
+  runId,
+  dataset,
+  datasetName,
+  joint,
+}: FieldsTabProps) {
   const [field, setField] = useState<FieldDef>(FIELD_DEFS[1]);
   const [tRatio, setTRatio] = useState(0.34);
   const [map, setMap] = useState<FieldMap | null>(null);
@@ -172,7 +179,7 @@ export function FieldsTab({ runId, dataset, joint }: FieldsTabProps) {
     <>
       <Panel
         title="Predicted fields"
-        subtitle={`${dataset ?? "run"} · evaluated live from ckpt.pt`}
+        subtitle={`${datasetName ?? dataset ?? "run"} · evaluated live from ckpt.pt`}
       >
         <div
           className="fieldchips"

@@ -1427,3 +1427,9 @@
 .btn-link:hover {
   background: var(--panel2);
 }
+
+.run-header-raw {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}

@@ -72,6 +72,8 @@ interface FrameMatchPanelProps {
   runId: string;
   /** The camera frames' dataset (the viewing condition for joint runs). */
   dataset: string | null;
+  /** The series' display label (ids stay in URLs; labels in copy). */
+  datasetName: string | null;
   metrics: RunMetrics | null;
   validation: PhysicsValidation | null;
   /** Joint runs can't evaluate the PINN layer yet (single checkpoint loader). */
@@ -87,6 +89,7 @@ interface FrameMatchPanelProps {
 export function FrameMatchPanel({
   runId,
   dataset,
+  datasetName,
   metrics,
   validation,
   pinnAvailable,
@@ -157,7 +160,7 @@ export function FrameMatchPanel({
     );
   if (detailQ.error)
     return (
-      <Panel title="Frame matching" subtitle={dataset}>
+      <Panel title="Frame matching" subtitle={datasetName ?? dataset}>
         <Callout tone="error" title="Could not load the series">
           {detailQ.error}
         </Callout>
@@ -170,7 +173,7 @@ export function FrameMatchPanel({
   return (
     <Panel
       title="Frame matching"
-      subtitle={`camera · detected · PINN — ${dataset}`}
+      subtitle={`camera · detected · PINN — ${datasetName ?? dataset}`}
     >
       {frames.length === 0 ? (
         <p className="state-note">

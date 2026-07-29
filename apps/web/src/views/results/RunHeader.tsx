@@ -1,7 +1,12 @@
 import { Button, Chip } from "../../components";
 import { SelectField } from "../../components/Field";
 import type { RunDetail, RunStatus, RunSummary } from "../../lib/api";
-import { formatRunDate, runConditions, toYamlish } from "./format";
+import {
+  formatRunDate,
+  runConditions,
+  runDisplayName,
+  toYamlish,
+} from "./format";
 
 const STATUS_CHIP: Record<
   RunStatus,
@@ -48,6 +53,7 @@ export function RunHeader({
   resuming,
 }: RunHeaderProps) {
   const status = STATUS_CHIP[run.status];
+  const displayName = runDisplayName(run, datasetLabels);
   const { all, heldout } = runConditions(run);
   const labelOf = (id: string) => datasetLabels.get(id) ?? id;
   const training = detail?.config?.["training"] as
@@ -63,8 +69,11 @@ export function RunHeader({
   return (
     <div className="card run-header" data-testid="run-header">
       <div className="run-header-top">
-        <span className="run-header-id">{run.id}</span>
+        <span className="run-header-id">{displayName}</span>
         <Chip tone={status.tone}>{status.label}</Chip>
+        {displayName !== run.id && (
+          <span className="run-header-raw">outputs/{run.id}</span>
+        )}
         <span className="run-header-date">{formatRunDate(run.date)}</span>
         <span className="run-header-spacer" />
         {all.length > 1 && viewDataset && (

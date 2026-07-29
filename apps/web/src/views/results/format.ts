@@ -97,3 +97,16 @@ export function noseSpeedTone(
 /** IoU values print with three decimals everywhere. */
 export const fmtIou = (value: number | null | undefined) =>
   value != null ? value.toFixed(3) : "—";
+
+/** What a run is called in the UI. Legacy CLI runs were auto-named after
+ * their dataset (`run_name` defaulted to the dataset id), so they follow that
+ * series' current display label; minted `run-YYYYMMDD-…` ids are their own
+ * name. The id stays the immutable key — provenance surfaces show it raw. */
+export function runDisplayName(
+  run: RunSummary,
+  datasetLabels: Map<string, string>,
+): string {
+  if (run.dataset && run.id === run.dataset)
+    return datasetLabels.get(run.dataset) ?? run.id;
+  return run.id;
+}

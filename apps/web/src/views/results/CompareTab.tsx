@@ -12,7 +12,7 @@ import {
   type RunSummary,
 } from "../../lib/api";
 import { isTrainedRun } from "../../lib/runs";
-import { fmtIou } from "./format";
+import { fmtIou, runDisplayName } from "./format";
 
 /** Comparing more runs than chart series colors would un-name the lines. */
 const MAX_COMPARED = 4;
@@ -26,6 +26,7 @@ interface CompareTabProps {
   runs: RunSummary[];
   /** The run open in the page; preselected. */
   currentId: string;
+  datasetLabels: Map<string, string>;
 }
 
 interface MetricRow {
@@ -75,7 +76,11 @@ const ROWS: MetricRow[] = [
 ];
 
 /** Side-by-side metrics and overlaid data-loss for up to four trained runs. */
-export function CompareTab({ runs, currentId }: CompareTabProps) {
+export function CompareTab({
+  runs,
+  currentId,
+  datasetLabels,
+}: CompareTabProps) {
   const trained = runs.filter(isTrainedRun);
   const [picked, setPicked] = useState<Set<string>>(() => {
     const first = trained.find((run) => run.id === currentId) ?? trained[0];
@@ -151,7 +156,7 @@ export function CompareTab({ runs, currentId }: CompareTabProps) {
                 }
                 aria-hidden="true"
               />
-              {run.id}
+              {runDisplayName(run, datasetLabels)}
             </button>
           );
         })}
@@ -164,7 +169,7 @@ export function CompareTab({ runs, currentId }: CompareTabProps) {
               <th scope="col">Metric</th>
               {selected.map((run) => (
                 <th scope="col" key={run.id}>
-                  {run.id}
+                  {runDisplayName(run, datasetLabels)}
                 </th>
               ))}
             </tr>

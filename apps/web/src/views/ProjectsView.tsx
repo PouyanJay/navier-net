@@ -1,3 +1,4 @@
+import { seriesName } from "../lib/series";
 import { Fragment, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -231,7 +232,10 @@ function ProjectCard({
       <StagePipe dots={dots} />
       <div className="pfoot">
         <span className="mono">
-          naviernet://{facts.datasets[0]?.id ?? project.id.slice(0, 8)}
+          naviernet://
+          {facts.datasets[0]
+            ? seriesName(facts.datasets[0])
+            : project.id.slice(0, 8)}
         </span>
         <span className="pfoot-actions">
           <button

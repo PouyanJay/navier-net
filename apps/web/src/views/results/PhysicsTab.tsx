@@ -52,12 +52,19 @@ interface PhysicsTabProps {
   runId: string;
   /** The viewing condition; its groups drive the tiles (joint runs). */
   dataset: string | null;
+  /** The series' display label (ids stay in URLs; labels in copy). */
+  datasetName: string | null;
   validation: PhysicsValidation | null;
 }
 
 /** The checks that hold independently of training, and the dimensionless
  * groups the physics (and the conditioning vector) derive from. */
-export function PhysicsTab({ runId, dataset, validation }: PhysicsTabProps) {
+export function PhysicsTab({
+  runId,
+  dataset,
+  datasetName,
+  validation,
+}: PhysicsTabProps) {
   const groupsQ = useApiResource<DimensionlessGroups>(
     dataset,
     (id) => api.getDatasetGroups(id),
@@ -142,7 +149,7 @@ export function PhysicsTab({ runId, dataset, validation }: PhysicsTabProps) {
             <h3 className="env-title">
               Dimensionless groups{" "}
               <span className="env-sub">
-                {dataset ?? runId} · conditioning inputs
+                {datasetName ?? dataset ?? runId} · conditioning inputs
               </span>
             </h3>
             {groupsQ.loading && <p className="state-note">Loading groups…</p>}

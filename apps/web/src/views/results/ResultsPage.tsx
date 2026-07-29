@@ -11,7 +11,12 @@ import {
   type RunSummary,
 } from "../../lib/api";
 import { isTrainedRun } from "../../lib/runs";
-import { runConditions, runHeadline, runRowMeta } from "./format";
+import {
+  runConditions,
+  runDisplayName,
+  runHeadline,
+  runRowMeta,
+} from "./format";
 import { AgreementTab } from "./AgreementTab";
 import { CompareTab } from "./CompareTab";
 import { ExportTab } from "./ExportTab";
@@ -217,7 +222,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                       aria-hidden="true"
                     />
                     <span className="runrow-main">
-                      <b>{run.id}</b>
+                      <b>{runDisplayName(run, datasetLabels)}</b>
                       <span>{runRowMeta(run)}</span>
                     </span>
                     {headline && (
@@ -291,6 +296,11 @@ export function ResultsPage({ project }: ResultsPageProps) {
               <FieldsTab
                 runId={selected.id}
                 dataset={viewDataset}
+                datasetName={
+                  viewDataset
+                    ? (datasetLabels.get(viewDataset) ?? viewDataset)
+                    : null
+                }
                 joint={runConditions(selected).all.length > 1}
               />
             ) : activeTab === "agreement" ? (
@@ -304,17 +314,27 @@ export function ResultsPage({ project }: ResultsPageProps) {
               <PhysicsTab
                 runId={selected.id}
                 dataset={viewDataset}
+                datasetName={
+                  viewDataset
+                    ? (datasetLabels.get(viewDataset) ?? viewDataset)
+                    : null
+                }
                 validation={validation}
               />
             ) : activeTab === "training" ? (
               <TrainingTab runId={selected.id} />
             ) : activeTab === "compare" ? (
-              <CompareTab runs={runs ?? []} currentId={selected.id} />
+              <CompareTab
+                runs={runs ?? []}
+                currentId={selected.id}
+                datasetLabels={datasetLabels}
+              />
             ) : (
               <ExportTab
                 run={selected}
                 detail={detail}
                 viewDataset={viewDataset}
+                datasetLabels={datasetLabels}
               />
             )
           ) : runs !== null ? (
