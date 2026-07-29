@@ -135,25 +135,6 @@
   flex-direction: column;
   gap: var(--s5);
 }
-.compare-chart-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--s4);
-  margin-bottom: var(--s3);
-}
-.compare-chart-head .fld {
-  max-width: 260px;
-}
-.compare-h {
-  margin: 0 0 var(--s3);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-}
-.compare-chart-head .compare-h {
-  margin-bottom: 0;
-}
 
 /* Reconstruction viewport: the dark instrument panel (mockup's hero) */
 .viewport {
@@ -341,20 +322,6 @@
 }
 
 /* Inline IoU bars in the agreement table */
-.iou-bar {
-  display: inline-block;
-  width: 96px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--line2);
-  overflow: hidden;
-  vertical-align: middle;
-}
-.iou-bar i {
-  display: block;
-  height: 100%;
-  background: var(--acc2);
-}
 
 /* ---------- redesigned results page (run browser + tabbed outputs) ---------- */
 

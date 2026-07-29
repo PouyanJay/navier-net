@@ -379,6 +379,40 @@ afterEach(() => {
 });
 
 describe("results routing", () => {
+  it("an empty project shows the no-runs state with tabs disabled", async () => {
+    const calls = mockApi();
+    // The project-scoped listing returns nothing for this project.
+    const original = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, opts?: RequestInit) => {
+        const u = String(url);
+        if (u.includes("/api/runs?project=")) {
+          calls.runListCalls.push(u);
+          return json([]);
+        }
+        return original(url as never, opts);
+      }),
+    );
+    renderAt(`/projects/${PID}/results`);
+
+    expect(await screen.findByText(/no runs yet/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/launch the first training run/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /overview/i })).toBeDisabled();
+  });
+
+  it("an unknown run id in the URL falls back to the default run", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/does-not-exist/overview`);
+
+    // First trained run selected instead of a crash or blank page.
+    expect(
+      await screen.findByRole("option", { name: /demo_run/i }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
   it("renders the project-scoped results page with run browser and tabs", async () => {
     const calls = mockApi();
     renderAt(`/projects/${PID}/results`);

@@ -5,11 +5,11 @@ import {
   Chip,
   type Column,
   DL,
-  IouChart,
   Stat,
   StatusDot,
   Table,
 } from "../src/components";
+import { IouDotChart } from "../src/components/charts/IouDotChart";
 
 describe("Stat", () => {
   it("renders label, value and unit", () => {
@@ -84,17 +84,21 @@ describe("Table", () => {
   });
 });
 
-describe("IouChart", () => {
-  it("draws one bar per frame and marks the holdout", () => {
+describe("IouDotChart", () => {
+  it("positions one dot per frame and labels the holdout in text", () => {
     const { container } = render(
-      <IouChart
-        data={[
-          { frame: 1, iou: 0.97, holdout: false },
-          { frame: 6, iou: 0.96, holdout: true },
+      <IouDotChart
+        frames={[
+          { frame: 1, iou: 0.97, role: "supervised" },
+          { frame: 6, iou: 0.96, role: "holdout" },
         ]}
+        mean={0.965}
+        ariaLabel="Per-frame IoU"
       />,
     );
-    expect(container.querySelectorAll(".chart-bar")).toHaveLength(2);
-    expect(container.querySelectorAll(".chart-bar.holdout")).toHaveLength(1);
+    expect(container.querySelectorAll(".iou-dot")).toHaveLength(2);
+    expect(container.querySelectorAll(".iou-dot.hold")).toHaveLength(1);
+    expect(container.textContent).toContain("HOLDOUT");
+    expect(container.textContent).toContain("mean 0.965");
   });
 });

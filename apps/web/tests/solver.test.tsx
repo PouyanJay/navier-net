@@ -438,7 +438,12 @@ describe("SolverView", () => {
         }
         if (path.endsWith("/api/datasets"))
           return json([
-            { id: "ds_a", label: "High-T FC-72", n_frames: 11, processed: true },
+            {
+              id: "ds_a",
+              label: "High-T FC-72",
+              n_frames: 11,
+              processed: true,
+            },
           ]);
         if (path.endsWith("/api/runs/active")) return json(null);
         if (path.endsWith("/api/runs")) return json([]);

@@ -20,5 +20,4 @@ export { StatusDot } from "./StatusDot";
 export { Switch } from "./Switch";
 export { Table, type Column } from "./Table";
 export { ViewCanvas } from "./ViewCanvas";
-export { IouChart, type FramePoint } from "./charts/IouChart";
 export { LossChart } from "./charts/LossChart";
