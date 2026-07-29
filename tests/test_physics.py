@@ -390,19 +390,47 @@ def test_energy_residual_has_wall_heating_gated_by_liquid_and_a_latent_sink():
     assert torch.allclose(res.energy, expected, atol=1e-5)
 
 
+def _evap_and_target(model, x, groups, r_int):
+    """The evaporation flux and the closure's flux target (what the source minus
+    the residual leaves), for the two mass-closure tests below."""
+    res = stage_b_residuals(model, x, groups, r_int_star=r_int)
+    evap = groups["Ja"] * (model.temperature(x) / r_int) * res.interface_delta
+    target = model.source(x) - res.src_closure
+    return evap, target
+
+
 def test_evaporation_closes_mass_and_energy_with_the_same_flux():
-    """s_closure = (rho_ratio-1) * evap and the energy sink = evap: one flux,
-    two conservation laws (the two-way mass-energy closure)."""
+    """s_closure = (1 - rho_v/rho_l) * evap and the energy sink = evap: one flux,
+    two conservation laws (the two-way mass-energy closure). The mass prefactor is
+    the dilatation the vapour actually gains -- see the regression test below."""
     groups = _groups()
     model = _Analytic()
-    r_int = 3.0
     x = (torch.rand(32, 3) * 0.6 + 0.05).requires_grad_(True)
 
-    res = stage_b_residuals(model, x, groups, r_int_star=r_int)
+    evap, target = _evap_and_target(model, x, groups, r_int=3.0)
 
-    evap = groups["Ja"] * (model.temperature(x) / r_int) * res.interface_delta
-    s_closure = (groups["rho_ratio"] - 1.0) * evap
-    assert torch.allclose(res.src_closure, model.source(x) - s_closure, atol=1e-6)
+    assert torch.allclose(target, (1.0 - 1.0 / groups["rho_ratio"]) * evap, atol=1e-6)
+
+
+def test_mass_closure_prefactor_is_the_dilatation_not_rho_ratio():
+    """Regression: the phase-change dilatation is mdot*(1/rho_v - 1/rho_l), so in
+    the model's (vapour-scaled) source the prefactor is (1 - rho_v/rho_l) ~ O(1),
+    NOT (rho_l/rho_v - 1) ~ O(rho_ratio). The latter over-scaled the source by
+    ~120x, driving unphysical interface velocity that collapsed alpha (IoU -> 0).
+    """
+    groups = _groups()
+    model = _Analytic()
+    x = (torch.rand(32, 3) * 0.6 + 0.05).requires_grad_(True)
+
+    evap, target = _evap_and_target(model, x, groups, r_int=3.0)
+
+    assert torch.allclose(target, (1.0 - 1.0 / groups["rho_ratio"]) * evap, atol=1e-6)
+    assert not torch.allclose(target, (groups["rho_ratio"] - 1.0) * evap, atol=1e-6)
+    # The prefactor the closure actually applies, read back from its output, is
+    # O(1) -- not O(rho_ratio) as the bug had it. Derived from `target`, so this
+    # exercises the residual, not just the group value.
+    implied = (target / evap.clamp_min(1e-9)).abs().median().item()
+    assert implied < 2.0
 
 
 def test_source_closure_vanishes_when_the_source_matches_evaporation():
@@ -416,7 +444,7 @@ def test_source_closure_vanishes_when_the_source_matches_evaporation():
             a_x, a_y, _ = gradients(self.alpha(xx), xx)
             delta = torch.sqrt(a_x**2 + a_y**2 + KAPPA_EPS**2)
             j = self.temperature(xx) / 3.0
-            return (groups["rho_ratio"] - 1.0) * groups["Ja"] * j * delta
+            return (1.0 - 1.0 / groups["rho_ratio"]) * groups["Ja"] * j * delta
 
     matched = stage_b_residuals(_MatchedSource(), x, groups, r_int_star=3.0)
     assert matched.src_closure.abs().max().item() == pytest.approx(0.0, abs=1e-6)
