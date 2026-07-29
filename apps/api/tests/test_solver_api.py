@@ -112,16 +112,26 @@ def test_launch_joint_run_trains_and_evaluates_every_dataset(
     assert metrics["datasets"] == ["highest_t", "second"]
 
 
-def test_joint_run_with_render_on_skips_figures_and_still_finishes(
-    client: TestClient, repo_root: Path
+def test_joint_run_renders_per_dataset_figures(
+    client: TestClient, repo_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The renderer assumes an unconditioned model, so a joint run skips figures/
-    video (default render=on) rather than crashing — metrics are still written."""
+    """A rendered joint run writes each dataset's figures into its own subdir,
+    lists them with relative names, and serves them back. ffmpeg is kept off
+    PATH so the joint video path exercises its skip-not-crash guard."""
     from conftest import write_synthetic_tensors
+    from PIL import Image
+
+    monkeypatch.setenv("PATH", str(repo_root))  # no ffmpeg → video skips
 
     second = repo_root / "data" / "processed" / "second"
     second.mkdir(parents=True)
     write_synthetic_tensors(second / "tensors.npz")
+    # Raw frames for both datasets, sized to the synthetic y_roi geometry.
+    for name in ("highest_t", "second"):
+        raw = repo_root / "data" / "raw" / name
+        raw.mkdir(parents=True, exist_ok=True)
+        for n in range(1, 13):
+            Image.new("L", (16, 140), color=10 * n).save(raw / f"{n}.tif", format="TIFF")
 
     joint = {
         **TINY_RUN,
@@ -133,6 +143,18 @@ def test_joint_run_with_render_on_skips_figures_and_still_finishes(
     events = read_stream(client, run_id)
     final = [e["data"] for e in events if e["event"] == "status"][-1]
     assert final["state"] == "done", f"joint render run failed: {final.get('message')}"
+
+    figures_dir = repo_root / "outputs" / run_id / "figures"
+    for name in ("highest_t", "second"):
+        assert (figures_dir / name / "trajectories.png").is_file()
+        assert (figures_dir / name / "pinn_on_images_all.png").is_file()
+    listed = client.get(f"/api/runs/{run_id}").json()["artifacts"]["figures"]
+    assert "second/trajectories.png" in listed
+    served = client.get(f"/api/runs/{run_id}/figures/second/trajectories.png")
+    assert served.status_code == 200
+    assert client.get(f"/api/runs/{run_id}/figures/../secret.png").status_code == 404
+    # No ffmpeg on PATH: the joint video skipped rather than failing the run.
+    assert not (repo_root / "outputs" / run_id / "video" / "second" / "growth.mp4").exists()
 
 
 def test_launch_joint_run_with_a_held_out_condition(client: TestClient, repo_root: Path):

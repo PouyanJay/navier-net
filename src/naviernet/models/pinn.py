@@ -153,3 +153,47 @@ class BubblePINN(nn.Module):
                 f"Add it to cfg.model.fields and retrain."
             )
         return self.nets[name]
+
+    def bound(self, c: torch.Tensor) -> "BoundPINN":
+        """This model with one dataset's conditioning row bound (joint viz)."""
+        return BoundPINN(self, c)
+
+
+class BoundPINN:
+    """A conditioned model with one dataset's conditioning row bound.
+
+    Joint checkpoints need a per-dataset context on every call; binding it once
+    lets every single-dataset consumer (figures, video, reconstruction) render
+    a joint model unchanged. Anything not overridden falls through to the
+    underlying model (``eps``, trainable unknowns, ``fields``...).
+    """
+
+    def __init__(self, model: BubblePINN, c: torch.Tensor):
+        self._model = model
+        self._c = c
+
+    def _ctx(self, x: torch.Tensor) -> torch.Tensor:
+        return self._c.expand(x.shape[0], -1)
+
+    def phi(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.phi(x, c if c is not None else self._ctx(x))
+
+    def alpha(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.alpha(x, c if c is not None else self._ctx(x))
+
+    def velocity(
+        self, x: torch.Tensor, c: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self._model.velocity(x, c if c is not None else self._ctx(x))
+
+    def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.source(x, c if c is not None else self._ctx(x))
+
+    def pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.pressure(x, c if c is not None else self._ctx(x))
+
+    def temperature(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.temperature(x, c if c is not None else self._ctx(x))
+
+    def __getattr__(self, name: str):
+        return getattr(self._model, name)

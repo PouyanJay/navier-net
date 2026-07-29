@@ -220,7 +220,7 @@ def get_loss_history(run_id: str, settings: Settings = Depends(get_settings)) ->
     return history
 
 
-@router.get("/{run_id}/figures/{name}")
+@router.get("/{run_id}/figures/{name:path}")
 def get_figure(
     run_id: str, name: str, settings: Settings = Depends(get_settings)
 ) -> FileResponse:

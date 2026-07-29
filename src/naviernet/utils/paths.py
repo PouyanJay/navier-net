@@ -111,3 +111,19 @@ class RunPaths:
         ):
             d.mkdir(parents=True, exist_ok=True)
         return self
+
+
+@dataclass(frozen=True)
+class DatasetVizPaths(RunPaths):
+    """A joint run's paths with figures/video scoped to one dataset's subdir
+    (single runs keep the flat legacy layout)."""
+
+    viz_dataset: str = ""
+
+    @property
+    def figures_dir(self) -> Path:
+        return self.output_dir / "figures" / self.viz_dataset
+
+    @property
+    def video_dir(self) -> Path:
+        return self.output_dir / "video" / self.viz_dataset

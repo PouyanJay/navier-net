@@ -67,27 +67,67 @@ class Pipeline:
         return evaluate(self.cfg, model, data, self.paths)
 
     def figures(self) -> None:
-        # The viz path renders a single unconditioned model; a joint run's model
-        # needs a per-dataset context, so skip rather than crash. Its per-dataset
-        # metrics are still written by evaluate.
-        if len(resolved_datasets(self.cfg)) > 1:
-            log.info("skipping figures for joint run %s (not yet supported)", self.cfg.run_name)
-            return
-
         from naviernet.viz import render_all_figures
+
+        if len(resolved_datasets(self.cfg)) > 1:
+            for cfg_ds, bound, context, paths in self._joint_viz_scenes():
+                log.info("rendering figures for joint dataset %s", context.name)
+                render_all_figures(cfg_ds, bound, context.data, paths)
+            return
 
         model, data = self._load()
         render_all_figures(self.cfg, model, data, self.paths)
 
     def video(self, n_t: int | None = None):
-        if len(resolved_datasets(self.cfg)) > 1:
-            log.info("skipping video for joint run %s (not yet supported)", self.cfg.run_name)
-            return None
+        import shutil
 
         from naviernet.viz import render_video
 
+        if len(resolved_datasets(self.cfg)) > 1:
+            if shutil.which("ffmpeg") is None:
+                # A missing renderer must not fail the whole joint run's report;
+                # single-dataset runs keep the hard error (their video IS the stage).
+                log.warning("ffmpeg not found; skipping joint-run videos")
+                return None
+            rendered = None
+            for cfg_ds, bound, context, paths in self._joint_viz_scenes():
+                log.info("rendering video for joint dataset %s", context.name)
+                rendered = render_video(cfg_ds, bound, context.data, paths, n_t=n_t)
+            return rendered
+
         model, data = self._load()
         return render_video(self.cfg, model, data, self.paths, n_t=n_t)
+
+    def _joint_viz_scenes(self):
+        """Per-dataset (cfg, bound model, context, paths) for joint-run viz.
+
+        Each dataset renders with its own conditioning row bound into the model,
+        its own reference scales (from its tensors), and its own figures/video
+        subdirectory — the single-dataset viz path runs unchanged on top.
+        """
+        from omegaconf import OmegaConf
+
+        from naviernet import training
+        from naviernet.utils.paths import DatasetVizPaths
+
+        model, contexts, _ = training.load_joint(self.cfg, self.paths)
+        for context in contexts:
+            cfg_ds = OmegaConf.merge(self.cfg)  # a per-dataset copy
+            OmegaConf.set_readonly(cfg_ds, False)  # merge keeps the source flag
+            meta = context.data.meta
+            if meta.get("L_ref_um") is not None:
+                cfg_ds.scales.L_ref_um = float(meta["L_ref_um"])
+            if meta.get("U_ref") is not None:
+                cfg_ds.scales.U_ref = float(meta["U_ref"])
+            OmegaConf.set_readonly(cfg_ds, True)
+            data_paths = self.paths.for_dataset(context.name)
+            paths = DatasetVizPaths(
+                raw_dir=data_paths.raw_dir,
+                processed_dir=data_paths.processed_dir,
+                output_dir=self.paths.output_dir,
+                viz_dataset=context.name,
+            ).ensure()
+            yield cfg_ds, model.bound(context.c), context, paths
 
     # -- dispatch ----------------------------------------------------------
     def run(self, stage: str) -> None:

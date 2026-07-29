@@ -33,8 +33,9 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # Directory names under outputs/ that are not individual runs.
 _NON_RUN_DIRS = {"multirun"}
 
-# Served figure files must be simple PNG names inside the run's figures dir.
-_FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
+# Served figure files must be PNG names inside the run's figures dir, at most
+# one dataset subdirectory deep (joint runs render per-dataset figures).
+_FIGURE_NAME_RE = re.compile(r"^(?:[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+\.png$")
 
 
 def _safe_run_dir(settings: Settings, run_id: str) -> Path | None:
@@ -297,8 +298,14 @@ def get_run(settings: Settings, run_id: str) -> RunDetail | None:
     dataset = _dataset_of(run_dir, metrics)
     paths = _run_paths(settings, run_id, dataset)
 
+    # Joint runs render figures into per-dataset subdirectories; list them
+    # with their relative names so the client can request them back verbatim.
     figures = (
-        sorted(p.name for p in paths.figures_dir.glob("*.png"))
+        sorted(
+            str(p.relative_to(paths.figures_dir))
+            for pattern in ("*.png", "*/*.png")
+            for p in paths.figures_dir.glob(pattern)
+        )
         if paths.figures_dir.is_dir()
         else []
     )
@@ -359,7 +366,9 @@ def read_loss_history(settings: Settings, run_id: str) -> list[dict] | None:
 
 def figure_path(settings: Settings, run_id: str, name: str) -> Path | None:
     """Path to a figure PNG, confined to the run's figures dir (SECURITY.md §3)."""
-    if not _FIGURE_NAME_RE.match(name):
+    # ".." matches the name character class; reject it before it can resolve
+    # upward (the containment check below would too — defense in depth).
+    if not _FIGURE_NAME_RE.match(name) or ".." in name.split("/"):
         return None
     paths = _run_paths_or_none(settings, run_id)
     if paths is None:
