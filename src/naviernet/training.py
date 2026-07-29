@@ -76,6 +76,53 @@ def _curriculum(step: int, curriculum_steps: int) -> tuple[float, float]:
     return 1.0 - frac, frac
 
 
+def _loss_schedule(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> dict[str, float]:
+    """Per-term loss multipliers at ``step``: the evaporation curriculum plus the
+    Stage-B warm-up gate.
+
+    While ``step <= stage_b_warmup_steps`` the Stage-B terms (momentum, energy,
+    evaporation) are held at zero so the model fits the interface on the Stage-A
+    objective first; adding those terms to a random field collapses it. After the
+    gate they act at full weight (evaporation still following the curriculum). A
+    term absent from the returned dict keeps its static weight (multiplier 1).
+
+    NB the curriculum's ``frac`` is measured from the absolute step, so combining a
+    non-zero ``curriculum_steps`` with the warm-up gate does not ramp evaporation
+    across the *post*-gate steps -- if ``curriculum_steps <= stage_b_warmup_steps``
+    it is already saturated when the gate lifts. The shipped path leaves
+    ``curriculum_steps=0`` (the warm-up is the schedule); set both by hand only
+    knowingly."""
+    src_factor, evap_factor = _curriculum(step, tcfg.curriculum_steps)
+    schedule = {"src": src_factor, "evap": evap_factor}
+    if step <= tcfg.stage_b_warmup_steps:
+        for key in stage_b_keys:
+            schedule[key] = 0.0
+    return schedule
+
+
+def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
+    """True only at the one step the warm-up hands off to Stage-B physics -- where
+    the optimiser is restarted. Never true when the warm-up is disabled
+    (``stage_b_warmup_steps=0``) or the model has no Stage-B physics to engage."""
+    return (
+        bool(stage_b_keys)
+        and tcfg.stage_b_warmup_steps > 0
+        and step == tcfg.stage_b_warmup_steps + 1
+    )
+
+
+def _restart_for_stage_b(
+    model, lr: float, reset_weights: dict[str, float]
+) -> tuple[torch.optim.Optimizer, dict[str, float]]:
+    """A fresh optimiser and a clean copy of the config loss weights, for the moment
+    Stage-B physics engages after the warm-up.
+
+    Carrying Adam's Stage-A state and the warm-up-rebalanced weights across the
+    switch destabilises the interface; a fresh-optimiser warm start from a Stage-A
+    checkpoint does not, and this reproduces that clean transition in one run."""
+    return torch.optim.Adam(model.parameters(), lr=lr), dict(reset_weights)
+
+
 def _rebalance(
     weights: dict[str, float],
     norms: dict[str, float],
@@ -122,6 +169,7 @@ def train(
 
     equations = registry.enabled_equations(cfg.model.fields)
     rebalanced = registry.rebalanced_terms(equations)
+    stage_b_keys = registry.stage_b_terms(equations)
     state = _initial_state(cfg, equations)
     if paths.checkpoint.exists():
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
@@ -152,6 +200,7 @@ def train(
     # same sample sequence it already saw.
     rng = np.random.default_rng(tcfg.seed + state["done"])
     weights = state["w"]
+    reset_weights = _initial_state(cfg, equations)["w"]  # config defaults, for the handoff
 
     first_step = state["done"] + 1
     last_step = state["done"] + steps
@@ -172,12 +221,17 @@ def train(
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
 
-        if step % tcfg.rebalance_every == 0:
+        # Skip rebalancing on the handoff step: its weights are about to be reset.
+        if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(step, tcfg, stage_b_keys):
             _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
-        src_factor, evap_factor = _curriculum(step, tcfg.curriculum_steps)
-        schedule = {"src": src_factor, "evap": evap_factor}
+        if _stage_b_engages_at(step, tcfg, stage_b_keys):
+            # Engage Stage-B physics on the interface the warm-up converged, from a
+            # clean optimiser (see _restart_for_stage_b).
+            opt, weights = _restart_for_stage_b(model, lr, reset_weights)
+            log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
+        schedule = _loss_schedule(step, tcfg, stage_b_keys)
         total = sum(
             weights[name] * schedule.get(name, 1.0) * loss for name, loss in losses.items()
         )
@@ -305,10 +359,12 @@ def _train_joint(
 
     equations = registry.enabled_equations(cfg.model.fields)
     rebalanced = registry.rebalanced_terms(equations)
+    stage_b_keys = registry.stage_b_terms(equations)
     state = _initial_state(cfg, equations)
 
     rng = np.random.default_rng(tcfg.seed + state["done"])
     weights = state["w"]
+    reset_weights = _initial_state(cfg, equations)["w"]  # config defaults, for the handoff
     first_step = state["done"] + 1
     last_step = state["done"] + steps
     log.info(
@@ -328,12 +384,17 @@ def _train_joint(
 
         losses = _joint_losses(model, contexts, equations, tcfg, rng)
 
-        if step % tcfg.rebalance_every == 0:
+        # Skip rebalancing on the handoff step: its weights are about to be reset.
+        if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(step, tcfg, stage_b_keys):
             _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
-        src_factor, evap_factor = _curriculum(step, tcfg.curriculum_steps)
-        schedule = {"src": src_factor, "evap": evap_factor}
+        if _stage_b_engages_at(step, tcfg, stage_b_keys):
+            # Engage Stage-B physics on the interface the warm-up converged, from a
+            # clean optimiser (see _restart_for_stage_b).
+            opt, weights = _restart_for_stage_b(model, lr, reset_weights)
+            log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
+        schedule = _loss_schedule(step, tcfg, stage_b_keys)
         total = sum(
             weights[name] * schedule.get(name, 1.0) * loss for name, loss in losses.items()
         )

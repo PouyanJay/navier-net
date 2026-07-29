@@ -469,6 +469,51 @@ def test_curriculum_ramps_evaporation_in_as_the_source_penalty_decays():
     assert _curriculum(50, 0) == (1.0, 1.0), "0 disables the schedule"
 
 
+def test_loss_schedule_gates_stage_b_physics_until_the_warmup_ends():
+    """The Stage-B terms (momentum/energy/evaporation) stay at zero through the
+    warm-up, then engage; the gate never touches the Stage-A objective. Absent
+    keys keep their static weight (multiplier 1), so post-warm-up they are on."""
+    from types import SimpleNamespace
+
+    from naviernet.training import _loss_schedule
+
+    keys = ("mom", "energy", "evap")
+    tcfg = SimpleNamespace(curriculum_steps=0, stage_b_warmup_steps=100)
+
+    during = _loss_schedule(50, tcfg, keys)
+    assert during["mom"] == during["energy"] == during["evap"] == 0.0
+    assert during["src"] == 1.0, "the Stage-A source penalty is not gated"
+
+    at_boundary = _loss_schedule(100, tcfg, keys)
+    assert at_boundary["mom"] == 0.0, "the warm-up step itself is still gated (<=)"
+
+    after = _loss_schedule(101, tcfg, keys)
+    assert "mom" not in after and "energy" not in after, "engaged -> default weight 1"
+    assert after["evap"] == 1.0, "engaged, curriculum off -> full closure"
+
+    no_warmup = _loss_schedule(1, SimpleNamespace(curriculum_steps=0, stage_b_warmup_steps=0), keys)
+    assert "mom" not in no_warmup, "0 warm-up -> Stage-B physics on from step 1"
+
+
+def test_stage_b_engages_only_at_the_boundary_and_never_when_disabled():
+    """The optimiser restart fires at exactly step warmup+1 -- and never when the
+    warm-up is disabled (0) or the model has no Stage-B physics, so an ordinary
+    Stage-B run is not silently restarted on its first step."""
+    from types import SimpleNamespace
+
+    from naviernet.training import _stage_b_engages_at
+
+    keys = ("mom", "energy", "evap")
+    tcfg = SimpleNamespace(stage_b_warmup_steps=100)
+    assert _stage_b_engages_at(101, tcfg, keys) is True
+    assert _stage_b_engages_at(100, tcfg, keys) is False
+    assert _stage_b_engages_at(102, tcfg, keys) is False
+    # 0 disables the warm-up: it must NOT fire at step 1 (warmup + 1).
+    assert _stage_b_engages_at(1, SimpleNamespace(stage_b_warmup_steps=0), keys) is False
+    # Nothing to engage on a Stage-A model.
+    assert _stage_b_engages_at(101, tcfg, ()) is False
+
+
 def test_curriculum_schedule_targets_real_weight_keys():
     """The trainer applies the schedule by the names 'src' and 'evap'; guard those
     strings against drifting from the registry's weight keys (else it silently
@@ -531,6 +576,90 @@ def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):
         for name, value in record.items():
             assert math.isfinite(value), f"{name} was not finite"
     assert paths.checkpoint.exists()
+
+
+def _spy_on_adam(monkeypatch) -> list:
+    """Record the lr of every optimiser built during training. The in-run warm-up
+    builds a second one when Stage-B physics engages; this proves it fired."""
+    import torch
+
+    built: list = []
+    real_adam = torch.optim.Adam
+
+    def _spy(*args, **kwargs):
+        built.append(kwargs.get("lr"))
+        return real_adam(*args, **kwargs)
+
+    monkeypatch.setattr(torch.optim, "Adam", _spy)
+    return built
+
+
+def test_stage_b_warmup_restarts_the_optimiser_when_physics_engages(
+    tmp_path, caplog, monkeypatch
+):
+    """The in-run warm-up gates Stage-B physics off, then engages it on a FRESH
+    optimiser exactly at step warmup+1. Carrying Adam's Stage-A state across the
+    switch collapses the interface, so the restart is the crux of the feature."""
+    import logging
+
+    from naviernet.training import train
+
+    built = _spy_on_adam(monkeypatch)
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_STAGE_B,
+            *_TINY_TRAIN,
+            "training.steps=4",
+            "training.stage_b_warmup_steps=2",
+            "training.curriculum_steps=0",
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    with caplog.at_level(logging.INFO, logger="naviernet.training"):
+        train(cfg, paths)
+
+    assert len(built) == 2, "one optimiser at init, one more when physics engages"
+    assert "Stage-B physics engaged" in caplog.text
+
+
+def test_joint_stage_b_warmup_restarts_the_optimiser_at_the_boundary(
+    tmp_path, caplog, monkeypatch
+):
+    """The joint (transfer-learning) path gates and restarts the optimiser exactly
+    like the single-dataset path -- the same warm-up, over a conditioned model."""
+    import logging
+
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import train
+
+    built = _spy_on_adam(monkeypatch)
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint",
+            *_TINY_STAGE_B,
+            *_TINY_TRAIN,
+            "training.steps=4",
+            "training.stage_b_warmup_steps=2",
+            "training.curriculum_steps=0",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    for name, q_wall in (("ds_a", 2.0), ("ds_b", 5.0)):
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
+
+    with caplog.at_level(logging.INFO, logger="naviernet.training"):
+        train(cfg, run_paths)
+
+    assert len(built) == 2, "one optimiser at init, one more when physics engages"
+    assert "Stage-B physics engaged" in caplog.text
 
 
 def test_stage_b_warm_starts_from_a_stage_a_checkpoint(tmp_path, caplog):

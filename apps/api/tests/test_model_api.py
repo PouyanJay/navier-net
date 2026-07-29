@@ -92,3 +92,15 @@ def test_saved_model_config_reaches_a_launched_run(client, repo_root):
     assert "p" in list(cfg.model.fields), "momentum's pressure field trains"
     assert cfg.model.per_field.p.hidden == 64
     assert cfg.training.weights.mom == pytest.approx(3.0)
+
+
+def test_series_is_stage_b_triggers_on_any_stage_b_physics():
+    """The warm-up trigger fires whenever any Stage-B equation is active -- energy
+    alone counts (it activates the evaporation closure), not just the full p+T set.
+    A pre-read cfg avoids the filesystem, so settings/dataset are unused here."""
+    from naviernet_api.services.datasets import series_is_stage_b
+
+    assert series_is_stage_b(None, "x", cfg={"enabled": ["energy", "mom"]}) is True
+    assert series_is_stage_b(None, "x", cfg={"enabled": ["energy"]}) is True  # evaporation
+    assert series_is_stage_b(None, "x", cfg={"enabled": ["mom"]}) is True  # momentum
+    assert series_is_stage_b(None, "x", cfg={"enabled": []}) is False  # Stage-A only

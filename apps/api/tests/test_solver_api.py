@@ -277,6 +277,34 @@ def test_holdout_none_trains_on_all_frames(client: TestClient, repo_root: Path):
     assert metrics["holdout_frame"] is None
 
 
+def test_stage_b_run_gets_an_automatic_in_run_warm_up(
+    client: TestClient, repo_root: Path, sample_processed: Path
+):
+    """Enabling Stage-B physics makes a launched run train the Stage-A objective
+    alone for the first half, then engage momentum/energy/evaporation -- the warm
+    start done inside one run, with no extra step for the user."""
+    client.put("/api/physics/sample", json={"enabled": ["energy", "mom"], "weights": {}})
+
+    run_id = client.post(
+        "/api/runs", json={**TINY_RUN, "dataset": "sample", "steps": 4}
+    ).json()["run_id"]
+    final = [e["data"] for e in read_stream(client, run_id) if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"run failed: {final.get('message')}"
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["training"]["stage_b_warmup_steps"] == 2  # half the run
+    assert {"p", "T"} <= set(cfg["model"]["fields"])  # the Stage-B heads are present
+
+
+def test_stage_a_run_has_no_warm_up_gate(client: TestClient, repo_root: Path):
+    """A Stage-A run (no Stage-B physics enabled) is never gated: the warm-up is
+    zero, so training is unchanged."""
+    run_id = client.post("/api/runs", json=TINY_RUN).json()["run_id"]
+    read_stream(client, run_id)
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["training"]["stage_b_warmup_steps"] == 0
+
+
 def test_launch_is_rejected_while_a_run_is_active(client: TestClient):
     """One training run at a time: a second launch is refused with 409."""
     from naviernet_api.services import run_manager

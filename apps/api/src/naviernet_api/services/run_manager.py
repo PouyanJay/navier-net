@@ -35,6 +35,11 @@ log = get_logger(__name__)
 # responsive and the console unambiguous.
 MAX_CONCURRENT_RUNS = 1
 
+# A fresh Stage-B run spends this fraction of its steps on the Stage-A warm-up
+# before the momentum/energy/evaporation physics engages (see the trainer's
+# in-run warm start). Half mirrors the shipped CLI flow (Stage A then Stage B).
+STAGE_B_WARMUP_FRACTION = 0.5
+
 # Finished registry entries kept for late SSE joins. Older runs are evicted;
 # their artifacts (checkpoint, metrics, solver_console.log) live on disk. This
 # bounds the process's memory across many launches: each job's event buffer is
@@ -491,10 +496,17 @@ def _configure(
         f"training.weights.bc={request.weights.bc}",
     ]
     from naviernet_api.services.config_service import compose_cfg_once
-    from naviernet_api.services.datasets import series_overrides
+    from naviernet_api.services.datasets import series_is_stage_b, series_overrides
 
     # The series' saved conditions and frame exclusions travel with every run.
     overrides.extend(series_overrides(settings, dataset))
+    # Stage-B physics collapses a random interface, so a fresh Stage-B run trains
+    # the Stage-A objective alone for the warm-up fraction, then engages momentum/
+    # energy/evaporation on the converged interface -- the warm start done in one
+    # run, with no extra step for the user. The primary series decides the stage.
+    if series_is_stage_b(settings, dataset):
+        warmup = int(request.steps * STAGE_B_WARMUP_FRACTION)
+        overrides.append(f"training.stage_b_warmup_steps={warmup}")
     # Joint training: hand the pipeline the whole list. Each series' regime is
     # read from its own tensors, so the primary's compose is enough as the base.
     datasets = request.datasets or [dataset]

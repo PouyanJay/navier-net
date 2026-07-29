@@ -19,7 +19,7 @@ from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 
 from naviernet.data.preprocess import BAKED_CONDITION_FIELDS
-from naviernet.physics.registry import REGISTRY
+from naviernet.physics.registry import REGISTRY, enabled_equations, stage_b_terms
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import (
     MAX_LABEL_LEN,
@@ -499,6 +499,18 @@ def series_fields(settings: Settings, dataset: str, cfg: dict | None = None) -> 
     )
     added = [f for eid in enabled if eid in _TOGGLEABLE for f in _TOGGLEABLE[eid]]
     return list(_STAGE_A_FIELDS) + added
+
+
+def series_is_stage_b(settings: Settings, dataset: str, cfg: dict | None = None) -> bool:
+    """Whether this series has ANY Stage-B physics enabled (momentum, energy, or
+    evaporation) -- not only the full p+T set.
+
+    A single enabled equation is enough: energy alone activates the evaporation
+    closure, which is the term that needs the interface already in place. A launched
+    Stage-B run therefore gets an automatic in-run Stage-A warm-up (see the run
+    launcher). ``cfg`` may be a pre-read model config, to skip re-reading model.json.
+    """
+    return bool(stage_b_terms(enabled_equations(series_fields(settings, dataset, cfg))))
 
 
 def _inline_per_field(per_field: dict) -> str:

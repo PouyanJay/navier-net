@@ -230,3 +230,13 @@ def enabled_equations(fields: Sequence[str]) -> list[Equation]:
 def rebalanced_terms(equations: Sequence[Equation]) -> tuple[str, ...]:
     """The weight keys the gradient-norm rebalancer adjusts, in order."""
     return tuple(e.weight_key for e in equations if e.rebalanced)
+
+
+def stage_b_terms(equations: Sequence[Equation]) -> tuple[str, ...]:
+    """The weight keys of the Stage-B equations, in order.
+
+    These are gated off during the warm-up (`training.stage_b_warmup_steps`) so
+    the interface converges on the Stage-A objective before the momentum, energy,
+    and evaporation physics engages.
+    """
+    return tuple(e.weight_key for e in equations if e.stage == "B")
