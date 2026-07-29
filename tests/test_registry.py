@@ -45,6 +45,15 @@ def test_stage_b_rebalances_momentum_and_energy_but_not_evaporation():
     assert registry.rebalanced_terms(eqs) == ("vof", "div", "bc", "mom", "energy")
 
 
+def test_stage_b_terms_are_exactly_the_warmup_gated_physics():
+    """The terms the in-run warm-up holds off are the Stage-B equations, and only
+    those -- the Stage-A objective is never gated."""
+    eqs = registry.enabled_equations(("phi", "u", "v", "s", "p", "T"))
+    assert registry.stage_b_terms(eqs) == ("mom", "energy", "evap")
+    # A Stage-A-only model has nothing to gate.
+    assert registry.stage_b_terms(registry.enabled_equations(("phi", "u", "v", "s"))) == ()
+
+
 def test_momentum_needs_pressure_and_can_be_enabled_without_temperature():
     """The toggles are independent: pressure unlocks momentum, temperature unlocks
     energy + evaporation. Enabling one must not require the other."""

@@ -192,6 +192,12 @@ class TrainingConfig:
     # off-interface source penalty decays (soft -> hard curriculum). 0 disables
     # the schedule (the penalty and closure keep their static weights).
     curriculum_steps: int = 0
+    # Stage B: steps to train the Stage-A objective alone before the Stage-B
+    # physics (momentum, energy, evaporation) engages -- an in-run warm start, so
+    # those terms act on an interface that has already converged instead of on a
+    # random field (which collapses it). 0 disables the gate (Stage-B on from
+    # step 1); a resumed run whose step count is past the gate is unaffected.
+    stage_b_warmup_steps: int = 0
 
     seed: int = 0
     device: str = "cpu"
