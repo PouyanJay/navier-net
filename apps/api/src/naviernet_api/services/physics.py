@@ -50,6 +50,7 @@ def build_validation(
         validation_frames=metrics.get("validation_frames") or [],
         transfer_iou_mean=transfer.get("mean"),
         transfer_per_dataset=transfer.get("per_dataset"),
+        transfer_per_frame=transfer.get("per_frame"),
         per_dataset=per_dataset,
         training_datasets=metrics.get("training_datasets"),
         heldout_datasets=metrics.get("heldout_datasets"),

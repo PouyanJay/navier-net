@@ -12,6 +12,7 @@ import {
 } from "../../lib/api";
 import { isTrainedRun } from "../../lib/runs";
 import { runConditions, runHeadline, runRowMeta } from "./format";
+import { AgreementTab } from "./AgreementTab";
 import { FieldsTab } from "./FieldsTab";
 import { OverviewTab } from "./OverviewTab";
 import { ReconTab } from "./ReconTab";
@@ -287,6 +288,13 @@ export function ResultsPage({ project }: ResultsPageProps) {
                 runId={selected.id}
                 dataset={viewDataset}
                 joint={runConditions(selected).all.length > 1}
+              />
+            ) : activeTab === "agreement" ? (
+              <AgreementTab
+                run={selected}
+                metrics={detail?.metrics ?? null}
+                validation={validation}
+                datasetLabels={datasetLabels}
               />
             ) : (
               <Panel

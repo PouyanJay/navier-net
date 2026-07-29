@@ -33,6 +33,7 @@ export interface ArtifactFlags {
 export interface TransferMetrics {
   per_dataset?: Record<string, number>;
   mean?: number | null;
+  per_frame?: Record<string, Record<string, number>>;
 }
 
 export interface RunMetrics {
@@ -99,6 +100,7 @@ export interface PhysicsValidation {
   validation_frames: number[];
   transfer_iou_mean: number | null;
   transfer_per_dataset: Record<string, number> | null;
+  transfer_per_frame: Record<string, Record<string, number>> | null;
   per_dataset: Record<string, DatasetAgreement> | null;
   training_datasets: string[] | null;
   heldout_datasets: string[] | null;

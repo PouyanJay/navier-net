@@ -117,6 +117,18 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
       const u = String(url);
       if (u.includes("/api/projects/" + PID)) return json(PROJECT);
       if (u.includes("/api/projects")) return json([PROJECT]);
+      const groupsMatch = u.match(/\/api\/datasets\/([^/]+)\/groups$/);
+      if (groupsMatch) {
+        const heldout = groupsMatch[1] === "low_t";
+        return json({
+          Re: heldout ? 265 : 320,
+          We: heldout ? 1.4 : 1.8,
+          Ca: heldout ? 0.0044 : 0.0056,
+          Ja: heldout ? 0.22 : 0.31,
+          Pr: 9.4,
+          hele_shaw: heldout ? 5.2 : 1.9,
+        });
+      }
       if (u.includes("/api/datasets/highest_t/qc-data")) {
         return json({
           dataset: "highest_t",
@@ -295,6 +307,9 @@ function mockApi(): { runListCalls: string[]; launches: unknown[] } {
           validation_frames: [],
           transfer_iou_mean: joint ? 0.903 : null,
           transfer_per_dataset: joint ? { low_t: 0.903 } : null,
+          transfer_per_frame: joint
+            ? { low_t: { "1": 0.91, "2": 0.9, "3": 0.899 } }
+            : null,
           per_dataset: joint
             ? {
                 highest_t: {
@@ -467,6 +482,38 @@ describe("results routing", () => {
     expect(
       screen.getByRole("img", { name: /speed .u. field map/i }),
     ).toBeInTheDocument();
+  });
+
+  it("agreement tab shows per-condition dots, transfer and the envelope", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/second_run/agreement`);
+
+    const grid = await screen.findByTestId("agreement-grid");
+    expect(grid).toHaveTextContent(/held-out condition/i);
+    expect(grid).toHaveTextContent(/mean 0\.958/);
+
+    // Transfer panel: the axis-B number and the credibility argument.
+    expect(
+      await screen.findByText(/transfer iou · all frames/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("0.903")).toBeInTheDocument();
+    // The envelope marks a group outside the training range as extrapolated
+    // (hele_shaw: training 1.9, held-out 5.2) and inside ones as inside.
+    expect((await screen.findAllByText(/extrapolated/i)).length).toBe(1);
+    expect(screen.getAllByText(/inside envelope/i).length).toBeGreaterThan(0);
+  });
+
+  it("single runs show the transfer empty state", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/demo_run/agreement`);
+
+    expect(
+      await screen.findByText(/no condition was held out/i),
+    ).toBeInTheDocument();
+    // The single condition still charts, holdout flagged in text.
+    expect(await screen.findByTestId("agreement-grid")).toHaveTextContent(
+      /mean/,
+    );
   });
 
   it("joint runs state per-condition reconstruction honestly", async () => {

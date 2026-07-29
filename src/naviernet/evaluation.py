@@ -248,6 +248,9 @@ def evaluate_joint(cfg, model, contexts, paths: RunPaths, heldout_datasets=None)
         report["transfer"] = {
             "per_dataset": transfer,
             "mean": float(np.mean(list(transfer.values()))),
+            # Per-frame transfer scores too: the platform charts how agreement
+            # on a never-trained condition evolves over the event.
+            "per_frame": {name: reports[name]["iou_per_frame"] for name in transfer},
         }
 
     # Per-dataset growth kinematics, held-out conditions included: transfer

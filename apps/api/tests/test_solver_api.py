@@ -168,6 +168,9 @@ def test_launch_joint_run_with_a_held_out_condition(client: TestClient, repo_roo
     assert metrics["heldout_datasets"] == ["third"]
     assert set(metrics["per_dataset"]) == {"highest_t", "second"}
     assert set(metrics["transfer"]["per_dataset"]) == {"third"}
+    # Per-frame transfer scores travel too, for the agreement charts.
+    assert set(metrics["transfer"]["per_frame"]) == {"third"}
+    assert len(metrics["transfer"]["per_frame"]["third"]) > 0
 
     # The launch overrides reached the run's own config snapshot.
     cfg = client.get(f"/api/runs/{run_id}").json()["config"]

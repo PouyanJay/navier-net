@@ -481,6 +481,7 @@ class PhysicsValidation(BaseModel):
     validation_frames: list[int] = Field(default_factory=list)
     transfer_iou_mean: float | None = None  # axis B across held-out datasets
     transfer_per_dataset: dict[str, float] | None = None
+    transfer_per_frame: dict[str, dict[str, float]] | None = None
     per_dataset: dict[str, DatasetAgreement] | None = None
     training_datasets: list[str] | None = None
     heldout_datasets: list[str] | None = None
