@@ -521,7 +521,9 @@ describe("results routing", () => {
 
   it("export tab links artifacts and CSV exports, and copies a citation", async () => {
     mockApi();
-    const writeText = vi.fn(async (_text: string) => {});
+    const writeText = vi.fn<(text: string) => Promise<void>>(
+      async () => {},
+    );
     Object.assign(navigator, { clipboard: { writeText } });
     renderAt(`/projects/${PID}/results/demo_run/export`);
 
