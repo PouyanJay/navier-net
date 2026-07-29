@@ -1,11 +1,24 @@
 /** Typed client for the naviernet API. Types mirror the backend response models. */
 
+export type RunStatus = "running" | "trained" | "failed" | "empty";
+
 export interface RunSummary {
   id: string;
   dataset: string | null;
-  status: "trained" | "empty";
+  status: RunStatus;
   steps: number | null;
   iou_holdout: number | null;
+  /** Every dataset the run spans (one for single runs, several for joint). */
+  datasets?: string[];
+  /** Axis-B conditions held out of training. */
+  heldout_datasets?: string[];
+  /** Joint runs' in-distribution (axis-A) validation IoU. */
+  val_iou_mean?: number | null;
+  /** ISO timestamp of the run directory. */
+  date?: string | null;
+  /** Live progress while the server is training this run. */
+  steps_done?: number | null;
+  steps_total?: number | null;
 }
 
 export interface ArtifactFlags {
@@ -20,6 +33,7 @@ export interface ArtifactFlags {
 export interface TransferMetrics {
   per_dataset?: Record<string, number>;
   mean?: number | null;
+  per_frame?: Record<string, Record<string, number>>;
 }
 
 export interface RunMetrics {
@@ -43,7 +57,9 @@ export interface RunMetrics {
  * holdout-frame IoU, or a joint run's in-distribution validation IoU (metrics.json
  * v2 has no `iou_holdout`). Mirrors the backend's `_headline_iou` so every surface
  * shows the same number for the same run. */
-export function headlineIou(metrics: RunMetrics | null | undefined): number | null {
+export function headlineIou(
+  metrics: RunMetrics | null | undefined,
+): number | null {
   return metrics?.iou_holdout ?? metrics?.val_iou_mean ?? null;
 }
 
@@ -55,6 +71,14 @@ export interface RunDetail {
   metrics: RunMetrics | null;
   config: Record<string, unknown> | null;
   artifacts: ArtifactFlags;
+}
+
+/** One dataset's agreement block inside a joint run's v2 metrics. */
+export interface DatasetAgreement {
+  iou_mean: number | null;
+  iou_val: number | null;
+  validation_frames: number[];
+  iou_per_frame: Record<string, number>;
 }
 
 export interface PhysicsValidation {
@@ -70,6 +94,16 @@ export interface PhysicsValidation {
   iou_mean: number | null;
   iou_holdout: number | null;
   holdout_frame: number | null;
+  // Two-axis validation (metrics.json v2); null/empty on legacy runs.
+  val_iou_mean: number | null;
+  iou_val: number | null;
+  validation_frames: number[];
+  transfer_iou_mean: number | null;
+  transfer_per_dataset: Record<string, number> | null;
+  transfer_per_frame: Record<string, Record<string, number>> | null;
+  per_dataset: Record<string, DatasetAgreement> | null;
+  training_datasets: string[] | null;
+  heldout_datasets: string[] | null;
 }
 
 export interface OperatingConditions {
@@ -271,6 +305,15 @@ export interface LossWeightsInput {
 }
 
 /** A request to start (or resume) a training run. Mirrors the backend model. */
+/** On resume the server applies only `steps` and `render`; every other value
+ * is fixed by the run's own config snapshot, so none are sent. */
+export interface RunResumeRequest {
+  resume: true;
+  run_id: string;
+  steps: number;
+  render?: boolean;
+}
+
 export interface RunLaunchRequest {
   dataset?: string | null;
   /** Joint (transfer-learning) training: one model across these datasets. */
@@ -323,7 +366,8 @@ export interface SweepStatus {
 /** One per-log-step loss record, streamed live over SSE (`hist` events). */
 export interface LossRecord {
   step: number;
-  lr: number;
+  /** Absent in histories from CLI-era checkpoints. */
+  lr?: number | null;
   data: number;
   vof: number;
   div: number;
@@ -357,6 +401,23 @@ export interface Trajectory {
 export interface InterfaceFrame {
   t_ms: number;
   contours: number[][][];
+}
+
+/** One predicted field evaluated on a grid at t* (the /field endpoint). */
+export interface FieldMap {
+  run_id: string;
+  dataset: string | null;
+  name: string;
+  unit: string;
+  t_star: number;
+  t_min_star: number;
+  t_max_star: number;
+  x_um: number[];
+  y_um: number[];
+  values: number[][];
+  vmin: number;
+  vmax: number;
+  fields_available: string[];
 }
 
 export interface InterfaceData {
@@ -413,19 +474,32 @@ const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
 const datasetPath = (id: string) => `/api/datasets/${encodeURIComponent(id)}`;
 
 export const api = {
-  listRuns: () => getJson<RunSummary[]>("/api/runs"),
+  listRuns: (project?: string) =>
+    getJson<RunSummary[]>(
+      project
+        ? `/api/runs?project=${encodeURIComponent(project)}`
+        : "/api/runs",
+    ),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
   getValidation: (id: string) =>
     getJson<PhysicsValidation>(`${runPath(id)}/validation`),
 
-  startRun: (request: RunLaunchRequest) =>
+  startRun: (request: RunLaunchRequest | RunResumeRequest) =>
     sendJson<RunJobStatus>("/api/runs", "POST", request),
   getRunStatus: (id: string) => getJson<RunJobStatus>(`${runPath(id)}/status`),
   getActiveRun: () => getJson<RunJobStatus | null>("/api/runs/active"),
   getLossHistory: (id: string) =>
     getJson<LossRecord[]>(`${runPath(id)}/loss-history`),
-  getTrajectory: (id: string) =>
-    getJson<Trajectory>(`${runPath(id)}/trajectory`),
+  getTrajectory: (id: string, dataset?: string) =>
+    getJson<Trajectory>(
+      `${runPath(id)}/trajectory` +
+        (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
+    ),
+  getField: (id: string, name: string, t: number, dataset?: string) =>
+    getJson<FieldMap>(
+      `${runPath(id)}/field?name=${encodeURIComponent(name)}&t=${t.toFixed(3)}` +
+        (dataset ? `&dataset=${encodeURIComponent(dataset)}` : ""),
+    ),
   getInterface: (id: string, frames = 48) =>
     getJson<InterfaceData>(`${runPath(id)}/interface?frames=${frames}`),
 
@@ -436,6 +510,8 @@ export const api = {
   getActiveSweep: () => getJson<SweepStatus | null>("/api/sweeps/active"),
 
   listProjects: () => getJson<ProjectSummary[]>("/api/projects"),
+  getProject: (id: string) =>
+    getJson<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`),
   createProject: (name: string, description: string) =>
     sendJson<ProjectSummary>("/api/projects", "POST", { name, description }),
   updateProject: (

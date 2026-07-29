@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components";
 import { ArtifactImage } from "../../components/ArtifactImage";
+import { ringPath, type FrameGeometry } from "../../lib/frameGeometry";
 import { seriesName } from "../../lib/series";
 import {
   artifactUrl,
@@ -19,30 +20,6 @@ interface FrameLightboxProps {
   onFrameChange: (frame: number) => void;
   onToggleExcluded: (frame: number) => void;
   onClose: () => void;
-}
-
-/** What it takes to place a ring on the raw frame: the pipeline flips x (raw
- * camera flow runs right to left) and crops the imaged band off the top, so the
- * overlay undoes both. */
-interface FrameGeometry {
-  /** Raw frame width in pixels. */
-  width: number;
-  /** Raw frame height in pixels. */
-  height: number;
-  /** x*,y* are in L_ref units; multiply by this to get pixels. */
-  pxPerStar: number;
-  /** Top row of the imaged band the rings were cut to. */
-  yRoiTop: number;
-}
-
-/** A ring of [x*, y*] points as an SVG path in raw-frame pixel space. */
-function ringPath(ring: number[][], geo: FrameGeometry): string {
-  const points = ring.map(([xStar, yStar]) => {
-    const col = geo.width - 0.5 - xStar * geo.pxPerStar;
-    const row = yStar * geo.pxPerStar - 0.5 + geo.yRoiTop;
-    return `${col.toFixed(2)} ${row.toFixed(2)}`;
-  });
-  return points.length ? `M${points.join("L")}Z` : "";
 }
 
 /** One frame at full size, stepped with the arrow keys. Opened by

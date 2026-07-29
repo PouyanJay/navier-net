@@ -58,6 +58,9 @@ def write_synthetic_tensors(path: Path) -> None:
         "x_pin_star": float(x_star[1]),
         "n_frames_usable": n_t,
         "n_frames_event": 10,
+        # Raw-frame geometry, so the overlays figure can render on synthetic
+        # raws: the imaged band's rows within the (16 x 140) raw frames.
+        "y_roi": [64, 76],
         # Snapshot of the conditions baked into these tensors (matches the
         # highest_t defaults), so the staleness check has something to compare.
         "baked_conditions": {

@@ -13,7 +13,11 @@ import type {
   RunSummary,
 } from "../../lib/api";
 import { seriesName } from "../../lib/series";
-import { FORM_BOUNDS, VAL_FRACTION_OPTIONS, type SolverFormState } from "./form";
+import {
+  FORM_BOUNDS,
+  VAL_FRACTION_OPTIONS,
+  type SolverFormState,
+} from "./form";
 
 /** The numeric run-config fields, in display order. Each maps 1:1 onto a
  * `cfg.training` value; bounds come from FORM_BOUNDS by the same key. */
@@ -158,13 +162,13 @@ function DatasetMultiSelect({
           {heldout ? (
             <>
               {trainingCount} train · 1 held out. The held-out series is never
-              supervised — scored on every frame as a transfer test (can the model
-              predict a condition it never trained on?).
+              supervised — scored on every frame as a transfer test (can the
+              model predict a condition it never trained on?).
             </>
           ) : (
             <>
-              Trains one model jointly across the selected series. Hold one out to
-              keep a whole condition out of training as a transfer test.
+              Trains one model jointly across the selected series. Hold one out
+              to keep a whole condition out of training as a transfer test.
             </>
           )}
         </p>

@@ -4,4 +4,5 @@ import type { RunSummary } from "./api";
  * shared by the shell's stage flags and the project cards so they can't
  * drift on what those words mean. */
 export const isTrainedRun = (run: RunSummary) => run.status === "trained";
-export const hasEvaluation = (run: RunSummary) => run.iou_holdout != null;
+export const hasEvaluation = (run: RunSummary) =>
+  run.iou_holdout != null || run.val_iou_mean != null;

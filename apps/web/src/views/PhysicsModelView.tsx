@@ -43,7 +43,8 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
   if (datasets.length === 0) {
     return (
       <Callout tone="info">
-        No datasets yet — upload a sequence in Datasets to configure its physics and model.
+        No datasets yet — upload a sequence in Datasets to configure its physics
+        and model.
       </Callout>
     );
   }
@@ -71,13 +72,15 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
             </label>
           )}
           <p>
-            Toggle the governing equations; the builder derives the network ensemble. Hover any
-            equation for its math and detail.
+            Toggle the governing equations; the builder derives the network
+            ensemble. Hover any equation for its math and detail.
           </p>
         </div>
         <div className="pm-headacts">
           {model && (
-            <span className={model.dirty ? "pm-statechip dirty" : "pm-statechip"}>
+            <span
+              className={model.dirty ? "pm-statechip dirty" : "pm-statechip"}
+            >
               <span className="dot" aria-hidden="true" />
               {model.dirty ? "unsaved changes" : "saved"}
             </span>
@@ -86,7 +89,9 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
             type="button"
             className="btn ghost icon-only pm-save"
             data-tip={model?.saving ? "Saving…" : "Save configuration"}
-            aria-label={model?.saving ? "Saving configuration" : "Save configuration"}
+            aria-label={
+              model?.saving ? "Saving configuration" : "Save configuration"
+            }
             disabled={!model || !model.dirty || model.saving}
             onClick={() => model?.save()}
           >
@@ -100,7 +105,9 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
           Loading physics &amp; model…
         </p>
       )}
-      {load.status === "error" && <Callout tone="error">{load.message}</Callout>}
+      {load.status === "error" && (
+        <Callout tone="error">{load.message}</Callout>
+      )}
 
       {model && (
         <>

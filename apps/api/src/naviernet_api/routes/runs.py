@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from naviernet_api.models import (
@@ -17,7 +18,10 @@ from naviernet_api.models import (
     RunLaunchRequest,
     RunSummary,
 )
+from naviernet_api.services import exports as exports_service
+from naviernet_api.services import fields as fields_service
 from naviernet_api.services import physics as physics_service
+from naviernet_api.services import projects as projects_service
 from naviernet_api.services import reconstruction, run_manager
 from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings, get_settings
@@ -29,9 +33,17 @@ _STREAM_POLL_SECONDS = 0.25
 
 
 @router.get("", response_model=list[RunSummary])
-def list_runs(settings: Settings = Depends(get_settings)) -> list[RunSummary]:
-    """Every run under `outputs/`."""
-    return runs_service.list_runs(settings)
+def list_runs(
+    project: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> list[RunSummary]:
+    """Every run under `outputs/`; with `?project=`, only that project's runs."""
+    if project is None:
+        return runs_service.list_runs(settings)
+    scope = projects_service.get_project(settings, project)
+    if scope is None:
+        raise HTTPException(status_code=404, detail=f"project {project!r} not found")
+    return runs_service.list_runs(settings, datasets=set(scope.datasets))
 
 
 @router.post("", response_model=RunJobStatus, status_code=202)
@@ -116,12 +128,84 @@ def get_validation(
 
 
 @router.get("/{run_id}/trajectory")
-def get_trajectory(run_id: str, settings: Settings = Depends(get_settings)) -> dict:
-    """Continuous + measured growth kinematics (written by the evaluate stage)."""
-    trajectory = runs_service.read_trajectory(settings, run_id)
+def get_trajectory(
+    run_id: str,
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Continuous + measured growth kinematics (written by the evaluate stage).
+    Joint runs record one per spanned dataset; select it with `?dataset=`."""
+    trajectory = runs_service.read_trajectory(settings, run_id, dataset)
     if trajectory is None:
         raise HTTPException(status_code=404, detail=f"no trajectory for run {run_id!r}")
     return trajectory
+
+
+def _csv_response(body: str | None, filename: str, run_id: str) -> Response:
+    if body is None:
+        raise HTTPException(status_code=404, detail=f"nothing to export for run {run_id!r}")
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{run_id}/export/iou.csv")
+def export_iou(run_id: str, settings: Settings = Depends(get_settings)):
+    """Per-frame IoU with each frame's validation role, in long format."""
+    body = exports_service.iou_csv(settings, run_id)
+    return _csv_response(body, f"{run_id}_iou.csv", run_id)
+
+
+@router.get("/{run_id}/export/trajectory.csv")
+def export_trajectory(
+    run_id: str,
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+):
+    """Growth kinematics (PINN + measured) in long format."""
+    body = exports_service.trajectory_csv(settings, run_id, dataset)
+    suffix = f"_{dataset}" if dataset else ""
+    return _csv_response(body, f"{run_id}{suffix}_trajectory.csv", run_id)
+
+
+@router.get("/{run_id}/export/loss.csv")
+def export_loss(run_id: str, settings: Settings = Depends(get_settings)):
+    """The checkpoint's loss history, one row per logged step."""
+    body = exports_service.loss_csv(settings, run_id)
+    return _csv_response(body, f"{run_id}_loss.csv", run_id)
+
+
+@router.get("/{run_id}/field")
+def get_field(
+    run_id: str,
+    name: Literal[
+        "alpha",
+        "u",
+        "v",
+        "umag",
+        "s",
+        "p",
+        "T",
+        "res_vof",
+        "res_div",
+        "res_mom",
+        "res_energy",
+    ] = Query(...),
+    t: float = Query(default=0.0),
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """One predicted field on a grid at time t* (clamped to the trained span),
+    evaluated from the run's own checkpoint. Joint runs scope by `?dataset=`."""
+    try:
+        payload = fields_service.field_map(settings, run_id, name, t, dataset)
+    except fields_service.FieldUnavailable as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"no trained model for run {run_id!r}")
+    return payload
 
 
 @router.get("/{run_id}/interface")
@@ -148,7 +232,7 @@ def get_loss_history(run_id: str, settings: Settings = Depends(get_settings)) ->
     return history
 
 
-@router.get("/{run_id}/figures/{name}")
+@router.get("/{run_id}/figures/{name:path}")
 def get_figure(
     run_id: str, name: str, settings: Settings = Depends(get_settings)
 ) -> FileResponse:

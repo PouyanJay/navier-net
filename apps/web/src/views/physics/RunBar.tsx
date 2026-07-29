@@ -29,13 +29,19 @@ export function RunBar({ model }: { model: PhysicsModel }) {
             {model.overrideCount > 0 && (
               <span className="dim">
                 {" "}
-                · {model.overrideCount} override{model.overrideCount === 1 ? "" : "s"}
+                · {model.overrideCount} override
+                {model.overrideCount === 1 ? "" : "s"}
               </span>
             )}
           </div>
         </div>
-        <div className="runacts hasinfo" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <Button onClick={copy}>{copied ? "Copied" : "Copy train command"}</Button>
+        <div
+          className="runacts hasinfo"
+          style={{ display: "flex", gap: "8px", alignItems: "center" }}
+        >
+          <Button onClick={copy}>
+            {copied ? "Copied" : "Copy train command"}
+          </Button>
           <span className="infob" aria-hidden="true" tabIndex={0}>
             i
           </span>

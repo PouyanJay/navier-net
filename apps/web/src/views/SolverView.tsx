@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 
+import { ChartFrame } from "../components/ChartFrame";
 import {
   Button,
   Callout,
@@ -169,15 +170,27 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             transferIou={run.transferIou}
           />
           <Panel title="Loss history" subtitle="log₁₀ · rebalance markers">
-            <ViewCanvas>
-              {run.hist.length >= 2 ? (
-                <LossChart records={run.hist} rebalanceSteps={rebalanceSteps} />
-              ) : (
+            {run.hist.length >= 2 ? (
+              <ChartFrame
+                name={`${run.status?.run_id ?? "run"}-live-loss`}
+                title="Live loss history"
+                rows={run.hist as unknown as Record<string, unknown>[]}
+                render={() => (
+                  <ViewCanvas>
+                    <LossChart
+                      records={run.hist}
+                      rebalanceSteps={rebalanceSteps}
+                    />
+                  </ViewCanvas>
+                )}
+              />
+            ) : (
+              <ViewCanvas>
                 <p className="canvas-note">
                   Loss history appears once the run logs its first records.
                 </p>
-              )}
-            </ViewCanvas>
+              </ViewCanvas>
+            )}
           </Panel>
           <Panel title="Solver console" subtitle="pipeline log · live">
             <Console lines={run.lines} label="Solver console" />

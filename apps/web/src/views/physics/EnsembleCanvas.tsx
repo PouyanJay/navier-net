@@ -31,10 +31,14 @@ function bez(x0: number, y0: number, x1: number, y1: number): string {
   return `M ${x0} ${y0} C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
 }
 
-function layerBars(arch: FieldArch, ff: number): { label: string; p: number }[] {
+function layerBars(
+  arch: FieldArch,
+  ff: number,
+): { label: string; p: number }[] {
   const { width: w, depth: d } = arch;
   const bars = [{ label: "γ→h₁", p: 2 * ff * w + w }];
-  for (let i = 1; i < d; i++) bars.push({ label: `h${i}→h${i + 1}`, p: w * w + w });
+  for (let i = 1; i < d; i++)
+    bars.push({ label: `h${i}→h${i + 1}`, p: w * w + w });
   bars.push({ label: "head", p: w + 1 });
   return bars;
 }
@@ -71,7 +75,13 @@ function InputHub({ cy }: { cy: number }) {
         const y = cy + (i - 1) * 40;
         return (
           <g key={n}>
-            <circle cx={X.in} cy={y} r={13} fill="var(--view2)" stroke="var(--viewline)" />
+            <circle
+              cx={X.in}
+              cy={y}
+              r={13}
+              fill="var(--view2)"
+              stroke="var(--viewline)"
+            />
             <text
               x={X.in}
               y={y + 3.5}
@@ -95,7 +105,15 @@ function InputHub({ cy }: { cy: number }) {
   );
 }
 
-function FourierBlock({ cy, ff, ffScale }: { cy: number; ff: number; ffScale: number }) {
+function FourierBlock({
+  cy,
+  ff,
+  ffScale,
+}: {
+  cy: number;
+  ff: number;
+  ffScale: number;
+}) {
   return (
     <>
       <rect
@@ -107,25 +125,59 @@ function FourierBlock({ cy, ff, ffScale }: { cy: number; ff: number; ffScale: nu
         fill="var(--view2)"
         stroke="var(--acc2)"
       />
-      <text x={X.ff} y={cy - 6} textAnchor="middle" fontFamily="var(--mono)" fontSize="10.5" fill="var(--acc2)">
+      <text
+        x={X.ff}
+        y={cy - 6}
+        textAnchor="middle"
+        fontFamily="var(--mono)"
+        fontSize="10.5"
+        fill="var(--acc2)"
+      >
         γ(x,y,t)
       </text>
-      <text x={X.ff} y={cy + 10} textAnchor="middle" fontFamily="var(--mono)" fontSize="9.5" fill="var(--viewtxt)">
+      <text
+        x={X.ff}
+        y={cy + 10}
+        textAnchor="middle"
+        fontFamily="var(--mono)"
+        fontSize="9.5"
+        fill="var(--viewtxt)"
+      >
         {ff} pairs · σ_B {ffScale}
       </text>
     </>
   );
 }
 
-function ResidualHub({ nodes, resY }: { nodes: string[]; resY: (i: number) => number }) {
+function ResidualHub({
+  nodes,
+  resY,
+}: {
+  nodes: string[];
+  resY: (i: number) => number;
+}) {
   return (
     <>
       {nodes.map((id, i) => {
         const y = resY(i);
         return (
           <g key={id}>
-            <rect x={X.hub - 10} y={y - 12} width={150} height={24} rx={6} fill="var(--view2)" stroke="var(--viewline)" />
-            <text x={X.hub} y={y + 3.5} fontFamily="var(--mono)" fontSize="9.5" fill="var(--viewtxt)">
+            <rect
+              x={X.hub - 10}
+              y={y - 12}
+              width={150}
+              height={24}
+              rx={6}
+              fill="var(--view2)"
+              stroke="var(--viewline)"
+            />
+            <text
+              x={X.hub}
+              y={y + 3.5}
+              fontFamily="var(--mono)"
+              fontSize="9.5"
+              fill="var(--viewtxt)"
+            >
               {RES_LABEL[id]}
             </text>
           </g>
@@ -147,7 +199,17 @@ interface LaneProps {
   onSelect: () => void;
 }
 
-function FieldLane({ field, arch, y, cy, selected, params, resNodes, resY, onSelect }: LaneProps) {
+function FieldLane({
+  field,
+  arch,
+  y,
+  cy,
+  selected,
+  params,
+  resNodes,
+  resY,
+  onSelect,
+}: LaneProps) {
   const meta = FIELDS[field];
   const bh = Math.max(12, Math.round(Math.sqrt(arch.width) * 3.4));
   const bw = 13;
@@ -207,7 +269,13 @@ function FieldLane({ field, arch, y, cy, selected, params, resNodes, resY, onSel
       >
         {meta.label} · {arch.width}×{arch.depth}
       </text>
-      <text x={X.net + netW + 14} y={y + 10} fontFamily="var(--mono)" fontSize="8.5" fill="var(--viewtxt)">
+      <text
+        x={X.net + netW + 14}
+        y={y + 10}
+        fontFamily="var(--mono)"
+        fontSize="8.5"
+        fill="var(--viewtxt)"
+      >
         {meta.transform} · {fmtCount(params)}
       </text>
       {LINKS[field].map((rid) => {
@@ -260,7 +328,12 @@ function Inspector({
       <span
         role="img"
         aria-label={`Per-layer parameter distribution for ${meta.label}`}
-        style={{ display: "inline-flex", alignItems: "flex-end", gap: "3px", height: "26px" }}
+        style={{
+          display: "inline-flex",
+          alignItems: "flex-end",
+          gap: "3px",
+          height: "26px",
+        }}
       >
         {bars.map((b, i) => (
           <span
@@ -290,7 +363,9 @@ function Legend({ active }: { active: FieldName[] }) {
           {FIELDS[f].label}
         </span>
       ))}
-      <span style={{ marginLeft: "auto" }}>block height ∝ √width · blocks = layers · click a lane</span>
+      <span style={{ marginLeft: "auto" }}>
+        block height ∝ √width · blocks = layers · click a lane
+      </span>
     </div>
   );
 }
@@ -304,12 +379,17 @@ export function EnsembleCanvas({ model }: { model: PhysicsModel }) {
     if (!active.includes(selected)) setSelected(active[0] ?? "phi");
   }, [active, selected]);
 
-  const enabledEq = new Set(model.equations.filter((e) => e.on).map((e) => e.id));
+  const enabledEq = new Set(
+    model.equations.filter((e) => e.on).map((e) => e.id),
+  );
   const resNodes = ["data", "vof", "div", "bc", "mom", "energy"].filter(
     (id) => id === "data" || id === "bc" || enabledEq.has(id),
   );
 
-  const H = Math.max(320, 46 + Math.max(active.length * LANE_H, resNodes.length * 46) + 40);
+  const H = Math.max(
+    320,
+    46 + Math.max(active.length * LANE_H, resNodes.length * 46) + 40,
+  );
   const cy = H / 2 + 8;
   const laneY = (i: number) => cy + (i - (active.length - 1) / 2) * LANE_H;
   const resY = (i: number) => cy + (i - (resNodes.length - 1) / 2) * 46;
@@ -334,7 +414,11 @@ export function EnsembleCanvas({ model }: { model: PhysicsModel }) {
         >
           <ColumnCaptions />
           <InputHub cy={cy} />
-          <FourierBlock cy={cy} ff={model.globals.ff} ffScale={model.globals.ffScale} />
+          <FourierBlock
+            cy={cy}
+            ff={model.globals.ff}
+            ffScale={model.globals.ffScale}
+          />
           <ResidualHub nodes={resNodes} resY={resY} />
           {active.map((f, i) => (
             <FieldLane

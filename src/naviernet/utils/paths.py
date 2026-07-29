@@ -95,6 +95,11 @@ class RunPaths:
     def trajectory_json(self) -> Path:
         return self.output_dir / "trajectory.json"
 
+    def trajectory_json_for(self, dataset: str) -> Path:
+        """A joint run's per-dataset kinematics (single runs keep the legacy
+        unsuffixed name for backward compatibility)."""
+        return self.output_dir / f"trajectory_{dataset}.json"
+
     def ensure(self) -> RunPaths:
         """Create every writable directory. Safe to call repeatedly."""
         for d in (
@@ -106,3 +111,19 @@ class RunPaths:
         ):
             d.mkdir(parents=True, exist_ok=True)
         return self
+
+
+@dataclass(frozen=True)
+class DatasetVizPaths(RunPaths):
+    """A joint run's paths with figures/video scoped to one dataset's subdir
+    (single runs keep the flat legacy layout)."""
+
+    viz_dataset: str = ""
+
+    @property
+    def figures_dir(self) -> Path:
+        return self.output_dir / "figures" / self.viz_dataset
+
+    @property
+    def video_dir(self) -> Path:
+        return self.output_dir / "video" / self.viz_dataset

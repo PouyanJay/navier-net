@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,8 +33,9 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # Directory names under outputs/ that are not individual runs.
 _NON_RUN_DIRS = {"multirun"}
 
-# Served figure files must be simple PNG names inside the run's figures dir.
-_FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
+# Served figure files must be PNG names inside the run's figures dir, at most
+# one dataset subdirectory deep (joint runs render per-dataset figures).
+_FIGURE_NAME_RE = re.compile(r"^(?:[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+\.png$")
 
 
 def _safe_run_dir(settings: Settings, run_id: str) -> Path | None:
@@ -185,18 +187,59 @@ def _checkpoint_steps(checkpoint: Path) -> int | None:
     return int(done) if done is not None else None
 
 
-def _headline_iou(metrics: dict | None) -> float | None:
-    """The generalization number for a run's list row: the single-dataset holdout
-    IoU, or a joint run's in-distribution validation IoU (metrics.json v2 has no
-    `iou_holdout`), so a joint run isn't shown as blank."""
-    if not metrics:
+def _datasets_of(run_dir: Path, metrics: dict | None) -> list[str]:
+    """Every dataset a run spans: the v2 `datasets` list for a joint run, else
+    the single dataset. Names are validated like run ids (they become paths)."""
+    if metrics and isinstance(metrics.get("datasets"), list):
+        names = [str(name) for name in metrics["datasets"]]
+        safe = [name for name in names if _RUN_ID_RE.match(name)]
+        for name in set(names) - set(safe):
+            log.warning("ignoring unsafe dataset name %r in %s", name, run_dir)
+        if safe:
+            return safe
+    dataset = _dataset_of(run_dir, metrics)
+    return [dataset] if dataset is not None else []
+
+
+def _heldout_of(run_dir: Path, metrics: dict | None) -> list[str]:
+    """The run's held-out (axis-B) datasets, validated like every dataset name."""
+    if not metrics or not isinstance(metrics.get("heldout_datasets"), list):
+        return []
+    names = [str(name) for name in metrics["heldout_datasets"]]
+    safe = [name for name in names if _RUN_ID_RE.match(name)]
+    for name in set(names) - set(safe):
+        log.warning("ignoring unsafe held-out dataset name %r in %s", name, run_dir)
+    return safe
+
+
+def _run_date(run_dir: Path) -> str | None:
+    """When the run last changed, as an ISO UTC timestamp (directory mtime —
+    runs record no explicit timestamp of their own)."""
+    try:
+        stamp = run_dir.stat().st_mtime
+    except OSError:
         return None
-    holdout = metrics.get("iou_holdout")
-    return holdout if holdout is not None else metrics.get("val_iou_mean")
+    return datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(timespec="seconds")
 
 
-def list_runs(settings: Settings) -> list[RunSummary]:
-    """Every run directory under `outputs/`, newest name last (sorted)."""
+def _live_state(run_id: str):
+    """The run-manager job for this run, if the server launched it.
+
+    Imported lazily: run_manager imports this module at module level, so a
+    top-level import here would be a cycle.
+    """
+    from naviernet_api.services import run_manager
+
+    return run_manager.status(run_id)
+
+
+def list_runs(settings: Settings, datasets: set[str] | None = None) -> list[RunSummary]:
+    """Every run directory under `outputs/`, newest name last (sorted).
+
+    With `datasets`, only runs spanning at least one of those datasets are
+    returned — the project-scoped listing (a run with no identifiable dataset
+    cannot belong to a project, so it is excluded from scoped listings).
+    """
     if not settings.outputs_dir.is_dir():
         return []
 
@@ -204,19 +247,40 @@ def list_runs(settings: Settings) -> list[RunSummary]:
     for run_dir in sorted(settings.outputs_dir.iterdir()):
         if not run_dir.is_dir() or run_dir.name in _NON_RUN_DIRS:
             continue
-        run_id = run_dir.name
         metrics = _read_json(run_dir / "metrics.json")
-        dataset = _dataset_of(run_dir, metrics)
-        paths = _run_paths(settings, run_id, dataset)
-        summaries.append(
-            RunSummary(
-                id=run_id,
-                dataset=dataset,
-                status="trained" if paths.checkpoint.is_file() else "empty",
-                iou_holdout=_headline_iou(metrics),
-            )
-        )
+        spanned = _datasets_of(run_dir, metrics)
+        if datasets is not None and not set(spanned) & datasets:
+            continue
+        summaries.append(_summarize_run(settings, run_dir, metrics, spanned))
     return summaries
+
+
+def _summarize_run(
+    settings: Settings, run_dir: Path, metrics: dict | None, spanned: list[str]
+) -> RunSummary:
+    """One run's list row: live job state wins over the on-disk view."""
+    run_id = run_dir.name
+    dataset = _dataset_of(run_dir, metrics)
+    paths = _run_paths(settings, run_id, dataset)
+    live = _live_state(run_id)
+    if live is not None and live.state in ("queued", "running"):
+        status = "running"
+    elif live is not None and live.state == "error":
+        status = "failed"
+    else:
+        status = "trained" if paths.checkpoint.is_file() else "empty"
+    return RunSummary(
+        id=run_id,
+        dataset=dataset,
+        status=status,
+        iou_holdout=metrics.get("iou_holdout") if metrics else None,
+        datasets=spanned,
+        heldout_datasets=_heldout_of(run_dir, metrics),
+        val_iou_mean=metrics.get("val_iou_mean") if metrics else None,
+        date=_run_date(run_dir),
+        steps_done=live.steps_done if status == "running" else None,
+        steps_total=live.steps_total if status == "running" else None,
+    )
 
 
 def read_dataset_and_metrics(
@@ -240,8 +304,14 @@ def get_run(settings: Settings, run_id: str) -> RunDetail | None:
     dataset = _dataset_of(run_dir, metrics)
     paths = _run_paths(settings, run_id, dataset)
 
+    # Joint runs render figures into per-dataset subdirectories; list them
+    # with their relative names so the client can request them back verbatim.
     figures = (
-        sorted(p.name for p in paths.figures_dir.glob("*.png"))
+        sorted(
+            str(p.relative_to(paths.figures_dir))
+            for pattern in ("*.png", "*/*.png")
+            for p in paths.figures_dir.glob(pattern)
+        )
         if paths.figures_dir.is_dir()
         else []
     )
@@ -273,12 +343,21 @@ def read_groups(settings: Settings, run_id: str) -> dict | None:
     return payload.get("groups") if payload else None
 
 
-def read_trajectory(settings: Settings, run_id: str) -> dict | None:
-    """The growth-kinematics arrays the evaluate stage wrote, or None."""
+def read_trajectory(settings: Settings, run_id: str, dataset: str | None = None) -> dict | None:
+    """The growth-kinematics arrays the evaluate stage wrote, or None.
+
+    With `dataset`, a joint run's per-dataset file; the name is validated
+    because it becomes part of a path.
+    """
     paths = _run_paths_or_none(settings, run_id)
     if paths is None:
         return None
-    return _read_json(paths.trajectory_json)
+    if dataset is None:
+        return _read_json(paths.trajectory_json)
+    if not _RUN_ID_RE.match(dataset):
+        log.warning("rejecting unsafe trajectory dataset name %r", dataset)
+        return None
+    return _read_json(paths.trajectory_json_for(dataset))
 
 
 def read_loss_history(settings: Settings, run_id: str) -> list[dict] | None:
@@ -293,7 +372,9 @@ def read_loss_history(settings: Settings, run_id: str) -> list[dict] | None:
 
 def figure_path(settings: Settings, run_id: str, name: str) -> Path | None:
     """Path to a figure PNG, confined to the run's figures dir (SECURITY.md §3)."""
-    if not _FIGURE_NAME_RE.match(name):
+    # ".." matches the name character class; reject it before it can resolve
+    # upward (the containment check below would too — defense in depth).
+    if not _FIGURE_NAME_RE.match(name) or ".." in name.split("/"):
         return None
     paths = _run_paths_or_none(settings, run_id)
     if paths is None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
@@ -104,12 +105,13 @@ class GrowthTrajectory(NamedTuple):
     area: np.ndarray
 
 
-def nose_trajectory(cfg, model, data) -> GrowthTrajectory:
+def nose_trajectory(cfg, model, data, c=None) -> GrowthTrajectory:
     """Continuous nose position and projected vapour area over time (t*).
 
     The final camera frame is excluded from the time span because its bubble
     is cut by the field of view. A timestep whose predicted mask is empty
-    yields ``nan`` for the nose position.
+    yields ``nan`` for the nose position. ``c`` is the dataset's conditioning
+    row for a joint, condition-aware model; ``None`` for a plain one.
     """
     stride = cfg.evaluation.stride
     threshold = cfg.evaluation.threshold
@@ -118,7 +120,7 @@ def nose_trajectory(cfg, model, data) -> GrowthTrajectory:
 
     nose, area = [], []
     for t in times:
-        mask = predict_alpha(model, data, t, stride) > threshold
+        mask = predict_alpha(model, data, t, stride, c) > threshold
         columns = np.where(mask.any(axis=0))[0]
         nose.append(xs[columns.max()] if len(columns) else np.nan)
         area.append(mask.mean() * data.domain.area)
@@ -155,7 +157,7 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     iou_val, validation_frames = _validation_iou(ious_report, data)
 
     predicted = nose_trajectory(cfg, model, data)
-    _write_trajectory(cfg, data, paths, predicted)
+    _write_trajectory(cfg, data, paths.trajectory_json, predicted)
     speed = np.gradient(predicted.nose, predicted.times)
     # Trim the ends, where one-sided differences and the pinned start distort
     # the estimate, and average over the steady middle of the growth.
@@ -247,7 +249,12 @@ def evaluate_joint(cfg, model, contexts, paths: RunPaths, heldout_datasets=None)
         report["transfer"] = {
             "per_dataset": transfer,
             "mean": float(np.mean(list(transfer.values()))),
+            # Per-frame transfer scores too: the platform charts how agreement
+            # on a never-trained condition evolves over the event.
+            "per_frame": {name: reports[name]["iou_per_frame"] for name in transfer},
         }
+
+    _write_joint_trajectories(cfg, model, contexts, paths)
 
     for name, d in per_dataset.items():
         log.info("dataset %s: IoU mean %.3f, val %s", name, d["iou_mean"], d["iou_val"])
@@ -258,30 +265,55 @@ def evaluate_joint(cfg, model, contexts, paths: RunPaths, heldout_datasets=None)
     return report
 
 
+def _write_joint_trajectories(cfg, model, contexts, paths: RunPaths) -> None:
+    """Per-dataset growth kinematics, held-out conditions included: transfer
+    kinematics are evidence too."""
+    for cx in contexts:
+        predicted = nose_trajectory(cfg, model, cx.data, cx.c)
+        _write_trajectory(cfg, cx.data, paths.trajectory_json_for(cx.name), predicted)
+
+
 def _scaled(values, factor: float, digits: int) -> list[float | None]:
     """Scale an array into physical units; NaN becomes None (JSON has no NaN,
     and a bare ``NaN`` token would break every standards-compliant consumer)."""
     return [None if math.isnan(v) else round(float(v) * factor, digits) for v in values]
 
 
-def _write_trajectory(cfg, data, paths: RunPaths, predicted: GrowthTrajectory) -> None:
+def _reference_length_um(cfg, data) -> float:
+    """The dataset's own reference length; the composed cfg is the fallback for
+    tensors that predate the ``L_ref_um`` record (exact for the primary dataset,
+    approximate otherwise — logged so a re-preprocess can fix it)."""
+    l_ref_um = data.meta.get("L_ref_um")
+    if l_ref_um is None:
+        l_ref_um = cfg.scales.L_ref_um
+        log.warning(
+            "tensors for %s record no L_ref_um; scaling with the composed cfg "
+            "value (%.1f µm) — re-preprocess to fix",
+            data.meta.get("dataset", "?"),
+            l_ref_um,
+        )
+    return float(l_ref_um)
+
+
+def _write_trajectory(cfg, data, path: Path, predicted: GrowthTrajectory) -> None:
     """Persist the continuous and measured growth kinematics as data.
 
-    The same arrays the trajectory figure plots, in physical units, so the
-    platform can chart them interactively instead of reading a rendered PNG.
+    The same arrays the trajectory figure plots, in physical units (each
+    dataset scaled by its own reference length), so the platform can chart
+    them interactively instead of reading a rendered PNG.
     """
-    l_ref = float(cfg.scales.L_ref_um)
+    l_ref_um = _reference_length_um(cfg, data)
     t_ref_ms = float(data.meta["t_ref_ms"])
     measured = measured_trajectory(cfg, data)
     payload = {
         "t_ms": _scaled(predicted.times, t_ref_ms, 4),
-        "nose_um": _scaled(predicted.nose, l_ref, 2),
-        "area_um2": _scaled(predicted.area, l_ref * l_ref, 1),
+        "nose_um": _scaled(predicted.nose, l_ref_um, 2),
+        "area_um2": _scaled(predicted.area, l_ref_um * l_ref_um, 1),
         "measured": {
             "t_ms": _scaled(measured.times, 1.0, 4),  # already in ms
-            "nose_um": _scaled(measured.nose, l_ref, 2),
-            "area_um2": _scaled(measured.area, l_ref * l_ref, 1),
+            "nose_um": _scaled(measured.nose, l_ref_um, 2),
+            "area_um2": _scaled(measured.area, l_ref_um * l_ref_um, 1),
         },
     }
-    paths.trajectory_json.write_text(json.dumps(payload, allow_nan=False))
-    log.info("trajectory written to %s", paths.trajectory_json)
+    path.write_text(json.dumps(payload, allow_nan=False))
+    log.info("trajectory written to %s", path)

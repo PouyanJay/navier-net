@@ -28,6 +28,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   const { qc, qcError } = useQcData(
     data.selected,
     data.detail?.processed ?? false,
+    data.dataVersion,
   );
 
   if (data.datasets === null && data.error) {
@@ -88,7 +89,10 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
               </Callout>
             )}
             {data.groups && (
-              <GroupsPanel datasetName={seriesName(detail)} groups={data.groups} />
+              <GroupsPanel
+                datasetName={seriesName(detail)}
+                groups={data.groups}
+              />
             )}
           </>
         )}

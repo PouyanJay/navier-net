@@ -15,7 +15,8 @@ const DESC: Record<string, string> = {
 };
 
 const fieldLabel = (f: string) => FIELDS[f as FieldName]?.label ?? f;
-const fmtGroup = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toPrecision(3));
+const fmtGroup = (v: number) =>
+  Math.abs(v) >= 100 ? v.toFixed(0) : v.toPrecision(3);
 
 function EquationInfoPopover({
   eq,
@@ -93,7 +94,9 @@ function EquationRow({
         <span className={eq.stage === "A" ? "tag a" : "tag b"}>{eq.stage}</span>
         {eq.core && <span className="tag core">core</span>}
         {eq.fields_added.length > 0 && (
-          <span className="eqadds">+{eq.fields_added.map(fieldLabel).join(" +")}</span>
+          <span className="eqadds">
+            +{eq.fields_added.map(fieldLabel).join(" +")}
+          </span>
         )}
         <span className="wlab">
           <label htmlFor={`w-${eq.id}`}>w</label>
@@ -104,8 +107,14 @@ function EquationRow({
             min="0"
             value={eq.liveWeight}
             disabled={!eq.on || eq.core}
-            title={eq.core ? "Stage-A weights are set in the Solver run configuration" : undefined}
-            onChange={(e) => model.setWeight(eq.weight_key, Number(e.target.value) || 0)}
+            title={
+              eq.core
+                ? "Stage-A weights are set in the Solver run configuration"
+                : undefined
+            }
+            onChange={(e) =>
+              model.setWeight(eq.weight_key, Number(e.target.value) || 0)
+            }
           />
         </span>
         <span className="infob" aria-hidden="true">
@@ -139,12 +148,18 @@ export function EquationsPanel({
     >
       <div role="group" aria-label="Governing equations">
         {model.equations.map((eq) => (
-          <EquationRow key={eq.id} eq={eq} model={model} datasetName={datasetName} />
+          <EquationRow
+            key={eq.id}
+            eq={eq}
+            model={model}
+            datasetName={datasetName}
+          />
         ))}
       </div>
       <p className="reco-note" style={{ marginTop: "12px" }}>
-        <b>{active}</b> of {model.equations.length} equations active. Core equations are locked
-        on; enabling Momentum or Energy unlocks pressure or temperature.
+        <b>{active}</b> of {model.equations.length} equations active. Core
+        equations are locked on; enabling Momentum or Energy unlocks pressure or
+        temperature.
       </p>
     </Panel>
   );

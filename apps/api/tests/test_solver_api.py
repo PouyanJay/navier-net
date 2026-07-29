@@ -112,16 +112,27 @@ def test_launch_joint_run_trains_and_evaluates_every_dataset(
     assert metrics["datasets"] == ["highest_t", "second"]
 
 
-def test_joint_run_with_render_on_skips_figures_and_still_finishes(
-    client: TestClient, repo_root: Path
+def test_joint_run_renders_per_dataset_figures(
+    client: TestClient, repo_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The renderer assumes an unconditioned model, so a joint run skips figures/
-    video (default render=on) rather than crashing — metrics are still written."""
+    """A rendered joint run writes each dataset's figures into its own subdir,
+    lists them with relative names, and serves them back. ffmpeg is kept off
+    PATH so the joint video path exercises its skip-not-crash guard."""
+    from PIL import Image
+
     from conftest import write_synthetic_tensors
+
+    monkeypatch.setenv("PATH", str(repo_root))  # no ffmpeg → video skips
 
     second = repo_root / "data" / "processed" / "second"
     second.mkdir(parents=True)
     write_synthetic_tensors(second / "tensors.npz")
+    # Raw frames for both datasets, sized to the synthetic y_roi geometry.
+    for name in ("highest_t", "second"):
+        raw = repo_root / "data" / "raw" / name
+        raw.mkdir(parents=True, exist_ok=True)
+        for n in range(1, 13):
+            Image.new("L", (16, 140), color=10 * n).save(raw / f"{n}.tif", format="TIFF")
 
     joint = {
         **TINY_RUN,
@@ -133,6 +144,18 @@ def test_joint_run_with_render_on_skips_figures_and_still_finishes(
     events = read_stream(client, run_id)
     final = [e["data"] for e in events if e["event"] == "status"][-1]
     assert final["state"] == "done", f"joint render run failed: {final.get('message')}"
+
+    figures_dir = repo_root / "outputs" / run_id / "figures"
+    for name in ("highest_t", "second"):
+        assert (figures_dir / name / "trajectories.png").is_file()
+        assert (figures_dir / name / "pinn_on_images_all.png").is_file()
+    listed = client.get(f"/api/runs/{run_id}").json()["artifacts"]["figures"]
+    assert "second/trajectories.png" in listed
+    served = client.get(f"/api/runs/{run_id}/figures/second/trajectories.png")
+    assert served.status_code == 200
+    assert client.get(f"/api/runs/{run_id}/figures/../secret.png").status_code == 404
+    # No ffmpeg on PATH: the joint video skipped rather than failing the run.
+    assert not (repo_root / "outputs" / run_id / "video" / "second" / "growth.mp4").exists()
 
 
 def test_launch_joint_run_with_a_held_out_condition(client: TestClient, repo_root: Path):
@@ -168,6 +191,9 @@ def test_launch_joint_run_with_a_held_out_condition(client: TestClient, repo_roo
     assert metrics["heldout_datasets"] == ["third"]
     assert set(metrics["per_dataset"]) == {"highest_t", "second"}
     assert set(metrics["transfer"]["per_dataset"]) == {"third"}
+    # Per-frame transfer scores travel too, for the agreement charts.
+    assert set(metrics["transfer"]["per_frame"]) == {"third"}
+    assert len(metrics["transfer"]["per_frame"]["third"]) > 0
 
     # The launch overrides reached the run's own config snapshot.
     cfg = client.get(f"/api/runs/{run_id}").json()["config"]
@@ -179,8 +205,8 @@ def test_launch_joint_run_with_a_held_out_condition(client: TestClient, repo_roo
 def test_joint_run_lists_its_validation_iou_as_the_headline(
     client: TestClient, repo_root: Path
 ):
-    """metrics.json v2 has no `iou_holdout`; the runs list falls back to the joint
-    run's in-distribution validation IoU so its row isn't blank."""
+    """metrics.json v2 has no `iou_holdout`; the runs list carries the joint
+    run's in-distribution validation IoU explicitly so its row isn't blank."""
     from conftest import write_synthetic_tensors
 
     processed = repo_root / "data" / "processed" / "second"
@@ -198,7 +224,9 @@ def test_joint_run_lists_its_validation_iou_as_the_headline(
 
     listed = {run["id"]: run for run in client.get("/api/runs").json()}
     detail = client.get(f"/api/runs/{run_id}").json()
-    assert listed[run_id]["iou_holdout"] == detail["metrics"]["val_iou_mean"]
+    assert listed[run_id]["iou_holdout"] is None  # v2 metrics have no holdout frame
+    assert listed[run_id]["val_iou_mean"] == detail["metrics"]["val_iou_mean"]
+    assert listed[run_id]["datasets"] == ["highest_t", "second"]
 
 
 def test_launch_rejects_holding_out_every_dataset(client: TestClient, repo_root: Path):
@@ -322,3 +350,36 @@ def test_stream_replays_fully_after_the_run_finished(client: TestClient):
     names = {event["event"] for event in events}
     assert {"status", "hist", "log"} <= names
     assert [e["data"] for e in events if e["event"] == "status"][-1]["state"] == "done"
+
+
+def test_joint_run_writes_per_dataset_trajectories(client: TestClient, repo_root: Path):
+    """A joint run records growth kinematics per spanned dataset (including the
+    held-out one) and serves them via ?dataset=; the unscoped path stays 404
+    because a joint run has no single trajectory."""
+    from conftest import write_synthetic_tensors
+
+    processed = repo_root / "data" / "processed" / "second"
+    processed.mkdir(parents=True)
+    write_synthetic_tensors(processed / "tensors.npz")
+
+    joint = {
+        **TINY_RUN,
+        "dataset": None,
+        "datasets": ["highest_t", "second"],
+        "heldout_datasets": ["second"],
+        "val_fraction": 0.2,
+    }
+    run_id = client.post("/api/runs", json=joint).json()["run_id"]
+    read_stream(client, run_id)
+
+    for name in ("highest_t", "second"):
+        assert (repo_root / "outputs" / run_id / f"trajectory_{name}.json").is_file()
+        body = client.get(f"/api/runs/{run_id}/trajectory", params={"dataset": name}).json()
+        assert body["t_ms"] and body["nose_um"]
+        assert body["measured"]["t_ms"]
+
+    assert client.get(f"/api/runs/{run_id}/trajectory").status_code == 404
+    assert (
+        client.get(f"/api/runs/{run_id}/trajectory", params={"dataset": "../evil"}).status_code
+        == 404
+    )

@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 
 import { AppShell, NAV_ITEMS, type PlatformStatus } from "./app/AppShell";
 import { Button } from "./components";
@@ -10,11 +17,12 @@ import {
   type RunJobStatus,
   type RunSummary,
 } from "./lib/api";
-import { hasEvaluation, isTrainedRun } from "./lib/runs";
+import { isTrainedRun } from "./lib/runs";
+import { seriesNameOf } from "./lib/series";
 import { DatasetsView } from "./views/DatasetsView";
 import { PhysicsModelView } from "./views/PhysicsModelView";
 import { ProjectsView } from "./views/ProjectsView";
-import { ResultsView } from "./views/ResultsView";
+import { ResultsPage } from "./views/results/ResultsPage";
 import { SolverView } from "./views/SolverView";
 
 const PAGE_TITLE: Record<string, string> = Object.fromEntries(
@@ -42,7 +50,6 @@ const CONTINUE: Record<string, { label: string; next: string }> = {
 };
 
 const IDLE_STATUS: PlatformStatus = {
-  done: { physics: true },
   latestRun: null,
   projects: 0,
 };
@@ -53,8 +60,30 @@ interface RepoFacts {
   projectCount: number;
 }
 
+/** Valid stage segments for /projects/:pid/:stage — anything else goes home. */
+const PROJECT_STAGES = new Set(["datasets", "physics", "solver", "results"]);
+
 export function App() {
-  const [active, setActive] = useState("projects");
+  return (
+    <Routes>
+      <Route path="/" element={<Workspace />} />
+      <Route path="/projects/:pid/:stage" element={<Workspace />} />
+      <Route path="/projects/:pid/results/:runId" element={<Workspace />} />
+      <Route
+        path="/projects/:pid/results/:runId/:tab"
+        element={<Workspace />}
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+function Workspace() {
+  const params = useParams<{ pid?: string; stage?: string }>();
+  const navigate = useNavigate();
+  // The deep results routes have no :stage param; they are always "results".
+  const stage = params.pid ? (params.stage ?? "results") : undefined;
+  const active = stage && PROJECT_STAGES.has(stage) ? stage : "projects";
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [creatingProject, setCreatingProject] = useState(false);
   const [activeRun, setActiveRun] = useState<RunJobStatus | null>(null);
@@ -70,13 +99,10 @@ export function App() {
       .catch(() => setRepo(null)); // chrome only; views surface real errors
   }, []);
 
-  // Stage flags are scoped to the open project: an empty project shows an
+  // The run chip is scoped to the open project: an empty project shows an
   // untouched pipeline even when other projects have trained runs.
   const status = useMemo<PlatformStatus>(() => {
     if (!repo) return IDLE_STATUS;
-    const datasets = project
-      ? repo.datasets.filter((dataset) => project.datasets.includes(dataset.id))
-      : repo.datasets;
     const runs = project
       ? repo.runs.filter(
           (run) =>
@@ -85,14 +111,16 @@ export function App() {
       : repo.runs;
     const trained = runs.filter(isTrainedRun);
     const latest = trained[trained.length - 1] ?? null;
+    // Dataset-named legacy runs follow their series' current display label.
+    const latestName =
+      latest &&
+      (latest.dataset && latest.id === latest.dataset
+        ? seriesNameOf(repo.datasets, latest.dataset)
+        : latest.id);
     return {
-      done: {
-        datasets: datasets.some((dataset) => dataset.processed),
-        physics: true, // the governing equations ship with the platform
-        solver: trained.length > 0,
-        results: runs.some(hasEvaluation),
-      },
-      latestRun: latest ? { id: latest.id, steps: latest.steps } : null,
+      latestRun: latest
+        ? { id: latest.id, name: latestName ?? latest.id, steps: latest.steps }
+        : null,
       projects: repo.projectCount,
     };
   }, [repo, project]);
@@ -105,6 +133,41 @@ export function App() {
       .then(setActiveRun)
       .catch(() => {}); // the pill is best-effort
   }, [refreshStatus]);
+
+  // The URL is the source of truth for the open project: resolve :pid to a
+  // project (deep links, reloads), and clear it when navigating home.
+  useEffect(() => {
+    const pid = params.pid;
+    if (!pid) {
+      setProject(null);
+      return;
+    }
+    let mounted = true;
+    setProject((current) => (current?.id === pid ? current : null));
+    api
+      .getProject(pid)
+      .then((loaded) => {
+        if (mounted) setProject(loaded);
+      })
+      .catch(() => {
+        if (mounted) {
+          toast("Project not found", pid, "err");
+          navigate("/", { replace: true });
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [params.pid, navigate, toast]);
+
+  // Stage navigation writes the URL; the URL drives everything else.
+  const goToStage = useCallback(
+    (id: string) => {
+      if (id === "projects" || !params.pid) navigate("/");
+      else navigate(`/projects/${params.pid}/${id}`);
+    },
+    [navigate, params.pid],
+  );
 
   const handleRunState = useCallback(
     (run: RunJobStatus | null) => {
@@ -128,16 +191,18 @@ export function App() {
     [toast, refreshStatus],
   );
 
-  const openProject = useCallback((selected: ProjectSummary) => {
-    setProject(selected);
-    setActive("datasets");
-  }, []);
+  const openProject = useCallback(
+    (selected: ProjectSummary) => {
+      setProject(selected); // seed before the :pid effect re-resolves it
+      navigate(`/projects/${selected.id}/datasets`);
+    },
+    [navigate],
+  );
 
   // Stable identity: AppShell memoizes its palette actions on this callback.
   const goHome = useCallback(() => {
-    setProject(null);
-    setActive("projects");
-  }, []);
+    navigate("/");
+  }, [navigate]);
 
   // Series uploads update the project's dataset list; stage flags follow.
   const handleProjectChanged = useCallback(
@@ -148,10 +213,13 @@ export function App() {
     [refreshStatus],
   );
 
+  // A project URL with an unknown stage segment is not a page.
+  if (stage && !PROJECT_STAGES.has(stage)) return <Navigate to="/" replace />;
+
   return (
     <AppShell
       active={active}
-      onNavigate={setActive}
+      onNavigate={goToStage}
       activeRun={activeRun}
       status={status}
       project={project?.name ?? null}
@@ -170,16 +238,14 @@ export function App() {
         {project && CONTINUE[active] && (
           <Button
             variant="primary"
-            onClick={() => setActive(CONTINUE[active].next)}
+            onClick={() => goToStage(CONTINUE[active].next)}
           >
             {CONTINUE[active].label}
           </Button>
         )}
       </header>
       <div className="stack">
-        {active === "results" && (
-          <ResultsView datasets={repo?.datasets ?? []} />
-        )}
+        {active === "results" && project && <ResultsPage project={project} />}
         {active === "projects" && (
           <ProjectsView
             onOpen={openProject}

@@ -51,6 +51,9 @@
 
   /* Chart series; third line-series color (after --acc and --green) */
   --purple: #a855f7;
+  /* Fifth line-series color (charts render on the always-dark canvas, so one
+     value serves both themes; red stays reserved for status). */
+  --teal: #2dd4bf;
 
   /* Solver console tones: the console sits on the always-dark view canvas,
      so these do not vary with the theme (values from the mockup's console). */
@@ -80,6 +83,9 @@
   /* Type */
   --mono: "JetBrains Mono", ui-monospace, monospace;
   --sans: "Geist Variable", system-ui, -apple-system, sans-serif;
+  /* Serif voice: verdict narratives and figure captions (the mockup's
+     editorial register). */
+  --serif: "Crimson Pro", "Iowan Old Style", Palatino, Georgia, serif;
 
   /* Spacing scale (4px base) */
   --s1: 4px;
@@ -127,6 +133,7 @@
   --redsoft: #fb718516;
   --redtext: #fb7185;
   --purple: #c084fc;
+  --teal: #2dd4bf;
 
   --sh: 0 1px 2px #00000057, 0 1px 3px #00000040;
 

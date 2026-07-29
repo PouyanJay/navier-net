@@ -19,7 +19,13 @@
   flex-direction: column;
 }
 .lib-card > .body > .note {
+  /* Sit at the card's bottom when the card is stretched, but never closer
+     than a real gap to whatever precedes it (an empty project's card is
+     content-height, where `auto` alone collapses to nothing). */
   margin-top: auto;
+}
+.lib-card > .body > .addds {
+  margin-bottom: var(--s5);
 }
 .dsx-main {
   display: grid;

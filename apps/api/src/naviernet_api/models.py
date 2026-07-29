@@ -37,9 +37,15 @@ class RunSummary(BaseModel):
 
     id: str
     dataset: str | None = None
-    status: str  # "trained" (has a checkpoint) | "empty"
+    status: str  # "running" | "trained" | "failed" | "empty"
     steps: int | None = None  # completed training steps, if known
-    iou_holdout: float | None = None  # headline generalization metric, if evaluated
+    iou_holdout: float | None = None  # single-dataset holdout-frame IoU, if evaluated
+    datasets: list[str] = Field(default_factory=list)  # every dataset the run spans
+    heldout_datasets: list[str] = Field(default_factory=list)  # axis-B conditions
+    val_iou_mean: float | None = None  # joint runs' in-distribution (axis-A) IoU
+    date: str | None = None  # ISO timestamp of the run directory
+    steps_done: int | None = None  # live progress while the server trains it
+    steps_total: int | None = None
 
 
 class ArtifactFlags(BaseModel):
@@ -441,6 +447,15 @@ class PhysicsUpdate(BaseModel):
     weights: dict[str, float] = Field(default_factory=dict)
 
 
+class DatasetAgreement(BaseModel):
+    """One dataset's agreement block inside a joint run's v2 metrics."""
+
+    iou_mean: float | None = None
+    iou_val: float | None = None  # axis A: this dataset's validation-frame IoU
+    validation_frames: list[int] = Field(default_factory=list)
+    iou_per_frame: dict[str, float] = Field(default_factory=dict)
+
+
 class PhysicsValidation(BaseModel):
     """The physics-validation summary the Results view shows.
 
@@ -460,3 +475,13 @@ class PhysicsValidation(BaseModel):
     iou_mean: float | None = None
     iou_holdout: float | None = None
     holdout_frame: int | None = None
+    # Two-axis validation (metrics.json v2); None/empty on legacy runs.
+    val_iou_mean: float | None = None  # axis A across training datasets
+    iou_val: float | None = None  # axis A of a single-series run
+    validation_frames: list[int] = Field(default_factory=list)
+    transfer_iou_mean: float | None = None  # axis B across held-out datasets
+    transfer_per_dataset: dict[str, float] | None = None
+    transfer_per_frame: dict[str, dict[str, float]] | None = None
+    per_dataset: dict[str, DatasetAgreement] | None = None
+    training_datasets: list[str] | None = None
+    heldout_datasets: list[str] | None = None

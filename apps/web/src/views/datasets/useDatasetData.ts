@@ -22,6 +22,8 @@ export interface DatasetData {
   detail: DatasetDetail | null;
   groups: DimensionlessGroups | null;
   preprocess: PreprocessStatus | null;
+  /** Increments when a preprocess settles; keys derived-data refetches. */
+  dataVersion: number;
   error: string | null;
   /** Add or remove a 1-based camera frame from the series' exclusion set. */
   toggleExcludedFrame: (frame: number) => Promise<void>;
@@ -104,6 +106,9 @@ export function useDatasetData(focusId?: string | null): DatasetData {
   const [detail, setDetail] = useState<DatasetDetail | null>(null);
   const [groups, setGroups] = useState<DimensionlessGroups | null>(null);
   const [preprocess, setPreprocess] = useState<PreprocessStatus | null>(null);
+  // Bumped each time a preprocess settles: derived data (the QC charts) must
+  // refetch even though `selected` and `processed` did not change.
+  const [dataVersion, setDataVersion] = useState(0);
   const [exclusionError, setExclusionError] = useState<string | null>(null);
   // The set the user has asked for, updated synchronously on click so a burst of
   // toggles composes instead of each one racing off the same stale render.
@@ -136,6 +141,7 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     if (!selected) return;
     await loadSelected(selected);
     await refresh();
+    setDataVersion((version) => version + 1);
   }, [selected, loadSelected, refresh]);
 
   usePreprocessPolling(
@@ -210,6 +216,7 @@ export function useDatasetData(focusId?: string | null): DatasetData {
     detail,
     groups,
     preprocess,
+    dataVersion,
     error,
     toggleExcludedFrame,
     exclusionError,
@@ -241,10 +248,14 @@ export function useTrainedIds(): Set<string> {
 }
 
 /** The selected series' QC chart data, refreshed after preprocessing.
+ * `dataVersion` forces a refetch when a RE-preprocess settles — `selected`
+ * and `processed` are both unchanged then, but the tensors (and so the QC)
+ * were rebuilt, e.g. after excluding a frame.
  * A 404 means "not preprocessed yet" (expected); anything else is surfaced. */
 export function useQcData(
   selected: string | null,
   processed: boolean,
+  dataVersion: number,
 ): { qc: QcData | null; qcError: string | null } {
   const [qc, setQc] = useState<QcData | null>(null);
   const [qcError, setQcError] = useState<string | null>(null);
@@ -266,7 +277,7 @@ export function useQcData(
     return () => {
       stale = true;
     };
-  }, [selected, processed]);
+  }, [selected, processed, dataVersion]);
 
   return { qc, qcError };
 }
