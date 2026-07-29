@@ -491,7 +491,9 @@ def test_loss_schedule_gates_stage_b_physics_until_the_warmup_ends():
     assert "mom" not in after and "energy" not in after, "engaged -> default weight 1"
     assert after["evap"] == 1.0, "engaged, curriculum off -> full closure"
 
-    no_warmup = _loss_schedule(1, SimpleNamespace(curriculum_steps=0, stage_b_warmup_steps=0), keys)
+    no_warmup = _loss_schedule(
+        1, SimpleNamespace(curriculum_steps=0, stage_b_warmup_steps=0), keys
+    )
     assert "mom" not in no_warmup, "0 warm-up -> Stage-B physics on from step 1"
 
 

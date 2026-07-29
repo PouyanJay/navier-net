@@ -222,7 +222,9 @@ def train(
             losses[eq.weight_key] = eq.term(ctx)
 
         # Skip rebalancing on the handoff step: its weights are about to be reset.
-        if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(step, tcfg, stage_b_keys):
+        if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
+            step, tcfg, stage_b_keys
+        ):
             _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
@@ -385,7 +387,9 @@ def _train_joint(
         losses = _joint_losses(model, contexts, equations, tcfg, rng)
 
         # Skip rebalancing on the handoff step: its weights are about to be reset.
-        if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(step, tcfg, stage_b_keys):
+        if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
+            step, tcfg, stage_b_keys
+        ):
             _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
