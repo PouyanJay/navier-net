@@ -1,11 +1,24 @@
 /** Typed client for the naviernet API. Types mirror the backend response models. */
 
+export type RunStatus = "running" | "trained" | "failed" | "empty";
+
 export interface RunSummary {
   id: string;
   dataset: string | null;
-  status: "trained" | "empty";
+  status: RunStatus;
   steps: number | null;
   iou_holdout: number | null;
+  /** Every dataset the run spans (one for single runs, several for joint). */
+  datasets?: string[];
+  /** Axis-B conditions held out of training. */
+  heldout_datasets?: string[];
+  /** Joint runs' in-distribution (axis-A) validation IoU. */
+  val_iou_mean?: number | null;
+  /** ISO timestamp of the run directory. */
+  date?: string | null;
+  /** Live progress while the server is training this run. */
+  steps_done?: number | null;
+  steps_total?: number | null;
 }
 
 export interface ArtifactFlags {
@@ -43,7 +56,9 @@ export interface RunMetrics {
  * holdout-frame IoU, or a joint run's in-distribution validation IoU (metrics.json
  * v2 has no `iou_holdout`). Mirrors the backend's `_headline_iou` so every surface
  * shows the same number for the same run. */
-export function headlineIou(metrics: RunMetrics | null | undefined): number | null {
+export function headlineIou(
+  metrics: RunMetrics | null | undefined,
+): number | null {
   return metrics?.iou_holdout ?? metrics?.val_iou_mean ?? null;
 }
 
@@ -413,7 +428,12 @@ const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
 const datasetPath = (id: string) => `/api/datasets/${encodeURIComponent(id)}`;
 
 export const api = {
-  listRuns: () => getJson<RunSummary[]>("/api/runs"),
+  listRuns: (project?: string) =>
+    getJson<RunSummary[]>(
+      project
+        ? `/api/runs?project=${encodeURIComponent(project)}`
+        : "/api/runs",
+    ),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
   getValidation: (id: string) =>
     getJson<PhysicsValidation>(`${runPath(id)}/validation`),
@@ -436,6 +456,8 @@ export const api = {
   getActiveSweep: () => getJson<SweepStatus | null>("/api/sweeps/active"),
 
   listProjects: () => getJson<ProjectSummary[]>("/api/projects"),
+  getProject: (id: string) =>
+    getJson<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`),
   createProject: (name: string, description: string) =>
     sendJson<ProjectSummary>("/api/projects", "POST", { name, description }),
   updateProject: (

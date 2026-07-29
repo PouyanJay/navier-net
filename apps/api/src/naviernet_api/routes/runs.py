@@ -18,6 +18,7 @@ from naviernet_api.models import (
     RunSummary,
 )
 from naviernet_api.services import physics as physics_service
+from naviernet_api.services import projects as projects_service
 from naviernet_api.services import reconstruction, run_manager
 from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings, get_settings
@@ -29,9 +30,17 @@ _STREAM_POLL_SECONDS = 0.25
 
 
 @router.get("", response_model=list[RunSummary])
-def list_runs(settings: Settings = Depends(get_settings)) -> list[RunSummary]:
-    """Every run under `outputs/`."""
-    return runs_service.list_runs(settings)
+def list_runs(
+    project: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> list[RunSummary]:
+    """Every run under `outputs/`; with `?project=`, only that project's runs."""
+    if project is None:
+        return runs_service.list_runs(settings)
+    scope = projects_service.get_project(settings, project)
+    if scope is None:
+        raise HTTPException(status_code=404, detail=f"project {project!r} not found")
+    return runs_service.list_runs(settings, datasets=set(scope.datasets))
 
 
 @router.post("", response_model=RunJobStatus, status_code=202)

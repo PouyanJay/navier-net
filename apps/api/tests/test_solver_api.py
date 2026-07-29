@@ -179,8 +179,8 @@ def test_launch_joint_run_with_a_held_out_condition(client: TestClient, repo_roo
 def test_joint_run_lists_its_validation_iou_as_the_headline(
     client: TestClient, repo_root: Path
 ):
-    """metrics.json v2 has no `iou_holdout`; the runs list falls back to the joint
-    run's in-distribution validation IoU so its row isn't blank."""
+    """metrics.json v2 has no `iou_holdout`; the runs list carries the joint
+    run's in-distribution validation IoU explicitly so its row isn't blank."""
     from conftest import write_synthetic_tensors
 
     processed = repo_root / "data" / "processed" / "second"
@@ -198,7 +198,9 @@ def test_joint_run_lists_its_validation_iou_as_the_headline(
 
     listed = {run["id"]: run for run in client.get("/api/runs").json()}
     detail = client.get(f"/api/runs/{run_id}").json()
-    assert listed[run_id]["iou_holdout"] == detail["metrics"]["val_iou_mean"]
+    assert listed[run_id]["iou_holdout"] is None  # v2 metrics have no holdout frame
+    assert listed[run_id]["val_iou_mean"] == detail["metrics"]["val_iou_mean"]
+    assert listed[run_id]["datasets"] == ["highest_t", "second"]
 
 
 def test_launch_rejects_holding_out_every_dataset(client: TestClient, repo_root: Path):

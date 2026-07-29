@@ -2,7 +2,9 @@ import type { DatasetSummary } from "./api";
 
 /** The human name for a series: its editable display label, or the id when
  * unset. The id stays the immutable key; this is only what the UI shows. */
-export function seriesName(series: Pick<DatasetSummary, "id" | "label">): string {
+export function seriesName(
+  series: Pick<DatasetSummary, "id" | "label">,
+): string {
   return series.label ?? series.id;
 }
 

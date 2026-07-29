@@ -37,9 +37,15 @@ class RunSummary(BaseModel):
 
     id: str
     dataset: str | None = None
-    status: str  # "trained" (has a checkpoint) | "empty"
+    status: str  # "running" | "trained" | "failed" | "empty"
     steps: int | None = None  # completed training steps, if known
-    iou_holdout: float | None = None  # headline generalization metric, if evaluated
+    iou_holdout: float | None = None  # single-dataset holdout-frame IoU, if evaluated
+    datasets: list[str] = Field(default_factory=list)  # every dataset the run spans
+    heldout_datasets: list[str] = Field(default_factory=list)  # axis-B conditions
+    val_iou_mean: float | None = None  # joint runs' in-distribution (axis-A) IoU
+    date: str | None = None  # ISO timestamp of the run directory
+    steps_done: int | None = None  # live progress while the server trains it
+    steps_total: int | None = None
 
 
 class ArtifactFlags(BaseModel):

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -185,18 +186,59 @@ def _checkpoint_steps(checkpoint: Path) -> int | None:
     return int(done) if done is not None else None
 
 
-def _headline_iou(metrics: dict | None) -> float | None:
-    """The generalization number for a run's list row: the single-dataset holdout
-    IoU, or a joint run's in-distribution validation IoU (metrics.json v2 has no
-    `iou_holdout`), so a joint run isn't shown as blank."""
-    if not metrics:
+def _datasets_of(run_dir: Path, metrics: dict | None) -> list[str]:
+    """Every dataset a run spans: the v2 `datasets` list for a joint run, else
+    the single dataset. Names are validated like run ids (they become paths)."""
+    if metrics and isinstance(metrics.get("datasets"), list):
+        names = [str(name) for name in metrics["datasets"]]
+        safe = [name for name in names if _RUN_ID_RE.match(name)]
+        for name in set(names) - set(safe):
+            log.warning("ignoring unsafe dataset name %r in %s", name, run_dir)
+        if safe:
+            return safe
+    dataset = _dataset_of(run_dir, metrics)
+    return [dataset] if dataset is not None else []
+
+
+def _heldout_of(run_dir: Path, metrics: dict | None) -> list[str]:
+    """The run's held-out (axis-B) datasets, validated like every dataset name."""
+    if not metrics or not isinstance(metrics.get("heldout_datasets"), list):
+        return []
+    names = [str(name) for name in metrics["heldout_datasets"]]
+    safe = [name for name in names if _RUN_ID_RE.match(name)]
+    for name in set(names) - set(safe):
+        log.warning("ignoring unsafe held-out dataset name %r in %s", name, run_dir)
+    return safe
+
+
+def _run_date(run_dir: Path) -> str | None:
+    """When the run last changed, as an ISO UTC timestamp (directory mtime —
+    runs record no explicit timestamp of their own)."""
+    try:
+        stamp = run_dir.stat().st_mtime
+    except OSError:
         return None
-    holdout = metrics.get("iou_holdout")
-    return holdout if holdout is not None else metrics.get("val_iou_mean")
+    return datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(timespec="seconds")
 
 
-def list_runs(settings: Settings) -> list[RunSummary]:
-    """Every run directory under `outputs/`, newest name last (sorted)."""
+def _live_state(run_id: str):
+    """The run-manager job for this run, if the server launched it.
+
+    Imported lazily: run_manager imports this module at module level, so a
+    top-level import here would be a cycle.
+    """
+    from naviernet_api.services import run_manager
+
+    return run_manager.status(run_id)
+
+
+def list_runs(settings: Settings, datasets: set[str] | None = None) -> list[RunSummary]:
+    """Every run directory under `outputs/`, newest name last (sorted).
+
+    With `datasets`, only runs spanning at least one of those datasets are
+    returned — the project-scoped listing (a run with no identifiable dataset
+    cannot belong to a project, so it is excluded from scoped listings).
+    """
     if not settings.outputs_dir.is_dir():
         return []
 
@@ -206,14 +248,29 @@ def list_runs(settings: Settings) -> list[RunSummary]:
             continue
         run_id = run_dir.name
         metrics = _read_json(run_dir / "metrics.json")
+        if datasets is not None and not set(_datasets_of(run_dir, metrics)) & datasets:
+            continue
         dataset = _dataset_of(run_dir, metrics)
         paths = _run_paths(settings, run_id, dataset)
+        live = _live_state(run_id)
+        if live is not None and live.state in ("queued", "running"):
+            status = "running"
+        elif live is not None and live.state == "error":
+            status = "failed"
+        else:
+            status = "trained" if paths.checkpoint.is_file() else "empty"
         summaries.append(
             RunSummary(
                 id=run_id,
                 dataset=dataset,
-                status="trained" if paths.checkpoint.is_file() else "empty",
-                iou_holdout=_headline_iou(metrics),
+                status=status,
+                iou_holdout=metrics.get("iou_holdout") if metrics else None,
+                datasets=_datasets_of(run_dir, metrics),
+                heldout_datasets=_heldout_of(run_dir, metrics),
+                val_iou_mean=metrics.get("val_iou_mean") if metrics else None,
+                date=_run_date(run_dir),
+                steps_done=live.steps_done if status == "running" else None,
+                steps_total=live.steps_total if status == "running" else None,
             )
         )
     return summaries
