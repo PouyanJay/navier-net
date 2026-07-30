@@ -97,9 +97,15 @@ def stage_a_residuals(model, x: torch.Tensor, c: torch.Tensor | None = None) -> 
     )
 
 
+def source_penalty_sq(residuals: StageAResiduals) -> torch.Tensor:
+    """Per-point squared dilatation penalty away from the interface, where it is
+    unphysical (shape ``(n, 1)``). The registry's ``src`` collocation term reads this."""
+    return ((1.0 - residuals.interface_weight) * residuals.source) ** 2
+
+
 def source_penalty(residuals: StageAResiduals) -> torch.Tensor:
     """Penalise dilatation away from the interface, where it is unphysical."""
-    return (((1.0 - residuals.interface_weight) * residuals.source) ** 2).mean()
+    return source_penalty_sq(residuals).mean()
 
 
 def boundary_losses(

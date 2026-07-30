@@ -326,6 +326,13 @@ def _init_attention(state: dict, coll_keys, n_coll: int, device) -> dict[str, to
     the checkpoint when resuming an RBA run, otherwise zeros (a fresh run == the plain
     mean-squared residual). Shape ``(n_coll, 1)`` per term."""
     saved = state.get("attention") or {}
+    for key, tensor in saved.items():
+        if tensor.shape[0] != n_coll:
+            raise ValueError(
+                f"checkpoint RBA attention for {key!r} has {tensor.shape[0]} points but "
+                f"training.n_coll={n_coll}; resume with the n_coll the run was built with, "
+                f"or delete the checkpoint to start fresh."
+            )
     return {
         key: (saved[key].to(device) if key in saved else torch.zeros(n_coll, 1, device=device))
         for key in coll_keys
@@ -334,12 +341,10 @@ def _init_attention(state: dict, coll_keys, n_coll: int, device) -> dict[str, to
 
 def _rba_collocation_loss(
     ctx: registry.LossContext,
-    coll_equations,
     weights: dict[str, float],
     schedule: dict[str, float],
     attention: dict[str, torch.Tensor],
-    gamma: float,
-    eta: float,
+    plan: _LossPlan,
 ) -> torch.Tensor:
     """The collocation loss under Residual-Based Attention for one context.
 
@@ -348,19 +353,24 @@ def _rba_collocation_loss(
     the warm-up schedule) and the term contributes
     ``w_k * sched_k * mean((1+lambda_k) * r_k^2)``. ``attention`` is mutated in place so
     it persists across steps; the weights are the fixed config values (RBA replaces the
-    gradient-norm rebalancer, so nothing ratchets them).
+    gradient-norm rebalancer, so nothing ratchets them). At zero attention every term
+    reduces to ``w_k * sched_k * mean(r_k^2)`` -- the pre-RBA objective.
     """
+    gamma, eta = plan.tcfg.rba_gamma, plan.tcfg.rba_eta
     total = 0.0
-    for eq in coll_equations:
+    for eq in plan.coll_equations:
         pointwise = eq.pointwise(ctx)
         sched = schedule.get(eq.weight_key, 1.0)
+        # Use the current attention, THEN update it for the next step -- so a fresh run
+        # (attention 0) applies the plain mean on its first step, exactly the pre-RBA
+        # objective, and a warm-up-gated term (sched 0) never updates.
+        total = total + weights[eq.weight_key] * sched * weighting.rba_weighted_mean(
+            pointwise, attention[eq.weight_key]
+        )
         if sched > 0:
             attention[eq.weight_key] = weighting.rba_update(
                 attention[eq.weight_key], pointwise, gamma, eta
             )
-        total = total + weights[eq.weight_key] * sched * weighting.rba_weighted_mean(
-            pointwise, attention[eq.weight_key]
-        )
     return total
 
 
@@ -549,6 +559,9 @@ def train(
     if rba:
         x_pool = data.sample_collocation(tcfg.n_coll, np.random.default_rng(tcfg.seed)).detach()
         attention = _init_attention(state, coll_keys, x_pool.shape[0], device)
+        # A fingerprint of the fixed pool, recorded each call so a resume can be checked
+        # to have regenerated the identical pool the saved attention is aligned to.
+        state["rba_pool_sig"] = float(x_pool.sum().item())
 
     first_step = state["done"] + 1
     last_step = state["done"] + steps
@@ -595,7 +608,7 @@ def train(
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
         if rba:
             total = _rba_collocation_loss(
-                ctx, coll_equations, weights, schedule, attention, tcfg.rba_gamma, tcfg.rba_eta
+                ctx, weights, schedule, attention, plan
             ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
         else:
             total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)

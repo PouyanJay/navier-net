@@ -28,6 +28,7 @@ from naviernet.physics.residuals import (
     boundary_losses,
     energy_residuals,
     momentum_residuals,
+    source_penalty_sq,
     stage_a_residuals,
 )
 
@@ -96,7 +97,9 @@ class LossContext:
 # function exposes that per-point residual (shape ``(n_coll, 1)``, non-negative) so
 # per-point schemes -- RBA attention (Phase 2) and residual-adaptive resampling
 # (Phase 3) -- can read it, and ``term = mean(pointwise)`` keeps the scalar objective
-# byte-for-byte identical to the original trainer.
+# identical to the original trainer (byte-for-byte for the golden Stage-A terms; the
+# Stage-B mom term now sums per point before the mean, mathematically but not bitwise
+# the same as the old sum-of-means).
 
 
 def _mean(
@@ -115,9 +118,7 @@ def _div_sq(ctx: LossContext) -> torch.Tensor:
 
 
 def _src_sq(ctx: LossContext) -> torch.Tensor:
-    # Dilatation penalised away from the interface (see residuals.source_penalty),
-    # per point rather than reduced.
-    return ((1.0 - ctx.res_a.interface_weight) * ctx.res_a.source) ** 2
+    return source_penalty_sq(ctx.res_a)
 
 
 def _bc_term(ctx: LossContext) -> torch.Tensor:

@@ -126,12 +126,14 @@ def test_collocation_terms_expose_per_point_residuals_that_mean_to_the_term():
     coll = registry.collocation_equations(equations)
     assert {e.id for e in coll} == {"vof", "div", "src", "mom", "energy", "evap"}
 
-    for e in coll:
+    by_id = {e.id: e for e in coll}
+    for eid in ("vof", "div", "src", "mom", "energy", "evap"):  # explicit so a failure names it
+        e = by_id[eid]
         pw = e.pointwise(ctx)
-        assert pw.shape == (n, 1), f"{e.id} pointwise must be per-point, got {tuple(pw.shape)}"
-        assert torch.all(pw >= 0), f"{e.id} pointwise must be a squared residual (>= 0)"
+        assert pw.shape == (n, 1), f"{eid} pointwise must be per-point, got {tuple(pw.shape)}"
+        assert torch.all(pw >= 0), f"{eid} pointwise must be a squared residual (>= 0)"
         assert e.term(ctx).item() == pytest.approx(pw.mean().item(), rel=1e-6), (
-            f"{e.id}: term must equal mean(pointwise)"
+            f"{eid}: term must equal mean(pointwise)"
         )
 
     bc = next(e for e in equations if e.id == "bc")

@@ -894,6 +894,11 @@ def test_rba_attention_persists_and_grows_across_resume(tmp_path):
 
     assert second["done"] == 8, "resume continued the run"
     assert peak_after_second > peak_after_first, "attention kept accumulating across resume"
+    # The pool is regenerated from a FIXED seed (not offset by `done`), so the resumed
+    # run reuses the identical collocation points the saved attention is aligned to.
+    assert second["rba_pool_sig"] == pytest.approx(first["rba_pool_sig"]), (
+        "resume must regenerate the same fixed pool, not reseed by completed steps"
+    )
 
 
 def test_unknown_weighting_fails_loudly(tmp_path):
@@ -916,6 +921,65 @@ def test_rba_with_causal_weighting_fails_loudly(tmp_path):
     _stage(RunPaths.from_config(cfg))
     with pytest.raises(ValueError, match="rba"):
         train(cfg, RunPaths.from_config(cfg))
+
+
+def test_joint_rba_weighting_is_not_yet_supported(tmp_path):
+    """RBA on a joint (multi-dataset) run raises rather than silently falling back to
+    the gradnorm rebalancer -- joint RBA is a later task (T2.5)."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint-rba",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.weighting=rba",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _stage_joint_datasets(run_paths)
+    with pytest.raises(NotImplementedError, match="rba"):
+        train(cfg, run_paths)
+
+
+def test_rba_collocation_loss_matches_the_plain_weighted_mean_at_zero_attention(tmp_path):
+    """Trainer-level init==baseline: with attention all zero, `_rba_collocation_loss`
+    equals the plain per-term weighted sum of mean-squared residuals. A warm-up-gated
+    term (schedule 0) contributes nothing AND its attention is frozen (not updated)."""
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics import registry
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _LossPlan, _rba_collocation_loss, _weighted_sum
+
+    cfg = make_config([*_TINY_TRAIN, "training.weighting=rba"])
+    torch.manual_seed(0)
+    model = BubblePINN(cfg)
+    groups = compute_groups(cfg)
+    equations = registry.enabled_equations(cfg.model.fields)
+    coll_equations = registry.collocation_equations(equations)
+    coll_keys = frozenset(e.weight_key for e in coll_equations)
+    plan = _LossPlan(coll_equations, coll_keys, 1, 1, cfg.training)
+
+    weights = {"vof": 2.0, "div": 0.5, "src": 3.0}
+    x_coll = torch.rand(16, 3, requires_grad=True)
+    ctx = registry.LossContext(model, x_coll, groups=groups)
+    attention = {k: torch.zeros(16, 1) for k in coll_keys}
+    schedule = {"src": 0.0}  # gate `src` off, like the warm-up gates a Stage-B term
+
+    rba_loss = _rba_collocation_loss(ctx, weights, schedule, attention, plan)
+    # Reference: the same terms via the plain weighted mean, src gated to 0.
+    ctx2 = registry.LossContext(model, x_coll, groups=groups)
+    plain = _weighted_sum(
+        {e.weight_key: e.term(ctx2) for e in coll_equations}, weights, schedule
+    )
+
+    assert rba_loss.item() == pytest.approx(plain.item(), rel=1e-5), (
+        "zero attention -> plain mean"
+    )
+    assert torch.all(attention["src"] == 0), "a gated term's attention must not update"
+    assert torch.any(attention["vof"] > 0), "an active term's attention updates"
 
 
 def test_stage_b_engages_only_at_the_boundary_and_never_when_disabled():
