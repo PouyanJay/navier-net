@@ -205,6 +205,36 @@ def test_source_penalty_ignores_sources_on_the_interface(tiny_cfg):
     assert source_penalty(in_bulk).item() == pytest.approx(1.0)
 
 
+def test_nucleation_pulse_source_is_localized_at_the_pin_and_brief():
+    """The nucleation pulse is a streamwise Gaussian peaked at x_pin, active only for
+    t < t0 (a brief initiation burst), and scales linearly with the pulse magnitude --
+    the fixed, time-anchored heat that seeds the bubble."""
+    from naviernet.physics.residuals import nucleation_pulse_source
+
+    x_pin, t0, sigma = 0.3, 0.1, 0.05
+    q_pulse = torch.tensor(2.0)
+
+    # Points at t=0 (pulse active): at the pin, one sigma away, far away.
+    early = torch.tensor([[x_pin, 0.5, 0.0], [x_pin + sigma, 0.5, 0.0], [0.9, 0.5, 0.0]])
+    heat = nucleation_pulse_source(early, x_pin, t0, sigma, q_pulse)
+
+    assert heat.shape == (3, 1)
+    assert heat[0].item() == pytest.approx(2.0), "peaks at q_pulse on the pin"
+    assert heat[1].item() == pytest.approx(2.0 * math.exp(-0.5), rel=1e-5), "Gaussian falloff"
+    assert heat[2].item() < 1e-6, "≈0 far from the pin"
+
+    # After t0 the pulse is off everywhere (the burst has ended).
+    late = torch.tensor([[x_pin, 0.5, t0], [x_pin, 0.5, 0.5]])
+    assert torch.all(nucleation_pulse_source(late, x_pin, t0, sigma, q_pulse) == 0), (
+        "no heat once t >= t0"
+    )
+
+    # Independent of channel height y (a streamwise band at the pin).
+    off_center = torch.tensor([[x_pin, 0.1, 0.0], [x_pin, 0.9, 0.0]])
+    band = nucleation_pulse_source(off_center, x_pin, t0, sigma, q_pulse)
+    assert band[0].item() == pytest.approx(band[1].item())
+
+
 def test_boundary_loss_is_zero_for_a_perfect_solution(tiny_cfg):
     """A model outputting exactly the BC values incurs no boundary loss."""
     u_inlet = 0.1542

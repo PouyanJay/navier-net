@@ -305,6 +305,43 @@ def test_stage_a_run_has_no_warm_up_gate(client: TestClient, repo_root: Path):
     assert cfg["training"]["stage_b_warmup_steps"] == 0
 
 
+def test_launch_with_rba_and_adaptive_collocation_composes_the_config(
+    client: TestClient, repo_root: Path
+):
+    """The advanced accuracy controls travel from the request to the composed config:
+    a run launched with RBA weighting + residual-adaptive collocation trains and its
+    saved config reflects both."""
+    run_id = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "weighting": "rba", "adaptive_collocation": True},
+    ).json()["run_id"]
+    final = [e["data"] for e in read_stream(client, run_id) if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"run failed: {final.get('message')}"
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["training"]["weighting"] == "rba"
+    assert cfg["training"]["adaptive_collocation"] is True
+
+
+@pytest.mark.parametrize("mode", ["weight", "march"])
+def test_launch_with_causal_weighting_composes_and_trains(
+    client: TestClient, repo_root: Path, mode: str
+):
+    """Causal weighting travels through (both modes) and the run actually completes --
+    the config snapshot is written before training, so assert `done` too, not just the
+    composed value."""
+    run_id = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "causal_weighting": True, "causal_mode": mode},
+    ).json()["run_id"]
+    final = [e["data"] for e in read_stream(client, run_id) if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"run failed: {final.get('message')}"
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["training"]["causal_weighting"] is True
+    assert cfg["training"]["causal_mode"] == mode
+
+
 def test_launch_is_rejected_while_a_run_is_active(client: TestClient):
     """One training run at a time: a second launch is refused with 409."""
     from naviernet_api.services import run_manager
@@ -343,6 +380,17 @@ def test_a_failing_run_reports_error_over_the_stream(client: TestClient, repo_ro
         pytest.param({**TINY_RUN, "lr": 0}, 422, id="lr-must-be-positive"),
         pytest.param({**TINY_RUN, "weights": {"data": -1}}, 422, id="negative-weight"),
         pytest.param({**TINY_RUN, "dataset": None}, 422, id="new-run-needs-dataset"),
+        pytest.param(
+            {**TINY_RUN, "weighting": "rba", "causal_weighting": True},
+            422,
+            id="rba-incompatible-with-causal",
+        ),
+        pytest.param(
+            {**TINY_RUN, "adaptive_collocation": True},
+            422,
+            id="adaptive-requires-rba",
+        ),
+        pytest.param({**TINY_RUN, "weighting": "bogus"}, 422, id="unknown-weighting"),
         pytest.param({"resume": True, "steps": 2}, 422, id="resume-needs-run-id"),
         pytest.param({**TINY_RUN, "dataset": "../evil"}, 404, id="traversal-shaped-dataset"),
         pytest.param({**TINY_RUN, "dataset": "."}, 404, id="dot-dataset"),

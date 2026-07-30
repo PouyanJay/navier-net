@@ -26,14 +26,20 @@ import numpy as np
 import torch
 
 from naviernet.config.schema import resolved_datasets, training_datasets
+from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BubblePINN
-from naviernet.physics import registry
+from naviernet.physics import registry, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
 log = get_logger(__name__)
+
+# The residual-adaptive (RAR) candidate pool is this many times the collocation size:
+# a broad pool to score by residual and draw the high-residual sample from. Only built
+# every `resample_every` steps, so the extra forward pass is amortised.
+CANDIDATE_POOL_MULT = 8
 
 # Loss terms whose weights the rebalancer adjusts, derived from the registry for
 # the Stage-A field set: `data` is the reference scale and `src` is a deliberate
@@ -41,6 +47,20 @@ log = get_logger(__name__)
 # rebalance a Stage-A weight dict directly.
 STAGE_A_FIELDS = ("phi", "u", "v", "s")
 REBALANCED_TERMS = registry.rebalanced_terms(registry.enabled_equations(STAGE_A_FIELDS))
+
+
+def _pulse_groups(groups: dict, cfg, domain) -> dict:
+    """Augment ``groups`` with the nucleation pulse's fixed geometry, converted from the
+    config's fractions to the model's absolute non-dimensional units via the dataset's
+    domain, so the energy residual can read them. A no-op when the pulse is off."""
+    if not getattr(cfg.model, "nucleation_pulse", False):
+        return groups
+    return {
+        **groups,
+        "x_pin_star": domain.x_pin,
+        "pulse_t0": domain.t_min + cfg.model.pulse_t0 * (domain.t_max - domain.t_min),
+        "pulse_sigma": cfg.model.pulse_width * (domain.x_max - domain.x_min),
+    }
 
 
 def _initial_state(cfg, equations) -> dict:
@@ -100,6 +120,392 @@ def _loss_schedule(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> dict[str, 
     return schedule
 
 
+def _causal_weights(chunk_losses: torch.Tensor, eps: float) -> torch.Tensor:
+    """Temporal causal weights (Wang et al., arXiv:2203.07404).
+
+    Given the PDE residual aggregated into time-ordered chunks
+    ``chunk_losses[i] = L_r(t_i)`` (with ``t_0 < t_1 < ...``), a chunk is weighted
+    down until all *earlier* chunks are satisfied, so the network learns forward in
+    time instead of fitting late times on an unconverged early solution (the bias
+    that hurts extrapolation to held-out late frames):
+
+        w_i = exp(-eps * sum_{k<i} L_r(t_k))
+
+    The weights are **detached** -- they steer which residuals matter now but carry
+    no gradient. ``eps=0`` returns all ones (uniform-in-time, i.e. today's loss)."""
+    with torch.no_grad():
+        exclusive_prior = torch.cumsum(chunk_losses, dim=0) - chunk_losses
+        return torch.exp(-eps * exclusive_prior)
+
+
+def _causal_eps(step: int, first_step: int, last_step: int, schedule: list[float]) -> float:
+    """The causal weighting ``eps`` for ``step``, annealed across this call's step
+    window ``[first_step, last_step]``.
+
+    ``eps`` climbs through ``schedule`` as training progresses -- a small ``eps``
+    early (near uniform-in-time) steepening to a large one late -- so the network
+    first fits the whole trajectory loosely, then enforces causality hard once it
+    has a coarse solution to march forward from (Wang et al., arXiv:2203.07404). An
+    empty schedule disables the weighting (``eps=0`` -> uniform, i.e. today's loss).
+
+    Progress is measured over the current ``train``/``_train_joint`` invocation, not
+    a stored run total (the trainer keeps none): a single-call run -- the recipe the
+    benchmark and every UI launch use -- anneals cleanly across the whole schedule,
+    and a chunked/resumed run anneals within each chunk rather than jumping to the
+    final ``eps`` (which dividing by a per-call step count would do).
+    """
+    if not schedule:
+        return 0.0
+    frac = min(1.0, max(0.0, (step - first_step) / max(1, last_step - first_step)))
+    return float(schedule[min(len(schedule) - 1, int(frac * len(schedule)))])
+
+
+def _time_chunks(x_coll: torch.Tensor, n_chunks: int) -> list[torch.Tensor]:
+    """``x_coll`` split into ``n_chunks`` time-ordered batches (ascending in the time
+    column, index 2).
+
+    Each batch is a fresh leaf with ``requires_grad`` set, so the PDE residuals
+    differentiate through it exactly as they do the full collocation batch. The
+    chunks are contiguous and near-equal in size, so no bin is empty and -- at
+    ``eps=0`` -- the causal loss reduces to the ordinary collocation mean.
+    """
+    time = x_coll.detach()[:, 2]
+    ordered = x_coll.detach()[torch.argsort(time)]
+    return [
+        chunk.clone().requires_grad_(True)
+        for chunk in torch.chunk(ordered, max(1, n_chunks), dim=0)
+        if chunk.shape[0] > 0
+    ]
+
+
+def _causal_collocation_loss(
+    model,
+    x_coll: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None,
+    coll_equations,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    n_chunks: int,
+    eps: float,
+) -> torch.Tensor:
+    """Time-causal aggregation of the collocation residual (Wang et al.).
+
+    ``x_coll`` is binned into ``n_chunks`` time-ordered groups; within a bin the
+    active PDE terms are summed with their per-term weight and warm-up schedule
+    (exactly the multipliers the uniform path applies) into ``L_r(t_i)``. Each bin
+    is then scaled by the detached causal weight ``w_i = exp(-eps*sum_{k<i} L_r(t_k))``
+    so a late-time bin only matters once the earlier bins are satisfied. Returns
+    ``mean_i(w_i * L_r(t_i))``.
+
+    ``coll_equations`` is always non-empty on any real run (the Stage-A terms
+    vof/div/src are ``core`` and enabled whenever a field set is present), so the
+    ``torch.stack`` below always has bins to stack.
+
+    Cost note: the bins together hold ``x_coll``'s points, so this pass is ~1x the
+    uniform path on its own. But it is a *second* collocation pass -- the caller
+    keeps the uniform per-term means (for logging and the rebalancer) -- so enabling
+    causal weighting roughly doubles the per-step collocation compute. That is the
+    deliberate Phase-1/Phase-2 isolation (the rebalancer still sees plain means);
+    Phase 2 collapses the two passes when it replaces the gradient-norm rebalancer.
+    """
+    chunk_losses = torch.stack(
+        [
+            sum(
+                weights[eq.weight_key]
+                * schedule.get(eq.weight_key, 1.0)
+                * eq.term(registry.LossContext(model, chunk, groups=groups, c=c))
+                for eq in coll_equations
+            )
+            for chunk in _time_chunks(x_coll, n_chunks)
+        ]
+    )
+    return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
+
+
+def _march_active_bins(progress: float, n_chunks: int, full_frac: float) -> int:
+    """How many of the earliest time bins the marching horizon covers at ``progress``
+    (a fraction in ``[0, 1]`` of the way through the run).
+
+    One bin at the start, expanding to all ``n_chunks`` by the time ``progress``
+    reaches ``full_frac`` (the ``1 + int(...)`` discretisation reaches full width a
+    little before that point) and staying there -- a monotonic forward-in-time
+    curriculum.
+    """
+    expanded = min(1.0, max(0.0, progress) / max(1e-9, full_frac))
+    return min(n_chunks, 1 + int(expanded * n_chunks))
+
+
+def _time_march_collocation_loss(
+    model,
+    x_coll: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None,
+    coll_equations,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    n_chunks: int,
+    progress: float,
+    full_frac: float,
+) -> torch.Tensor:
+    """Time-marching curriculum (Wang et al., arXiv:2203.07404).
+
+    Enforce the collocation residual only up to a time horizon that expands from the
+    earliest bin to the whole domain across the run (:func:`_march_active_bins`).
+    Within the active horizon every term is at full weight -- unlike causal
+    *weighting*, which keeps late-time residuals suppressed throughout -- so once the
+    front reaches the late frames they are trained at full strength. Returns the plain
+    per-term weighted, scheduled collocation loss over the active points.
+    """
+    bins = _time_chunks(x_coll, n_chunks)
+    active = _march_active_bins(progress, len(bins), full_frac)
+    x_active = torch.cat([b.detach() for b in bins[:active]]).requires_grad_(True)
+    ctx = registry.LossContext(model, x_active, groups=groups, c=c)
+    return sum(
+        weights[eq.weight_key] * schedule.get(eq.weight_key, 1.0) * eq.term(ctx)
+        for eq in coll_equations
+    )
+
+
+def _weighted_sum(
+    losses: dict[str, torch.Tensor],
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    skip: frozenset[str] = frozenset(),
+) -> torch.Tensor:
+    """The per-term-weighted, scheduled sum of ``losses``, omitting ``skip`` keys.
+
+    ``skip`` carries the collocation terms when causal weighting supplies them
+    separately, leaving the supervised (``data``) and boundary (``bc``) terms.
+    """
+    return sum(
+        weights[name] * schedule.get(name, 1.0) * loss
+        for name, loss in losses.items()
+        if name not in skip
+    )
+
+
+@dataclass(frozen=True)
+class _LossPlan:
+    """Per-run-constant inputs to :func:`_total_loss`.
+
+    ``coll_equations`` are the equations evaluated on the collocation points and
+    ``coll_keys`` their weight keys; ``first_step``/``last_step`` bound this call's
+    step window for the causal ``eps`` schedule; ``tcfg`` is the training config.
+    Built once before the training loop so the per-step call stays small.
+    """
+
+    coll_equations: list
+    coll_keys: frozenset[str]
+    first_step: int
+    last_step: int
+    tcfg: object
+
+
+CAUSAL_MODES = ("weight", "march")
+
+
+def _validate_causal(tcfg) -> None:
+    """Reject an unusable causal config up front, so a typo or a degenerate value fails
+    loudly rather than silently falling through to one variant or defeating the
+    curriculum. Only checked when causal weighting is actually engaged."""
+    if not tcfg.causal_weighting:
+        return
+    if tcfg.causal_mode not in CAUSAL_MODES:
+        raise ValueError(
+            f"training.causal_mode={tcfg.causal_mode!r} is not one of {CAUSAL_MODES}"
+        )
+    # 0 or negative collapses the marching horizon to the full domain on the first
+    # step (via the div-by-zero guard in _march_active_bins), silently disabling the
+    # curriculum; >1 ("never fully expand within the run") is a valid deliberate choice.
+    if tcfg.causal_mode == "march" and tcfg.causal_march_full_frac <= 0:
+        raise ValueError(
+            f"training.causal_march_full_frac={tcfg.causal_march_full_frac} must be > 0"
+        )
+
+
+WEIGHTING_MODES = ("gradnorm", "rba")
+
+
+def _validate_weighting(tcfg) -> None:
+    """Reject an unusable weighting config up front: an unknown scheme, or the not-yet
+    supported RBA x causal-weighting combination (their composition is Phase 4)."""
+    if tcfg.weighting not in WEIGHTING_MODES:
+        raise ValueError(
+            f"training.weighting={tcfg.weighting!r} is not one of {WEIGHTING_MODES}"
+        )
+    if tcfg.weighting == "rba" and tcfg.causal_weighting:
+        raise ValueError(
+            "training.weighting='rba' with training.causal_weighting=true is not "
+            "supported yet (RBA x causal composition is Phase 4); disable one."
+        )
+    if tcfg.adaptive_collocation:
+        if tcfg.weighting != "rba":
+            raise ValueError(
+                "training.adaptive_collocation=true refreshes the RBA fixed pool, so it "
+                "requires training.weighting='rba'."
+            )
+        if tcfg.resample_every <= 0:
+            raise ValueError(
+                f"training.resample_every={tcfg.resample_every} must be > 0 "
+                f"(it is the step period between residual-adaptive pool refreshes)."
+            )
+        if not 0.0 <= tcfg.resample_fraction <= 1.0:
+            raise ValueError(
+                f"training.resample_fraction={tcfg.resample_fraction} must be in [0, 1]."
+            )
+
+
+def _init_attention(state: dict, coll_keys, n_coll: int, device) -> dict[str, torch.Tensor]:
+    """The persistent per-point RBA attention for each collocation term: carried from
+    the checkpoint when resuming an RBA run, otherwise zeros (a fresh run == the plain
+    mean-squared residual). Shape ``(n_coll, 1)`` per term."""
+    saved = state.get("attention") or {}
+    for key, tensor in saved.items():
+        if tensor.shape[0] != n_coll:
+            raise ValueError(
+                f"checkpoint RBA attention for {key!r} has {tensor.shape[0]} points but "
+                f"training.n_coll={n_coll}; resume with the n_coll the run was built with, "
+                f"or delete the checkpoint to start fresh."
+            )
+    return {
+        key: (saved[key].to(device) if key in saved else torch.zeros(n_coll, 1, device=device))
+        for key in coll_keys
+    }
+
+
+def _residual_magnitude(ctx: registry.LossContext, coll_equations) -> torch.Tensor:
+    """Per-point residual magnitude ``sqrt(sum_k r_k^2)`` over the collocation terms,
+    detached -- the score residual-adaptive resampling draws high-residual points by."""
+    total_sq = sum(eq.pointwise(ctx) for eq in coll_equations)
+    return total_sq.detach().sqrt().squeeze(-1)
+
+
+def _resample_pool(model, data, groups, coll_equations, tcfg, rng) -> torch.Tensor:
+    """A residual-adaptively refreshed collocation pool (RAD, :mod:`naviernet.data.adaptive`).
+
+    Scores a broad candidate pool by residual magnitude under the current model and
+    draws ``resample_fraction`` of the points from the high-residual regions plus a
+    uniform base, so the pool tracks the moving interface and stiff late times while
+    keeping global coverage. Returned detached (its own fixed points until the next
+    resample).
+    """
+    candidates = data.sample_collocation(tcfg.n_coll * CANDIDATE_POOL_MULT, rng)
+    magnitude = _residual_magnitude(
+        registry.LossContext(model, candidates, groups=groups), coll_equations
+    )
+    base = data.sample_collocation(tcfg.n_coll, rng).detach()
+    return rad_resample(
+        candidates.detach(), magnitude, base, tcfg.n_coll, tcfg.resample_fraction, rng
+    ).detach()
+
+
+def _rba_collocation_loss(
+    ctx: registry.LossContext,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    attention: dict[str, torch.Tensor],
+    plan: _LossPlan,
+) -> torch.Tensor:
+    """The collocation loss under Residual-Based Attention for one context.
+
+    For each collocation term the per-point attention is updated from that term's
+    per-point squared residual (only while the term is active, i.e. not gated off by
+    the warm-up schedule) and the term contributes
+    ``w_k * sched_k * mean((1+lambda_k) * r_k^2)``. ``attention`` is mutated in place so
+    it persists across steps; the weights are the fixed config values (RBA replaces the
+    gradient-norm rebalancer, so nothing ratchets them). At zero attention every term
+    reduces to ``w_k * sched_k * mean(r_k^2)`` -- the pre-RBA objective.
+    """
+    gamma, eta = plan.tcfg.rba_gamma, plan.tcfg.rba_eta
+    total = 0.0
+    for eq in plan.coll_equations:
+        pointwise = eq.pointwise(ctx)
+        sched = schedule.get(eq.weight_key, 1.0)
+        # Use the current attention, THEN update it for the next step -- so a fresh run
+        # (attention 0) applies the plain mean on its first step, exactly the pre-RBA
+        # objective, and a warm-up-gated term (sched 0) never updates.
+        total = total + weights[eq.weight_key] * sched * weighting.rba_weighted_mean(
+            pointwise, attention[eq.weight_key]
+        )
+        if sched > 0:
+            attention[eq.weight_key] = weighting.rba_update(
+                attention[eq.weight_key], pointwise, gamma, eta
+            )
+    return total
+
+
+def _causal_collocation(
+    model,
+    x_coll: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    step: int,
+    plan: _LossPlan,
+) -> torch.Tensor:
+    """One dataset's causal collocation loss, dispatched on ``causal_mode``: the soft
+    per-time ``weight`` variant or the ``march`` time-curriculum."""
+    tcfg = plan.tcfg
+    if tcfg.causal_mode == "march":
+        progress = (step - plan.first_step) / max(1, plan.last_step - plan.first_step)
+        return _time_march_collocation_loss(
+            model,
+            x_coll,
+            groups,
+            c,
+            plan.coll_equations,
+            weights,
+            schedule,
+            tcfg.causal_time_chunks,
+            progress,
+            tcfg.causal_march_full_frac,
+        )
+    eps = _causal_eps(step, plan.first_step, plan.last_step, tcfg.causal_eps_schedule)
+    return _causal_collocation_loss(
+        model,
+        x_coll,
+        groups,
+        c,
+        plan.coll_equations,
+        weights,
+        schedule,
+        tcfg.causal_time_chunks,
+        eps,
+    )
+
+
+def _total_loss(
+    model,
+    losses: dict[str, torch.Tensor],
+    coll_batches: list[tuple[torch.Tensor, dict, torch.Tensor | None]],
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    step: int,
+    plan: _LossPlan,
+) -> torch.Tensor:
+    """The optimised total loss for one step, shared by ``train`` and ``_train_joint``.
+
+    Off (default): the per-term weighted, scheduled sum of ``losses``. On: the
+    collocation terms are replaced by their causal aggregation (soft time weighting or
+    a time-marching curriculum, per ``causal_mode``), averaged over the datasets'
+    collocation batches (a single batch for a single-dataset run), while the supervised
+    (``data``) and boundary (``bc``) terms keep their uniform contribution. ``losses``
+    -- the plain per-term means -- is never touched here, so logging and the
+    gradient-norm rebalancer see the same quantities either way.
+    """
+    if not plan.tcfg.causal_weighting:
+        return _weighted_sum(losses, weights, schedule)
+    coll = torch.stack(
+        [
+            _causal_collocation(model, x_coll, groups, c, weights, schedule, step, plan)
+            for x_coll, groups, c in coll_batches
+        ]
+    ).mean()
+    return coll + _weighted_sum(losses, weights, schedule, skip=plan.coll_keys)
+
+
 def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     """True only at the one step the warm-up hands off to Stage-B physics -- where
     the optimiser is restarted. Never true when the warm-up is disabled
@@ -155,6 +561,9 @@ def train(
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
     tcfg = cfg.training
+    _validate_causal(tcfg)
+    _validate_weighting(tcfg)
+    rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
 
@@ -164,12 +573,15 @@ def train(
     groups = compute_groups(cfg)
     u_inlet = groups["u_inlet_star"]
     data = BubbleDataset(cfg, paths, device=str(device))
+    groups = _pulse_groups(groups, cfg, data.domain)
     model = BubblePINN(cfg).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
     equations = registry.enabled_equations(cfg.model.fields)
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
+    coll_equations = registry.collocation_equations(equations)
+    coll_keys = frozenset(e.weight_key for e in coll_equations)
     state = _initial_state(cfg, equations)
     if paths.checkpoint.exists():
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
@@ -202,8 +614,26 @@ def train(
     weights = state["w"]
     reset_weights = _initial_state(cfg, equations)["w"]  # config defaults, for the handoff
 
+    # RBA trains on a FIXED collocation pool so the per-point attention persists across
+    # steps. The pool is drawn from a fixed seed (not offset by `done`) so a resumed run
+    # regenerates the identical pool the saved attention is aligned to.
+    x_pool = attention = None
+    if rba:
+        # Restore the exact pool the saved attention aligns to; a fresh run draws it from
+        # a fixed seed. (With RAR the pool evolves, so it must be restored, not just
+        # reseeded -- for a non-adaptive run the two are identical.)
+        saved_pool = state.get("rba_pool")
+        x_pool = (
+            saved_pool.to(device)
+            if saved_pool is not None
+            else data.sample_collocation(tcfg.n_coll, np.random.default_rng(tcfg.seed)).detach()
+        )
+        attention = _init_attention(state, coll_keys, x_pool.shape[0], device)
+        state.setdefault("rba_resamples", 0)
+
     first_step = state["done"] + 1
     last_step = state["done"] + steps
+    plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
@@ -212,18 +642,36 @@ def train(
             group["lr"] = lr
         opt.zero_grad()
 
+        # Residual-adaptive resampling (RAR): periodically move the RBA pool toward the
+        # high-residual regions and reset the per-point attention for the new points.
+        if rba and tcfg.adaptive_collocation and step % tcfg.resample_every == 0:
+            x_pool = _resample_pool(model, data, groups, coll_equations, tcfg, rng)
+            attention = _init_attention({}, coll_keys, x_pool.shape[0], device)
+            state["rba_resamples"] += 1
+            log.info("step %5d | RAR resampled the collocation pool", step)
+
         x_data, alpha_target = data.sample_supervised(tcfg.n_data, rng)
-        x_coll = data.sample_collocation(tcfg.n_coll, rng)
+        # RBA reuses the fixed pool (a fresh leaf each step so the PDE derivatives
+        # differentiate through it, with no cross-step grad accumulation).
+        x_coll = (
+            x_pool.clone().requires_grad_(True)
+            if rba
+            else data.sample_collocation(tcfg.n_coll, rng)
+        )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
 
         ctx = registry.LossContext(model, x_coll, inlet, walls, u_inlet, groups)
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
+        coll_batches = [(x_coll, groups, None)]  # single dataset: one collocation batch
 
-        # Skip rebalancing on the handoff step: its weights are about to be reset.
-        if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
-            step, tcfg, stage_b_keys
+        # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
+        # bounded per-point attention below. Skip the handoff step: weights reset there.
+        if (
+            not rba
+            and step % tcfg.rebalance_every == 0
+            and not _stage_b_engages_at(step, tcfg, stage_b_keys)
         ):
             _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
@@ -234,9 +682,12 @@ def train(
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
-        total = sum(
-            weights[name] * schedule.get(name, 1.0) * loss for name, loss in losses.items()
-        )
+        if rba:
+            total = _rba_collocation_loss(
+                ctx, weights, schedule, attention, plan
+            ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
+        else:
+            total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
         total.backward()
         opt.step()
 
@@ -256,6 +707,12 @@ def train(
 
     state["done"] += steps
     state["w"] = weights
+    if rba:
+        state["attention"] = attention  # persist per-point attention for resume
+        state["rba_pool"] = x_pool  # persist the pool the attention aligns to (RAR evolves it)
+        # Fingerprint of the FINAL pool (RAR mutates it in-loop), so a resume can be
+        # checked to have restored the identical pool the saved attention aligns to.
+        state["rba_pool_sig"] = float(x_pool.sum().item())
     torch.save(
         {"model": model.state_dict(), "opt": opt.state_dict(), "state": state},
         paths.checkpoint,
@@ -299,14 +756,26 @@ def _load_joint_datasets(
                 f"before joining it to a multi-dataset run"
             )
         c = torch.tensor([conditioning_vector(groups)], dtype=torch.float32, device=device)
-        contexts.append(_JointDataset(name, data, groups, c, float(groups["u_inlet_star"])))
+        # The conditioning row is built from the physics groups before the pulse geometry
+        # is mixed in, so `conditioning_vector` sees the same keys as a single-dataset run.
+        pulse_groups = _pulse_groups(groups, cfg, data.domain)
+        contexts.append(
+            _JointDataset(name, data, pulse_groups, c, float(groups["u_inlet_star"]))
+        )
     return contexts
 
 
-def _joint_losses(model, contexts, equations, tcfg, rng) -> dict[str, torch.Tensor]:
+def _joint_losses(
+    model, contexts, equations, tcfg, rng
+) -> tuple[dict[str, torch.Tensor], list[tuple[torch.Tensor, dict, torch.Tensor]]]:
     """Each loss term averaged over the datasets, every dataset's residuals
-    evaluated with its own conditioning row so one model fits them all."""
+    evaluated with its own conditioning row so one model fits them all.
+
+    Also returns each dataset's ``(x_coll, groups, c)`` so the caller can apply
+    causal temporal weighting to the same collocation points without resampling.
+    """
     aggregate: dict[str, torch.Tensor] = {}
+    coll_batches: list[tuple[torch.Tensor, dict, torch.Tensor]] = []
     for cx in contexts:
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
@@ -320,9 +789,10 @@ def _joint_losses(model, contexts, equations, tcfg, rng) -> dict[str, torch.Tens
 
         for name, loss in per_term.items():
             aggregate[name] = loss if name not in aggregate else aggregate[name] + loss
+        coll_batches.append((x_coll, cx.groups, cx.c))
 
     n = len(contexts)
-    return {name: loss / n for name, loss in aggregate.items()}
+    return {name: loss / n for name, loss in aggregate.items()}, coll_batches
 
 
 def _train_joint(
@@ -341,6 +811,15 @@ def _train_joint(
     untouched; this runs only when ``cfg.datasets`` names more than one series.
     """
     tcfg = cfg.training
+    _validate_causal(tcfg)
+    _validate_weighting(tcfg)
+    if tcfg.weighting == "rba":
+        # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
+        # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
+        raise NotImplementedError(
+            "training.weighting='rba' is not yet supported for joint (multi-dataset) "
+            "runs; use weighting='gradnorm' for joint runs for now."
+        )
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
 
@@ -362,6 +841,8 @@ def _train_joint(
     equations = registry.enabled_equations(cfg.model.fields)
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
+    coll_equations = registry.collocation_equations(equations)
+    coll_keys = frozenset(e.weight_key for e in coll_equations)
     state = _initial_state(cfg, equations)
 
     rng = np.random.default_rng(tcfg.seed + state["done"])
@@ -369,6 +850,7 @@ def _train_joint(
     reset_weights = _initial_state(cfg, equations)["w"]  # config defaults, for the handoff
     first_step = state["done"] + 1
     last_step = state["done"] + steps
+    plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
     log.info(
         "joint training steps %d-%d on %s over %s%s",
         first_step,
@@ -384,7 +866,7 @@ def _train_joint(
             group["lr"] = lr
         opt.zero_grad()
 
-        losses = _joint_losses(model, contexts, equations, tcfg, rng)
+        losses, coll_batches = _joint_losses(model, contexts, equations, tcfg, rng)
 
         # Skip rebalancing on the handoff step: its weights are about to be reset.
         if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
@@ -399,9 +881,7 @@ def _train_joint(
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
-        total = sum(
-            weights[name] * schedule.get(name, 1.0) * loss for name, loss in losses.items()
-        )
+        total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
         total.backward()
         opt.step()
 

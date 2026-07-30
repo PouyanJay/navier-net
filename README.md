@@ -179,7 +179,31 @@ liquid where nothing happens.
 
 **Loss weights are rebalanced, not hand-tuned.** Every `rebalance_every` steps
 the per-term gradient norms are measured and the weights nudged so no single
-term dominates the others.
+term dominates the others (`training.weighting=gradnorm`, the default). This
+gradient-norm rebalancer is unbounded, though: on long runs it can ratchet a
+physics weight to its cap and crush the data fit, so it needs a hand-picked
+`rebalance_every`.
+
+**Accuracy techniques (opt-in, all default-off).** Three literature methods are
+implemented behind config flags; an unchanged config trains exactly as before.
+
+- **Residual-Based Attention** (`training.weighting=rba`; Anagnostopoulos et al.,
+  [arXiv:2307.00379](https://arxiv.org/abs/2307.00379)) replaces the rebalancer with a
+  *bounded* per-point, per-term attention on a fixed collocation pool. Its weights
+  cannot exceed `rba_eta/(1-rba_gamma)`, so it trains stably with **no** `rebalance_every`
+  tuning and no weight blow-up — the robust choice for long runs.
+- **Temporal causal weighting** (`training.causal_weighting=true`, `causal_mode=weight|march`;
+  Wang et al., [arXiv:2203.07404](https://arxiv.org/abs/2203.07404)) weights the PDE
+  residual by time so the network learns forward in time (early times before late).
+- **Residual-adaptive collocation** (`training.adaptive_collocation=true`, requires RBA;
+  Wu et al., [arXiv:2207.10289](https://arxiv.org/abs/2207.10289)) periodically refreshes
+  the collocation pool toward high-residual regions, keeping a uniform base.
+
+Measured on Series-1 (3000 steps, held-out tail frames): RBA fixes the rebalancer's
+mean-collapse (mean IoU 0.88 → 0.90, weights bounded, no manual tuning). None of the
+three reliably lifts the *last* held-out extrapolation frame above the tamed-rebalancer
+baseline — extrapolating past all supervision is genuinely hard, and this is recorded
+rather than papered over. See `.memory/pinn-accuracy/` for the full per-technique numbers.
 
 Stage A solves VOF transport plus continuity with an *inferred* dilatation
 source `s`, penalised away from the interface so it cannot become a free sink

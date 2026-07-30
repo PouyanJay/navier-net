@@ -337,6 +337,14 @@ export interface RunLaunchRequest {
   log_every: number;
   weights: LossWeightsInput;
   render: boolean;
+  /** Loss-weighting scheme: "gradnorm" (rebalancer) | "rba" (bounded attention). */
+  weighting: "gradnorm" | "rba";
+  /** Temporal causal weighting of the PDE residual (learn early times first). */
+  causal_weighting: boolean;
+  /** Causal variant when enabled: soft time weighting | time-marching curriculum. */
+  causal_mode: "weight" | "march";
+  /** Residual-adaptive collocation (RAR); refreshes the RBA pool, so requires RBA. */
+  adaptive_collocation: boolean;
 }
 
 export interface RunJobStatus {

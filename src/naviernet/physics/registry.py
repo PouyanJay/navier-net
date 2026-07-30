@@ -24,11 +24,12 @@ import torch
 from naviernet.physics.residuals import (
     EnergyResiduals,
     MomentumResiduals,
+    NucleationPulse,
     StageAResiduals,
     boundary_losses,
     energy_residuals,
     momentum_residuals,
-    source_penalty,
+    source_penalty_sq,
     stage_a_residuals,
 )
 
@@ -39,16 +40,21 @@ class LossContext:
     Residual bundles are computed lazily and cached so terms sharing them (e.g.
     ``vof`` and ``div``) reuse a single autograd graph, exactly as the original
     trainer did with one ``stage_a_residuals`` call.
+
+    The boundary batches (``inlet``, ``walls``, ``u_inlet``) are only read by the
+    ``bc`` term and may be omitted for a collocation-only context -- the per-bin
+    contexts the causal temporal weighting builds evaluate only the interior PDE
+    terms (see :func:`collocation_equations`).
     """
 
     def __init__(
         self,
         model,
         x_coll: torch.Tensor,
-        inlet: torch.Tensor,
-        walls: torch.Tensor,
-        u_inlet: float,
-        groups: dict[str, float],
+        inlet: torch.Tensor | None = None,
+        walls: torch.Tensor | None = None,
+        u_inlet: float = 0.0,
+        groups: dict[str, float] | None = None,
         c: torch.Tensor | None = None,
     ) -> None:
         self.model = model
@@ -81,44 +87,74 @@ class LossContext:
     def energy_res(self) -> EnergyResiduals:
         if self._energy is None:
             self._energy = energy_residuals(
-                self.model, self.x_coll, self.groups, self.model.r_int_star, c=self.c
+                self.model,
+                self.x_coll,
+                self.groups,
+                self.model.r_int_star,
+                c=self.c,
+                pulse=self._nucleation_pulse(),
             )
         return self._energy
 
+    def _nucleation_pulse(self) -> NucleationPulse | None:
+        """The localized nucleation pulse for this batch, or ``None`` when the feature is
+        off. Location/width/timing are fixed priors the trainer put in ``groups`` (in the
+        model's non-dimensional units); only the magnitude is the model's learnable one."""
+        if not getattr(self.model, "has_nucleation_pulse", False):
+            return None
+        return NucleationPulse(
+            x_pin=self.groups["x_pin_star"],
+            t0=self.groups["pulse_t0"],
+            sigma=self.groups["pulse_sigma"],
+            q_pulse=self.model.q_pulse_star,
+        )
 
-# --- Stage-A loss terms (byte-for-byte identical to the original trainer) ----
+
+# --- Collocation loss terms ---------------------------------------------------
+#
+# Each collocation term is the mean of a per-point squared residual. The pointwise
+# function exposes that per-point residual (shape ``(n_coll, 1)``, non-negative) so
+# per-point schemes -- RBA attention (Phase 2) and residual-adaptive resampling
+# (Phase 3) -- can read it, and ``term = mean(pointwise)`` keeps the scalar objective
+# identical to the original trainer (byte-for-byte for the golden Stage-A terms; the
+# Stage-B mom term now sums per point before the mean, mathematically but not bitwise
+# the same as the old sum-of-means).
 
 
-def _vof_term(ctx: LossContext) -> torch.Tensor:
-    return (ctx.res_a.vof**2).mean()
+def _mean(
+    pointwise: Callable[[LossContext], torch.Tensor],
+) -> Callable[[LossContext], torch.Tensor]:
+    """The scalar loss term for a per-point squared residual: its mean."""
+    return lambda ctx: pointwise(ctx).mean()
 
 
-def _div_term(ctx: LossContext) -> torch.Tensor:
-    return (ctx.res_a.div**2).mean()
+def _vof_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.res_a.vof**2
 
 
-def _src_term(ctx: LossContext) -> torch.Tensor:
-    return source_penalty(ctx.res_a)
+def _div_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.res_a.div**2
+
+
+def _src_sq(ctx: LossContext) -> torch.Tensor:
+    return source_penalty_sq(ctx.res_a)
 
 
 def _bc_term(ctx: LossContext) -> torch.Tensor:
     return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet, ctx.c)
 
 
-# --- Stage-B loss terms -----------------------------------------------------
-
-
-def _mom_term(ctx: LossContext) -> torch.Tensor:
+def _mom_sq(ctx: LossContext) -> torch.Tensor:
     res = ctx.mom_res
-    return (res.mom_x**2).mean() + (res.mom_y**2).mean()
+    return res.mom_x**2 + res.mom_y**2
 
 
-def _energy_term(ctx: LossContext) -> torch.Tensor:
-    return (ctx.energy_res.energy**2).mean()
+def _energy_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.energy_res.energy**2
 
 
-def _evap_term(ctx: LossContext) -> torch.Tensor:
-    return (ctx.energy_res.src_closure**2).mean()
+def _evap_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.energy_res.src_closure**2
 
 
 @dataclass(frozen=True)
@@ -136,7 +172,16 @@ class Equation:
     rebalanced: bool = True
     implemented: bool = True
     core: bool = False  # always-on (the Stage-A objective); the UI locks it on
+    # Evaluated on the interior collocation points ``x_coll`` (True) rather than the
+    # boundary batches (False, i.e. the ``bc`` term). Causal temporal weighting
+    # reweights only the collocation terms, so it selects on this flag.
+    on_collocation: bool = True
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
+    # Per-point squared residual (shape ``(n_coll, 1)``, non-negative) for the
+    # collocation terms; ``term`` is its mean. ``None`` for boundary terms (bc), which
+    # are not evaluated on the collocation points. Read by the per-point RBA attention
+    # and residual-adaptive resampling.
+    pointwise: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
 
 
 REGISTRY: tuple[Equation, ...] = (
@@ -149,7 +194,8 @@ REGISTRY: tuple[Equation, ...] = (
         weight_key="vof",
         fields_required=("phi", "u", "v"),
         core=True,
-        term=_vof_term,
+        pointwise=_vof_sq,
+        term=_mean(_vof_sq),
     ),
     Equation(
         id="div",
@@ -159,7 +205,8 @@ REGISTRY: tuple[Equation, ...] = (
         weight_key="div",
         fields_required=("u", "v", "s"),
         core=True,
-        term=_div_term,
+        pointwise=_div_sq,
+        term=_mean(_div_sq),
     ),
     Equation(
         id="src",
@@ -170,7 +217,8 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("s",),
         rebalanced=False,  # a deliberate soft penalty, held where it is put
         core=True,
-        term=_src_term,
+        pointwise=_src_sq,
+        term=_mean(_src_sq),
     ),
     Equation(
         id="bc",
@@ -180,6 +228,7 @@ REGISTRY: tuple[Equation, ...] = (
         weight_key="bc",
         fields_required=("u", "v"),
         core=True,
+        on_collocation=False,  # evaluated on the inlet/wall batches, not x_coll
         term=_bc_term,
     ),
     Equation(
@@ -193,7 +242,8 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("phi", "u", "v", "p"),
         fields_added=("p",),
         groups=("Re", "We", "hele_shaw"),
-        term=_mom_term,
+        pointwise=_mom_sq,
+        term=_mean(_mom_sq),
     ),
     Equation(
         id="energy",
@@ -205,7 +255,8 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("u", "v", "T"),
         fields_added=("T",),
         groups=("Pe", "Pr"),
-        term=_energy_term,
+        pointwise=_energy_sq,
+        term=_mean(_energy_sq),
     ),
     Equation(
         id="evap",
@@ -216,7 +267,8 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("s", "T"),
         groups=("Ja",),
         rebalanced=False,  # a soft consistency penalty, ramped by the curriculum
-        term=_evap_term,
+        pointwise=_evap_sq,
+        term=_mean(_evap_sq),
     ),
 )
 
@@ -225,6 +277,17 @@ def enabled_equations(fields: Sequence[str]) -> list[Equation]:
     """The equations active for a model with the given fields, in registry order."""
     present = set(fields)
     return [e for e in REGISTRY if e.implemented and set(e.fields_required) <= present]
+
+
+def collocation_equations(equations: Sequence[Equation]) -> list[Equation]:
+    """The equations evaluated on the interior collocation points ``x_coll`` -- every
+    governing PDE term except the boundary conditions -- in registry order.
+
+    Causal temporal weighting (Wang et al., arXiv:2203.07404) reweights this set by
+    time; the boundary and supervised (``data``) terms are already time-anchored and
+    stay uniform.
+    """
+    return [e for e in equations if e.on_collocation]
 
 
 def rebalanced_terms(equations: Sequence[Equation]) -> tuple[str, ...]:

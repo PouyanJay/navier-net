@@ -136,6 +136,13 @@ class ModelConfig:
     # Optional per-field architecture overrides, keyed by field name. Absent =
     # every field uses the global architecture above (Stage-A behaviour).
     per_field: dict[str, FieldArch] = field(default_factory=dict)
+    # Localized nucleation heat pulse (Stage B; requires the `T` field). Off by default
+    # -> the energy residual is unchanged. When on, a brief localized pulse at the fixed
+    # cavity seeds the bubble (see residuals.NucleationPulse): its location (x_pin, from
+    # the data) and width/timing are fixed priors; only its magnitude is learnable.
+    nucleation_pulse: bool = False
+    pulse_t0: float = 0.1  # pulse active for the first this-fraction of the time window
+    pulse_width: float = 0.05  # streamwise Gaussian sigma, as a fraction of the domain width
 
 
 @dataclass
@@ -198,6 +205,42 @@ class TrainingConfig:
     # random field (which collapses it). 0 disables the gate (Stage-B on from
     # step 1); a resumed run whose step count is past the gate is unaffected.
     stage_b_warmup_steps: int = 0
+
+    # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
+    # config trains byte-for-byte as before). See
+    # .claude/plans/pinn-accuracy-causality-adaptive-weighting-plan.md ---
+    # Problem 1 -- temporal causal weighting (arXiv:2203.07404): weight the PDE
+    # residual by time so the model learns causally (early times first), which
+    # fixes the late-frame extrapolation bias. False -> uniform-in-time (today).
+    causal_weighting: bool = False
+    causal_time_chunks: int = 16  # number of ordered time bins the residual is split into
+    # ε annealing schedule -- steeper causal enforcement as training proceeds.
+    causal_eps_schedule: list[float] = field(
+        default_factory=lambda: [1e-2, 1e-1, 1.0, 10.0, 100.0]
+    )
+    # Causal variant. "weight": soft per-time exp weights (uses causal_eps_schedule).
+    # "march": a time-marching curriculum -- enforce the collocation residual only up
+    # to a horizon that expands from the earliest bin to the whole domain, so late
+    # times are trained at FULL weight once the front reaches them (causal_eps_schedule
+    # is unused in this mode). See arXiv:2203.07404 §time-marching.
+    causal_mode: str = "weight"  # "weight" | "march"
+    # Fraction of the run over which the marching horizon expands to the full time
+    # domain; it stays at the full domain afterwards (so late frames get real
+    # full-weight training). Only used when causal_mode="march".
+    causal_march_full_frac: float = 0.5
+    # Problem 2 -- loss-weighting scheme. "gradnorm" is the gradient-norm rebalancer
+    # (unbounded; ratchets to the 1e3 cap on long runs); "rba" is bounded residual-
+    # based attention (arXiv:2307.00379). Default keeps existing behaviour until
+    # Phase 2 makes "rba" the default.
+    weighting: str = "gradnorm"  # "gradnorm" | "rba"
+    rba_gamma: float = 0.999  # RBA EMA decay on per-point attention
+    rba_eta: float = 0.01  # RBA update rate
+    # Problem 3 -- residual-adaptive collocation (RAR): periodically resample
+    # collocation points toward high-residual regions (interface, late times).
+    # False -> uniform sampling (today).
+    adaptive_collocation: bool = False
+    resample_every: int = 500  # steps between collocation resamples
+    resample_fraction: float = 0.5  # fraction of the batch drawn from high-residual regions
 
     seed: int = 0
     device: str = "cpu"

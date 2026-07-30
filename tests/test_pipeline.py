@@ -107,6 +107,53 @@ def test_joint_training_over_two_datasets_writes_one_conditioned_checkpoint(tmp_
     assert saved["n_cond"] == N_COND
 
 
+@pytest.mark.parametrize("mode", ["weight", "march"])
+def test_joint_training_runs_with_causal_weighting_enabled(tmp_path, mode):
+    """The causal path is wired into the joint loop too, for BOTH modes: a conditioned
+    two-dataset run with causal weighting ON reweights each dataset's collocation
+    residual by time -- diverging from the causal-off joint run under an identical
+    seed -- and still trains to finite losses (no crash from the per-bin passes)."""
+    import math
+
+    from naviernet.training import train
+
+    def run(run_name: str, extra: list[str]):
+        cfg = make_config(
+            [
+                f"paths.root={tmp_path}",
+                "datasets=[ds_a,ds_b]",
+                f"run_name={run_name}",
+                *_TINY_TRAIN,
+                "training.steps=3",
+                "training.log_every=1",
+                "training.seed=0",
+                *extra,
+            ]
+        )
+        run_paths = RunPaths.from_config(cfg)
+        _stage_joint_datasets(run_paths)
+        _, _, state = train(cfg, run_paths)
+        return run_paths, state["hist"]
+
+    _, off = run(f"joint-causal-off-{mode}", [])
+    run_paths, on = run(
+        f"joint-causal-on-{mode}",
+        [
+            "training.causal_weighting=true",
+            f"training.causal_mode={mode}",
+            "training.causal_time_chunks=4",
+            "training.causal_eps_schedule=[1.0]",
+        ],
+    )
+
+    assert len(on) == len(off) == 3
+    for record in on:
+        for name, value in record.items():
+            assert math.isfinite(value), f"causal joint {name} was not finite"
+    assert _trajectories_differ(on, off), "causal weighting should change the joint trajectory"
+    assert run_paths.checkpoint.exists()
+
+
 def test_single_dataset_evaluate_reports_a_validation_split_iou(tmp_path):
     """A single-series run with a validation split surfaces its in-distribution
     IoU (over the held-out tail frames), rather than silently dropping the metric."""
@@ -497,6 +544,566 @@ def test_loss_schedule_gates_stage_b_physics_until_the_warmup_ends():
     assert "mom" not in no_warmup, "0 warm-up -> Stage-B physics on from step 1"
 
 
+def test_causal_weights_enforce_temporal_ordering():
+    """Causal weighting (Wang et al.): a time chunk is held down until earlier
+    chunks are satisfied, so the model learns forward in time. eps=0 is uniform;
+    weights decrease with time, depend only on EARLIER losses, and carry no grad."""
+    import math
+
+    from naviernet.training import _causal_weights
+
+    losses = torch.tensor([1.0, 1.0, 1.0, 1.0])
+
+    assert torch.allclose(_causal_weights(losses, 0.0), torch.ones(4)), "eps=0 -> uniform"
+
+    w = _causal_weights(losses, 1.0)
+    assert w[0].item() == pytest.approx(1.0), "first chunk has no prior -> full weight"
+    assert torch.all(w[1:] < w[:-1]), "later chunks weighted down by earlier residuals"
+    assert w[2].item() == pytest.approx(math.exp(-2.0)), "w_2 = exp(-(L0+L1)) = exp(-2)"
+    assert not w.requires_grad, "weights steer training but carry no gradient"
+
+
+def test_causal_eps_anneals_across_the_call_window_and_restarts_on_resume():
+    """ε steps through the schedule as training progresses over the call's step
+    window [first_step, last_step]: the first step uses the smallest ε (near-uniform
+    in time), the last the largest, so causal enforcement steepens over the run. An
+    empty schedule disables it (ε=0 -> uniform)."""
+    from naviernet.training import _causal_eps
+
+    schedule = [1e-2, 1e-1, 1.0]
+    assert _causal_eps(1, 1, 300, schedule) == pytest.approx(1e-2), "first step -> smallest ε"
+    assert _causal_eps(150, 1, 300, schedule) == pytest.approx(1e-1), "midpoint -> middle ε"
+    assert _causal_eps(300, 1, 300, schedule) == pytest.approx(1.0), "last step -> largest ε"
+    assert _causal_eps(1, 1, 300, []) == 0.0, "empty schedule -> ε=0 (uniform in time)"
+
+    # Resume regression: a chunk starting at step 301 anneals from the start of the
+    # schedule again, rather than dividing an absolute step by a per-call count and
+    # snapping straight to the final ε for the whole resumed segment.
+    assert _causal_eps(301, 301, 600, schedule) == pytest.approx(1e-2), (
+        "resumed chunk restarts ε"
+    )
+    assert _causal_eps(600, 301, 600, schedule) == pytest.approx(1.0), (
+        "resumed chunk reaches max ε"
+    )
+
+
+def test_time_chunks_partition_x_coll_by_ascending_time():
+    """The binning is by the time column (index 2), ascending, into leaf tensors
+    that carry gradient (so the PDE residuals differentiate through them), covering
+    every point exactly once."""
+    from naviernet.training import _time_chunks
+
+    torch.manual_seed(0)
+    x = torch.rand(20, 3, requires_grad=True)
+
+    chunks = _time_chunks(x, 4)
+
+    assert len(chunks) == 4
+    assert sum(c.shape[0] for c in chunks) == 20, "every point lands in exactly one bin"
+    for c in chunks:
+        assert c.is_leaf and c.requires_grad, "bins are differentiable leaves"
+    means = [float(c.detach()[:, 2].mean()) for c in chunks]
+    assert means == sorted(means), "bins are ordered earliest -> latest in time"
+    # Fewer points than chunks still yields non-empty bins (no empty-bin NaN).
+    assert all(c.shape[0] > 0 for c in _time_chunks(x[:3], 8))
+
+
+def test_causal_collocation_loss_reduces_to_the_uniform_mean_when_eps_is_zero():
+    """The no-op guarantee the journey rests on: at ε=0 the causal weights are all
+    one, so with equal-size bins the time-causal collocation loss equals the plain
+    per-term weighted collocation mean over the same points -- and it still carries
+    gradient back to the model parameters."""
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics import registry
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _causal_collocation_loss, _weighted_sum
+
+    cfg = make_config(_TINY_TRAIN)
+    torch.manual_seed(0)
+    model = BubblePINN(cfg)
+    groups = compute_groups(cfg)
+    coll_equations = registry.collocation_equations(
+        registry.enabled_equations(cfg.model.fields)
+    )
+    weights = {"vof": 2.0, "div": 0.5, "src": 3.0}  # distinct, so weights must carry through
+    schedule: dict[str, float] = {}  # no warm-up gating: every multiplier is 1
+
+    x_coll = torch.rand(16, 3, requires_grad=True)  # 16 points / 4 bins -> equal bins
+
+    causal = _causal_collocation_loss(
+        model, x_coll, groups, None, coll_equations, weights, schedule, n_chunks=4, eps=0.0
+    )
+    ctx = registry.LossContext(model, x_coll, groups=groups)
+    uniform = _weighted_sum(
+        {e.weight_key: e.term(ctx) for e in coll_equations}, weights, schedule
+    )
+
+    assert causal.item() == pytest.approx(uniform.item(), rel=1e-5), (
+        "ε=0 -> uniform collocation mean"
+    )
+    assert causal.requires_grad, "gradient must still flow through the residual"
+    causal.backward()
+    assert any(p.grad is not None and torch.any(p.grad != 0) for p in model.parameters()), (
+        "the causal collocation loss trains the model"
+    )
+
+
+def test_causal_weighting_changes_the_stage_a_loss_trajectory(tmp_path):
+    """Wiring check for Phase 1: turning causal weighting ON reweights the
+    collocation residual by time, so the optimised loss trajectory diverges from
+    the uniform-in-time run under an identical seed and sampling -- and the run
+    still trains to finite losses (no crash from the per-bin residual passes)."""
+    import math
+
+    off = _stage_a_hist(tmp_path, "causal-off", [])
+    on = _stage_a_hist(
+        tmp_path,
+        "causal-on",
+        [
+            "training.causal_weighting=true",
+            "training.causal_time_chunks=4",
+            "training.causal_eps_schedule=[1.0]",
+        ],
+    )
+
+    assert len(on) == len(off) == 3
+    for record in on:
+        for name, value in record.items():
+            assert math.isfinite(value), f"causal {name} was not finite"
+    # Same seed, same samples: only the temporal reweighting differs, so the
+    # trajectories must diverge on the collocation terms.
+    assert _trajectories_differ(on, off), "causal weighting should change the trajectory"
+
+
+def test_march_active_bins_expands_monotonically_to_full_domain():
+    """Time-marching horizon: covers only the earliest time bin at the start of the
+    run and expands to the whole domain by ``full_frac`` of the way through, never
+    shrinking -- so late times are trained at full weight once the front reaches
+    them."""
+    from naviernet.training import _march_active_bins
+
+    n = 16
+    assert _march_active_bins(0.0, n, 0.5) == 1, "start: only the earliest bin"
+    assert _march_active_bins(1.0, n, 0.5) == n, "stays at the full domain afterwards"
+    # full_frac IS honoured (not a hardcoded 0.5): a smaller frac reaches the full
+    # domain earlier. The `1 + int(...)` discretisation reaches full slightly *before*
+    # the nominal frac, so compare across fracs rather than pinning the exact step.
+    assert _march_active_bins(0.25, n, 0.25) == n, "smaller full_frac -> full sooner"
+    assert _march_active_bins(0.25, n, 0.75) < n, "larger full_frac still expanding at 0.25"
+    swept = [_march_active_bins(i / 20, n, 0.5) for i in range(21)]
+    assert swept == sorted(swept), "the horizon never shrinks"
+
+
+def test_time_march_collocation_loss_restricts_to_the_active_time_horizon():
+    """Marching's distinguishing behaviour: at the start only the earliest time bin's
+    residual enters the loss; once the horizon reaches full_frac it is the whole
+    collocation mean. This pins WHICH points are active (earliest-first), which a
+    trajectory-only test cannot."""
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics import registry
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _time_chunks, _time_march_collocation_loss, _weighted_sum
+
+    cfg = make_config(_TINY_TRAIN)
+    torch.manual_seed(0)
+    model = BubblePINN(cfg)
+    groups = compute_groups(cfg)
+    coll_equations = registry.collocation_equations(
+        registry.enabled_equations(cfg.model.fields)
+    )
+    weights = {"vof": 2.0, "div": 0.5, "src": 3.0}
+    schedule: dict[str, float] = {}
+    x_coll = torch.rand(16, 3, requires_grad=True)
+
+    def march(progress: float) -> float:
+        return _time_march_collocation_loss(
+            model, x_coll, groups, None, coll_equations, weights, schedule, 4, progress, 0.5
+        ).item()
+
+    def uniform_over(points) -> float:
+        ctx = registry.LossContext(model, points, groups=groups)
+        return _weighted_sum(
+            {e.weight_key: e.term(ctx) for e in coll_equations}, weights, schedule
+        ).item()
+
+    earliest_bin = _time_chunks(x_coll, 4)[0]
+    assert march(0.0) == pytest.approx(uniform_over(earliest_bin), rel=1e-5), (
+        "progress 0 -> only the earliest time bin"
+    )
+    assert march(1.0) == pytest.approx(uniform_over(x_coll), rel=1e-5), (
+        "progress >= full_frac -> the whole domain"
+    )
+    assert march(0.0) != pytest.approx(march(1.0), rel=1e-3), "the horizon actually restricts"
+
+
+def test_time_marching_and_soft_weighting_are_distinct_objectives(tmp_path):
+    """march and weight must be different objectives, not a silent dispatch
+    fall-through: under a shared seed their trajectories diverge from EACH OTHER (both
+    also differ from the uniform run, so comparing only to 'off' would not catch a
+    mode mix-up)."""
+    import math
+
+    weight = _stage_a_hist(
+        tmp_path,
+        "cmp-weight",
+        [
+            "training.causal_weighting=true",
+            "training.causal_mode=weight",
+            "training.causal_time_chunks=4",
+            "training.causal_eps_schedule=[1.0]",
+        ],
+    )
+    march = _stage_a_hist(
+        tmp_path,
+        "cmp-march",
+        [
+            "training.causal_weighting=true",
+            "training.causal_mode=march",
+            "training.causal_time_chunks=4",
+        ],
+    )
+
+    for record in march:
+        for name, value in record.items():
+            assert math.isfinite(value), f"march {name} was not finite"
+    assert _trajectories_differ(weight, march), "march and weight are distinct objectives"
+
+
+def test_unknown_causal_mode_fails_loudly(tmp_path):
+    """An unrecognised causal_mode is a config error, not a silent fall-through to
+    one variant -- it must raise so a typo can't quietly train the wrong objective.
+    (Validation is the first line of train(), before any dataset I/O, so no staging.)"""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.causal_weighting=true",
+            "training.causal_mode=bogus",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="causal_mode"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_out_of_range_march_full_frac_fails_loudly(tmp_path):
+    """causal_march_full_frac<=0 would collapse the horizon to the full domain on the
+    first step, silently defeating the curriculum -- so it must raise, like an unknown
+    causal_mode does, rather than degrade quietly."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.causal_weighting=true",
+            "training.causal_mode=march",
+            "training.causal_march_full_frac=0.0",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="causal_march_full_frac"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def _rba_cfg(tmp_path, run_name: str, extra: list[str] | None = None):
+    return make_config(
+        [
+            f"paths.root={tmp_path}",
+            f"run_name={run_name}",
+            *_TINY_TRAIN,
+            "training.steps=4",
+            "training.log_every=1",
+            "training.weighting=rba",
+            "training.seed=0",
+            *(extra or []),
+        ]
+    )
+
+
+def test_rba_weighting_trains_without_rebalancing_and_bounds_the_attention(tmp_path):
+    """RBA replaces the gradnorm rebalancer: per-term weights stay at their config
+    defaults (never ratcheted), the run trains to finite losses, and the persistent
+    per-point attention is stored, non-negative and bounded by eta/(1-gamma)."""
+    import math
+
+    from naviernet.physics.weighting import rba_bound
+    from naviernet.training import train
+
+    cfg = _rba_cfg(
+        tmp_path, "rba", ["training.rebalance_every=1"]
+    )  # would rebalance every step
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, state = train(cfg, paths)
+
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"rba {name} was not finite"
+    # No rebalancing: weights are exactly the config defaults despite rebalance_every=1.
+    for key, weight in state["w"].items():
+        assert weight == pytest.approx(float(getattr(cfg.training.weights, key))), (
+            f"rba must not rebalance {key}"
+        )
+    attention = state["attention"]
+    assert set(attention) == {"vof", "div", "src"}, "attention on the collocation terms"
+    bound = rba_bound(cfg.training.rba_gamma, cfg.training.rba_eta)
+    for key, a in attention.items():
+        assert a.shape == (cfg.training.n_coll, 1), f"{key} attention is per-point"
+        assert torch.all(a >= 0) and a.max().item() <= bound + 1e-6, f"{key} attention bounded"
+    assert paths.checkpoint.exists()
+
+
+def test_rba_weighting_is_deterministic_via_the_fixed_pool(tmp_path):
+    """The RBA pool is sampled from a fixed seed (not offset by completed steps), so
+    two identical runs produce the identical loss trajectory."""
+    from naviernet.training import train
+
+    hists = []
+    for name in ("rba-a", "rba-b"):
+        cfg = _rba_cfg(tmp_path, name)
+        paths = RunPaths.from_config(cfg)
+        _stage(paths)
+        _, _, state = train(cfg, paths)
+        hists.append(state["hist"])
+
+    for a, b in zip(hists[0], hists[1], strict=True):
+        for k in ("vof", "div", "data"):
+            assert a[k] == pytest.approx(b[k], rel=1e-9), f"{k} must be deterministic"
+
+
+def test_rba_attention_persists_and_grows_across_resume(tmp_path):
+    """The attention is carried in the checkpoint and continues to accumulate on a
+    resumed run, rather than restarting from zero each chunk."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "rba-resume")
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, first = train(cfg, paths, steps=4)
+    peak_after_first = max(a.max().item() for a in first["attention"].values())
+
+    _, _, second = train(cfg, paths, steps=4)  # resume
+    peak_after_second = max(a.max().item() for a in second["attention"].values())
+
+    assert second["done"] == 8, "resume continued the run"
+    assert peak_after_second > peak_after_first, "attention kept accumulating across resume"
+    # The pool is regenerated from a FIXED seed (not offset by `done`), so the resumed
+    # run reuses the identical collocation points the saved attention is aligned to.
+    assert second["rba_pool_sig"] == pytest.approx(first["rba_pool_sig"]), (
+        "resume must regenerate the same fixed pool, not reseed by completed steps"
+    )
+
+
+def test_unknown_weighting_fails_loudly(tmp_path):
+    """An unrecognised weighting scheme is a config error -- raise rather than fall
+    through to one path."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "bogus", ["training.weighting=bogus"])
+    _stage(RunPaths.from_config(cfg))
+    with pytest.raises(ValueError, match="weighting"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_rba_with_causal_weighting_fails_loudly(tmp_path):
+    """Composing RBA with causal weighting is not implemented yet (Phase 4); enabling
+    both must raise rather than silently apply only one."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "rba-causal", ["training.causal_weighting=true"])
+    _stage(RunPaths.from_config(cfg))
+    with pytest.raises(ValueError, match="rba"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_joint_rba_weighting_is_not_yet_supported(tmp_path):
+    """RBA on a joint (multi-dataset) run raises rather than silently falling back to
+    the gradnorm rebalancer -- joint RBA is a later task (T2.5)."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            "datasets=[ds_a,ds_b]",
+            "run_name=joint-rba",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.weighting=rba",
+        ]
+    )
+    run_paths = RunPaths.from_config(cfg)
+    _stage_joint_datasets(run_paths)
+    with pytest.raises(NotImplementedError, match="rba"):
+        train(cfg, run_paths)
+
+
+def test_adaptive_collocation_refreshes_the_rba_pool_by_real_residual(tmp_path, monkeypatch):
+    """With RAR on, the pool is refreshed every `resample_every` steps BY THE RESIDUAL:
+    spy on `rad_resample` to prove `_resample_pool` feeds it a real (varying) residual
+    magnitude and the configured `resample_fraction` -- not a flat/uniform fallback --
+    while the run stays finite and the attention stays aligned to the refreshed pool."""
+    import math
+
+    import naviernet.training as training_mod
+    from naviernet.training import train
+
+    captured: dict = {}
+    real_rad = training_mod.rad_resample
+
+    def spy(cand_x, mag, base_x, n, fraction, rng, **kw):
+        captured["mag_std"] = float(mag.std())
+        captured["fraction"] = fraction
+        return real_rad(cand_x, mag, base_x, n, fraction, rng, **kw)
+
+    monkeypatch.setattr(training_mod, "rad_resample", spy)
+
+    cfg = _rba_cfg(
+        tmp_path,
+        "rar",
+        [
+            "training.adaptive_collocation=true",
+            "training.resample_every=2",
+            "training.resample_fraction=0.75",
+        ],
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, state = train(cfg, paths)  # steps=4 -> resample at 2 and 4
+
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"rar {name} was not finite"
+    assert state["rba_resamples"] == 2, "resample fires at every step % resample_every == 0"
+    assert captured["mag_std"] > 0, "RAR must resample by a varying residual, not a flat score"
+    assert captured["fraction"] == pytest.approx(0.75), "resample_fraction is wired through"
+    n_coll = cfg.training.n_coll
+    assert state["rba_pool"].shape == (n_coll, 3), "pool refreshed to n_coll points"
+    for a in state["attention"].values():
+        assert a.shape == (n_coll, 1), "attention stays aligned to the refreshed pool"
+    assert paths.checkpoint.exists()
+
+
+def test_adaptive_collocation_off_leaves_the_pool_fixed(tmp_path):
+    """Default (adaptive_collocation off) keeps the RBA pool fixed for the whole run --
+    no resamples fire."""
+    from naviernet.training import train
+
+    # resample_every left at its default (500) but the point is the flag: the
+    # `adaptive_collocation and step % resample_every == 0` guard short-circuits on the
+    # flag, so no resample fires regardless of the step count.
+    cfg = _rba_cfg(tmp_path, "rba-fixed")
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, state = train(cfg, paths)
+    assert state.get("rba_resamples", 0) == 0, "no resampling when adaptive_collocation is off"
+
+
+def test_adaptive_collocation_requires_rba(tmp_path):
+    """RAR refreshes the RBA fixed pool, so it needs weighting=rba; with gradnorm it
+    raises rather than silently no-op."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(
+        tmp_path,
+        "rar-gradnorm",
+        ["training.weighting=gradnorm", "training.adaptive_collocation=true"],
+    )
+    _stage(RunPaths.from_config(cfg))
+    with pytest.raises(ValueError, match="adaptive_collocation"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+@pytest.mark.parametrize(
+    ("override", "match"),
+    [
+        ("training.resample_every=0", "resample_every"),
+        ("training.resample_fraction=1.5", "resample_fraction"),
+    ],
+)
+def test_bad_rar_config_fails_loudly(tmp_path, override, match):
+    """A degenerate RAR config raises at startup with an actionable message, not a
+    ZeroDivisionError (resample_every=0) or a negative split (resample_fraction>1) deep
+    in the loop."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "rar-bad", ["training.adaptive_collocation=true", override])
+    _stage(RunPaths.from_config(cfg))
+    with pytest.raises(ValueError, match=match):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_adaptive_collocation_resume_restores_the_exact_evolved_pool(tmp_path):
+    """With RAR the pool evolves, so it must be saved and restored on resume -- not
+    reseeded. The first call resamples (pool moves away from the seed pool); the resumed
+    call runs a single step with NO resample, so its saved pool must equal the first
+    call's evolved pool exactly (a broken restore would reseed and differ)."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(
+        tmp_path,
+        "rar-resume",
+        ["training.adaptive_collocation=true", "training.resample_every=2"],
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, first = train(cfg, paths, steps=4)  # resamples at steps 2 and 4 -> evolved pool
+    evolved = first["rba_pool"].clone()
+
+    # One more step (step 5): 5 % resample_every(2) != 0, so no resample fires and the
+    # restored pool is saved unchanged -- it must be the evolved pool, bit-for-bit.
+    _, _, second = train(cfg, paths, steps=1)
+    assert second["done"] == 5
+    assert torch.equal(second["rba_pool"], evolved), "resume must restore the evolved pool"
+
+
+def test_rba_collocation_loss_matches_the_plain_weighted_mean_at_zero_attention(tmp_path):
+    """Trainer-level init==baseline: with attention all zero, `_rba_collocation_loss`
+    equals the plain per-term weighted sum of mean-squared residuals. A warm-up-gated
+    term (schedule 0) contributes nothing AND its attention is frozen (not updated)."""
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics import registry
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _LossPlan, _rba_collocation_loss, _weighted_sum
+
+    cfg = make_config([*_TINY_TRAIN, "training.weighting=rba"])
+    torch.manual_seed(0)
+    model = BubblePINN(cfg)
+    groups = compute_groups(cfg)
+    equations = registry.enabled_equations(cfg.model.fields)
+    coll_equations = registry.collocation_equations(equations)
+    coll_keys = frozenset(e.weight_key for e in coll_equations)
+    plan = _LossPlan(coll_equations, coll_keys, 1, 1, cfg.training)
+
+    weights = {"vof": 2.0, "div": 0.5, "src": 3.0}
+    x_coll = torch.rand(16, 3, requires_grad=True)
+    ctx = registry.LossContext(model, x_coll, groups=groups)
+    attention = {k: torch.zeros(16, 1) for k in coll_keys}
+    schedule = {"src": 0.0}  # gate `src` off, like the warm-up gates a Stage-B term
+
+    rba_loss = _rba_collocation_loss(ctx, weights, schedule, attention, plan)
+    # Reference: the same terms via the plain weighted mean, src gated to 0.
+    ctx2 = registry.LossContext(model, x_coll, groups=groups)
+    plain = _weighted_sum(
+        {e.weight_key: e.term(ctx2) for e in coll_equations}, weights, schedule
+    )
+
+    assert rba_loss.item() == pytest.approx(plain.item(), rel=1e-5), (
+        "zero attention -> plain mean"
+    )
+    assert torch.all(attention["src"] == 0), "a gated term's attention must not update"
+    assert torch.any(attention["vof"] > 0), "an active term's attention updates"
+
+
 def test_stage_b_engages_only_at_the_boundary_and_never_when_disabled():
     """The optimiser restart fires at exactly step warmup+1 -- and never when the
     warm-up is disabled (0) or the model has no Stage-B physics, so an ordinary
@@ -550,6 +1157,53 @@ def _stage(paths):
     _write_tensors(paths.tensors, list(range(1, 9)), n_event=8)
 
 
+def _stage_joint_datasets(run_paths, specs=(("ds_a", 2.0), ("ds_b", 5.0))):
+    """Stage synthetic datasets for a joint run, each carrying its own groups (a
+    distinct wall heat flux -> distinct regime), as preprocess would have written."""
+    from naviernet.physics.groups import compute_groups
+
+    for name, q_wall in specs:
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
+
+
+def _stage_a_hist(tmp_path, run_name: str, extra: list[str]) -> list[dict]:
+    """Train a tiny single-dataset Stage-A run (fixed seed, no Stage-B warm-up so the
+    optimiser restart never fires) and return its loss history, for comparing loss
+    trajectories under the one variable a test toggles via ``extra``."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            f"run_name={run_name}",
+            *_TINY_TRAIN,
+            "training.steps=3",
+            "training.log_every=1",
+            "training.stage_b_warmup_steps=0",
+            "training.seed=0",
+            *extra,
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+    _, _, state = train(cfg, paths)
+    return state["hist"]
+
+
+def _trajectories_differ(a: list[dict], b: list[dict], keys=("vof", "div")) -> bool:
+    """True if two loss histories diverge on any collocation term at any logged step.
+    Under a shared seed, step 1's recorded means match (identical initial model); the
+    divergence shows once the differing gradient has stepped the model."""
+    return any(
+        a_rec[k] != pytest.approx(b_rec[k], rel=1e-9, abs=1e-12)
+        for a_rec, b_rec in zip(a, b, strict=True)
+        for k in keys
+    )
+
+
 def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):
     """A tiny Stage-B run builds the p/T networks, activates momentum + energy +
     evaporation, and takes real steps without producing a NaN."""
@@ -578,6 +1232,62 @@ def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):
         for name, value in record.items():
             assert math.isfinite(value), f"{name} was not finite"
     assert paths.checkpoint.exists()
+
+
+def test_nucleation_pulse_trains_its_learnable_magnitude(tmp_path):
+    """A Stage-B run with the nucleation pulse on trains to finite losses and the pulse
+    magnitude is a trained unknown -- it moves from its init, which can only happen if
+    the pulse is actually wired into the energy loss graph (fixed location/width/timing,
+    learnable strength)."""
+    import math
+
+    import torch.nn.functional as F
+
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_STAGE_B,
+            *_TINY_TRAIN,
+            "training.steps=3",
+            "training.stage_b_warmup_steps=0",  # engage energy immediately so the pulse acts
+            "model.nucleation_pulse=true",
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    model, _, state = train(cfg, paths)
+
+    assert model.has_nucleation_pulse
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"{name} was not finite"
+    init = F.softplus(torch.zeros(1)).item()
+    assert model.q_pulse_star.item() != pytest.approx(init, abs=1e-6), (
+        "the pulse magnitude was trained (so the pulse is in the energy loss)"
+    )
+    assert paths.checkpoint.exists()
+
+
+def test_nucleation_pulse_requires_temperature(tmp_path):
+    """The pulse heats the energy equation, so enabling it on a Stage-A model (no T)
+    fails loudly rather than silently doing nothing."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "model.nucleation_pulse=true",
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+    with pytest.raises(ValueError, match="nucleation_pulse"):
+        train(cfg, paths)
 
 
 def _spy_on_adam(monkeypatch) -> list:

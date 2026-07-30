@@ -14,8 +14,10 @@ import type {
 } from "../../lib/api";
 import { seriesName } from "../../lib/series";
 import {
+  CAUSAL_MODE_OPTIONS,
   FORM_BOUNDS,
   VAL_FRACTION_OPTIONS,
+  WEIGHTING_OPTIONS,
   type SolverFormState,
 } from "./form";
 
@@ -300,16 +302,89 @@ export function RunConfigPanel({
       <LossWeightsSection
         weights={form.weights}
         rebalanceEvery={form.rebalance_every}
+        weighting={form.weighting}
         onForm={onForm}
         locked={fixedByResume}
       />
+      <AdvancedTrainingSection form={form} onForm={onForm} locked={fixedByResume} />
     </Panel>
+  );
+}
+
+interface AdvancedTrainingSectionProps {
+  form: SolverFormState;
+  onForm: (patch: Partial<SolverFormState>) => void;
+  locked: boolean;
+}
+
+/** Opt-in accuracy techniques (default no-ops). RBA replaces the gradient-norm
+ * rebalancer with bounded per-point attention; causal weighting learns early times
+ * first; adaptive collocation refreshes the RBA pool toward high-residual regions.
+ * Combinations the trainer rejects (RBA×causal, adaptive without RBA) are gated
+ * valid-by-construction here, so the form can never submit one. */
+function AdvancedTrainingSection({
+  form,
+  onForm,
+  locked,
+}: AdvancedTrainingSectionProps) {
+  const rba = form.weighting === "rba";
+  return (
+    <>
+      <div className="cfg-subhead">
+        <span className="cfg-label">Accuracy techniques</span>
+        <span className="cfg-subnote">opt-in · default off</span>
+      </div>
+      <div className="cfg cfg-narrow">
+        <SelectField
+          label="Weighting"
+          hint="loss balancing"
+          value={form.weighting}
+          onChange={(value) =>
+            onForm(
+              value === "rba"
+                ? { weighting: "rba", causal_weighting: false }
+                : { weighting: "gradnorm", adaptive_collocation: false },
+            )
+          }
+          options={WEIGHTING_OPTIONS}
+          disabled={locked}
+        />
+      </div>
+      <div className="switch-rows">
+        <Switch
+          label="Causal weighting"
+          hint={rba ? "gradient-norm only" : "learn early times first"}
+          checked={form.causal_weighting}
+          onChange={(causal_weighting) => onForm({ causal_weighting })}
+          disabled={locked || rba}
+        />
+        {form.causal_weighting && (
+          <SelectField
+            label="Causal mode"
+            value={form.causal_mode}
+            onChange={(value) =>
+              onForm({ causal_mode: value as SolverFormState["causal_mode"] })
+            }
+            options={CAUSAL_MODE_OPTIONS}
+            disabled={locked}
+          />
+        )}
+        <Switch
+          label="Adaptive collocation"
+          hint={rba ? "refresh pool to high residual" : "requires RBA"}
+          checked={form.adaptive_collocation}
+          onChange={(adaptive_collocation) => onForm({ adaptive_collocation })}
+          disabled={locked || !rba}
+        />
+      </div>
+    </>
   );
 }
 
 interface LossWeightsSectionProps {
   weights: LossWeightsInput;
   rebalanceEvery: number;
+  weighting: SolverFormState["weighting"];
   onForm: (patch: Partial<SolverFormState>) => void;
   locked: boolean;
 }
@@ -320,6 +395,7 @@ interface LossWeightsSectionProps {
 function LossWeightsSection({
   weights,
   rebalanceEvery,
+  weighting,
   onForm,
   locked,
 }: LossWeightsSectionProps) {
@@ -374,14 +450,14 @@ function LossWeightsSection({
         )}
         <NumberField
           label="Rebalance"
-          hint="every"
+          hint={weighting === "rba" ? "RBA: n/a" : "every"}
           value={rebalanceEvery}
           onChange={(rebalance_every) => onForm({ rebalance_every })}
           min={FORM_BOUNDS.rebalance_every.min}
           max={FORM_BOUNDS.rebalance_every.max}
           step={100}
           suffix="steps"
-          disabled={locked}
+          disabled={locked || weighting === "rba"}
         />
       </div>
     </>

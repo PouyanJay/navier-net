@@ -97,9 +97,15 @@ def stage_a_residuals(model, x: torch.Tensor, c: torch.Tensor | None = None) -> 
     )
 
 
+def source_penalty_sq(residuals: StageAResiduals) -> torch.Tensor:
+    """Per-point squared dilatation penalty away from the interface, where it is
+    unphysical (shape ``(n, 1)``). The registry's ``src`` collocation term reads this."""
+    return ((1.0 - residuals.interface_weight) * residuals.source) ** 2
+
+
 def source_penalty(residuals: StageAResiduals) -> torch.Tensor:
     """Penalise dilatation away from the interface, where it is unphysical."""
-    return (((1.0 - residuals.interface_weight) * residuals.source) ** 2).mean()
+    return source_penalty_sq(residuals).mean()
 
 
 def boundary_losses(
@@ -237,6 +243,38 @@ def momentum_residuals(
     return MomentumResiduals(mom_x, mom_y, kappa)
 
 
+class NucleationPulse(NamedTuple):
+    """A localized initiation heat pulse at the fixed nucleation cavity.
+
+    The real experiment seeds the bubble with a brief, spatially localized heat pulse at
+    a fixed cavity (in addition to the uniform bottom-wall flux). Encoding it gives the
+    model the fixed, time-anchored *cause* of the bubble it otherwise lacks -- a
+    streamwise Gaussian at ``x_pin`` (width ``sigma``), a step for ``t < t0``, with a
+    learnable magnitude ``q_pulse`` (the heater power is unknown -- V is known but its
+    resistance is not -- so only the strength is fit; location, timing and width are
+    fixed priors). All quantities non-dimensional.
+    """
+
+    x_pin: float
+    t0: float
+    sigma: float
+    q_pulse: torch.Tensor  # learnable magnitude (softplus >= 0)
+
+
+def nucleation_pulse_source(
+    x: torch.Tensor, x_pin: float, t0: float, sigma: float, q_pulse
+) -> torch.Tensor:
+    """The nucleation pulse's per-point heat ``(N, 1)`` (before the liquid ``(1-alpha)``
+    gate): a streamwise Gaussian centred at the fixed cavity ``x_pin`` and gated to the
+    brief initiation burst ``t < t0``. y-independent (a band across the channel height),
+    since the cavity's channel-height position is not measured."""
+    streamwise = x[:, 0:1]
+    time = x[:, 2:3]
+    spatial = torch.exp(-((streamwise - x_pin) ** 2) / (2.0 * sigma**2))
+    active = (time < t0).to(x.dtype)
+    return q_pulse * spatial * active
+
+
 def energy_residuals(
     model,
     x: torch.Tensor,
@@ -244,6 +282,7 @@ def energy_residuals(
     r_int_star,
     eps: float = KAPPA_EPS,
     c: torch.Tensor | None = None,
+    pulse: NucleationPulse | None = None,
 ) -> EnergyResiduals:
     """Energy advection-diffusion with wall heating and the two-way evaporation
     closure. Needs ``T`` (and the ``s`` field for the mass consistency).
@@ -251,6 +290,8 @@ def energy_residuals(
     ``r_int_star`` is the non-dimensional interfacial resistance closing the
     evaporation flux -- a trainable inverse unknown supplied by the trainer.
     ``c`` is the points' dataset's conditioning row (``None`` when unconditioned).
+    ``pulse`` adds the localized nucleation heat pulse (:class:`NucleationPulse`); when
+    ``None`` (the default) the energy residual is unchanged.
     """
     pe = groups["Pe"]
     q_wall = groups["q_wall_star"]
@@ -273,6 +314,14 @@ def energy_residuals(
     # alone and cannot flatten the interface (delta) or perturb theta to cheat.
     src_closure = model.source(x, cx) - (1.0 - 1.0 / rho_ratio) * evap.detach()
 
+    # Wall heating gated by liquid contact: the uniform bottom-wall flux plus, when
+    # enabled, the localized nucleation pulse that seeds the bubble at the fixed cavity.
+    wall_heat = q_wall
+    if pulse is not None:
+        wall_heat = wall_heat + nucleation_pulse_source(
+            x, pulse.x_pin, pulse.t0, pulse.sigma, pulse.q_pulse
+        )
+
     u, v = model.velocity(x, cx)
     t_x, t_y, t_t = gradients(theta, x)
     energy = (
@@ -280,7 +329,7 @@ def energy_residuals(
         + u * t_x
         + v * t_y
         - (1.0 / pe) * _laplacian(theta, x)
-        - q_wall * (1.0 - alpha)  # wall heating, gated by liquid contact
+        - wall_heat * (1.0 - alpha)  # heating, gated by liquid contact
         + evap  # latent-heat sink at the interface
     )
     return EnergyResiduals(energy, src_closure, delta)
