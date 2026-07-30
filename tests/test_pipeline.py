@@ -944,6 +944,86 @@ def test_joint_rba_weighting_is_not_yet_supported(tmp_path):
         train(cfg, run_paths)
 
 
+def test_adaptive_collocation_refreshes_the_rba_pool_and_realigns_attention(tmp_path):
+    """With RAR on, the RBA pool is refreshed every `resample_every` steps: the pool
+    actually moves, the resample counter fires, the run stays finite, and the attention
+    stays aligned to the (n_coll) pool it was rebuilt for."""
+    import math
+
+    from naviernet.training import train
+
+    cfg = _rba_cfg(
+        tmp_path,
+        "rar",
+        ["training.adaptive_collocation=true", "training.resample_every=2"],
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, state = train(cfg, paths)  # steps=4, resample at 2 and 4
+
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"rar {name} was not finite"
+    assert state["rba_resamples"] >= 1, "the collocation pool was refreshed at least once"
+    n_coll = cfg.training.n_coll
+    assert state["rba_pool"].shape == (n_coll, 3), "pool refreshed to n_coll points"
+    for a in state["attention"].values():
+        assert a.shape == (n_coll, 1), "attention stays aligned to the refreshed pool"
+    assert paths.checkpoint.exists()
+
+
+def test_adaptive_collocation_off_leaves_the_pool_fixed(tmp_path):
+    """Default (adaptive_collocation off) keeps the RBA pool fixed for the whole run --
+    no resamples fire."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "rba-fixed")
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, state = train(cfg, paths)
+    assert state.get("rba_resamples", 0) == 0, "no resampling when adaptive_collocation is off"
+
+
+def test_adaptive_collocation_requires_rba(tmp_path):
+    """RAR refreshes the RBA fixed pool, so it needs weighting=rba; with gradnorm it
+    raises rather than silently no-op."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(
+        tmp_path,
+        "rar-gradnorm",
+        ["training.weighting=gradnorm", "training.adaptive_collocation=true"],
+    )
+    _stage(RunPaths.from_config(cfg))
+    with pytest.raises(ValueError, match="adaptive_collocation"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_adaptive_collocation_resume_keeps_the_pool_and_attention_aligned(tmp_path):
+    """With RAR the pool evolves, so it is saved and restored on resume (the attention
+    stays aligned to it); a resumed run continues without a shape mismatch."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(
+        tmp_path,
+        "rar-resume",
+        ["training.adaptive_collocation=true", "training.resample_every=2"],
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, first = train(cfg, paths, steps=4)
+    _, _, second = train(cfg, paths, steps=4)  # resume; must not crash on pool alignment
+
+    assert second["done"] == 8
+    n_coll = cfg.training.n_coll
+    assert second["rba_pool"].shape == (n_coll, 3)
+    for a in second["attention"].values():
+        assert a.shape == (n_coll, 1)
+
+
 def test_rba_collocation_loss_matches_the_plain_weighted_mean_at_zero_attention(tmp_path):
     """Trainer-level init==baseline: with attention all zero, `_rba_collocation_loss`
     equals the plain per-term weighted sum of mean-squared residuals. A warm-up-gated

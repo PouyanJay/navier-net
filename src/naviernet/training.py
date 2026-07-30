@@ -26,6 +26,7 @@ import numpy as np
 import torch
 
 from naviernet.config.schema import resolved_datasets, training_datasets
+from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BubblePINN
 from naviernet.physics import registry, weighting
@@ -34,6 +35,11 @@ from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
 log = get_logger(__name__)
+
+# The residual-adaptive (RAR) candidate pool is this many times the collocation size:
+# a broad pool to score by residual and draw the high-residual sample from. Only built
+# every `resample_every` steps, so the extra forward pass is amortised.
+CANDIDATE_POOL_MULT = 8
 
 # Loss terms whose weights the rebalancer adjusts, derived from the registry for
 # the Stage-A field set: `data` is the reference scale and `src` is a deliberate
@@ -319,6 +325,11 @@ def _validate_weighting(tcfg) -> None:
             "training.weighting='rba' with training.causal_weighting=true is not "
             "supported yet (RBA x causal composition is Phase 4); disable one."
         )
+    if tcfg.adaptive_collocation and tcfg.weighting != "rba":
+        raise ValueError(
+            "training.adaptive_collocation=true refreshes the RBA fixed pool, so it "
+            "requires training.weighting='rba'."
+        )
 
 
 def _init_attention(state: dict, coll_keys, n_coll: int, device) -> dict[str, torch.Tensor]:
@@ -337,6 +348,32 @@ def _init_attention(state: dict, coll_keys, n_coll: int, device) -> dict[str, to
         key: (saved[key].to(device) if key in saved else torch.zeros(n_coll, 1, device=device))
         for key in coll_keys
     }
+
+
+def _residual_magnitude(ctx: registry.LossContext, coll_equations) -> torch.Tensor:
+    """Per-point residual magnitude ``sqrt(sum_k r_k^2)`` over the collocation terms,
+    detached -- the score residual-adaptive resampling draws high-residual points by."""
+    total_sq = sum(eq.pointwise(ctx) for eq in coll_equations)
+    return total_sq.detach().sqrt().squeeze(-1)
+
+
+def _resample_pool(model, data, groups, coll_equations, tcfg, rng) -> torch.Tensor:
+    """A residual-adaptively refreshed collocation pool (RAD, :mod:`naviernet.data.adaptive`).
+
+    Scores a broad candidate pool by residual magnitude under the current model and
+    draws ``resample_fraction`` of the points from the high-residual regions plus a
+    uniform base, so the pool tracks the moving interface and stiff late times while
+    keeping global coverage. Returned detached (its own fixed points until the next
+    resample).
+    """
+    candidates = data.sample_collocation(tcfg.n_coll * CANDIDATE_POOL_MULT, rng)
+    magnitude = _residual_magnitude(
+        registry.LossContext(model, candidates, groups=groups), coll_equations
+    )
+    base = data.sample_collocation(tcfg.n_coll, rng).detach()
+    return rad_resample(
+        candidates.detach(), magnitude, base, tcfg.n_coll, tcfg.resample_fraction, rng
+    ).detach()
 
 
 def _rba_collocation_loss(
@@ -557,11 +594,18 @@ def train(
     # regenerates the identical pool the saved attention is aligned to.
     x_pool = attention = None
     if rba:
-        x_pool = data.sample_collocation(tcfg.n_coll, np.random.default_rng(tcfg.seed)).detach()
+        # Restore the exact pool the saved attention aligns to; a fresh run draws it from
+        # a fixed seed. (With RAR the pool evolves, so it must be restored, not just
+        # reseeded -- for a non-adaptive run the two are identical.)
+        saved_pool = state.get("rba_pool")
+        x_pool = (
+            saved_pool.to(device)
+            if saved_pool is not None
+            else data.sample_collocation(tcfg.n_coll, np.random.default_rng(tcfg.seed)).detach()
+        )
         attention = _init_attention(state, coll_keys, x_pool.shape[0], device)
-        # A fingerprint of the fixed pool, recorded each call so a resume can be checked
-        # to have regenerated the identical pool the saved attention is aligned to.
         state["rba_pool_sig"] = float(x_pool.sum().item())
+        state.setdefault("rba_resamples", 0)
 
     first_step = state["done"] + 1
     last_step = state["done"] + steps
@@ -573,6 +617,14 @@ def train(
         for group in opt.param_groups:
             group["lr"] = lr
         opt.zero_grad()
+
+        # Residual-adaptive resampling (RAR): periodically move the RBA pool toward the
+        # high-residual regions and reset the per-point attention for the new points.
+        if rba and tcfg.adaptive_collocation and step % tcfg.resample_every == 0:
+            x_pool = _resample_pool(model, data, groups, coll_equations, tcfg, rng)
+            attention = _init_attention({}, coll_keys, x_pool.shape[0], device)
+            state["rba_resamples"] += 1
+            log.info("step %5d | RAR resampled the collocation pool", step)
 
         x_data, alpha_target = data.sample_supervised(tcfg.n_data, rng)
         # RBA reuses the fixed pool (a fresh leaf each step so the PDE derivatives
@@ -633,6 +685,7 @@ def train(
     state["w"] = weights
     if rba:
         state["attention"] = attention  # persist per-point attention for resume
+        state["rba_pool"] = x_pool  # persist the pool the attention aligns to (RAR evolves it)
     torch.save(
         {"model": model.state_dict(), "opt": opt.state_dict(), "state": state},
         paths.checkpoint,
