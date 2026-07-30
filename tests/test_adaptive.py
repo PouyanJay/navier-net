@@ -83,6 +83,30 @@ def test_rad_resample_preserves_the_base_fraction_and_count():
     assert n_base == 50, "half the pool is the uniform base at fraction=0.5"
 
 
+def test_rad_resample_handles_the_fraction_edges():
+    """fraction=0 -> the pool is entirely the uniform base; fraction=1 with fewer
+    candidates than requested clamps to the candidate count (no over-draw), the rest
+    filled from the base."""
+    from naviernet.data.adaptive import rad_resample
+
+    rng = np.random.default_rng(0)
+    base_x = torch.full((100, 3), -1.0)  # sentinel base
+
+    all_base = rad_resample(
+        torch.rand(50, 3), torch.rand(50), base_x, n=40, fraction=0.0, rng=rng
+    )
+    assert all_base.shape == (40, 3)
+    assert bool((all_base == -1.0).all()), "fraction=0 -> pool is entirely the base"
+
+    # fraction=1 asks for 40 adaptive but only 10 candidates exist -> 10 adaptive + 30 base.
+    small_cand = torch.rand(10, 3)
+    clamped = rad_resample(small_cand, torch.rand(10), base_x, n=40, fraction=1.0, rng=rng)
+    assert clamped.shape == (40, 3)
+    assert int((clamped == -1.0).all(dim=1).sum()) == 30, (
+        "the shortfall is filled from the base"
+    )
+
+
 def test_rad_resample_is_seed_deterministic():
     """Same seed -> same pool, so golden/reproducibility hold."""
     from naviernet.data.adaptive import rad_resample

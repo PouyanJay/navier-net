@@ -325,11 +325,21 @@ def _validate_weighting(tcfg) -> None:
             "training.weighting='rba' with training.causal_weighting=true is not "
             "supported yet (RBA x causal composition is Phase 4); disable one."
         )
-    if tcfg.adaptive_collocation and tcfg.weighting != "rba":
-        raise ValueError(
-            "training.adaptive_collocation=true refreshes the RBA fixed pool, so it "
-            "requires training.weighting='rba'."
-        )
+    if tcfg.adaptive_collocation:
+        if tcfg.weighting != "rba":
+            raise ValueError(
+                "training.adaptive_collocation=true refreshes the RBA fixed pool, so it "
+                "requires training.weighting='rba'."
+            )
+        if tcfg.resample_every <= 0:
+            raise ValueError(
+                f"training.resample_every={tcfg.resample_every} must be > 0 "
+                f"(it is the step period between residual-adaptive pool refreshes)."
+            )
+        if not 0.0 <= tcfg.resample_fraction <= 1.0:
+            raise ValueError(
+                f"training.resample_fraction={tcfg.resample_fraction} must be in [0, 1]."
+            )
 
 
 def _init_attention(state: dict, coll_keys, n_coll: int, device) -> dict[str, torch.Tensor]:
@@ -604,7 +614,6 @@ def train(
             else data.sample_collocation(tcfg.n_coll, np.random.default_rng(tcfg.seed)).detach()
         )
         attention = _init_attention(state, coll_keys, x_pool.shape[0], device)
-        state["rba_pool_sig"] = float(x_pool.sum().item())
         state.setdefault("rba_resamples", 0)
 
     first_step = state["done"] + 1
@@ -686,6 +695,9 @@ def train(
     if rba:
         state["attention"] = attention  # persist per-point attention for resume
         state["rba_pool"] = x_pool  # persist the pool the attention aligns to (RAR evolves it)
+        # Fingerprint of the FINAL pool (RAR mutates it in-loop), so a resume can be
+        # checked to have restored the identical pool the saved attention aligns to.
+        state["rba_pool_sig"] = float(x_pool.sum().item())
     torch.save(
         {"model": model.state_dict(), "opt": opt.state_dict(), "state": state},
         paths.checkpoint,

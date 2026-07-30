@@ -944,28 +944,46 @@ def test_joint_rba_weighting_is_not_yet_supported(tmp_path):
         train(cfg, run_paths)
 
 
-def test_adaptive_collocation_refreshes_the_rba_pool_and_realigns_attention(tmp_path):
-    """With RAR on, the RBA pool is refreshed every `resample_every` steps: the pool
-    actually moves, the resample counter fires, the run stays finite, and the attention
-    stays aligned to the (n_coll) pool it was rebuilt for."""
+def test_adaptive_collocation_refreshes_the_rba_pool_by_real_residual(tmp_path, monkeypatch):
+    """With RAR on, the pool is refreshed every `resample_every` steps BY THE RESIDUAL:
+    spy on `rad_resample` to prove `_resample_pool` feeds it a real (varying) residual
+    magnitude and the configured `resample_fraction` -- not a flat/uniform fallback --
+    while the run stays finite and the attention stays aligned to the refreshed pool."""
     import math
 
+    import naviernet.training as training_mod
     from naviernet.training import train
+
+    captured: dict = {}
+    real_rad = training_mod.rad_resample
+
+    def spy(cand_x, mag, base_x, n, fraction, rng, **kw):
+        captured["mag_std"] = float(mag.std())
+        captured["fraction"] = fraction
+        return real_rad(cand_x, mag, base_x, n, fraction, rng, **kw)
+
+    monkeypatch.setattr(training_mod, "rad_resample", spy)
 
     cfg = _rba_cfg(
         tmp_path,
         "rar",
-        ["training.adaptive_collocation=true", "training.resample_every=2"],
+        [
+            "training.adaptive_collocation=true",
+            "training.resample_every=2",
+            "training.resample_fraction=0.75",
+        ],
     )
     paths = RunPaths.from_config(cfg)
     _stage(paths)
 
-    _, _, state = train(cfg, paths)  # steps=4, resample at 2 and 4
+    _, _, state = train(cfg, paths)  # steps=4 -> resample at 2 and 4
 
     for record in state["hist"]:
         for name, value in record.items():
             assert math.isfinite(value), f"rar {name} was not finite"
-    assert state["rba_resamples"] >= 1, "the collocation pool was refreshed at least once"
+    assert state["rba_resamples"] == 2, "resample fires at every step % resample_every == 0"
+    assert captured["mag_std"] > 0, "RAR must resample by a varying residual, not a flat score"
+    assert captured["fraction"] == pytest.approx(0.75), "resample_fraction is wired through"
     n_coll = cfg.training.n_coll
     assert state["rba_pool"].shape == (n_coll, 3), "pool refreshed to n_coll points"
     for a in state["attention"].values():
@@ -978,6 +996,9 @@ def test_adaptive_collocation_off_leaves_the_pool_fixed(tmp_path):
     no resamples fire."""
     from naviernet.training import train
 
+    # resample_every left at its default (500) but the point is the flag: the
+    # `adaptive_collocation and step % resample_every == 0` guard short-circuits on the
+    # flag, so no resample fires regardless of the step count.
     cfg = _rba_cfg(tmp_path, "rba-fixed")
     paths = RunPaths.from_config(cfg)
     _stage(paths)
@@ -1001,9 +1022,30 @@ def test_adaptive_collocation_requires_rba(tmp_path):
         train(cfg, RunPaths.from_config(cfg))
 
 
-def test_adaptive_collocation_resume_keeps_the_pool_and_attention_aligned(tmp_path):
-    """With RAR the pool evolves, so it is saved and restored on resume (the attention
-    stays aligned to it); a resumed run continues without a shape mismatch."""
+@pytest.mark.parametrize(
+    ("override", "match"),
+    [
+        ("training.resample_every=0", "resample_every"),
+        ("training.resample_fraction=1.5", "resample_fraction"),
+    ],
+)
+def test_bad_rar_config_fails_loudly(tmp_path, override, match):
+    """A degenerate RAR config raises at startup with an actionable message, not a
+    ZeroDivisionError (resample_every=0) or a negative split (resample_fraction>1) deep
+    in the loop."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "rar-bad", ["training.adaptive_collocation=true", override])
+    _stage(RunPaths.from_config(cfg))
+    with pytest.raises(ValueError, match=match):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_adaptive_collocation_resume_restores_the_exact_evolved_pool(tmp_path):
+    """With RAR the pool evolves, so it must be saved and restored on resume -- not
+    reseeded. The first call resamples (pool moves away from the seed pool); the resumed
+    call runs a single step with NO resample, so its saved pool must equal the first
+    call's evolved pool exactly (a broken restore would reseed and differ)."""
     from naviernet.training import train
 
     cfg = _rba_cfg(
@@ -1014,14 +1056,14 @@ def test_adaptive_collocation_resume_keeps_the_pool_and_attention_aligned(tmp_pa
     paths = RunPaths.from_config(cfg)
     _stage(paths)
 
-    _, _, first = train(cfg, paths, steps=4)
-    _, _, second = train(cfg, paths, steps=4)  # resume; must not crash on pool alignment
+    _, _, first = train(cfg, paths, steps=4)  # resamples at steps 2 and 4 -> evolved pool
+    evolved = first["rba_pool"].clone()
 
-    assert second["done"] == 8
-    n_coll = cfg.training.n_coll
-    assert second["rba_pool"].shape == (n_coll, 3)
-    for a in second["attention"].values():
-        assert a.shape == (n_coll, 1)
+    # One more step (step 5): 5 % resample_every(2) != 0, so no resample fires and the
+    # restored pool is saved unchanged -- it must be the evolved pool, bit-for-bit.
+    _, _, second = train(cfg, paths, steps=1)
+    assert second["done"] == 5
+    assert torch.equal(second["rba_pool"], evolved), "resume must restore the evolved pool"
 
 
 def test_rba_collocation_loss_matches_the_plain_weighted_mean_at_zero_attention(tmp_path):
