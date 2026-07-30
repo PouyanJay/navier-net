@@ -810,6 +810,114 @@ def test_out_of_range_march_full_frac_fails_loudly(tmp_path):
         train(cfg, RunPaths.from_config(cfg))
 
 
+def _rba_cfg(tmp_path, run_name: str, extra: list[str] | None = None):
+    return make_config(
+        [
+            f"paths.root={tmp_path}",
+            f"run_name={run_name}",
+            *_TINY_TRAIN,
+            "training.steps=4",
+            "training.log_every=1",
+            "training.weighting=rba",
+            "training.seed=0",
+            *(extra or []),
+        ]
+    )
+
+
+def test_rba_weighting_trains_without_rebalancing_and_bounds_the_attention(tmp_path):
+    """RBA replaces the gradnorm rebalancer: per-term weights stay at their config
+    defaults (never ratcheted), the run trains to finite losses, and the persistent
+    per-point attention is stored, non-negative and bounded by eta/(1-gamma)."""
+    import math
+
+    from naviernet.physics.weighting import rba_bound
+    from naviernet.training import train
+
+    cfg = _rba_cfg(
+        tmp_path, "rba", ["training.rebalance_every=1"]
+    )  # would rebalance every step
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, state = train(cfg, paths)
+
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"rba {name} was not finite"
+    # No rebalancing: weights are exactly the config defaults despite rebalance_every=1.
+    for key, weight in state["w"].items():
+        assert weight == pytest.approx(float(getattr(cfg.training.weights, key))), (
+            f"rba must not rebalance {key}"
+        )
+    attention = state["attention"]
+    assert set(attention) == {"vof", "div", "src"}, "attention on the collocation terms"
+    bound = rba_bound(cfg.training.rba_gamma, cfg.training.rba_eta)
+    for key, a in attention.items():
+        assert a.shape == (cfg.training.n_coll, 1), f"{key} attention is per-point"
+        assert torch.all(a >= 0) and a.max().item() <= bound + 1e-6, f"{key} attention bounded"
+    assert paths.checkpoint.exists()
+
+
+def test_rba_weighting_is_deterministic_via_the_fixed_pool(tmp_path):
+    """The RBA pool is sampled from a fixed seed (not offset by completed steps), so
+    two identical runs produce the identical loss trajectory."""
+    from naviernet.training import train
+
+    hists = []
+    for name in ("rba-a", "rba-b"):
+        cfg = _rba_cfg(tmp_path, name)
+        paths = RunPaths.from_config(cfg)
+        _stage(paths)
+        _, _, state = train(cfg, paths)
+        hists.append(state["hist"])
+
+    for a, b in zip(hists[0], hists[1], strict=True):
+        for k in ("vof", "div", "data"):
+            assert a[k] == pytest.approx(b[k], rel=1e-9), f"{k} must be deterministic"
+
+
+def test_rba_attention_persists_and_grows_across_resume(tmp_path):
+    """The attention is carried in the checkpoint and continues to accumulate on a
+    resumed run, rather than restarting from zero each chunk."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "rba-resume")
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, first = train(cfg, paths, steps=4)
+    peak_after_first = max(a.max().item() for a in first["attention"].values())
+
+    _, _, second = train(cfg, paths, steps=4)  # resume
+    peak_after_second = max(a.max().item() for a in second["attention"].values())
+
+    assert second["done"] == 8, "resume continued the run"
+    assert peak_after_second > peak_after_first, "attention kept accumulating across resume"
+
+
+def test_unknown_weighting_fails_loudly(tmp_path):
+    """An unrecognised weighting scheme is a config error -- raise rather than fall
+    through to one path."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "bogus", ["training.weighting=bogus"])
+    _stage(RunPaths.from_config(cfg))
+    with pytest.raises(ValueError, match="weighting"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_rba_with_causal_weighting_fails_loudly(tmp_path):
+    """Composing RBA with causal weighting is not implemented yet (Phase 4); enabling
+    both must raise rather than silently apply only one."""
+    from naviernet.training import train
+
+    cfg = _rba_cfg(tmp_path, "rba-causal", ["training.causal_weighting=true"])
+    _stage(RunPaths.from_config(cfg))
+    with pytest.raises(ValueError, match="rba"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
 def test_stage_b_engages_only_at_the_boundary_and_never_when_disabled():
     """The optimiser restart fires at exactly step warmup+1 -- and never when the
     warm-up is disabled (0) or the model has no Stage-B physics, so an ordinary

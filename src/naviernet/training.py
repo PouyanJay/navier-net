@@ -28,7 +28,7 @@ import torch
 from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BubblePINN
-from naviernet.physics import registry
+from naviernet.physics import registry, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
@@ -304,6 +304,66 @@ def _validate_causal(tcfg) -> None:
         )
 
 
+WEIGHTING_MODES = ("gradnorm", "rba")
+
+
+def _validate_weighting(tcfg) -> None:
+    """Reject an unusable weighting config up front: an unknown scheme, or the not-yet
+    supported RBA x causal-weighting combination (their composition is Phase 4)."""
+    if tcfg.weighting not in WEIGHTING_MODES:
+        raise ValueError(
+            f"training.weighting={tcfg.weighting!r} is not one of {WEIGHTING_MODES}"
+        )
+    if tcfg.weighting == "rba" and tcfg.causal_weighting:
+        raise ValueError(
+            "training.weighting='rba' with training.causal_weighting=true is not "
+            "supported yet (RBA x causal composition is Phase 4); disable one."
+        )
+
+
+def _init_attention(state: dict, coll_keys, n_coll: int, device) -> dict[str, torch.Tensor]:
+    """The persistent per-point RBA attention for each collocation term: carried from
+    the checkpoint when resuming an RBA run, otherwise zeros (a fresh run == the plain
+    mean-squared residual). Shape ``(n_coll, 1)`` per term."""
+    saved = state.get("attention") or {}
+    return {
+        key: (saved[key].to(device) if key in saved else torch.zeros(n_coll, 1, device=device))
+        for key in coll_keys
+    }
+
+
+def _rba_collocation_loss(
+    ctx: registry.LossContext,
+    coll_equations,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    attention: dict[str, torch.Tensor],
+    gamma: float,
+    eta: float,
+) -> torch.Tensor:
+    """The collocation loss under Residual-Based Attention for one context.
+
+    For each collocation term the per-point attention is updated from that term's
+    per-point squared residual (only while the term is active, i.e. not gated off by
+    the warm-up schedule) and the term contributes
+    ``w_k * sched_k * mean((1+lambda_k) * r_k^2)``. ``attention`` is mutated in place so
+    it persists across steps; the weights are the fixed config values (RBA replaces the
+    gradient-norm rebalancer, so nothing ratchets them).
+    """
+    total = 0.0
+    for eq in coll_equations:
+        pointwise = eq.pointwise(ctx)
+        sched = schedule.get(eq.weight_key, 1.0)
+        if sched > 0:
+            attention[eq.weight_key] = weighting.rba_update(
+                attention[eq.weight_key], pointwise, gamma, eta
+            )
+        total = total + weights[eq.weight_key] * sched * weighting.rba_weighted_mean(
+            pointwise, attention[eq.weight_key]
+        )
+    return total
+
+
 def _causal_collocation(
     model,
     x_coll: torch.Tensor,
@@ -431,6 +491,8 @@ def train(
 
     tcfg = cfg.training
     _validate_causal(tcfg)
+    _validate_weighting(tcfg)
+    rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
 
@@ -480,6 +542,14 @@ def train(
     weights = state["w"]
     reset_weights = _initial_state(cfg, equations)["w"]  # config defaults, for the handoff
 
+    # RBA trains on a FIXED collocation pool so the per-point attention persists across
+    # steps. The pool is drawn from a fixed seed (not offset by `done`) so a resumed run
+    # regenerates the identical pool the saved attention is aligned to.
+    x_pool = attention = None
+    if rba:
+        x_pool = data.sample_collocation(tcfg.n_coll, np.random.default_rng(tcfg.seed)).detach()
+        attention = _init_attention(state, coll_keys, x_pool.shape[0], device)
+
     first_step = state["done"] + 1
     last_step = state["done"] + steps
     plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
@@ -492,7 +562,13 @@ def train(
         opt.zero_grad()
 
         x_data, alpha_target = data.sample_supervised(tcfg.n_data, rng)
-        x_coll = data.sample_collocation(tcfg.n_coll, rng)
+        # RBA reuses the fixed pool (a fresh leaf each step so the PDE derivatives
+        # differentiate through it, with no cross-step grad accumulation).
+        x_coll = (
+            x_pool.clone().requires_grad_(True)
+            if rba
+            else data.sample_collocation(tcfg.n_coll, rng)
+        )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
 
         ctx = registry.LossContext(model, x_coll, inlet, walls, u_inlet, groups)
@@ -501,9 +577,12 @@ def train(
             losses[eq.weight_key] = eq.term(ctx)
         coll_batches = [(x_coll, groups, None)]  # single dataset: one collocation batch
 
-        # Skip rebalancing on the handoff step: its weights are about to be reset.
-        if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
-            step, tcfg, stage_b_keys
+        # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
+        # bounded per-point attention below. Skip the handoff step: weights reset there.
+        if (
+            not rba
+            and step % tcfg.rebalance_every == 0
+            and not _stage_b_engages_at(step, tcfg, stage_b_keys)
         ):
             _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
@@ -514,7 +593,12 @@ def train(
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
-        total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
+        if rba:
+            total = _rba_collocation_loss(
+                ctx, coll_equations, weights, schedule, attention, tcfg.rba_gamma, tcfg.rba_eta
+            ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
+        else:
+            total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
         total.backward()
         opt.step()
 
@@ -534,6 +618,8 @@ def train(
 
     state["done"] += steps
     state["w"] = weights
+    if rba:
+        state["attention"] = attention  # persist per-point attention for resume
     torch.save(
         {"model": model.state_dict(), "opt": opt.state_dict(), "state": state},
         paths.checkpoint,
@@ -628,6 +714,14 @@ def _train_joint(
     """
     tcfg = cfg.training
     _validate_causal(tcfg)
+    _validate_weighting(tcfg)
+    if tcfg.weighting == "rba":
+        # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
+        # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
+        raise NotImplementedError(
+            "training.weighting='rba' is not yet supported for joint (multi-dataset) "
+            "runs; use weighting='gradnorm' for joint runs for now."
+        )
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
 
