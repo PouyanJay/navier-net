@@ -3,6 +3,7 @@ import "./components.css";
 export { Button } from "./Button";
 export { Callout, type CalloutTone } from "./Callout";
 export { Chip } from "./Chip";
+export { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 export { Console } from "./Console";
 export { DL, type KV } from "./DL";
 export { EquationBlock } from "./EquationBlock";

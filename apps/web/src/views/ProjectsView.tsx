@@ -1,8 +1,7 @@
 import { seriesName } from "../lib/series";
 import { Fragment, useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 
-import { Button, Callout, Chip } from "../components";
+import { Button, Callout, Chip, ConfirmDeleteDialog } from "../components";
 import { useToast } from "../components/Toast";
 import {
   api,
@@ -310,8 +309,8 @@ function TrashIcon() {
   );
 }
 
-/** Confirm-and-delete overlay: a project's data and runs are removed for good,
- * so the destructive action is gated behind an explicit confirmation. */
+/** Confirm-and-delete overlay: a project's data and runs are removed for good, so the
+ * destructive action is gated behind an explicit confirmation (the shared dialog). */
 function DeleteProjectDialog({
   project,
   datasetCount,
@@ -325,17 +324,6 @@ function DeleteProjectDialog({
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
-
   const owned = [
     datasetCount > 0
       ? `${datasetCount} dataset${datasetCount === 1 ? "" : "s"}`
@@ -343,64 +331,18 @@ function DeleteProjectDialog({
     runCount > 0 ? `${runCount} run${runCount === 1 ? "" : "s"}` : null,
   ].filter(Boolean);
 
-  const runDelete = () => {
-    setBusy(true);
-    setError(null);
-    // On success the card unmounts, taking this dialog with it, so we leave
-    // `busy` set; only a failure returns control here to surface the reason.
-    onConfirm().catch((err) => {
-      setError(errorMessage(err));
-      setBusy(false);
-    });
-  };
-
-  // Portalled to <body> so the fixed overlay is positioned against the viewport,
-  // not the card: `.pcard-clickable`'s hover transform makes the card a
-  // containing block, which would anchor the modal to it (and jitter with hover).
-  return createPortal(
-    <div
-      className="modal-ov"
-      role="presentation"
-      // React re-dispatches portal events up the *component* tree, so without
-      // this a click here still bubbles to the card's onClick (opening the
-      // project). Contain every click to the dialog.
-      onClick={(e) => e.stopPropagation()}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
+  return (
+    <ConfirmDeleteDialog
+      title="Delete project"
+      confirmLabel="Delete project"
+      onClose={onClose}
+      onConfirm={onConfirm}
     >
-      <div
-        className="modal"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="del-title"
-        aria-describedby="del-desc"
-      >
-        <div className="hd">
-          <h2 id="del-title">Delete project</h2>
-          <span className="sub">permanent</span>
-        </div>
-        <div className="body">
-          <p id="del-desc" className="del-msg">
-            Delete <b>{project.name}</b>
-            {owned.length > 0 ? <> and its {owned.join(" and ")}</> : null}? Its
-            data and outputs are removed from disk. Anything still shared with
-            another project is kept.
-          </p>
-          <Callout tone="caution">This cannot be undone.</Callout>
-          {error && <Callout tone="error">{error}</Callout>}
-          <div className="pform-actions">
-            <Button variant="danger" onClick={runDelete} disabled={busy}>
-              {busy ? "Deleting…" : "Delete project"}
-            </Button>
-            <Button onClick={onClose} disabled={busy} autoFocus>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>,
-    document.body,
+      Delete <b>{project.name}</b>
+      {owned.length > 0 ? <> and its {owned.join(" and ")}</> : null}? Its data
+      and outputs are removed from disk. Anything still shared with another
+      project is kept.
+    </ConfirmDeleteDialog>
   );
 }
 

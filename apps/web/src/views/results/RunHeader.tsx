@@ -28,6 +28,8 @@ interface RunHeaderProps {
   onViewDataset: (dataset: string) => void;
   onResume: () => void;
   resuming: boolean;
+  /** Open the delete-confirmation for this run. */
+  onDelete: () => void;
 }
 
 /** One field of the run's pedigree line ("seed 1234"). */
@@ -51,6 +53,7 @@ export function RunHeader({
   onViewDataset,
   onResume,
   resuming,
+  onDelete,
 }: RunHeaderProps) {
   const status = STATUS_CHIP[run.status];
   const displayName = runDisplayName(run, datasetLabels);
@@ -93,6 +96,18 @@ export function RunHeader({
             {resuming ? "Resuming…" : "Resume training"}
           </Button>
         )}
+        <Button
+          variant="danger"
+          onClick={onDelete}
+          disabled={run.status === "running"}
+          title={
+            run.status === "running"
+              ? "Stop the run before deleting it"
+              : "Delete this run and all its outputs"
+          }
+        >
+          Delete run
+        </Button>
       </div>
 
       <div className="run-chips">
