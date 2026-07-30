@@ -107,11 +107,12 @@ def test_joint_training_over_two_datasets_writes_one_conditioned_checkpoint(tmp_
     assert saved["n_cond"] == N_COND
 
 
-def test_joint_training_runs_with_causal_weighting_enabled(tmp_path):
-    """The causal path is wired into the joint loop too: a conditioned two-dataset
-    run with causal weighting ON reweights each dataset's collocation residual by
-    time -- diverging from the causal-off joint run under an identical seed -- and
-    still trains to finite losses (no crash from the per-bin passes)."""
+@pytest.mark.parametrize("mode", ["weight", "march"])
+def test_joint_training_runs_with_causal_weighting_enabled(tmp_path, mode):
+    """The causal path is wired into the joint loop too, for BOTH modes: a conditioned
+    two-dataset run with causal weighting ON reweights each dataset's collocation
+    residual by time -- diverging from the causal-off joint run under an identical
+    seed -- and still trains to finite losses (no crash from the per-bin passes)."""
     import math
 
     from naviernet.training import train
@@ -134,11 +135,12 @@ def test_joint_training_runs_with_causal_weighting_enabled(tmp_path):
         _, _, state = train(cfg, run_paths)
         return run_paths, state["hist"]
 
-    _, off = run("joint-causal-off", [])
+    _, off = run(f"joint-causal-off-{mode}", [])
     run_paths, on = run(
-        "joint-causal-on",
+        f"joint-causal-on-{mode}",
         [
             "training.causal_weighting=true",
+            f"training.causal_mode={mode}",
             "training.causal_time_chunks=4",
             "training.causal_eps_schedule=[1.0]",
         ],
@@ -148,15 +150,7 @@ def test_joint_training_runs_with_causal_weighting_enabled(tmp_path):
     for record in on:
         for name, value in record.items():
             assert math.isfinite(value), f"causal joint {name} was not finite"
-    # Same seed, same samples: only the temporal reweighting differs. Step 1's
-    # recorded means match (identical initial model); the divergence shows once the
-    # differing gradient has stepped the model, so scan every logged step.
-    diverged = any(
-        on_rec[k] != pytest.approx(off_rec[k], rel=1e-9, abs=1e-12)
-        for on_rec, off_rec in zip(on, off, strict=True)
-        for k in ("vof", "div")
-    )
-    assert diverged, "causal weighting should change the joint collocation trajectory"
+    assert _trajectories_differ(on, off), "causal weighting should change the joint trajectory"
     assert run_paths.checkpoint.exists()
 
 
@@ -585,8 +579,12 @@ def test_causal_eps_anneals_across_the_call_window_and_restarts_on_resume():
     # Resume regression: a chunk starting at step 301 anneals from the start of the
     # schedule again, rather than dividing an absolute step by a per-call count and
     # snapping straight to the final ε for the whole resumed segment.
-    assert _causal_eps(301, 301, 600, schedule) == pytest.approx(1e-2), "resumed chunk restarts ε"
-    assert _causal_eps(600, 301, 600, schedule) == pytest.approx(1.0), "resumed chunk reaches max ε"
+    assert _causal_eps(301, 301, 600, schedule) == pytest.approx(1e-2), (
+        "resumed chunk restarts ε"
+    )
+    assert _causal_eps(600, 301, 600, schedule) == pytest.approx(1.0), (
+        "resumed chunk reaches max ε"
+    )
 
 
 def test_time_chunks_partition_x_coll_by_ascending_time():
@@ -624,7 +622,9 @@ def test_causal_collocation_loss_reduces_to_the_uniform_mean_when_eps_is_zero():
     torch.manual_seed(0)
     model = BubblePINN(cfg)
     groups = compute_groups(cfg)
-    coll_equations = registry.collocation_equations(registry.enabled_equations(cfg.model.fields))
+    coll_equations = registry.collocation_equations(
+        registry.enabled_equations(cfg.model.fields)
+    )
     weights = {"vof": 2.0, "div": 0.5, "src": 3.0}  # distinct, so weights must carry through
     schedule: dict[str, float] = {}  # no warm-up gating: every multiplier is 1
 
@@ -634,14 +634,18 @@ def test_causal_collocation_loss_reduces_to_the_uniform_mean_when_eps_is_zero():
         model, x_coll, groups, None, coll_equations, weights, schedule, n_chunks=4, eps=0.0
     )
     ctx = registry.LossContext(model, x_coll, groups=groups)
-    uniform = _weighted_sum({e.weight_key: e.term(ctx) for e in coll_equations}, weights, schedule)
+    uniform = _weighted_sum(
+        {e.weight_key: e.term(ctx) for e in coll_equations}, weights, schedule
+    )
 
-    assert causal.item() == pytest.approx(uniform.item(), rel=1e-5), "ε=0 -> uniform collocation mean"
+    assert causal.item() == pytest.approx(uniform.item(), rel=1e-5), (
+        "ε=0 -> uniform collocation mean"
+    )
     assert causal.requires_grad, "gradient must still flow through the residual"
     causal.backward()
-    assert any(
-        p.grad is not None and torch.any(p.grad != 0) for p in model.parameters()
-    ), "the causal collocation loss trains the model"
+    assert any(p.grad is not None and torch.any(p.grad != 0) for p in model.parameters()), (
+        "the causal collocation loss trains the model"
+    )
 
 
 def test_causal_weighting_changes_the_stage_a_loss_trajectory(tmp_path):
@@ -651,27 +655,9 @@ def test_causal_weighting_changes_the_stage_a_loss_trajectory(tmp_path):
     still trains to finite losses (no crash from the per-bin residual passes)."""
     import math
 
-    from naviernet.training import train
-
-    shared = [
-        *_TINY_TRAIN,
-        "training.steps=3",
-        "training.log_every=1",
-        # No warm-up, so the Stage-B optimiser restart never fires and the only
-        # variable between the two runs is the causal temporal reweighting.
-        "training.stage_b_warmup_steps=0",
-        "training.seed=0",
-    ]
-
-    def run(run_name: str, extra: list[str]) -> list[dict]:
-        cfg = make_config([f"paths.root={tmp_path}", f"run_name={run_name}", *shared, *extra])
-        paths = RunPaths.from_config(cfg)
-        _stage(paths)
-        _, _, state = train(cfg, paths)
-        return state["hist"]
-
-    off = run("causal-off", [])
-    on = run(
+    off = _stage_a_hist(tmp_path, "causal-off", [])
+    on = _stage_a_hist(
+        tmp_path,
         "causal-on",
         [
             "training.causal_weighting=true",
@@ -686,12 +672,142 @@ def test_causal_weighting_changes_the_stage_a_loss_trajectory(tmp_path):
             assert math.isfinite(value), f"causal {name} was not finite"
     # Same seed, same samples: only the temporal reweighting differs, so the
     # trajectories must diverge on the collocation terms.
-    diverged = any(
-        on_rec[k] != pytest.approx(off_rec[k], rel=1e-9, abs=1e-12)
-        for on_rec, off_rec in zip(on, off, strict=True)
-        for k in ("vof", "div")
+    assert _trajectories_differ(on, off), "causal weighting should change the trajectory"
+
+
+def test_march_active_bins_expands_monotonically_to_full_domain():
+    """Time-marching horizon: covers only the earliest time bin at the start of the
+    run and expands to the whole domain by ``full_frac`` of the way through, never
+    shrinking -- so late times are trained at full weight once the front reaches
+    them."""
+    from naviernet.training import _march_active_bins
+
+    n = 16
+    assert _march_active_bins(0.0, n, 0.5) == 1, "start: only the earliest bin"
+    assert _march_active_bins(1.0, n, 0.5) == n, "stays at the full domain afterwards"
+    # full_frac IS honoured (not a hardcoded 0.5): a smaller frac reaches the full
+    # domain earlier. The `1 + int(...)` discretisation reaches full slightly *before*
+    # the nominal frac, so compare across fracs rather than pinning the exact step.
+    assert _march_active_bins(0.25, n, 0.25) == n, "smaller full_frac -> full sooner"
+    assert _march_active_bins(0.25, n, 0.75) < n, "larger full_frac still expanding at 0.25"
+    swept = [_march_active_bins(i / 20, n, 0.5) for i in range(21)]
+    assert swept == sorted(swept), "the horizon never shrinks"
+
+
+def test_time_march_collocation_loss_restricts_to_the_active_time_horizon():
+    """Marching's distinguishing behaviour: at the start only the earliest time bin's
+    residual enters the loss; once the horizon reaches full_frac it is the whole
+    collocation mean. This pins WHICH points are active (earliest-first), which a
+    trajectory-only test cannot."""
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics import registry
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _time_chunks, _time_march_collocation_loss, _weighted_sum
+
+    cfg = make_config(_TINY_TRAIN)
+    torch.manual_seed(0)
+    model = BubblePINN(cfg)
+    groups = compute_groups(cfg)
+    coll_equations = registry.collocation_equations(
+        registry.enabled_equations(cfg.model.fields)
     )
-    assert diverged, "causal weighting ON should change the collocation loss trajectory"
+    weights = {"vof": 2.0, "div": 0.5, "src": 3.0}
+    schedule: dict[str, float] = {}
+    x_coll = torch.rand(16, 3, requires_grad=True)
+
+    def march(progress: float) -> float:
+        return _time_march_collocation_loss(
+            model, x_coll, groups, None, coll_equations, weights, schedule, 4, progress, 0.5
+        ).item()
+
+    def uniform_over(points) -> float:
+        ctx = registry.LossContext(model, points, groups=groups)
+        return _weighted_sum(
+            {e.weight_key: e.term(ctx) for e in coll_equations}, weights, schedule
+        ).item()
+
+    earliest_bin = _time_chunks(x_coll, 4)[0]
+    assert march(0.0) == pytest.approx(uniform_over(earliest_bin), rel=1e-5), (
+        "progress 0 -> only the earliest time bin"
+    )
+    assert march(1.0) == pytest.approx(uniform_over(x_coll), rel=1e-5), (
+        "progress >= full_frac -> the whole domain"
+    )
+    assert march(0.0) != pytest.approx(march(1.0), rel=1e-3), "the horizon actually restricts"
+
+
+def test_time_marching_and_soft_weighting_are_distinct_objectives(tmp_path):
+    """march and weight must be different objectives, not a silent dispatch
+    fall-through: under a shared seed their trajectories diverge from EACH OTHER (both
+    also differ from the uniform run, so comparing only to 'off' would not catch a
+    mode mix-up)."""
+    import math
+
+    weight = _stage_a_hist(
+        tmp_path,
+        "cmp-weight",
+        [
+            "training.causal_weighting=true",
+            "training.causal_mode=weight",
+            "training.causal_time_chunks=4",
+            "training.causal_eps_schedule=[1.0]",
+        ],
+    )
+    march = _stage_a_hist(
+        tmp_path,
+        "cmp-march",
+        [
+            "training.causal_weighting=true",
+            "training.causal_mode=march",
+            "training.causal_time_chunks=4",
+        ],
+    )
+
+    for record in march:
+        for name, value in record.items():
+            assert math.isfinite(value), f"march {name} was not finite"
+    assert _trajectories_differ(weight, march), "march and weight are distinct objectives"
+
+
+def test_unknown_causal_mode_fails_loudly(tmp_path):
+    """An unrecognised causal_mode is a config error, not a silent fall-through to
+    one variant -- it must raise so a typo can't quietly train the wrong objective.
+    (Validation is the first line of train(), before any dataset I/O, so no staging.)"""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.causal_weighting=true",
+            "training.causal_mode=bogus",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="causal_mode"):
+        train(cfg, RunPaths.from_config(cfg))
+
+
+def test_out_of_range_march_full_frac_fails_loudly(tmp_path):
+    """causal_march_full_frac<=0 would collapse the horizon to the full domain on the
+    first step, silently defeating the curriculum -- so it must raise, like an unknown
+    causal_mode does, rather than degrade quietly."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "training.causal_weighting=true",
+            "training.causal_mode=march",
+            "training.causal_march_full_frac=0.0",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="causal_march_full_frac"):
+        train(cfg, RunPaths.from_config(cfg))
 
 
 def test_stage_b_engages_only_at_the_boundary_and_never_when_disabled():
@@ -757,6 +873,41 @@ def _stage_joint_datasets(run_paths, specs=(("ds_a", 2.0), ("ds_b", 5.0))):
         ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
         groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
         _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
+
+
+def _stage_a_hist(tmp_path, run_name: str, extra: list[str]) -> list[dict]:
+    """Train a tiny single-dataset Stage-A run (fixed seed, no Stage-B warm-up so the
+    optimiser restart never fires) and return its loss history, for comparing loss
+    trajectories under the one variable a test toggles via ``extra``."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            f"run_name={run_name}",
+            *_TINY_TRAIN,
+            "training.steps=3",
+            "training.log_every=1",
+            "training.stage_b_warmup_steps=0",
+            "training.seed=0",
+            *extra,
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+    _, _, state = train(cfg, paths)
+    return state["hist"]
+
+
+def _trajectories_differ(a: list[dict], b: list[dict], keys=("vof", "div")) -> bool:
+    """True if two loss histories diverge on any collocation term at any logged step.
+    Under a shared seed, step 1's recorded means match (identical initial model); the
+    divergence shows once the differing gradient has stepped the model."""
+    return any(
+        a_rec[k] != pytest.approx(b_rec[k], rel=1e-9, abs=1e-12)
+        for a_rec, b_rec in zip(a, b, strict=True)
+        for k in keys
+    )
 
 
 def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):

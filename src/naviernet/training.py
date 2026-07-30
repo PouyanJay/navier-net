@@ -203,6 +203,50 @@ def _causal_collocation_loss(
     return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
 
 
+def _march_active_bins(progress: float, n_chunks: int, full_frac: float) -> int:
+    """How many of the earliest time bins the marching horizon covers at ``progress``
+    (a fraction in ``[0, 1]`` of the way through the run).
+
+    One bin at the start, expanding to all ``n_chunks`` by the time ``progress``
+    reaches ``full_frac`` (the ``1 + int(...)`` discretisation reaches full width a
+    little before that point) and staying there -- a monotonic forward-in-time
+    curriculum.
+    """
+    expanded = min(1.0, max(0.0, progress) / max(1e-9, full_frac))
+    return min(n_chunks, 1 + int(expanded * n_chunks))
+
+
+def _time_march_collocation_loss(
+    model,
+    x_coll: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None,
+    coll_equations,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    n_chunks: int,
+    progress: float,
+    full_frac: float,
+) -> torch.Tensor:
+    """Time-marching curriculum (Wang et al., arXiv:2203.07404).
+
+    Enforce the collocation residual only up to a time horizon that expands from the
+    earliest bin to the whole domain across the run (:func:`_march_active_bins`).
+    Within the active horizon every term is at full weight -- unlike causal
+    *weighting*, which keeps late-time residuals suppressed throughout -- so once the
+    front reaches the late frames they are trained at full strength. Returns the plain
+    per-term weighted, scheduled collocation loss over the active points.
+    """
+    bins = _time_chunks(x_coll, n_chunks)
+    active = _march_active_bins(progress, len(bins), full_frac)
+    x_active = torch.cat([b.detach() for b in bins[:active]]).requires_grad_(True)
+    ctx = registry.LossContext(model, x_active, groups=groups, c=c)
+    return sum(
+        weights[eq.weight_key] * schedule.get(eq.weight_key, 1.0) * eq.term(ctx)
+        for eq in coll_equations
+    )
+
+
 def _weighted_sum(
     losses: dict[str, torch.Tensor],
     weights: dict[str, float],
@@ -238,6 +282,69 @@ class _LossPlan:
     tcfg: object
 
 
+CAUSAL_MODES = ("weight", "march")
+
+
+def _validate_causal(tcfg) -> None:
+    """Reject an unusable causal config up front, so a typo or a degenerate value fails
+    loudly rather than silently falling through to one variant or defeating the
+    curriculum. Only checked when causal weighting is actually engaged."""
+    if not tcfg.causal_weighting:
+        return
+    if tcfg.causal_mode not in CAUSAL_MODES:
+        raise ValueError(
+            f"training.causal_mode={tcfg.causal_mode!r} is not one of {CAUSAL_MODES}"
+        )
+    # 0 or negative collapses the marching horizon to the full domain on the first
+    # step (via the div-by-zero guard in _march_active_bins), silently disabling the
+    # curriculum; >1 ("never fully expand within the run") is a valid deliberate choice.
+    if tcfg.causal_mode == "march" and tcfg.causal_march_full_frac <= 0:
+        raise ValueError(
+            f"training.causal_march_full_frac={tcfg.causal_march_full_frac} must be > 0"
+        )
+
+
+def _causal_collocation(
+    model,
+    x_coll: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    step: int,
+    plan: _LossPlan,
+) -> torch.Tensor:
+    """One dataset's causal collocation loss, dispatched on ``causal_mode``: the soft
+    per-time ``weight`` variant or the ``march`` time-curriculum."""
+    tcfg = plan.tcfg
+    if tcfg.causal_mode == "march":
+        progress = (step - plan.first_step) / max(1, plan.last_step - plan.first_step)
+        return _time_march_collocation_loss(
+            model,
+            x_coll,
+            groups,
+            c,
+            plan.coll_equations,
+            weights,
+            schedule,
+            tcfg.causal_time_chunks,
+            progress,
+            tcfg.causal_march_full_frac,
+        )
+    eps = _causal_eps(step, plan.first_step, plan.last_step, tcfg.causal_eps_schedule)
+    return _causal_collocation_loss(
+        model,
+        x_coll,
+        groups,
+        c,
+        plan.coll_equations,
+        weights,
+        schedule,
+        tcfg.causal_time_chunks,
+        eps,
+    )
+
+
 def _total_loss(
     model,
     losses: dict[str, torch.Tensor],
@@ -250,28 +357,18 @@ def _total_loss(
     """The optimised total loss for one step, shared by ``train`` and ``_train_joint``.
 
     Off (default): the per-term weighted, scheduled sum of ``losses``. On: the
-    collocation terms are replaced by their time-causal aggregation, averaged over
-    the datasets' collocation batches (a single batch for a single-dataset run),
-    while the supervised (``data``) and boundary (``bc``) terms keep their uniform
-    contribution. ``losses`` -- the plain per-term means -- is never touched here, so
-    logging and the gradient-norm rebalancer see the same quantities either way.
+    collocation terms are replaced by their causal aggregation (soft time weighting or
+    a time-marching curriculum, per ``causal_mode``), averaged over the datasets'
+    collocation batches (a single batch for a single-dataset run), while the supervised
+    (``data``) and boundary (``bc``) terms keep their uniform contribution. ``losses``
+    -- the plain per-term means -- is never touched here, so logging and the
+    gradient-norm rebalancer see the same quantities either way.
     """
     if not plan.tcfg.causal_weighting:
         return _weighted_sum(losses, weights, schedule)
-    eps = _causal_eps(step, plan.first_step, plan.last_step, plan.tcfg.causal_eps_schedule)
     coll = torch.stack(
         [
-            _causal_collocation_loss(
-                model,
-                x_coll,
-                groups,
-                c,
-                plan.coll_equations,
-                weights,
-                schedule,
-                plan.tcfg.causal_time_chunks,
-                eps,
-            )
+            _causal_collocation(model, x_coll, groups, c, weights, schedule, step, plan)
             for x_coll, groups, c in coll_batches
         ]
     ).mean()
@@ -333,6 +430,7 @@ def train(
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
     tcfg = cfg.training
+    _validate_causal(tcfg)
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
 
@@ -529,6 +627,7 @@ def _train_joint(
     untouched; this runs only when ``cfg.datasets`` names more than one series.
     """
     tcfg = cfg.training
+    _validate_causal(tcfg)
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
 

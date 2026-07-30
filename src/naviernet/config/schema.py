@@ -211,6 +211,16 @@ class TrainingConfig:
     causal_eps_schedule: list[float] = field(
         default_factory=lambda: [1e-2, 1e-1, 1.0, 10.0, 100.0]
     )
+    # Causal variant. "weight": soft per-time exp weights (uses causal_eps_schedule).
+    # "march": a time-marching curriculum -- enforce the collocation residual only up
+    # to a horizon that expands from the earliest bin to the whole domain, so late
+    # times are trained at FULL weight once the front reaches them (causal_eps_schedule
+    # is unused in this mode). See arXiv:2203.07404 §time-marching.
+    causal_mode: str = "weight"  # "weight" | "march"
+    # Fraction of the run over which the marching horizon expands to the full time
+    # domain; it stays at the full domain afterwards (so late frames get real
+    # full-weight training). Only used when causal_mode="march".
+    causal_march_full_frac: float = 0.5
     # Problem 2 -- loss-weighting scheme. "gradnorm" is the gradient-norm rebalancer
     # (unbounded; ratchets to the 1e3 cap on long runs); "rba" is bounded residual-
     # based attention (arXiv:2307.00379). Default keeps existing behaviour until

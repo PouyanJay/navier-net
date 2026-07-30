@@ -155,5 +155,7 @@ def test_accuracy_technique_defaults_are_no_ops(cfg):
     # Present and typed so later phases can dial them without schema churn.
     assert t.causal_time_chunks == 16
     assert list(t.causal_eps_schedule) == [1e-2, 1e-1, 1.0, 10.0, 100.0]
+    assert t.causal_mode == "weight"  # soft weighting, not the marching curriculum
+    assert t.causal_march_full_frac == pytest.approx(0.5)
     assert t.rba_gamma == pytest.approx(0.999)
     assert t.resample_every == 500
