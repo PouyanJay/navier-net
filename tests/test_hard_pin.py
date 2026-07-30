@@ -10,6 +10,7 @@ checkpoint -> reloaded model.
 from __future__ import annotations
 
 import json
+import math
 
 import numpy as np
 import pytest
@@ -255,6 +256,23 @@ def test_training_with_the_pin_diverges_from_baseline(tmp_path):
     assert any(not torch.equal(off[k], on[k]) for k in off), (
         "pin on vs off trained identically -- the gate never entered the loss"
     )
+
+
+# --- Root-position metric (bench) --------------------------------------------
+
+
+def test_root_position_picks_the_edge_nearer_the_anchor():
+    """Of a mask's two x-extent edges, the root is the one nearer the dataset's
+    measured anchor -- in either orientation; an empty mask is NaN."""
+    from naviernet.evaluation import root_position
+
+    xs = np.linspace(0.0, 1.0, 11, dtype=np.float32)
+    mask = np.zeros((3, 11), dtype=bool)
+    mask[1, 2:8] = True  # bubble spanning x* 0.2 .. 0.7
+
+    assert root_position(mask, xs, x_anchor=0.15) == pytest.approx(0.2)
+    assert root_position(mask, xs, x_anchor=0.75) == pytest.approx(0.7)
+    assert math.isnan(root_position(np.zeros((3, 11), dtype=bool), xs, x_anchor=0.5))
 
 
 # --- Joint (multi-dataset) runs ----------------------------------------------

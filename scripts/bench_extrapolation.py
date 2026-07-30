@@ -82,6 +82,31 @@ def main() -> None:
         f"val_iou={metrics.get('iou_val'):.3f} "
         f"validation_frames={metrics.get('validation_frames')}"
     )
+    _report_root_drift(cfg, pipe)
+
+
+def _report_root_drift(cfg, pipe) -> None:
+    """Per-frame predicted bubble-root position vs the dataset's measured anchor.
+
+    The root drifting downstream on the held-out frames is the diagnosed
+    extrapolation failure the hard pin targets; reporting it for every bench run
+    (pinned or not) makes the mechanism visible next to the IoU numbers.
+    """
+    from naviernet.evaluation import predict_alpha, root_position
+
+    model, data = pipe._load()
+    x_anchor, _ = data.pin_anchor
+    stride = cfg.evaluation.stride
+    threshold = cfg.evaluation.threshold
+    xs = data.x[::stride]
+
+    drifts = []
+    for row, frame_no in enumerate(data.frame_numbers):
+        mask = predict_alpha(model, data, data.t[row], stride) > threshold
+        root = root_position(mask, xs, x_anchor)
+        drifts.append(f"{frame_no}:{root:.3f}({root - x_anchor:+.3f})")
+    print(f"root anchor x*={x_anchor:.4f}")
+    print(f"per-frame root x*(drift): {' '.join(drifts)}")
 
 
 if __name__ == "__main__":

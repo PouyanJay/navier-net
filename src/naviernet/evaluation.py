@@ -127,6 +127,21 @@ def nose_trajectory(cfg, model, data, c=None) -> GrowthTrajectory:
     return GrowthTrajectory(times, np.asarray(nose), np.asarray(area))
 
 
+def root_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
+    """The bubble-root x* of one mask: of the mask's two x-extent edges, the one
+    nearer the dataset's measured root anchor (orientation-agnostic, the same
+    convention the anchor measurement uses). ``nan`` for an empty mask.
+
+    The extrapolation bench reports this per frame -- the root staying at the
+    anchor on held-out frames is the hard pin's direct mechanistic check.
+    """
+    columns = np.where(mask.any(axis=0))[0]
+    if len(columns) == 0:
+        return float("nan")
+    lo, hi = float(xs[columns[0]]), float(xs[columns[-1]])
+    return lo if abs(lo - x_anchor) <= abs(hi - x_anchor) else hi
+
+
 def measured_trajectory(cfg, data) -> GrowthTrajectory:
     """The same quantities read straight off the segmented camera frames (ms)."""
     n_event = data.n_event
