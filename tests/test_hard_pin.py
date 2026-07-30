@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import pytest
 import torch
 
 from naviernet.utils.paths import RunPaths
@@ -103,3 +104,148 @@ def test_hard_pin_off_leaves_phi_raw(tmp_path):
     x = torch.tensor([[0.3, 0.2, 0.05], [0.9, 0.4, 0.35]], dtype=torch.float32)
 
     assert torch.equal(model.phi(x), model.nets["phi"](x))
+
+
+# --- Anchor measurement (dataset layer) --------------------------------------
+
+
+def test_anchor_sits_on_the_stationary_edge(tmp_path):
+    """The root anchor is the stationary bubble edge's x* and the centre of its
+    vapour column in y* -- for the synthetic event, known in closed form."""
+    from naviernet.data.dataset import BubbleDataset
+
+    cfg, paths = _staged_run(tmp_path)
+    data = BubbleDataset(cfg, paths)
+
+    x_star = np.linspace(0, 1.1, GROWING_W, dtype=np.float32)
+    y_star = np.linspace(0, 0.5, GROWING_H, dtype=np.float32)
+    x0, y0 = data.pin_anchor
+
+    assert x0 == pytest.approx(float(x_star[ROOT_COL]))
+    assert y0 == pytest.approx(float(y_star[VAPOR_ROWS].mean()))
+
+
+def test_anchor_is_orientation_agnostic(tmp_path):
+    """A mirrored event (root on the high-x side, front growing toward low x)
+    anchors on the high-x edge -- no orientation is assumed."""
+    from naviernet.data.dataset import BubbleDataset
+
+    cfg, paths = _staged_run(tmp_path)
+    archive = dict(np.load(paths.tensors))
+    meta = archive.pop("meta")
+    fields = ("alpha", "sdf", "valid", "masks_camera")  # mirror fields, not coordinates
+    flipped = {
+        k: np.ascontiguousarray(v[..., ::-1]) if k in fields else v for k, v in archive.items()
+    }
+    np.savez_compressed(paths.tensors, **flipped, meta=meta)
+
+    data = BubbleDataset(cfg, paths)
+    x_star = np.linspace(0, 1.1, GROWING_W, dtype=np.float32)
+    mirrored_root = GROWING_W - 1 - ROOT_COL
+
+    assert data.pin_anchor[0] == pytest.approx(float(x_star[mirrored_root]))
+
+
+def test_anchor_never_reads_held_out_frames(tmp_path):
+    """Leakage guard: corrupting the root in the held-out tail frame must not
+    move the anchor, because the anchor is measured on training frames only."""
+    from naviernet.data.dataset import BubbleDataset
+
+    split = ["training.val_fraction=0.25", "training.val_strategy=tail"]
+    cfg, paths = _staged_run(tmp_path, split)
+    clean_anchor = BubbleDataset(cfg, paths).pin_anchor
+
+    archive = dict(np.load(paths.tensors))
+    meta = archive.pop("meta")
+    # Shift the last (held-out) frame's bubble far downstream: a would-be leak.
+    last = np.zeros_like(archive["alpha"][-1])
+    last[:, -3:] = 1.0
+    archive["alpha"][-1] = last
+    np.savez_compressed(paths.tensors, **archive, meta=meta)
+    corrupted = BubbleDataset(cfg, paths)
+
+    assert corrupted.split_rows == [GROWING_FRAMES - 1], "tail split must hold the last frame"
+    assert corrupted.pin_anchor == clean_anchor
+
+
+def test_anchor_fails_loud_when_no_frame_has_vapor(tmp_path):
+    from naviernet.data.dataset import BubbleDataset
+
+    cfg, paths = _staged_run(tmp_path)
+    archive = dict(np.load(paths.tensors))
+    meta = archive.pop("meta")
+    archive["alpha"] = np.zeros_like(archive["alpha"])
+    np.savez_compressed(paths.tensors, **archive, meta=meta)
+
+    with pytest.raises(ValueError, match="no training frame"):
+        _ = BubbleDataset(cfg, paths).pin_anchor
+
+
+# --- The pin gate (model layer) ----------------------------------------------
+
+
+def test_pin_gate_is_transparent_far_from_the_anchor(tmp_path):
+    """Beyond a few d_ref the gate saturates to ~1: the far field is untouched."""
+    from naviernet.models.pinn import BubblePINN
+
+    cfg, paths = _staged_run(tmp_path, ["model.hard_pin=true"])
+    model = BubblePINN(cfg, pin=(0.2, 0.25))
+    far = torch.tensor([[0.9, 0.25, 0.1], [0.2, 0.25 + 0.7, 0.3]], dtype=torch.float32)
+
+    ratio = model.phi(far) / model.nets["phi"](far)
+
+    assert torch.all(ratio > 0.999), f"far-field gate should be ~1, got {ratio.ravel()}"
+
+
+def test_pin_gradients_are_finite_at_the_anchor(tmp_path):
+    """A collocation point exactly on the anchor must not NaN the backward pass
+    (the raw distance has no gradient at zero; the floored form does)."""
+    from naviernet.models.pinn import BubblePINN
+
+    cfg, _ = _staged_run(tmp_path, ["model.hard_pin=true"])
+    model = BubblePINN(cfg, pin=(0.2, 0.25))
+    x = torch.tensor(
+        [[0.2, 0.25, 0.1], [0.4, 0.3, 0.2]], dtype=torch.float32, requires_grad=True
+    )
+
+    model.alpha(x).sum().backward()
+
+    assert torch.isfinite(x.grad).all(), f"NaN/inf gradient at the anchor: {x.grad}"
+    grads = [p.grad for p in model.nets["phi"].parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+
+
+def test_pin_rejects_a_nonpositive_d_ref(tmp_path):
+    from naviernet.models.pinn import BubblePINN
+
+    cfg, _ = _staged_run(tmp_path, ["model.hard_pin=true", "model.pin_d_ref=0"])
+
+    with pytest.raises(ValueError, match="pin_d_ref"):
+        BubblePINN(cfg, pin=(0.2, 0.25))
+
+
+def test_pin_requires_an_anchor(tmp_path):
+    from naviernet.models.pinn import BubblePINN
+
+    cfg, _ = _staged_run(tmp_path, ["model.hard_pin=true"])
+
+    with pytest.raises(ValueError, match="anchor"):
+        BubblePINN(cfg)
+
+
+def test_training_with_the_pin_diverges_from_baseline(tmp_path):
+    """The transform must actually reach the training graph: identical seeds with
+    the pin on vs off produce different fitted models."""
+    from naviernet.training import train
+
+    cfg_off, paths_off = _staged_run(tmp_path / "off")
+    train(cfg_off, paths_off)
+    cfg_on, paths_on = _staged_run(tmp_path / "on", ["model.hard_pin=true"])
+    train(cfg_on, paths_on)
+
+    off = torch.load(paths_off.checkpoint, weights_only=False)["model"]
+    on = torch.load(paths_on.checkpoint, weights_only=False)["model"]
+
+    assert any(not torch.equal(off[k], on[k]) for k in off), (
+        "pin on vs off trained identically -- the gate never entered the loss"
+    )
