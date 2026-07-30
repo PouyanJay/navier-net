@@ -19,6 +19,7 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
+from naviernet.data.dataset import mask_x_extent
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -135,10 +136,10 @@ def root_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
     The extrapolation bench reports this per frame -- the root staying at the
     anchor on held-out frames is the hard pin's direct mechanistic check.
     """
-    columns = np.where(mask.any(axis=0))[0]
-    if len(columns) == 0:
+    extent = mask_x_extent(mask)
+    if extent is None:
         return float("nan")
-    lo, hi = float(xs[columns[0]]), float(xs[columns[-1]])
+    lo, hi = float(xs[extent[0]]), float(xs[extent[1]])
     return lo if abs(lo - x_anchor) <= abs(hi - x_anchor) else hi
 
 

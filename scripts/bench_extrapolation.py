@@ -93,8 +93,9 @@ def _report_root_drift(cfg, pipe) -> None:
     (pinned or not) makes the mechanism visible next to the IoU numbers.
     """
     from naviernet.evaluation import predict_alpha, root_position
+    from naviernet.training import load_model
 
-    model, data = pipe._load()
+    model, data, _ = load_model(cfg, pipe.paths)
     x_anchor, _ = data.pin_anchor
     stride = cfg.evaluation.stride
     threshold = cfg.evaluation.threshold

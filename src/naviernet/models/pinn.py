@@ -21,11 +21,6 @@ import torch.nn as nn
 
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures
 
-# Floor under the squared distance in the hard-pin gate, so a point exactly on
-# the anchor has a defined (zero) gradient instead of sqrt's NaN. Kept tiny so
-# the gate still vanishes to ~1e-11 at the anchor -- far below alpha resolution.
-PIN_DIST_FLOOR = 1e-24
-
 
 def _resolve(arch, key: str, fallback):
     """A per-field override value if set, otherwise the global default."""
@@ -97,21 +92,37 @@ class BubblePINN(nn.Module):
         n_cond: int = 0,
         pin: tuple[float, float] | None = None,
     ):
+        # NB one argument over the usual cap: ``fields``/``n_cond``/``pin`` are three
+        # orthogonal opt-ins (field set, joint conditioning, hard pin) and bundling
+        # them into a carrier object would churn every construction site for no
+        # clarity gain -- a reviewed, deliberate deviation.
         super().__init__()
         self.cfg = cfg
         self.eps = float(cfg.model.alpha_eps)
         self.n_cond = int(n_cond)
+        self._init_hard_pin(cfg, pin)
 
-        # Hard root pin: phi = tanh(dist/d_ref) * N, so the interface (alpha = 0.5)
-        # passes through the dataset's measured root anchor at EVERY time -- the
-        # constraint is architectural, so it keeps holding beyond the training
-        # window, unlike a loss term. The anchor is data-derived (never config) and
-        # deliberately NOT persisted: the checkpoint format is unchanged and the
-        # anchor is re-measured from the same dataset on every construction.
+        names = list(fields if fields is not None else cfg.model.fields)
+        per_field = getattr(cfg.model, "per_field", None) or {}
+        self.nets = nn.ModuleDict(
+            {
+                name: FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
+                for name in names
+            }
+        )
+        self._init_inverse_unknowns(cfg, names)
+
+    def _init_hard_pin(self, cfg, pin: tuple[float, float] | None) -> None:
+        """Hard root pin: phi = ell(x, y) * N, so the interface (alpha = 0.5) passes
+        through the dataset's measured root anchor at EVERY time -- the constraint is
+        architectural, so it keeps holding beyond the training window, unlike a loss
+        term. The anchor is data-derived (never config) and deliberately NOT
+        persisted: the checkpoint format is unchanged and the anchor is re-measured
+        from the same dataset on every construction."""
         self.hard_pin = bool(getattr(cfg.model, "hard_pin", False))
+        self.pin_d_ref = float(cfg.model.pin_d_ref) if self.hard_pin else None
         self.pin_anchor: torch.Tensor | None
         if self.hard_pin:
-            self.pin_d_ref = float(cfg.model.pin_d_ref)
             if self.pin_d_ref <= 0:
                 raise ValueError(f"model.pin_d_ref must be > 0, got {self.pin_d_ref}")
             if pin is None and self.n_cond == 0:
@@ -129,22 +140,16 @@ class BubblePINN(nn.Module):
             )
         else:
             self.pin_anchor = None
-        names = list(fields if fields is not None else cfg.model.fields)
-        per_field = getattr(cfg.model, "per_field", None) or {}
-        self.nets = nn.ModuleDict(
-            {
-                name: FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
-                for name in names
-            }
-        )
-        # Stage-B inverse unknowns, present only when temperature is modelled:
-        # the interfacial resistance closing evaporation and the inlet superheat.
-        # Both are inferred, not measured (the dataset calls them unknowns).
+
+    def _init_inverse_unknowns(self, cfg, names: list[str]) -> None:
+        """Stage-B inverse unknowns, present only when temperature is modelled:
+        the interfacial resistance closing evaporation and the inlet superheat.
+        Both are inferred, not measured (the dataset calls them unknowns). The
+        nucleation pulse adds its learnable magnitude (the heater power is unknown;
+        location/width/timing are fixed priors supplied by the trainer)."""
         if "T" in names:
             self._log_r_int = nn.Parameter(torch.zeros(1))
             self._theta_in_raw = nn.Parameter(torch.zeros(1))
-        # Localized nucleation pulse: only its magnitude is learnable (the heater power
-        # is unknown), location/width/timing are fixed priors supplied by the trainer.
         self.has_nucleation_pulse = bool(getattr(cfg.model, "nucleation_pulse", False))
         if self.has_nucleation_pulse:
             if "T" not in names:
@@ -180,13 +185,17 @@ class BubblePINN(nn.Module):
         return self._pin_gate(x, anchor) * raw
 
     def _pin_gate(self, x: torch.Tensor, anchor: torch.Tensor) -> torch.Tensor:
-        """``tanh(dist/d_ref)``: 0 at the anchor, ~linear nearby (a normalized
-        distance function, keeping near-anchor gradients well-scaled), saturating
-        to 1 beyond ~2*d_ref so the far field is untouched."""
+        """``tanh(d^2/d_ref^2)``: exactly 0 at the anchor, saturating to 1 beyond
+        ~2*d_ref so the far field is untouched. The squared-distance argument keeps
+        the gate C-infinity: the raw Euclidean distance has a cusp at the anchor
+        whose *second* derivative diverges like 1/d, and the Stage-B surface-tension
+        term differentiates alpha twice (curvature) -- measured, kappa*grad(alpha)
+        blows up ~3e6 near the anchor with a linear gate but stays bounded (~60)
+        with this form, because grad(alpha) vanishes as fast as kappa grows."""
         # A per-call anchor (joint bound view) is a plain CPU tensor; align it
         # with the batch (a no-op for the registered single-dataset buffer).
         d_sq = ((x[:, :2] - anchor.to(x.device)) ** 2).sum(dim=-1, keepdim=True)
-        return torch.tanh(torch.sqrt(d_sq + PIN_DIST_FLOOR) / self.pin_d_ref)
+        return torch.tanh(d_sq / self.pin_d_ref**2)
 
     def alpha(
         self,

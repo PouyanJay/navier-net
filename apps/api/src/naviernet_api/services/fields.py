@@ -127,7 +127,8 @@ def _load_scene(settings: Settings, run_id: str, dataset: str | None) -> _FieldS
             # Bind the dataset's conditioning row -- and, on a hard-pin run, its
             # root anchor -- into the model, so every downstream field/residual
             # call is per-dataset correct without threading extra context.
-            model, data, c = model.bound(context.c, pin=context.pin), context.data, None
+            model = model.bound(context.c, pin=context.pin)
+            data, c = context.data, None
         else:
             model, data, _ = load_model(cfg, paths)
             c = None

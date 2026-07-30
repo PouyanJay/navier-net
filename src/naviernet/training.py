@@ -28,7 +28,7 @@ import torch
 from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
-from naviernet.models.pinn import BubblePINN
+from naviernet.models.pinn import BoundPINN, BubblePINN
 from naviernet.physics import registry, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
 from naviernet.utils.logging import get_logger
@@ -78,6 +78,39 @@ def _pin_anchor(cfg, data: BubbleDataset) -> tuple[float, float] | None:
         data.domain.x_pin,
     )
     return x0, y0
+
+
+def _pin_record(cfg) -> dict:
+    """The hard-pin architecture facts persisted in every checkpoint, so a later
+    invocation can be checked against how the run was actually trained."""
+    hard_pin = bool(getattr(cfg.model, "hard_pin", False))
+    return {"hard_pin": hard_pin, "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None}
+
+
+def _check_pin_compat(cfg, ckpt: dict, path) -> None:
+    """Refuse to consume a checkpoint whose hard-pin architecture disagrees with
+    the composed config. The pin gate adds NO parameters, so ``load_state_dict``
+    succeeds silently either way -- without this guard, evaluating or resuming a
+    pinned run without ``model.hard_pin=true`` (or vice versa) would quietly load
+    the weights into a differently-shaped solution space. Checkpoints written
+    before the record existed pass unchecked (nothing to compare)."""
+    saved = ckpt.get("hard_pin")
+    if saved is None:
+        return
+    current = bool(getattr(cfg.model, "hard_pin", False))
+    if bool(saved) != current:
+        raise ValueError(
+            f"{path} was trained with model.hard_pin={bool(saved)} but this invocation "
+            f"composes model.hard_pin={current}. The pin is architectural: pass the "
+            f"same model.hard_pin override the run was trained with."
+        )
+    saved_d_ref = ckpt.get("pin_d_ref")
+    if current and saved_d_ref is not None and float(saved_d_ref) != float(cfg.model.pin_d_ref):
+        raise ValueError(
+            f"{path} was trained with model.pin_d_ref={saved_d_ref} but this invocation "
+            f"composes model.pin_d_ref={float(cfg.model.pin_d_ref)}; pass the value the "
+            f"run was trained with."
+        )
 
 
 def _initial_state(cfg, equations) -> dict:
@@ -303,6 +336,18 @@ def _weighted_sum(
 
 
 @dataclass(frozen=True)
+class CollocationBatch:
+    """One dataset's collocation batch for the causal pass: the model to evaluate
+    it with (that dataset's pin-bound view on a joint hard-pin run, the plain model
+    otherwise), the points, and the dataset's groups/conditioning row."""
+
+    model: BubblePINN | BoundPINN
+    x: torch.Tensor
+    groups: dict
+    c: torch.Tensor | None
+
+
+@dataclass(frozen=True)
 class _LossPlan:
     """Per-run-constant inputs to :func:`_total_loss`.
 
@@ -495,7 +540,7 @@ def _causal_collocation(
 
 def _total_loss(
     losses: dict[str, torch.Tensor],
-    coll_batches: list[tuple[object, torch.Tensor, dict, torch.Tensor | None]],
+    coll_batches: list[CollocationBatch],
     weights: dict[str, float],
     schedule: dict[str, float],
     step: int,
@@ -507,18 +552,16 @@ def _total_loss(
     collocation terms are replaced by their causal aggregation (soft time weighting or
     a time-marching curriculum, per ``causal_mode``), averaged over the datasets'
     collocation batches (a single batch for a single-dataset run), while the supervised
-    (``data``) and boundary (``bc``) terms keep their uniform contribution. Each batch
-    carries the model to evaluate it with -- a dataset's pin-bound view on a joint
-    hard-pin run, the plain model otherwise. ``losses`` -- the plain per-term means --
-    is never touched here, so logging and the gradient-norm rebalancer see the same
-    quantities either way.
+    (``data``) and boundary (``bc``) terms keep their uniform contribution. ``losses``
+    -- the plain per-term means -- is never touched here, so logging and the
+    gradient-norm rebalancer see the same quantities either way.
     """
     if not plan.tcfg.causal_weighting:
         return _weighted_sum(losses, weights, schedule)
     coll = torch.stack(
         [
-            _causal_collocation(mdl, x_coll, groups, c, weights, schedule, step, plan)
-            for mdl, x_coll, groups, c in coll_batches
+            _causal_collocation(b.model, b.x, b.groups, b.c, weights, schedule, step, plan)
+            for b in coll_batches
         ]
     ).mean()
     return coll + _weighted_sum(losses, weights, schedule, skip=plan.coll_keys)
@@ -603,6 +646,7 @@ def train(
     state = _initial_state(cfg, equations)
     if paths.checkpoint.exists():
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
+        _check_pin_compat(cfg, ckpt, paths.checkpoint)
         incompatible = model.load_state_dict(ckpt["model"], strict=False)
         if incompatible.unexpected_keys:
             raise RuntimeError(
@@ -682,7 +726,7 @@ def train(
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
-        coll_batches = [(model, x_coll, groups, None)]  # single dataset: one batch
+        coll_batches = [CollocationBatch(model, x_coll, groups, None)]  # single dataset
 
         # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
         # bounded per-point attention below. Skip the handoff step: weights reset there.
@@ -732,7 +776,12 @@ def train(
         # checked to have restored the identical pool the saved attention aligns to.
         state["rba_pool_sig"] = float(x_pool.sum().item())
     torch.save(
-        {"model": model.state_dict(), "opt": opt.state_dict(), "state": state},
+        {
+            "model": model.state_dict(),
+            "opt": opt.state_dict(),
+            "state": state,
+            **_pin_record(cfg),
+        },
         paths.checkpoint,
     )
     log.info("checkpoint written to %s (%d steps total)", paths.checkpoint, state["done"])
@@ -795,21 +844,22 @@ def _load_joint_datasets(
 
 def _joint_losses(
     model, contexts, equations, tcfg, rng
-) -> tuple[dict[str, torch.Tensor], list[tuple[object, torch.Tensor, dict, torch.Tensor]]]:
+) -> tuple[dict[str, torch.Tensor], list[CollocationBatch]]:
     """Each loss term averaged over the datasets, every dataset's residuals
     evaluated with its own conditioning row so one model fits them all.
 
-    Also returns each dataset's ``(model, x_coll, groups, c)`` -- the model entry
-    is that dataset's pin-bound view on a hard-pin run -- so the caller can apply
-    causal temporal weighting to the same collocation points without resampling
-    and without losing the per-dataset anchor.
+    Also returns each dataset's :class:`CollocationBatch` -- carrying that
+    dataset's pin-bound view on a hard-pin run -- so the caller can apply causal
+    temporal weighting to the same collocation points without resampling and
+    without losing the per-dataset anchor.
     """
     aggregate: dict[str, torch.Tensor] = {}
-    coll_batches: list[tuple[object, torch.Tensor, dict, torch.Tensor]] = []
+    coll_batches: list[CollocationBatch] = []
     for cx in contexts:
-        # On a hard-pin run every call must carry this dataset's root anchor;
-        # the bound view threads it through the residual bundles unchanged.
-        view = model.bound(cx.c, pin=cx.pin) if cx.pin is not None else model
+        # Every call goes through the dataset's bound view: on a hard-pin run it
+        # carries the root anchor; otherwise binding is a behavioral no-op (the
+        # view forwards the same c the raw-model calls passed before).
+        view = model.bound(cx.c, pin=cx.pin)
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
@@ -822,7 +872,7 @@ def _joint_losses(
 
         for name, loss in per_term.items():
             aggregate[name] = loss if name not in aggregate else aggregate[name] + loss
-        coll_batches.append((view, x_coll, cx.groups, cx.c))
+        coll_batches.append(CollocationBatch(view, x_coll, cx.groups, cx.c))
 
     n = len(contexts)
     return {name: loss / n for name, loss in aggregate.items()}, coll_batches
@@ -943,6 +993,7 @@ def _train_joint(
             "training_datasets": names,  # the ones actually supervised
             "heldout_datasets": heldout,  # kept out for the transfer test (axis B)
             "n_cond": N_COND,  # so evaluation rebuilds the conditioned architecture
+            **_pin_record(cfg),  # so evaluation rebuilds the pinned architecture
         },
         paths.checkpoint,
     )
@@ -964,6 +1015,7 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
         )
     device = torch.device(cfg.training.device)
     ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
+    _check_pin_compat(cfg, ckpt, paths.checkpoint)
     data = BubbleDataset(cfg, paths, device=str(device))
     # `n_cond` (0 for a single-dataset checkpoint) rebuilds the right architecture,
     # so a conditioned joint checkpoint loads without a shape mismatch.
@@ -992,6 +1044,7 @@ def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset], l
         )
     device = torch.device(cfg.training.device)
     ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
+    _check_pin_compat(cfg, ckpt, paths.checkpoint)
     names = list(ckpt.get("datasets") or resolved_datasets(cfg))
     heldout = list(ckpt.get("heldout_datasets", cfg.heldout_datasets))
     contexts = _load_joint_datasets(cfg, paths, device, names)
