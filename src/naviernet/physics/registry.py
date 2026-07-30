@@ -28,7 +28,6 @@ from naviernet.physics.residuals import (
     boundary_losses,
     energy_residuals,
     momentum_residuals,
-    source_penalty,
     stage_a_residuals,
 )
 
@@ -91,39 +90,51 @@ class LossContext:
         return self._energy
 
 
-# --- Stage-A loss terms (byte-for-byte identical to the original trainer) ----
+# --- Collocation loss terms ---------------------------------------------------
+#
+# Each collocation term is the mean of a per-point squared residual. The pointwise
+# function exposes that per-point residual (shape ``(n_coll, 1)``, non-negative) so
+# per-point schemes -- RBA attention (Phase 2) and residual-adaptive resampling
+# (Phase 3) -- can read it, and ``term = mean(pointwise)`` keeps the scalar objective
+# byte-for-byte identical to the original trainer.
 
 
-def _vof_term(ctx: LossContext) -> torch.Tensor:
-    return (ctx.res_a.vof**2).mean()
+def _mean(
+    pointwise: Callable[[LossContext], torch.Tensor],
+) -> Callable[[LossContext], torch.Tensor]:
+    """The scalar loss term for a per-point squared residual: its mean."""
+    return lambda ctx: pointwise(ctx).mean()
 
 
-def _div_term(ctx: LossContext) -> torch.Tensor:
-    return (ctx.res_a.div**2).mean()
+def _vof_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.res_a.vof**2
 
 
-def _src_term(ctx: LossContext) -> torch.Tensor:
-    return source_penalty(ctx.res_a)
+def _div_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.res_a.div**2
+
+
+def _src_sq(ctx: LossContext) -> torch.Tensor:
+    # Dilatation penalised away from the interface (see residuals.source_penalty),
+    # per point rather than reduced.
+    return ((1.0 - ctx.res_a.interface_weight) * ctx.res_a.source) ** 2
 
 
 def _bc_term(ctx: LossContext) -> torch.Tensor:
     return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet, ctx.c)
 
 
-# --- Stage-B loss terms -----------------------------------------------------
-
-
-def _mom_term(ctx: LossContext) -> torch.Tensor:
+def _mom_sq(ctx: LossContext) -> torch.Tensor:
     res = ctx.mom_res
-    return (res.mom_x**2).mean() + (res.mom_y**2).mean()
+    return res.mom_x**2 + res.mom_y**2
 
 
-def _energy_term(ctx: LossContext) -> torch.Tensor:
-    return (ctx.energy_res.energy**2).mean()
+def _energy_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.energy_res.energy**2
 
 
-def _evap_term(ctx: LossContext) -> torch.Tensor:
-    return (ctx.energy_res.src_closure**2).mean()
+def _evap_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.energy_res.src_closure**2
 
 
 @dataclass(frozen=True)
@@ -146,6 +157,11 @@ class Equation:
     # reweights only the collocation terms, so it selects on this flag.
     on_collocation: bool = True
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
+    # Per-point squared residual (shape ``(n_coll, 1)``, non-negative) for the
+    # collocation terms; ``term`` is its mean. ``None`` for boundary terms (bc), which
+    # are not evaluated on the collocation points. Read by the per-point RBA attention
+    # and residual-adaptive resampling.
+    pointwise: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
 
 
 REGISTRY: tuple[Equation, ...] = (
@@ -158,7 +174,8 @@ REGISTRY: tuple[Equation, ...] = (
         weight_key="vof",
         fields_required=("phi", "u", "v"),
         core=True,
-        term=_vof_term,
+        pointwise=_vof_sq,
+        term=_mean(_vof_sq),
     ),
     Equation(
         id="div",
@@ -168,7 +185,8 @@ REGISTRY: tuple[Equation, ...] = (
         weight_key="div",
         fields_required=("u", "v", "s"),
         core=True,
-        term=_div_term,
+        pointwise=_div_sq,
+        term=_mean(_div_sq),
     ),
     Equation(
         id="src",
@@ -179,7 +197,8 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("s",),
         rebalanced=False,  # a deliberate soft penalty, held where it is put
         core=True,
-        term=_src_term,
+        pointwise=_src_sq,
+        term=_mean(_src_sq),
     ),
     Equation(
         id="bc",
@@ -203,7 +222,8 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("phi", "u", "v", "p"),
         fields_added=("p",),
         groups=("Re", "We", "hele_shaw"),
-        term=_mom_term,
+        pointwise=_mom_sq,
+        term=_mean(_mom_sq),
     ),
     Equation(
         id="energy",
@@ -215,7 +235,8 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("u", "v", "T"),
         fields_added=("T",),
         groups=("Pe", "Pr"),
-        term=_energy_term,
+        pointwise=_energy_sq,
+        term=_mean(_energy_sq),
     ),
     Equation(
         id="evap",
@@ -226,7 +247,8 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("s", "T"),
         groups=("Ja",),
         rebalanced=False,  # a soft consistency penalty, ramped by the curriculum
-        term=_evap_term,
+        pointwise=_evap_sq,
+        term=_mean(_evap_sq),
     ),
 )
 

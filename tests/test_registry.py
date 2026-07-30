@@ -7,6 +7,8 @@ byte-for-byte and the presence (but not-yet-implemented status) of Stage B.
 
 from __future__ import annotations
 
+import pytest
+
 from naviernet.physics import registry
 
 STAGE_A_FIELDS = ("phi", "u", "v", "s")
@@ -87,3 +89,50 @@ def test_every_equation_carries_ui_metadata():
         assert e.weight_key
         assert e.stage in ("A", "B")
         assert e.name
+
+
+def test_collocation_terms_expose_per_point_residuals_that_mean_to_the_term():
+    """Every collocation equation exposes a per-point squared residual (`pointwise`)
+    whose mean is exactly the scalar `term` -- the accessor RBA (per-point attention)
+    and RAR (residual-adaptive resampling) build on. bc, evaluated on boundary batches,
+    has no pointwise residual."""
+    import torch
+
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics.groups import compute_groups
+
+    from .conftest import make_config
+
+    cfg = make_config(
+        [
+            "model=stage_b",
+            "model.hidden=8",
+            "model.layers=2",
+            "model.fourier_feats=4",
+            "model.per_field.p.hidden=8",
+            "model.per_field.p.layers=2",
+            "model.per_field.T.hidden=8",
+            "model.per_field.T.layers=2",
+        ]
+    )
+    torch.manual_seed(0)
+    model = BubblePINN(cfg)
+    groups = compute_groups(cfg)
+    n = 12
+    x = torch.rand(n, 3, requires_grad=True)
+    ctx = registry.LossContext(model, x, groups=groups)
+
+    equations = registry.enabled_equations(cfg.model.fields)
+    coll = registry.collocation_equations(equations)
+    assert {e.id for e in coll} == {"vof", "div", "src", "mom", "energy", "evap"}
+
+    for e in coll:
+        pw = e.pointwise(ctx)
+        assert pw.shape == (n, 1), f"{e.id} pointwise must be per-point, got {tuple(pw.shape)}"
+        assert torch.all(pw >= 0), f"{e.id} pointwise must be a squared residual (>= 0)"
+        assert e.term(ctx).item() == pytest.approx(pw.mean().item(), rel=1e-6), (
+            f"{e.id}: term must equal mean(pointwise)"
+        )
+
+    bc = next(e for e in equations if e.id == "bc")
+    assert bc.pointwise is None, "bc is a boundary term, not a per-point collocation residual"
