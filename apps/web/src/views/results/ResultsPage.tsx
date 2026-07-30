@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { Callout, Panel } from "../../components";
+import { Callout, ConfirmDeleteDialog, Panel } from "../../components";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { useToast } from "../../components/Toast";
 import {
@@ -94,6 +94,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -250,7 +251,26 @@ export function ResultsPage({ project }: ResultsPageProps) {
             onViewDataset={setViewDataset}
             onResume={resumeSelected}
             resuming={resuming}
+            onDelete={() => setConfirmingDelete(true)}
           />
+        )}
+        {confirmingDelete && selected && (
+          <ConfirmDeleteDialog
+            title="Delete run"
+            confirmLabel="Delete run"
+            onClose={() => setConfirmingDelete(false)}
+            onConfirm={async () => {
+              const name = runDisplayName(selected, datasetLabels);
+              await api.deleteRun(selected.id);
+              toast("Run deleted", name, "ok");
+              setRuns(await api.listRuns(project.id));
+              navigate(base); // drop the deleted run from the URL; selection falls back
+              setConfirmingDelete(false);
+            }}
+          >
+            Delete <b>{runDisplayName(selected, datasetLabels)}</b> and everything under{" "}
+            <code>outputs/{selected.id}</code> — checkpoint, figures, video and metrics.
+          </ConfirmDeleteDialog>
         )}
         <div className="tabbar" role="tablist" aria-label="Run outputs">
           {RESULT_TABS.map((tab) => (

@@ -484,6 +484,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
     throw new ApiError(detail, response.status);
   }
+  if (response.status === 204) return undefined as T; // no-content (e.g. DELETE)
   return (await response.json()) as T;
 }
 
@@ -512,6 +513,9 @@ export const api = {
         : "/api/runs",
     ),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
+  /** Delete a run and everything under its output directory. Rejected (409) while the
+   * run is training. */
+  deleteRun: (id: string) => send<void>(runPath(id), "DELETE"),
   getValidation: (id: string) =>
     getJson<PhysicsValidation>(`${runPath(id)}/validation`),
 

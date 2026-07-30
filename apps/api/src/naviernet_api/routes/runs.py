@@ -104,6 +104,22 @@ def get_run(run_id: str, settings: Settings = Depends(get_settings)) -> RunDetai
     return detail
 
 
+@router.delete("/{run_id}", status_code=204)
+def delete_run(run_id: str, settings: Settings = Depends(get_settings)) -> Response:
+    """Delete a run and everything under its output directory (checkpoint, figures,
+    video, metrics). 409 if it is the run currently training (stop it first); 404 if it
+    does not exist. The id is confined to `outputs/`, so a traversal-shaped id is a 404,
+    never a delete outside it (SECURITY.md §3)."""
+    active = run_manager.active_run()
+    if active is not None and active.run_id == run_id:
+        raise HTTPException(
+            status_code=409, detail=f"run {run_id!r} is training; stop it before deleting"
+        )
+    if not runs_service.delete_run(settings, run_id):
+        raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+    return Response(status_code=204)
+
+
 @router.get("/{run_id}/groups")
 def get_groups(run_id: str, settings: Settings = Depends(get_settings)) -> dict:
     """The run's derived dimensionless groups."""

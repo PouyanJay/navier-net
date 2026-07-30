@@ -1,15 +1,114 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   Chip,
   type Column,
+  ConfirmDeleteDialog,
   DL,
   Stat,
   StatusDot,
   Table,
 } from "../src/components";
 import { IouDotChart } from "../src/components/charts/IouDotChart";
+
+describe("ConfirmDeleteDialog", () => {
+  const setup = (onConfirm = vi.fn().mockResolvedValue(undefined)) => {
+    const onClose = vi.fn();
+    render(
+      <ConfirmDeleteDialog
+        title="Delete run"
+        confirmLabel="Delete run"
+        onConfirm={onConfirm}
+        onClose={onClose}
+      >
+        Delete <b>demo_run</b> and all its outputs?
+      </ConfirmDeleteDialog>,
+    );
+    return { onConfirm, onClose };
+  };
+
+  it("gates the destructive action behind an explicit, irreversible confirmation", () => {
+    setup();
+    // A real alertdialog with the consequence and the irreversibility spelled out.
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByText("demo_run")).toBeInTheDocument();
+    expect(screen.getByText("This cannot be undone.")).toBeInTheDocument();
+  });
+
+  it("runs onConfirm only when the danger button is pressed", () => {
+    const { onConfirm } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Delete run" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("Cancel and Escape close without deleting", () => {
+    const { onConfirm, onClose } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("keeps itself open and surfaces the reason when the delete fails", async () => {
+    const { onClose } = setup(vi.fn().mockRejectedValue(new Error("run is training")));
+    fireEvent.click(screen.getByRole("button", { name: "Delete run" }));
+    expect(await screen.findByText("run is training")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled(); // still open, so the user can retry/cancel
+  });
+});
+
+describe("RunHeader delete action", () => {
+  it("offers a Delete button that opens the confirm, and disables it while running", async () => {
+    const { RunHeader } = await import("../src/views/results/RunHeader");
+    const onDelete = vi.fn();
+    const run = {
+      id: "demo_run",
+      dataset: "highest_t",
+      datasets: ["highest_t"],
+      heldout_datasets: [],
+      status: "trained" as const,
+      date: null,
+      steps: 1500,
+      seed: 0,
+      iou_mean: null,
+      iou_holdout: null,
+      iou_val: null,
+      val_iou_mean: null,
+      transfer_iou_mean: null,
+    };
+    const { rerender } = render(
+      <RunHeader
+        run={run}
+        detail={null}
+        datasetLabels={new Map()}
+        viewDataset={null}
+        onViewDataset={() => {}}
+        onResume={() => {}}
+        resuming={false}
+        onDelete={onDelete}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete run" }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <RunHeader
+        run={{ ...run, status: "running" }}
+        detail={null}
+        datasetLabels={new Map()}
+        viewDataset={null}
+        onViewDataset={() => {}}
+        onResume={() => {}}
+        resuming={false}
+        onDelete={onDelete}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Delete run" })).toBeDisabled(),
+    );
+  });
+});
 
 describe("Stat", () => {
   it("renders label, value and unit", () => {

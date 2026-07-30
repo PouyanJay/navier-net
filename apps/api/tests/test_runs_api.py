@@ -59,6 +59,42 @@ def test_path_traversal_id_is_rejected(repo_root: Path, tmp_path: Path):
         assert runs_service.get_run(settings, evil) is None
 
 
+def test_delete_run_removes_the_run_and_its_assets(client, repo_root: Path):
+    """DELETE removes the run's whole output directory (checkpoint, figures, video, …)
+    and it disappears from the listing and detail."""
+    run_dir = repo_root / "outputs" / "demo_run"
+    assert run_dir.is_dir() and (run_dir / "checkpoints" / "ckpt.pt").exists()
+
+    assert client.delete("/api/runs/demo_run").status_code == 204
+
+    assert not run_dir.exists(), "the run's assets are gone from disk"
+    assert client.get("/api/runs/demo_run").status_code == 404
+    assert "demo_run" not in {run["id"] for run in client.get("/api/runs").json()}
+
+
+def test_delete_unknown_run_is_404(client):
+    assert client.delete("/api/runs/no-such-run").status_code == 404
+
+
+def test_delete_active_run_is_rejected(client, repo_root: Path):
+    """A run that is currently training cannot be deleted out from under the worker."""
+    from naviernet_api.services import run_manager
+
+    run_manager._jobs["demo_run"] = run_manager._RunJob(dataset="highest_t")
+
+    response = client.delete("/api/runs/demo_run")
+    assert response.status_code == 409
+    assert "training" in response.json()["detail"]
+    assert (repo_root / "outputs" / "demo_run").is_dir(), "the live run is left intact"
+
+
+def test_delete_run_rejects_a_bad_id(client):
+    """An id that is not a valid run directory (a forbidden character here) reaches the
+    handler and is a 404 -- never a delete outside outputs/. The full path-traversal
+    guard is covered at the service level by test_path_traversal_id_is_rejected."""
+    assert client.delete("/api/runs/a~b").status_code == 404
+
+
 def _write_project(repo_root: Path, pid: str, datasets: list[str]) -> None:
     projects = repo_root / "projects"
     projects.mkdir(exist_ok=True)
