@@ -39,16 +39,21 @@ class LossContext:
     Residual bundles are computed lazily and cached so terms sharing them (e.g.
     ``vof`` and ``div``) reuse a single autograd graph, exactly as the original
     trainer did with one ``stage_a_residuals`` call.
+
+    The boundary batches (``inlet``, ``walls``, ``u_inlet``) are only read by the
+    ``bc`` term and may be omitted for a collocation-only context -- the per-bin
+    contexts the causal temporal weighting builds evaluate only the interior PDE
+    terms (see :func:`collocation_equations`).
     """
 
     def __init__(
         self,
         model,
         x_coll: torch.Tensor,
-        inlet: torch.Tensor,
-        walls: torch.Tensor,
-        u_inlet: float,
-        groups: dict[str, float],
+        inlet: torch.Tensor | None = None,
+        walls: torch.Tensor | None = None,
+        u_inlet: float = 0.0,
+        groups: dict[str, float] | None = None,
         c: torch.Tensor | None = None,
     ) -> None:
         self.model = model
@@ -136,6 +141,10 @@ class Equation:
     rebalanced: bool = True
     implemented: bool = True
     core: bool = False  # always-on (the Stage-A objective); the UI locks it on
+    # Evaluated on the interior collocation points ``x_coll`` (True) rather than the
+    # boundary batches (False, i.e. the ``bc`` term). Causal temporal weighting
+    # reweights only the collocation terms, so it selects on this flag.
+    on_collocation: bool = True
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
 
 
@@ -180,6 +189,7 @@ REGISTRY: tuple[Equation, ...] = (
         weight_key="bc",
         fields_required=("u", "v"),
         core=True,
+        on_collocation=False,  # evaluated on the inlet/wall batches, not x_coll
         term=_bc_term,
     ),
     Equation(
@@ -225,6 +235,17 @@ def enabled_equations(fields: Sequence[str]) -> list[Equation]:
     """The equations active for a model with the given fields, in registry order."""
     present = set(fields)
     return [e for e in REGISTRY if e.implemented and set(e.fields_required) <= present]
+
+
+def collocation_equations(equations: Sequence[Equation]) -> list[Equation]:
+    """The equations evaluated on the interior collocation points ``x_coll`` -- every
+    governing PDE term except the boundary conditions -- in registry order.
+
+    Causal temporal weighting (Wang et al., arXiv:2203.07404) reweights this set by
+    time; the boundary and supervised (``data``) terms are already time-anchored and
+    stay uniform.
+    """
+    return [e for e in equations if e.on_collocation]
 
 
 def rebalanced_terms(equations: Sequence[Equation]) -> tuple[str, ...]:

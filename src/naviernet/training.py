@@ -118,6 +118,166 @@ def _causal_weights(chunk_losses: torch.Tensor, eps: float) -> torch.Tensor:
         return torch.exp(-eps * exclusive_prior)
 
 
+def _causal_eps(step: int, first_step: int, last_step: int, schedule: list[float]) -> float:
+    """The causal weighting ``eps`` for ``step``, annealed across this call's step
+    window ``[first_step, last_step]``.
+
+    ``eps`` climbs through ``schedule`` as training progresses -- a small ``eps``
+    early (near uniform-in-time) steepening to a large one late -- so the network
+    first fits the whole trajectory loosely, then enforces causality hard once it
+    has a coarse solution to march forward from (Wang et al., arXiv:2203.07404). An
+    empty schedule disables the weighting (``eps=0`` -> uniform, i.e. today's loss).
+
+    Progress is measured over the current ``train``/``_train_joint`` invocation, not
+    a stored run total (the trainer keeps none): a single-call run -- the recipe the
+    benchmark and every UI launch use -- anneals cleanly across the whole schedule,
+    and a chunked/resumed run anneals within each chunk rather than jumping to the
+    final ``eps`` (which dividing by a per-call step count would do).
+    """
+    if not schedule:
+        return 0.0
+    frac = min(1.0, max(0.0, (step - first_step) / max(1, last_step - first_step)))
+    return float(schedule[min(len(schedule) - 1, int(frac * len(schedule)))])
+
+
+def _time_chunks(x_coll: torch.Tensor, n_chunks: int) -> list[torch.Tensor]:
+    """``x_coll`` split into ``n_chunks`` time-ordered batches (ascending in the time
+    column, index 2).
+
+    Each batch is a fresh leaf with ``requires_grad`` set, so the PDE residuals
+    differentiate through it exactly as they do the full collocation batch. The
+    chunks are contiguous and near-equal in size, so no bin is empty and -- at
+    ``eps=0`` -- the causal loss reduces to the ordinary collocation mean.
+    """
+    time = x_coll.detach()[:, 2]
+    ordered = x_coll.detach()[torch.argsort(time)]
+    return [
+        chunk.clone().requires_grad_(True)
+        for chunk in torch.chunk(ordered, max(1, n_chunks), dim=0)
+        if chunk.shape[0] > 0
+    ]
+
+
+def _causal_collocation_loss(
+    model,
+    x_coll: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None,
+    coll_equations,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    n_chunks: int,
+    eps: float,
+) -> torch.Tensor:
+    """Time-causal aggregation of the collocation residual (Wang et al.).
+
+    ``x_coll`` is binned into ``n_chunks`` time-ordered groups; within a bin the
+    active PDE terms are summed with their per-term weight and warm-up schedule
+    (exactly the multipliers the uniform path applies) into ``L_r(t_i)``. Each bin
+    is then scaled by the detached causal weight ``w_i = exp(-eps*sum_{k<i} L_r(t_k))``
+    so a late-time bin only matters once the earlier bins are satisfied. Returns
+    ``mean_i(w_i * L_r(t_i))``.
+
+    ``coll_equations`` is always non-empty on any real run (the Stage-A terms
+    vof/div/src are ``core`` and enabled whenever a field set is present), so the
+    ``torch.stack`` below always has bins to stack.
+
+    Cost note: the bins together hold ``x_coll``'s points, so this pass is ~1x the
+    uniform path on its own. But it is a *second* collocation pass -- the caller
+    keeps the uniform per-term means (for logging and the rebalancer) -- so enabling
+    causal weighting roughly doubles the per-step collocation compute. That is the
+    deliberate Phase-1/Phase-2 isolation (the rebalancer still sees plain means);
+    Phase 2 collapses the two passes when it replaces the gradient-norm rebalancer.
+    """
+    chunk_losses = torch.stack(
+        [
+            sum(
+                weights[eq.weight_key]
+                * schedule.get(eq.weight_key, 1.0)
+                * eq.term(registry.LossContext(model, chunk, groups=groups, c=c))
+                for eq in coll_equations
+            )
+            for chunk in _time_chunks(x_coll, n_chunks)
+        ]
+    )
+    return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
+
+
+def _weighted_sum(
+    losses: dict[str, torch.Tensor],
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    skip: frozenset[str] = frozenset(),
+) -> torch.Tensor:
+    """The per-term-weighted, scheduled sum of ``losses``, omitting ``skip`` keys.
+
+    ``skip`` carries the collocation terms when causal weighting supplies them
+    separately, leaving the supervised (``data``) and boundary (``bc``) terms.
+    """
+    return sum(
+        weights[name] * schedule.get(name, 1.0) * loss
+        for name, loss in losses.items()
+        if name not in skip
+    )
+
+
+@dataclass(frozen=True)
+class _LossPlan:
+    """Per-run-constant inputs to :func:`_total_loss`.
+
+    ``coll_equations`` are the equations evaluated on the collocation points and
+    ``coll_keys`` their weight keys; ``first_step``/``last_step`` bound this call's
+    step window for the causal ``eps`` schedule; ``tcfg`` is the training config.
+    Built once before the training loop so the per-step call stays small.
+    """
+
+    coll_equations: list
+    coll_keys: frozenset[str]
+    first_step: int
+    last_step: int
+    tcfg: object
+
+
+def _total_loss(
+    model,
+    losses: dict[str, torch.Tensor],
+    coll_batches: list[tuple[torch.Tensor, dict, torch.Tensor | None]],
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    step: int,
+    plan: _LossPlan,
+) -> torch.Tensor:
+    """The optimised total loss for one step, shared by ``train`` and ``_train_joint``.
+
+    Off (default): the per-term weighted, scheduled sum of ``losses``. On: the
+    collocation terms are replaced by their time-causal aggregation, averaged over
+    the datasets' collocation batches (a single batch for a single-dataset run),
+    while the supervised (``data``) and boundary (``bc``) terms keep their uniform
+    contribution. ``losses`` -- the plain per-term means -- is never touched here, so
+    logging and the gradient-norm rebalancer see the same quantities either way.
+    """
+    if not plan.tcfg.causal_weighting:
+        return _weighted_sum(losses, weights, schedule)
+    eps = _causal_eps(step, plan.first_step, plan.last_step, plan.tcfg.causal_eps_schedule)
+    coll = torch.stack(
+        [
+            _causal_collocation_loss(
+                model,
+                x_coll,
+                groups,
+                c,
+                plan.coll_equations,
+                weights,
+                schedule,
+                plan.tcfg.causal_time_chunks,
+                eps,
+            )
+            for x_coll, groups, c in coll_batches
+        ]
+    ).mean()
+    return coll + _weighted_sum(losses, weights, schedule, skip=plan.coll_keys)
+
+
 def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     """True only at the one step the warm-up hands off to Stage-B physics -- where
     the optimiser is restarted. Never true when the warm-up is disabled
@@ -188,6 +348,8 @@ def train(
     equations = registry.enabled_equations(cfg.model.fields)
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
+    coll_equations = registry.collocation_equations(equations)
+    coll_keys = frozenset(e.weight_key for e in coll_equations)
     state = _initial_state(cfg, equations)
     if paths.checkpoint.exists():
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
@@ -222,6 +384,7 @@ def train(
 
     first_step = state["done"] + 1
     last_step = state["done"] + steps
+    plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
@@ -238,6 +401,7 @@ def train(
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
+        coll_batches = [(x_coll, groups, None)]  # single dataset: one collocation batch
 
         # Skip rebalancing on the handoff step: its weights are about to be reset.
         if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
@@ -252,9 +416,7 @@ def train(
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
-        total = sum(
-            weights[name] * schedule.get(name, 1.0) * loss for name, loss in losses.items()
-        )
+        total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
         total.backward()
         opt.step()
 
@@ -321,10 +483,17 @@ def _load_joint_datasets(
     return contexts
 
 
-def _joint_losses(model, contexts, equations, tcfg, rng) -> dict[str, torch.Tensor]:
+def _joint_losses(
+    model, contexts, equations, tcfg, rng
+) -> tuple[dict[str, torch.Tensor], list[tuple[torch.Tensor, dict, torch.Tensor]]]:
     """Each loss term averaged over the datasets, every dataset's residuals
-    evaluated with its own conditioning row so one model fits them all."""
+    evaluated with its own conditioning row so one model fits them all.
+
+    Also returns each dataset's ``(x_coll, groups, c)`` so the caller can apply
+    causal temporal weighting to the same collocation points without resampling.
+    """
     aggregate: dict[str, torch.Tensor] = {}
+    coll_batches: list[tuple[torch.Tensor, dict, torch.Tensor]] = []
     for cx in contexts:
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
@@ -338,9 +507,10 @@ def _joint_losses(model, contexts, equations, tcfg, rng) -> dict[str, torch.Tens
 
         for name, loss in per_term.items():
             aggregate[name] = loss if name not in aggregate else aggregate[name] + loss
+        coll_batches.append((x_coll, cx.groups, cx.c))
 
     n = len(contexts)
-    return {name: loss / n for name, loss in aggregate.items()}
+    return {name: loss / n for name, loss in aggregate.items()}, coll_batches
 
 
 def _train_joint(
@@ -380,6 +550,8 @@ def _train_joint(
     equations = registry.enabled_equations(cfg.model.fields)
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
+    coll_equations = registry.collocation_equations(equations)
+    coll_keys = frozenset(e.weight_key for e in coll_equations)
     state = _initial_state(cfg, equations)
 
     rng = np.random.default_rng(tcfg.seed + state["done"])
@@ -387,6 +559,7 @@ def _train_joint(
     reset_weights = _initial_state(cfg, equations)["w"]  # config defaults, for the handoff
     first_step = state["done"] + 1
     last_step = state["done"] + steps
+    plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
     log.info(
         "joint training steps %d-%d on %s over %s%s",
         first_step,
@@ -402,7 +575,7 @@ def _train_joint(
             group["lr"] = lr
         opt.zero_grad()
 
-        losses = _joint_losses(model, contexts, equations, tcfg, rng)
+        losses, coll_batches = _joint_losses(model, contexts, equations, tcfg, rng)
 
         # Skip rebalancing on the handoff step: its weights are about to be reset.
         if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
@@ -417,9 +590,7 @@ def _train_joint(
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
-        total = sum(
-            weights[name] * schedule.get(name, 1.0) * loss for name, loss in losses.items()
-        )
+        total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
         total.backward()
         opt.step()
 

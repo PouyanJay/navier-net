@@ -107,6 +107,59 @@ def test_joint_training_over_two_datasets_writes_one_conditioned_checkpoint(tmp_
     assert saved["n_cond"] == N_COND
 
 
+def test_joint_training_runs_with_causal_weighting_enabled(tmp_path):
+    """The causal path is wired into the joint loop too: a conditioned two-dataset
+    run with causal weighting ON reweights each dataset's collocation residual by
+    time -- diverging from the causal-off joint run under an identical seed -- and
+    still trains to finite losses (no crash from the per-bin passes)."""
+    import math
+
+    from naviernet.training import train
+
+    def run(run_name: str, extra: list[str]):
+        cfg = make_config(
+            [
+                f"paths.root={tmp_path}",
+                "datasets=[ds_a,ds_b]",
+                f"run_name={run_name}",
+                *_TINY_TRAIN,
+                "training.steps=3",
+                "training.log_every=1",
+                "training.seed=0",
+                *extra,
+            ]
+        )
+        run_paths = RunPaths.from_config(cfg)
+        _stage_joint_datasets(run_paths)
+        _, _, state = train(cfg, run_paths)
+        return run_paths, state["hist"]
+
+    _, off = run("joint-causal-off", [])
+    run_paths, on = run(
+        "joint-causal-on",
+        [
+            "training.causal_weighting=true",
+            "training.causal_time_chunks=4",
+            "training.causal_eps_schedule=[1.0]",
+        ],
+    )
+
+    assert len(on) == len(off) == 3
+    for record in on:
+        for name, value in record.items():
+            assert math.isfinite(value), f"causal joint {name} was not finite"
+    # Same seed, same samples: only the temporal reweighting differs. Step 1's
+    # recorded means match (identical initial model); the divergence shows once the
+    # differing gradient has stepped the model, so scan every logged step.
+    diverged = any(
+        on_rec[k] != pytest.approx(off_rec[k], rel=1e-9, abs=1e-12)
+        for on_rec, off_rec in zip(on, off, strict=True)
+        for k in ("vof", "div")
+    )
+    assert diverged, "causal weighting should change the joint collocation trajectory"
+    assert run_paths.checkpoint.exists()
+
+
 def test_single_dataset_evaluate_reports_a_validation_split_iou(tmp_path):
     """A single-series run with a validation split surfaces its in-distribution
     IoU (over the held-out tail frames), rather than silently dropping the metric."""
@@ -516,6 +569,131 @@ def test_causal_weights_enforce_temporal_ordering():
     assert not w.requires_grad, "weights steer training but carry no gradient"
 
 
+def test_causal_eps_anneals_across_the_call_window_and_restarts_on_resume():
+    """ε steps through the schedule as training progresses over the call's step
+    window [first_step, last_step]: the first step uses the smallest ε (near-uniform
+    in time), the last the largest, so causal enforcement steepens over the run. An
+    empty schedule disables it (ε=0 -> uniform)."""
+    from naviernet.training import _causal_eps
+
+    schedule = [1e-2, 1e-1, 1.0]
+    assert _causal_eps(1, 1, 300, schedule) == pytest.approx(1e-2), "first step -> smallest ε"
+    assert _causal_eps(150, 1, 300, schedule) == pytest.approx(1e-1), "midpoint -> middle ε"
+    assert _causal_eps(300, 1, 300, schedule) == pytest.approx(1.0), "last step -> largest ε"
+    assert _causal_eps(1, 1, 300, []) == 0.0, "empty schedule -> ε=0 (uniform in time)"
+
+    # Resume regression: a chunk starting at step 301 anneals from the start of the
+    # schedule again, rather than dividing an absolute step by a per-call count and
+    # snapping straight to the final ε for the whole resumed segment.
+    assert _causal_eps(301, 301, 600, schedule) == pytest.approx(1e-2), "resumed chunk restarts ε"
+    assert _causal_eps(600, 301, 600, schedule) == pytest.approx(1.0), "resumed chunk reaches max ε"
+
+
+def test_time_chunks_partition_x_coll_by_ascending_time():
+    """The binning is by the time column (index 2), ascending, into leaf tensors
+    that carry gradient (so the PDE residuals differentiate through them), covering
+    every point exactly once."""
+    from naviernet.training import _time_chunks
+
+    torch.manual_seed(0)
+    x = torch.rand(20, 3, requires_grad=True)
+
+    chunks = _time_chunks(x, 4)
+
+    assert len(chunks) == 4
+    assert sum(c.shape[0] for c in chunks) == 20, "every point lands in exactly one bin"
+    for c in chunks:
+        assert c.is_leaf and c.requires_grad, "bins are differentiable leaves"
+    means = [float(c.detach()[:, 2].mean()) for c in chunks]
+    assert means == sorted(means), "bins are ordered earliest -> latest in time"
+    # Fewer points than chunks still yields non-empty bins (no empty-bin NaN).
+    assert all(c.shape[0] > 0 for c in _time_chunks(x[:3], 8))
+
+
+def test_causal_collocation_loss_reduces_to_the_uniform_mean_when_eps_is_zero():
+    """The no-op guarantee the journey rests on: at ε=0 the causal weights are all
+    one, so with equal-size bins the time-causal collocation loss equals the plain
+    per-term weighted collocation mean over the same points -- and it still carries
+    gradient back to the model parameters."""
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics import registry
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _causal_collocation_loss, _weighted_sum
+
+    cfg = make_config(_TINY_TRAIN)
+    torch.manual_seed(0)
+    model = BubblePINN(cfg)
+    groups = compute_groups(cfg)
+    coll_equations = registry.collocation_equations(registry.enabled_equations(cfg.model.fields))
+    weights = {"vof": 2.0, "div": 0.5, "src": 3.0}  # distinct, so weights must carry through
+    schedule: dict[str, float] = {}  # no warm-up gating: every multiplier is 1
+
+    x_coll = torch.rand(16, 3, requires_grad=True)  # 16 points / 4 bins -> equal bins
+
+    causal = _causal_collocation_loss(
+        model, x_coll, groups, None, coll_equations, weights, schedule, n_chunks=4, eps=0.0
+    )
+    ctx = registry.LossContext(model, x_coll, groups=groups)
+    uniform = _weighted_sum({e.weight_key: e.term(ctx) for e in coll_equations}, weights, schedule)
+
+    assert causal.item() == pytest.approx(uniform.item(), rel=1e-5), "ε=0 -> uniform collocation mean"
+    assert causal.requires_grad, "gradient must still flow through the residual"
+    causal.backward()
+    assert any(
+        p.grad is not None and torch.any(p.grad != 0) for p in model.parameters()
+    ), "the causal collocation loss trains the model"
+
+
+def test_causal_weighting_changes_the_stage_a_loss_trajectory(tmp_path):
+    """Wiring check for Phase 1: turning causal weighting ON reweights the
+    collocation residual by time, so the optimised loss trajectory diverges from
+    the uniform-in-time run under an identical seed and sampling -- and the run
+    still trains to finite losses (no crash from the per-bin residual passes)."""
+    import math
+
+    from naviernet.training import train
+
+    shared = [
+        *_TINY_TRAIN,
+        "training.steps=3",
+        "training.log_every=1",
+        # No warm-up, so the Stage-B optimiser restart never fires and the only
+        # variable between the two runs is the causal temporal reweighting.
+        "training.stage_b_warmup_steps=0",
+        "training.seed=0",
+    ]
+
+    def run(run_name: str, extra: list[str]) -> list[dict]:
+        cfg = make_config([f"paths.root={tmp_path}", f"run_name={run_name}", *shared, *extra])
+        paths = RunPaths.from_config(cfg)
+        _stage(paths)
+        _, _, state = train(cfg, paths)
+        return state["hist"]
+
+    off = run("causal-off", [])
+    on = run(
+        "causal-on",
+        [
+            "training.causal_weighting=true",
+            "training.causal_time_chunks=4",
+            "training.causal_eps_schedule=[1.0]",
+        ],
+    )
+
+    assert len(on) == len(off) == 3
+    for record in on:
+        for name, value in record.items():
+            assert math.isfinite(value), f"causal {name} was not finite"
+    # Same seed, same samples: only the temporal reweighting differs, so the
+    # trajectories must diverge on the collocation terms.
+    diverged = any(
+        on_rec[k] != pytest.approx(off_rec[k], rel=1e-9, abs=1e-12)
+        for on_rec, off_rec in zip(on, off, strict=True)
+        for k in ("vof", "div")
+    )
+    assert diverged, "causal weighting ON should change the collocation loss trajectory"
+
+
 def test_stage_b_engages_only_at_the_boundary_and_never_when_disabled():
     """The optimiser restart fires at exactly step warmup+1 -- and never when the
     warm-up is disabled (0) or the model has no Stage-B physics, so an ordinary
@@ -567,6 +745,18 @@ def _stage(paths):
     paths.ensure()
     paths.tensors.parent.mkdir(parents=True, exist_ok=True)
     _write_tensors(paths.tensors, list(range(1, 9)), n_event=8)
+
+
+def _stage_joint_datasets(run_paths, specs=(("ds_a", 2.0), ("ds_b", 5.0))):
+    """Stage synthetic datasets for a joint run, each carrying its own groups (a
+    distinct wall heat flux -> distinct regime), as preprocess would have written."""
+    from naviernet.physics.groups import compute_groups
+
+    for name, q_wall in specs:
+        ds_paths = run_paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_tensors(ds_paths.tensors, list(range(1, 9)), n_event=8, groups=groups)
 
 
 def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):
