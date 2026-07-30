@@ -428,6 +428,52 @@ describe("results routing", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
+  it("deletes the selected run after confirmation and drops it from the list", async () => {
+    mockApi();
+    const base = globalThis.fetch as typeof fetch;
+    const deleted = new Set<string>();
+    let deleteCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, opts?: RequestInit) => {
+        const u = String(url);
+        const target = u.match(/\/api\/runs\/([^/?]+)$/);
+        if (opts?.method === "DELETE" && target) {
+          deleteCalls += 1;
+          deleted.add(target[1]);
+          return new Response(null, { status: 204 });
+        }
+        // The listing reflects the deletion (the server would too).
+        if (/\/api\/runs(\?|$)/.test(u)) {
+          return json(RUNS.filter((r) => !deleted.has(r.id)));
+        }
+        return base(url as never, opts);
+      }),
+    );
+
+    renderAt(`/projects/${PID}/results/demo_run`);
+    await screen.findByRole("option", { name: /demo_run/i });
+
+    // Open the confirm from the run header, then approve the destructive action.
+    fireEvent.click(screen.getByRole("button", { name: /delete run/i }));
+    expect(await screen.findByText("This cannot be undone.")).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: /delete run/i,
+      }),
+    );
+
+    // deleteRun was called, and the list refreshed without the deleted run --
+    // selection falls back to another run rather than crashing on the removed id.
+    await waitFor(() =>
+      expect(screen.queryByRole("option", { name: /demo_run/i })).toBeNull(),
+    );
+    expect(deleteCalls).toBe(1);
+    expect(
+      screen.getByRole("option", { name: /second_run/i }),
+    ).toBeInTheDocument();
+  });
+
   it("renders the project-scoped results page with run browser and tabs", async () => {
     const calls = mockApi();
     renderAt(`/projects/${PID}/results`);
