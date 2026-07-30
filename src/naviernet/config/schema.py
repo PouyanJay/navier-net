@@ -143,13 +143,13 @@ class ModelConfig:
     nucleation_pulse: bool = False
     pulse_t0: float = 0.1  # pulse active for the first this-fraction of the time window
     pulse_width: float = 0.05  # streamwise Gaussian sigma, as a fraction of the domain width
-    # Geometric nucleation pin: anchor the bubble at the fixed cavity for ALL time --
-    # alpha(x_pin, mid-height, t) = 1 (vapour). Off by default. Unlike a heat source (which
-    # the free T/s fields can compensate), this constrains the interface directly, so the
-    # bubble stays rooted at the cavity and cannot drift in the held-out late frames.
+    # Geometric nucleation pin: keep the bubble attached at the fixed cavity for ALL time
+    # -- require vapour somewhere along the x_pin column, `1 - max_y alpha(x_pin, y, t)`.
+    # Off by default. Unlike a heat source (which the free T/s fields absorb), this
+    # constrains the interface directly, so the rooted end cannot drift downstream in the
+    # held-out late frames (the measured failure).
     pin_nucleation: bool = False
     pin_weight: float = 10.0  # loss weight on the pin anchor (data-scale)
-    pin_y: float = 0.5  # channel-height fraction of the cavity (0.5 = mid-channel)
 
 
 @dataclass

@@ -41,6 +41,10 @@ log = get_logger(__name__)
 # every `resample_every` steps, so the extra forward pass is amortised.
 CANDIDATE_POOL_MULT = 8
 
+# Points sampled across the channel height at the x_pin station for the nucleation pin's
+# max-over-height presence check; dense enough to catch the thin root filament.
+PIN_HEIGHT_SAMPLES = 32
+
 # Loss terms whose weights the rebalancer adjusts, derived from the registry for
 # the Stage-A field set: `data` is the reference scale and `src` is a deliberate
 # soft penalty, so both stay out. Kept as a module constant for callers that
@@ -64,18 +68,28 @@ def _pulse_groups(groups: dict, cfg, domain) -> dict:
 
 
 def _pin_nucleation_loss(model, domain, cfg, rng, n: int, device, c=None) -> torch.Tensor:
-    """Geometric nucleation pin: penalise the fixed cavity ``(x_pin, mid-height)`` for
-    not being vapour (``alpha=1``) across ``n`` times spanning the run.
+    """Geometric nucleation pin: at every time there must be vapour *somewhere along the
+    ``x_pin`` column* -- ``penalty = mean_t (1 - max_y alpha(x_pin, y, t))^2``.
 
-    The bubble is rooted at the cavity for all time; anchoring it here keeps it from
-    drifting in the held-out late frames. Unlike a prescribed heat source (which the free
-    T/s fields can compensate away), this constrains the interface field directly."""
-    y = domain.y_min + cfg.model.pin_y * (domain.y_max - domain.y_min)
+    The bubble is rooted at the fixed cavity for all time; keeping it attached there stops
+    the rooted end from drifting downstream in the held-out late frames (the measured
+    failure). Taking the max over the channel height (rather than pinning one mid-height
+    point) matches the truth -- the root is a thin filament whose exact height wanders, so
+    the bubble *touches* ``x_pin`` every frame even though a fixed mid-point is not always
+    vapour. Unlike a prescribed heat source (which the free T/s fields absorb), this
+    constrains the interface field directly."""
+    m = PIN_HEIGHT_SAMPLES
     t = rng.uniform(domain.t_min, domain.t_max, n).astype(np.float32)
-    pts = np.stack([np.full(n, domain.x_pin, np.float32), np.full(n, y, np.float32), t], axis=1)
+    ys = np.linspace(domain.y_min, domain.y_max, m, dtype=np.float32)
+    times, heights = np.meshgrid(t, ys, indexing="ij")  # (n, m)
+    pts = np.stack(
+        [np.full(times.size, domain.x_pin, np.float32), heights.ravel(), times.ravel()],
+        axis=1,
+    )
     x = torch.tensor(pts, device=device)
-    cx = c.expand(n, -1) if c is not None else None
-    return ((model.alpha(x, cx) - 1.0) ** 2).mean()
+    cx = c.expand(x.shape[0], -1) if c is not None else None
+    presence = model.alpha(x, cx).reshape(n, m).max(dim=1).values  # vapour at x_pin?
+    return ((1.0 - presence) ** 2).mean()
 
 
 def _initial_state(cfg, equations) -> dict:

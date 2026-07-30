@@ -1271,43 +1271,51 @@ def test_nucleation_pulse_trains_its_learnable_magnitude(tmp_path):
     assert paths.checkpoint.exists()
 
 
-def test_pin_nucleation_loss_anchors_the_cavity_as_vapor():
-    """The geometric nucleation pin penalises the fixed cavity (x_pin, mid-height) for
-    not being vapour (alpha=1), sampled across all times -- so the bubble stays rooted
-    at the cavity. Zero when the cavity is vapour, one when it is liquid; the points sit
-    at (x_pin, mid-channel) and vary only in time."""
+def test_pin_nucleation_loss_requires_vapor_somewhere_along_the_cavity_column():
+    """The geometric pin requires vapour SOMEWHERE along the x_pin column at every time
+    (max over height), so the bubble stays attached at the cavity. Zero when the column
+    has vapour, one when it is entirely liquid; the points sit at x=x_pin, span the
+    channel height, and sweep all times -- crucially NOT a single mid-height point (that
+    version fought the thin, wandering root filament and corrupted the fit)."""
     from types import SimpleNamespace
 
     import numpy as np
 
-    from naviernet.training import _pin_nucleation_loss
+    from naviernet.training import PIN_HEIGHT_SAMPLES, _pin_nucleation_loss
 
     domain = SimpleNamespace(x_pin=0.7, y_min=0.0, y_max=1.0, t_min=0.0, t_max=1.0)
-    cfg = make_config(_TINY_TRAIN)  # model.pin_y defaults to 0.5 (mid-channel)
-    rng = np.random.default_rng(0)
+    cfg = make_config(_TINY_TRAIN)
+    n = 8
 
     class Field:
-        def __init__(self, value):
-            self.value = value
+        def __init__(self, alpha_of):
+            self.alpha_of = alpha_of
             self.seen = None
 
         def alpha(self, x, c=None):
             self.seen = x
-            return torch.full((x.shape[0], 1), self.value)
+            return self.alpha_of(x)
 
-    vapour, liquid = Field(1.0), Field(0.0)
-    assert _pin_nucleation_loss(vapour, domain, cfg, rng, 32, "cpu").item() == pytest.approx(
-        0.0
-    )
-    assert _pin_nucleation_loss(liquid, domain, cfg, rng, 32, "cpu").item() == pytest.approx(
-        1.0
-    )
+    def loss(field):
+        return _pin_nucleation_loss(
+            field, domain, cfg, np.random.default_rng(0), n, "cpu"
+        ).item()
 
-    pts = vapour.seen
-    assert torch.allclose(pts[:, 0], torch.full((32,), 0.7)), "streamwise fixed at x_pin"
-    assert torch.allclose(pts[:, 1], torch.full((32,), 0.5)), "fixed at mid-channel height"
-    assert pts[:, 2].min() >= 0.0 and pts[:, 2].max() <= 1.0 and pts[:, 2].std() > 0, (
-        "the anchor sweeps all times"
+    all_vapour = Field(lambda x: torch.ones(x.shape[0], 1))
+    all_liquid = Field(lambda x: torch.zeros(x.shape[0], 1))
+    assert loss(all_vapour) == pytest.approx(0.0)
+    assert loss(all_liquid) == pytest.approx(1.0)
+
+    # A thin filament of vapour at ONE height still satisfies the anchor (max over
+    # height) -- the exact case the old single-mid-point pin got wrong.
+    band = Field(lambda x: (torch.abs(x[:, 1:2] - 0.3) < 0.05).float())
+    assert loss(band) == pytest.approx(0.0)
+
+    pts = all_vapour.seen
+    assert pts.shape[0] == n * PIN_HEIGHT_SAMPLES
+    assert torch.allclose(pts[:, 0], torch.full((pts.shape[0],), 0.7)), "streamwise at x_pin"
+    assert pts[:, 1].min() == pytest.approx(0.0) and pts[:, 1].max() == pytest.approx(1.0), (
+        "the column spans the whole channel height"
     )
 
 
