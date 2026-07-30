@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -144,6 +145,21 @@ def active_run() -> RunJobStatus | None:
             if job.state == "running":
                 return _status_snapshot(run_id, job)
     return None
+
+
+def delete_if_idle(
+    run_id: str, delete: Callable[[], bool]
+) -> Literal["deleted", "missing", "active"]:
+    """Delete a run's assets, but only if it is not queued or running -- the idle check
+    and the ``delete`` both happen under the lock, so a concurrent launch/resume of the
+    same id cannot register it as running in the gap and then have its directory removed
+    out from under the worker. ``delete`` removes the run and returns whether it existed.
+    """
+    with _lock:
+        job = _jobs.get(run_id)
+        if job is not None and job.state in ("queued", "running"):
+            return "active"
+        return "deleted" if delete() else "missing"
 
 
 def active_datasets() -> set[str]:

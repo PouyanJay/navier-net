@@ -91,8 +91,24 @@ def test_delete_active_run_is_rejected(client, repo_root: Path):
 def test_delete_run_rejects_a_bad_id(client):
     """An id that is not a valid run directory (a forbidden character here) reaches the
     handler and is a 404 -- never a delete outside outputs/. The full path-traversal
-    guard is covered at the service level by test_path_traversal_id_is_rejected."""
+    guard (the same `_safe_run_dir` helper `get_run` uses) is covered at the service
+    level by test_path_traversal_id_is_rejected."""
     assert client.delete("/api/runs/a~b").status_code == 404
+
+
+def test_delete_if_idle_blocks_a_live_run_and_only_deletes_an_idle_one():
+    """The lock-held guard behind the endpoint: a queued/running run is never handed to
+    the delete callback (so a concurrent launch can't have its dir removed mid-run); an
+    idle run is, and its existence maps to deleted/missing."""
+    from naviernet_api.services import run_manager
+
+    fired: list[str] = []
+    run_manager._jobs["live"] = run_manager._RunJob(dataset="d")  # state defaults "running"
+    assert run_manager.delete_if_idle("live", lambda: fired.append("live") or True) == "active"
+    assert fired == [], "a live run's delete callback never runs"
+
+    assert run_manager.delete_if_idle("gone", lambda: True) == "deleted"
+    assert run_manager.delete_if_idle("nope", lambda: False) == "missing"
 
 
 def _write_project(repo_root: Path, pid: str, datasets: list[str]) -> None:
