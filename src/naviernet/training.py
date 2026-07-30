@@ -494,9 +494,8 @@ def _causal_collocation(
 
 
 def _total_loss(
-    model,
     losses: dict[str, torch.Tensor],
-    coll_batches: list[tuple[torch.Tensor, dict, torch.Tensor | None]],
+    coll_batches: list[tuple[object, torch.Tensor, dict, torch.Tensor | None]],
     weights: dict[str, float],
     schedule: dict[str, float],
     step: int,
@@ -508,16 +507,18 @@ def _total_loss(
     collocation terms are replaced by their causal aggregation (soft time weighting or
     a time-marching curriculum, per ``causal_mode``), averaged over the datasets'
     collocation batches (a single batch for a single-dataset run), while the supervised
-    (``data``) and boundary (``bc``) terms keep their uniform contribution. ``losses``
-    -- the plain per-term means -- is never touched here, so logging and the
-    gradient-norm rebalancer see the same quantities either way.
+    (``data``) and boundary (``bc``) terms keep their uniform contribution. Each batch
+    carries the model to evaluate it with -- a dataset's pin-bound view on a joint
+    hard-pin run, the plain model otherwise. ``losses`` -- the plain per-term means --
+    is never touched here, so logging and the gradient-norm rebalancer see the same
+    quantities either way.
     """
     if not plan.tcfg.causal_weighting:
         return _weighted_sum(losses, weights, schedule)
     coll = torch.stack(
         [
-            _causal_collocation(model, x_coll, groups, c, weights, schedule, step, plan)
-            for x_coll, groups, c in coll_batches
+            _causal_collocation(mdl, x_coll, groups, c, weights, schedule, step, plan)
+            for mdl, x_coll, groups, c in coll_batches
         ]
     ).mean()
     return coll + _weighted_sum(losses, weights, schedule, skip=plan.coll_keys)
@@ -681,7 +682,7 @@ def train(
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
-        coll_batches = [(x_coll, groups, None)]  # single dataset: one collocation batch
+        coll_batches = [(model, x_coll, groups, None)]  # single dataset: one batch
 
         # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
         # bounded per-point attention below. Skip the handoff step: weights reset there.
@@ -704,7 +705,7 @@ def train(
                 ctx, weights, schedule, attention, plan
             ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
         else:
-            total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
+            total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
         total.backward()
         opt.step()
 
@@ -749,6 +750,9 @@ class _JointDataset:
     groups: dict
     c: torch.Tensor  # (1, N_COND) conditioning row, broadcast per point batch
     u_inlet: float
+    # The dataset's measured root anchor when the hard pin is on, else None.
+    # Joint models bind it per call: model.bound(c, pin=pin).
+    pin: tuple[float, float] | None = None
 
 
 def _load_joint_datasets(
@@ -777,36 +781,48 @@ def _load_joint_datasets(
         # is mixed in, so `conditioning_vector` sees the same keys as a single-dataset run.
         pulse_groups = _pulse_groups(groups, cfg, data.domain)
         contexts.append(
-            _JointDataset(name, data, pulse_groups, c, float(groups["u_inlet_star"]))
+            _JointDataset(
+                name,
+                data,
+                pulse_groups,
+                c,
+                float(groups["u_inlet_star"]),
+                pin=_pin_anchor(cfg, data),
+            )
         )
     return contexts
 
 
 def _joint_losses(
     model, contexts, equations, tcfg, rng
-) -> tuple[dict[str, torch.Tensor], list[tuple[torch.Tensor, dict, torch.Tensor]]]:
+) -> tuple[dict[str, torch.Tensor], list[tuple[object, torch.Tensor, dict, torch.Tensor]]]:
     """Each loss term averaged over the datasets, every dataset's residuals
     evaluated with its own conditioning row so one model fits them all.
 
-    Also returns each dataset's ``(x_coll, groups, c)`` so the caller can apply
-    causal temporal weighting to the same collocation points without resampling.
+    Also returns each dataset's ``(model, x_coll, groups, c)`` -- the model entry
+    is that dataset's pin-bound view on a hard-pin run -- so the caller can apply
+    causal temporal weighting to the same collocation points without resampling
+    and without losing the per-dataset anchor.
     """
     aggregate: dict[str, torch.Tensor] = {}
-    coll_batches: list[tuple[torch.Tensor, dict, torch.Tensor]] = []
+    coll_batches: list[tuple[object, torch.Tensor, dict, torch.Tensor]] = []
     for cx in contexts:
+        # On a hard-pin run every call must carry this dataset's root anchor;
+        # the bound view threads it through the residual bundles unchanged.
+        view = model.bound(cx.c, pin=cx.pin) if cx.pin is not None else model
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
 
-        ctx = registry.LossContext(model, x_coll, inlet, walls, cx.u_inlet, cx.groups, c=cx.c)
+        ctx = registry.LossContext(view, x_coll, inlet, walls, cx.u_inlet, cx.groups, c=cx.c)
         c_data = cx.c.expand(x_data.shape[0], -1)
-        per_term = {"data": ((model.alpha(x_data, c_data) - target) ** 2).mean()}
+        per_term = {"data": ((view.alpha(x_data, c_data) - target) ** 2).mean()}
         for eq in equations:
             per_term[eq.weight_key] = eq.term(ctx)
 
         for name, loss in per_term.items():
             aggregate[name] = loss if name not in aggregate else aggregate[name] + loss
-        coll_batches.append((x_coll, cx.groups, cx.c))
+        coll_batches.append((view, x_coll, cx.groups, cx.c))
 
     n = len(contexts)
     return {name: loss / n for name, loss in aggregate.items()}, coll_batches
@@ -898,7 +914,7 @@ def _train_joint(
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
-        total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
+        total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
         total.backward()
         opt.step()
 

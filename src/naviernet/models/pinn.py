@@ -114,11 +114,16 @@ class BubblePINN(nn.Module):
             self.pin_d_ref = float(cfg.model.pin_d_ref)
             if self.pin_d_ref <= 0:
                 raise ValueError(f"model.pin_d_ref must be > 0, got {self.pin_d_ref}")
-            if pin is None:
+            if pin is None and self.n_cond == 0:
+                # A conditioned (joint) model legitimately has no single anchor --
+                # each dataset binds its own per call (see ``bound``); an unbound
+                # call then fails loudly in ``phi``. A single-dataset model has
+                # exactly one dataset, so a missing anchor is a wiring bug.
                 raise ValueError(
                     "model.hard_pin=true needs the dataset's root anchor: construct "
                     "the model with pin=(x0, y0), as train()/load_model() do."
                 )
+        if self.hard_pin and pin is not None:
             self.register_buffer(
                 "pin_anchor", torch.tensor(pin, dtype=torch.float32), persistent=False
             )
@@ -153,24 +158,44 @@ class BubblePINN(nn.Module):
     def fields(self) -> list[str]:
         return list(self.nets.keys())
 
-    def phi(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+    def phi(
+        self,
+        x: torch.Tensor,
+        c: torch.Tensor | None = None,
+        pin: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Level-set field; its zero contour is the interface. With the hard pin
-        on, the zero contour is anchored to the root for all t (see __init__)."""
+        on, the zero contour is anchored to the root for all t (see __init__).
+        ``pin`` is the per-call anchor a joint run's bound view supplies; a
+        single-dataset model carries its own."""
         raw = self.nets["phi"](x, c)
-        if self.pin_anchor is None:
+        if not self.hard_pin:
             return raw
-        return self._pin_gate(x) * raw
+        anchor = pin if pin is not None else self.pin_anchor
+        if anchor is None:
+            raise RuntimeError(
+                "hard_pin model evaluated without a root anchor -- a joint model "
+                "must be bound per dataset first: model.bound(c, pin=context.pin)."
+            )
+        return self._pin_gate(x, anchor) * raw
 
-    def _pin_gate(self, x: torch.Tensor) -> torch.Tensor:
+    def _pin_gate(self, x: torch.Tensor, anchor: torch.Tensor) -> torch.Tensor:
         """``tanh(dist/d_ref)``: 0 at the anchor, ~linear nearby (a normalized
         distance function, keeping near-anchor gradients well-scaled), saturating
         to 1 beyond ~2*d_ref so the far field is untouched."""
-        d_sq = ((x[:, :2] - self.pin_anchor) ** 2).sum(dim=-1, keepdim=True)
+        # A per-call anchor (joint bound view) is a plain CPU tensor; align it
+        # with the batch (a no-op for the registered single-dataset buffer).
+        d_sq = ((x[:, :2] - anchor.to(x.device)) ** 2).sum(dim=-1, keepdim=True)
         return torch.tanh(torch.sqrt(d_sq + PIN_DIST_FLOOR) / self.pin_d_ref)
 
-    def alpha(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+    def alpha(
+        self,
+        x: torch.Tensor,
+        c: torch.Tensor | None = None,
+        pin: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Volume fraction, bounded in (0, 1) by construction."""
-        return torch.sigmoid(self.phi(x, c) / self.eps)
+        return torch.sigmoid(self.phi(x, c, pin=pin) / self.eps)
 
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
@@ -215,9 +240,10 @@ class BubblePINN(nn.Module):
             )
         return self.nets[name]
 
-    def bound(self, c: torch.Tensor) -> BoundPINN:
-        """This model with one dataset's conditioning row bound (joint viz)."""
-        return BoundPINN(self, c)
+    def bound(self, c: torch.Tensor, pin: tuple[float, float] | None = None) -> BoundPINN:
+        """This model with one dataset's conditioning row -- and, for a hard-pin
+        run, that dataset's root anchor -- bound (joint training/eval/viz)."""
+        return BoundPINN(self, c, pin=pin)
 
 
 class BoundPINN:
@@ -225,22 +251,27 @@ class BoundPINN:
 
     Joint checkpoints need a per-dataset context on every call; binding it once
     lets every single-dataset consumer (figures, video, reconstruction) render
-    a joint model unchanged. Anything not overridden falls through to the
-    underlying model (``eps``, trainable unknowns, ``fields``...).
+    a joint model unchanged. For a hard-pin run the dataset's root anchor is
+    bound alongside, so the pin gate uses the right root per dataset. Anything
+    not overridden falls through to the underlying model (``eps``, trainable
+    unknowns, ``fields``...).
     """
 
-    def __init__(self, model: BubblePINN, c: torch.Tensor):
+    def __init__(
+        self, model: BubblePINN, c: torch.Tensor, pin: tuple[float, float] | None = None
+    ):
         self._model = model
         self._c = c
+        self._pin = None if pin is None else torch.as_tensor(pin, dtype=torch.float32)
 
     def _ctx(self, x: torch.Tensor) -> torch.Tensor:
         return self._c.expand(x.shape[0], -1)
 
     def phi(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        return self._model.phi(x, c if c is not None else self._ctx(x))
+        return self._model.phi(x, c if c is not None else self._ctx(x), pin=self._pin)
 
     def alpha(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        return self._model.alpha(x, c if c is not None else self._ctx(x))
+        return self._model.alpha(x, c if c is not None else self._ctx(x), pin=self._pin)
 
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None

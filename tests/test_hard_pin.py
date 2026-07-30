@@ -23,12 +23,16 @@ ROOT_COL = 2  # the stationary (nucleation-side) bubble edge, all frames
 VAPOR_ROWS = slice(2, 4)  # the bubble's y-extent at the root
 
 
-def _write_growing_bubble(path, n_frames: int = GROWING_FRAMES) -> None:
-    """A synthetic growth event: the root edge fixed at ROOT_COL, the front
-    advancing one column per frame -- the geometry the anchor measurement is for."""
+def _write_growing_bubble(
+    path, n_frames: int = GROWING_FRAMES, root_col: int = ROOT_COL, groups=None
+) -> None:
+    """A synthetic growth event: the root edge fixed at ``root_col``, the front
+    advancing one column per frame -- the geometry the anchor measurement is for.
+    ``groups`` (when given) is recorded as preprocess would, so the dataset can
+    join a conditioned multi-dataset run."""
     alpha = np.zeros((n_frames, GROWING_H, GROWING_W), dtype=np.float32)
     for k in range(n_frames):
-        alpha[k, VAPOR_ROWS, ROOT_COL : ROOT_COL + 3 + k] = 1.0
+        alpha[k, VAPOR_ROWS, root_col : root_col + 3 + k] = 1.0
     meta = {
         "x_pin_star": 0.2,
         "t_ref_ms": 1.5,
@@ -36,6 +40,8 @@ def _write_growing_bubble(path, n_frames: int = GROWING_FRAMES) -> None:
         "n_frames_event": n_frames,
         "frame_numbers": list(range(1, n_frames + 1)),
     }
+    if groups is not None:
+        meta["groups"] = groups
     np.savez_compressed(
         path,
         alpha=alpha,
@@ -249,3 +255,110 @@ def test_training_with_the_pin_diverges_from_baseline(tmp_path):
     assert any(not torch.equal(off[k], on[k]) for k in off), (
         "pin on vs off trained identically -- the gate never entered the loss"
     )
+
+
+# --- Joint (multi-dataset) runs ----------------------------------------------
+
+JOINT_SPECS = (("ds_a", 2.0, 2), ("ds_b", 5.0, 6))  # name, q_wall, root column
+
+
+def _staged_joint_run(tmp_path, overrides=None):
+    """Two synthetic datasets with distinct regimes AND distinct root columns,
+    staged for a conditioned joint run, as preprocess would have left them."""
+    from naviernet.physics.groups import compute_groups
+
+    names = ",".join(name for name, _, _ in JOINT_SPECS)
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            f"datasets=[{names}]",
+            "model.hidden=8",
+            "model.layers=2",
+            "model.fourier_feats=4",
+            "training.steps=2",
+            "training.n_data=16",
+            "training.n_coll=16",
+            "training.n_bc=8",
+            "training.holdout_frame=-1",
+            *(overrides or []),
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    paths.ensure()
+    for name, q_wall, root_col in JOINT_SPECS:
+        ds_paths = paths.for_dataset(name)
+        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
+        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
+        _write_growing_bubble(ds_paths.tensors, root_col=root_col, groups=groups)
+    return cfg, paths
+
+
+def test_joint_hard_pin_anchors_each_dataset_at_its_own_root(tmp_path):
+    """One conditioned model, two datasets with different roots: each dataset's
+    bound view holds alpha = 0.5 at ITS anchor for all t, anchors distinct."""
+    from naviernet.training import load_joint, train
+
+    cfg, paths = _staged_joint_run(tmp_path, ["model.hard_pin=true"])
+    train(cfg, paths)
+    model, contexts, _ = load_joint(cfg, paths)
+
+    anchors = [cx.pin for cx in contexts]
+    assert anchors[0][0] != anchors[1][0], "distinct roots must give distinct anchors"
+
+    for cx in contexts:
+        bound = model.bound(cx.c, pin=cx.pin)
+        x0, y0 = cx.pin
+        t_beyond = 3.0 * cx.data.domain.t_max + 1.0
+        points = torch.tensor([[x0, y0, 0.0], [x0, y0, t_beyond]], dtype=torch.float32)
+        alpha = bound.alpha(points)
+        assert torch.allclose(alpha, torch.full_like(alpha, 0.5), atol=1e-6), (
+            f"{cx.name}: pinned alpha at its anchor should be 0.5, got {alpha.ravel()}"
+        )
+
+
+def test_joint_hard_pin_model_refuses_unbound_calls(tmp_path):
+    """Zero silent failures: a joint hard-pin model evaluated without a bound
+    anchor raises instead of quietly predicting unpinned fields."""
+    from naviernet.training import load_joint, train
+
+    cfg, paths = _staged_joint_run(tmp_path, ["model.hard_pin=true"])
+    train(cfg, paths)
+    model, contexts, _ = load_joint(cfg, paths)
+
+    points = torch.tensor([[0.2, 0.25, 0.1]], dtype=torch.float32)
+    c = contexts[0].c.expand(1, -1)
+
+    with pytest.raises(RuntimeError, match="anchor"):
+        model.alpha(points, c)
+
+
+def test_joint_hard_pin_composes_with_causal_weighting(tmp_path):
+    """The bench composition: joint + pin + causal must train (the causal path
+    rebuilds per-bin contexts from the collocation batches -- each must keep its
+    dataset's anchor)."""
+    from naviernet.training import train
+
+    cfg, paths = _staged_joint_run(
+        tmp_path, ["model.hard_pin=true", "training.causal_weighting=true"]
+    )
+    train(cfg, paths)
+
+    assert paths.checkpoint.exists()
+
+
+def test_joint_hard_pin_evaluates(tmp_path):
+    """evaluate_joint runs the pinned views end-to-end and writes metrics."""
+    import json as json_mod
+
+    from naviernet.evaluation import evaluate_joint
+    from naviernet.training import load_joint, train
+
+    cfg, paths = _staged_joint_run(tmp_path, ["model.hard_pin=true"])
+    train(cfg, paths)
+    model, contexts, heldout = load_joint(cfg, paths)
+
+    report = evaluate_joint(cfg, model, contexts, paths, heldout_datasets=heldout)
+
+    assert set(report["per_dataset"]) == {name for name, _, _ in JOINT_SPECS}
+    assert paths.metrics_json.exists()
+    assert json_mod.loads(paths.metrics_json.read_text())["datasets"]
