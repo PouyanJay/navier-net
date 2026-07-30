@@ -136,6 +136,13 @@ class ModelConfig:
     # Optional per-field architecture overrides, keyed by field name. Absent =
     # every field uses the global architecture above (Stage-A behaviour).
     per_field: dict[str, FieldArch] = field(default_factory=dict)
+    # Localized nucleation heat pulse (Stage B; requires the `T` field). Off by default
+    # -> the energy residual is unchanged. When on, a brief localized pulse at the fixed
+    # cavity seeds the bubble (see residuals.NucleationPulse): its location (x_pin, from
+    # the data) and width/timing are fixed priors; only its magnitude is learnable.
+    nucleation_pulse: bool = False
+    pulse_t0: float = 0.1  # pulse active for the first this-fraction of the time window
+    pulse_width: float = 0.05  # streamwise Gaussian sigma, as a fraction of the domain width
 
 
 @dataclass

@@ -104,6 +104,16 @@ class BubblePINN(nn.Module):
         if "T" in names:
             self._log_r_int = nn.Parameter(torch.zeros(1))
             self._theta_in_raw = nn.Parameter(torch.zeros(1))
+        # Localized nucleation pulse: only its magnitude is learnable (the heater power
+        # is unknown), location/width/timing are fixed priors supplied by the trainer.
+        self.has_nucleation_pulse = bool(getattr(cfg.model, "nucleation_pulse", False))
+        if self.has_nucleation_pulse:
+            if "T" not in names:
+                raise ValueError(
+                    "model.nucleation_pulse=true heats the energy equation, so it "
+                    "requires the 'T' field in model.fields."
+                )
+            self._log_q_pulse = nn.Parameter(torch.zeros(1))
 
     @property
     def fields(self) -> list[str]:
@@ -139,6 +149,12 @@ class BubblePINN(nn.Module):
     def theta_in(self) -> torch.Tensor:
         """Inlet superheat in (0, 1) -- saturation to wall -- a trainable unknown."""
         return torch.sigmoid(self._theta_in_raw)
+
+    @property
+    def q_pulse_star(self) -> torch.Tensor:
+        """Non-dimensional nucleation-pulse magnitude (>0), a trainable unknown (the
+        heater's power is not known, so only its strength is fit)."""
+        return nn.functional.softplus(self._log_q_pulse)
 
     def temperature(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """Non-dimensional superheat, bounded to (theta_in, 1) so temperature stays

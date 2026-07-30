@@ -1234,6 +1234,62 @@ def test_stage_b_smoke_run_trains_pressure_and_temperature(tmp_path):
     assert paths.checkpoint.exists()
 
 
+def test_nucleation_pulse_trains_its_learnable_magnitude(tmp_path):
+    """A Stage-B run with the nucleation pulse on trains to finite losses and the pulse
+    magnitude is a trained unknown -- it moves from its init, which can only happen if
+    the pulse is actually wired into the energy loss graph (fixed location/width/timing,
+    learnable strength)."""
+    import math
+
+    import torch.nn.functional as F
+
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_STAGE_B,
+            *_TINY_TRAIN,
+            "training.steps=3",
+            "training.stage_b_warmup_steps=0",  # engage energy immediately so the pulse acts
+            "model.nucleation_pulse=true",
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    model, _, state = train(cfg, paths)
+
+    assert model.has_nucleation_pulse
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"{name} was not finite"
+    init = F.softplus(torch.zeros(1)).item()
+    assert model.q_pulse_star.item() != pytest.approx(init, abs=1e-6), (
+        "the pulse magnitude was trained (so the pulse is in the energy loss)"
+    )
+    assert paths.checkpoint.exists()
+
+
+def test_nucleation_pulse_requires_temperature(tmp_path):
+    """The pulse heats the energy equation, so enabling it on a Stage-A model (no T)
+    fails loudly rather than silently doing nothing."""
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_TRAIN,
+            "training.steps=2",
+            "model.nucleation_pulse=true",
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+    with pytest.raises(ValueError, match="nucleation_pulse"):
+        train(cfg, paths)
+
+
 def _spy_on_adam(monkeypatch) -> list:
     """Record the lr of every optimiser built during training. The in-run warm-up
     builds a second one when Stage-B physics engages; this proves it fired."""

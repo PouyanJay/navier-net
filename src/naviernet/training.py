@@ -49,6 +49,20 @@ STAGE_A_FIELDS = ("phi", "u", "v", "s")
 REBALANCED_TERMS = registry.rebalanced_terms(registry.enabled_equations(STAGE_A_FIELDS))
 
 
+def _pulse_groups(groups: dict, cfg, domain) -> dict:
+    """Augment ``groups`` with the nucleation pulse's fixed geometry, converted from the
+    config's fractions to the model's absolute non-dimensional units via the dataset's
+    domain, so the energy residual can read them. A no-op when the pulse is off."""
+    if not getattr(cfg.model, "nucleation_pulse", False):
+        return groups
+    return {
+        **groups,
+        "x_pin_star": domain.x_pin,
+        "pulse_t0": domain.t_min + cfg.model.pulse_t0 * (domain.t_max - domain.t_min),
+        "pulse_sigma": cfg.model.pulse_width * (domain.x_max - domain.x_min),
+    }
+
+
 def _initial_state(cfg, equations) -> dict:
     weights = cfg.training.weights
     w = {"data": float(weights.data)}
@@ -559,6 +573,7 @@ def train(
     groups = compute_groups(cfg)
     u_inlet = groups["u_inlet_star"]
     data = BubbleDataset(cfg, paths, device=str(device))
+    groups = _pulse_groups(groups, cfg, data.domain)
     model = BubblePINN(cfg).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
@@ -741,7 +756,12 @@ def _load_joint_datasets(
                 f"before joining it to a multi-dataset run"
             )
         c = torch.tensor([conditioning_vector(groups)], dtype=torch.float32, device=device)
-        contexts.append(_JointDataset(name, data, groups, c, float(groups["u_inlet_star"])))
+        # The conditioning row is built from the physics groups before the pulse geometry
+        # is mixed in, so `conditioning_vector` sees the same keys as a single-dataset run.
+        pulse_groups = _pulse_groups(groups, cfg, data.domain)
+        contexts.append(
+            _JointDataset(name, data, pulse_groups, c, float(groups["u_inlet_star"]))
+        )
     return contexts
 
 

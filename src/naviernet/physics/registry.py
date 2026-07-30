@@ -24,6 +24,7 @@ import torch
 from naviernet.physics.residuals import (
     EnergyResiduals,
     MomentumResiduals,
+    NucleationPulse,
     StageAResiduals,
     boundary_losses,
     energy_residuals,
@@ -86,9 +87,27 @@ class LossContext:
     def energy_res(self) -> EnergyResiduals:
         if self._energy is None:
             self._energy = energy_residuals(
-                self.model, self.x_coll, self.groups, self.model.r_int_star, c=self.c
+                self.model,
+                self.x_coll,
+                self.groups,
+                self.model.r_int_star,
+                c=self.c,
+                pulse=self._nucleation_pulse(),
             )
         return self._energy
+
+    def _nucleation_pulse(self) -> NucleationPulse | None:
+        """The localized nucleation pulse for this batch, or ``None`` when the feature is
+        off. Location/width/timing are fixed priors the trainer put in ``groups`` (in the
+        model's non-dimensional units); only the magnitude is the model's learnable one."""
+        if not getattr(self.model, "has_nucleation_pulse", False):
+            return None
+        return NucleationPulse(
+            x_pin=self.groups["x_pin_star"],
+            t0=self.groups["pulse_t0"],
+            sigma=self.groups["pulse_sigma"],
+            q_pulse=self.model.q_pulse_star,
+        )
 
 
 # --- Collocation loss terms ---------------------------------------------------
