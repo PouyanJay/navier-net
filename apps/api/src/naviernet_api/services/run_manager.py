@@ -494,6 +494,12 @@ def _configure(
         f"training.weights.div={request.weights.div}",
         f"training.weights.src={request.weights.src}",
         f"training.weights.bc={request.weights.bc}",
+        # Accuracy techniques (opt-in; defaults are no-ops). Booleans lower-cased to
+        # match the YAML/CLI convention (OmegaConf accepts either case).
+        f"training.weighting={request.weighting}",
+        f"training.causal_weighting={str(request.causal_weighting).lower()}",
+        f"training.causal_mode={request.causal_mode}",
+        f"training.adaptive_collocation={str(request.adaptive_collocation).lower()}",
     ]
     from naviernet_api.services.config_service import compose_cfg_once
     from naviernet_api.services.datasets import series_is_stage_b, series_overrides

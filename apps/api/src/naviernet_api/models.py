@@ -310,6 +310,14 @@ class RunLaunchRequest(BaseModel):
     seed: int = Field(default=0, ge=0, le=2**31 - 1)
     weights: LossWeightsInput = Field(default_factory=LossWeightsInput)
     render: bool = True  # render figures + video after evaluation
+    # Accuracy techniques (opt-in; every default is a no-op, so an unchanged request
+    # trains exactly as before). The fine sub-parameters (rba_gamma/eta, causal chunks/
+    # eps schedule, resample cadence) keep their schema defaults -- CLI-tunable only.
+    # See the README "Accuracy techniques" note.
+    weighting: Literal["gradnorm", "rba"] = "gradnorm"
+    causal_weighting: bool = False
+    causal_mode: Literal["weight", "march"] = "weight"
+    adaptive_collocation: bool = False
 
     def resolved_datasets(self) -> list[str]:
         """The datasets a new run trains on: `datasets` if given, else `[dataset]`.
@@ -323,6 +331,16 @@ class RunLaunchRequest(BaseModel):
             raise ValueError("resume requires run_id")
         if not self.resume and not self.resolved_datasets():
             raise ValueError("a new run requires dataset or datasets")
+        return self
+
+    @model_validator(mode="after")
+    def _check_accuracy_combo(self) -> RunLaunchRequest:
+        # Mirror the trainer's own guards so an invalid combination fails at the API
+        # boundary (422) with an actionable message, not deep in the worker.
+        if self.weighting == "rba" and self.causal_weighting:
+            raise ValueError("weighting='rba' is not compatible with causal_weighting yet")
+        if self.adaptive_collocation and self.weighting != "rba":
+            raise ValueError("adaptive_collocation requires weighting='rba'")
         return self
 
 

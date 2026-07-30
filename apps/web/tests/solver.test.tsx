@@ -300,6 +300,81 @@ describe("SolverView", () => {
     expect(body.heldout_datasets).toBeUndefined();
   });
 
+  it("starts at today's recipe: gradnorm, no causal, no adaptive", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.getByLabelText(/Weighting/)).toHaveValue("gradnorm");
+    // The causal mode select only appears once causal weighting is on.
+    expect(screen.queryByLabelText(/Causal mode/)).toBeNull();
+    // Adaptive collocation refreshes the RBA pool, so it is gated off under gradnorm.
+    expect(
+      screen.getByRole("switch", { name: "Adaptive collocation" }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.weighting).toBe("gradnorm");
+    expect(body.causal_weighting).toBe(false);
+    expect(body.adaptive_collocation).toBe(false);
+  });
+
+  it("enables causal time-marching and posts the chosen mode", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Causal weighting" }));
+    // The mode select appears, defaulting to soft weighting.
+    expect(screen.getByLabelText(/Causal mode/)).toHaveValue("weight");
+    fireEvent.change(screen.getByLabelText(/Causal mode/), {
+      target: { value: "march" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.causal_weighting).toBe(true);
+    expect(body.causal_mode).toBe("march");
+  });
+
+  it("gates RBA / causal / adaptive valid-by-construction in both directions", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // Turn causal ON under gradnorm, then switch to RBA: causal is forced off and
+    // disabled (RBA and causal are not composable yet).
+    fireEvent.click(screen.getByRole("switch", { name: "Causal weighting" }));
+    expect(screen.getByRole("switch", { name: "Causal weighting" })).toBeChecked();
+    fireEvent.change(screen.getByLabelText(/Weighting/), { target: { value: "rba" } });
+    const causal = screen.getByRole("switch", { name: "Causal weighting" });
+    expect(causal).toBeDisabled();
+    expect(causal).not.toBeChecked();
+
+    // Under RBA, adaptive is available; turn it on, then switch back to gradnorm:
+    // adaptive is forced off and disabled (it requires RBA).
+    const adaptive = screen.getByRole("switch", { name: "Adaptive collocation" });
+    expect(adaptive).toBeEnabled();
+    fireEvent.click(adaptive);
+    expect(adaptive).toBeChecked();
+    fireEvent.change(screen.getByLabelText(/Weighting/), { target: { value: "gradnorm" } });
+    expect(screen.getByRole("switch", { name: "Adaptive collocation" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Adaptive collocation" })).not.toBeChecked();
+
+    // Finally launch an RBA + adaptive run and confirm the posted combo is valid.
+    fireEvent.change(screen.getByLabelText(/Weighting/), { target: { value: "rba" } });
+    fireEvent.click(screen.getByRole("switch", { name: "Adaptive collocation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.weighting).toBe("rba");
+    expect(body.adaptive_collocation).toBe(true);
+    expect(body.causal_weighting).toBe(false);
+  });
+
   it("holds out a whole series from its row and posts it as a transfer condition", async () => {
     const posts: unknown[] = [];
     stubMultiDataset(
@@ -530,6 +605,12 @@ describe("SolverView", () => {
     );
     expect(screen.getByLabelText("highest_t")).toBeDisabled();
     expect(screen.getByLabelText(/Learning rate/)).toBeDisabled();
+    // The accuracy controls are fixed by the original run too (resume ignores them).
+    expect(screen.getByLabelText(/Weighting/)).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Causal weighting" })).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Adaptive collocation" }),
+    ).toBeDisabled();
     const resumeSelect = await screen.findByLabelText("Run to resume");
     expect(resumeSelect).toHaveValue("highest_t");
 

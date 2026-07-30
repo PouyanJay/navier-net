@@ -20,6 +20,10 @@ export interface SolverFormState {
   log_every: number;
   weights: LossWeightsInput;
   render: boolean;
+  weighting: "gradnorm" | "rba";
+  causal_weighting: boolean;
+  causal_mode: "weight" | "march";
+  adaptive_collocation: boolean;
 }
 
 export const FORM_DEFAULTS: SolverFormState = {
@@ -41,7 +45,26 @@ export const FORM_DEFAULTS: SolverFormState = {
   log_every: 200,
   weights: { data: 10, vof: 1, div: 1, src: 0.1, bc: 5 },
   render: true,
+  // Accuracy techniques: every default is a no-op, so the form starts at today's
+  // recipe. See the README "Accuracy techniques" note.
+  weighting: "gradnorm",
+  causal_weighting: false,
+  causal_mode: "weight",
+  adaptive_collocation: false,
 };
+
+/** Loss-weighting schemes. "gradnorm" is the live rebalancer (needs a hand-picked
+ * rebalance cadence); "rba" is bounded residual-based attention (stable, no tuning). */
+export const WEIGHTING_OPTIONS = [
+  { value: "gradnorm", label: "gradient-norm" },
+  { value: "rba", label: "RBA (bounded)" },
+];
+
+/** Causal variant: soft per-time weighting, or a time-marching curriculum. */
+export const CAUSAL_MODE_OPTIONS = [
+  { value: "weight", label: "soft weighting" },
+  { value: "march", label: "time-marching" },
+];
 
 /** Validation-split options: a fraction of each kept-in series' frames held from
  * training as an in-distribution validation set (deterministic, tail). Labels are
