@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 import torch
@@ -183,6 +184,50 @@ class BubbleDataset:
     def event_frames(self) -> list[int]:
         """Camera frame numbers of the growth event, in row order."""
         return self.frame_numbers[: self.n_event]
+
+    @cached_property
+    def pin_anchor(self) -> tuple[float, float]:
+        """The bubble-root anchor ``(x*, y*)``: where the interface stays for all t.
+
+        Measured from the data, not assumed: over the *training-visible* event
+        frames (held-out rows excluded, so the anchor can never leak validation
+        information), the bubble's two x-extent edges are tracked and the
+        temporally stationary one -- the nucleation-side root -- is taken. The
+        anchor is that edge's median x* and the median centre of its vapour
+        column in y*. Orientation-agnostic: whichever edge is stationary wins,
+        so a flipped series needs no special-casing.
+        """
+        rows = [r for r in range(self.n_event) if r not in set(self.validation_rows)]
+        lo_cols, hi_cols = [], []
+        for r in rows:
+            vapor = (self.alpha[r] > 0.5) & (self.valid[r] > 0)
+            cols = np.nonzero(vapor.any(axis=0))[0]
+            if cols.size == 0:
+                continue
+            lo_cols.append(int(cols[0]))
+            hi_cols.append(int(cols[-1]))
+        if not lo_cols:
+            raise ValueError(
+                "model.hard_pin needs a bubble-root anchor, but no training frame "
+                "has any vapour (alpha > 0.5) -- check the dataset's masks."
+            )
+
+        root_cols = lo_cols if np.std(lo_cols) <= np.std(hi_cols) else hi_cols
+        col = int(round(float(np.median(root_cols))))
+
+        centers = []
+        for r in rows:
+            vapor_rows = np.nonzero(
+                (self.alpha[r, :, col] > 0.5) & (self.valid[r, :, col] > 0)
+            )[0]
+            if vapor_rows.size:
+                centers.append(float(self.y[vapor_rows].mean()))
+        if not centers:
+            raise ValueError(
+                "model.hard_pin found a stationary bubble edge but no vapour column "
+                f"at its median station (column {col}) -- the masks look degenerate."
+            )
+        return float(self.x[col]), float(np.median(centers))
 
     def _coords(self, idx: np.ndarray) -> np.ndarray:
         """Map flat tensor indices to ``(x, y, t)`` coordinates."""

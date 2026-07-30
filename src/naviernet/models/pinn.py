@@ -21,6 +21,11 @@ import torch.nn as nn
 
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures
 
+# Floor under the squared distance in the hard-pin gate, so a point exactly on
+# the anchor has a defined (zero) gradient instead of sqrt's NaN. Kept tiny so
+# the gate still vanishes to ~1e-11 at the anchor -- far below alpha resolution.
+PIN_DIST_FLOOR = 1e-24
+
 
 def _resolve(arch, key: str, fallback):
     """A per-field override value if set, otherwise the global default."""
@@ -85,11 +90,40 @@ class BubblePINN(nn.Module):
     ``None`` for an unconditioned (single-dataset) model.
     """
 
-    def __init__(self, cfg, fields: Sequence[str] | None = None, n_cond: int = 0):
+    def __init__(
+        self,
+        cfg,
+        fields: Sequence[str] | None = None,
+        n_cond: int = 0,
+        pin: tuple[float, float] | None = None,
+    ):
         super().__init__()
         self.cfg = cfg
         self.eps = float(cfg.model.alpha_eps)
         self.n_cond = int(n_cond)
+
+        # Hard root pin: phi = tanh(dist/d_ref) * N, so the interface (alpha = 0.5)
+        # passes through the dataset's measured root anchor at EVERY time -- the
+        # constraint is architectural, so it keeps holding beyond the training
+        # window, unlike a loss term. The anchor is data-derived (never config) and
+        # deliberately NOT persisted: the checkpoint format is unchanged and the
+        # anchor is re-measured from the same dataset on every construction.
+        self.hard_pin = bool(getattr(cfg.model, "hard_pin", False))
+        self.pin_anchor: torch.Tensor | None
+        if self.hard_pin:
+            self.pin_d_ref = float(cfg.model.pin_d_ref)
+            if self.pin_d_ref <= 0:
+                raise ValueError(f"model.pin_d_ref must be > 0, got {self.pin_d_ref}")
+            if pin is None:
+                raise ValueError(
+                    "model.hard_pin=true needs the dataset's root anchor: construct "
+                    "the model with pin=(x0, y0), as train()/load_model() do."
+                )
+            self.register_buffer(
+                "pin_anchor", torch.tensor(pin, dtype=torch.float32), persistent=False
+            )
+        else:
+            self.pin_anchor = None
         names = list(fields if fields is not None else cfg.model.fields)
         per_field = getattr(cfg.model, "per_field", None) or {}
         self.nets = nn.ModuleDict(
@@ -120,8 +154,19 @@ class BubblePINN(nn.Module):
         return list(self.nets.keys())
 
     def phi(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        """Raw level-set field; its zero contour is the interface."""
-        return self.nets["phi"](x, c)
+        """Level-set field; its zero contour is the interface. With the hard pin
+        on, the zero contour is anchored to the root for all t (see __init__)."""
+        raw = self.nets["phi"](x, c)
+        if self.pin_anchor is None:
+            return raw
+        return self._pin_gate(x) * raw
+
+    def _pin_gate(self, x: torch.Tensor) -> torch.Tensor:
+        """``tanh(dist/d_ref)``: 0 at the anchor, ~linear nearby (a normalized
+        distance function, keeping near-anchor gradients well-scaled), saturating
+        to 1 beyond ~2*d_ref so the far field is untouched."""
+        d_sq = ((x[:, :2] - self.pin_anchor) ** 2).sum(dim=-1, keepdim=True)
+        return torch.tanh(torch.sqrt(d_sq + PIN_DIST_FLOOR) / self.pin_d_ref)
 
     def alpha(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """Volume fraction, bounded in (0, 1) by construction."""

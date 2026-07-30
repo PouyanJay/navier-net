@@ -63,6 +63,23 @@ def _pulse_groups(groups: dict, cfg, domain) -> dict:
     }
 
 
+def _pin_anchor(cfg, data: BubbleDataset) -> tuple[float, float] | None:
+    """The dataset's measured bubble-root anchor when the hard pin is on, else
+    ``None``. One helper so every construction site derives the anchor the same
+    way -- a site passing nothing would fail loudly in the model constructor."""
+    if not getattr(cfg.model, "hard_pin", False):
+        return None
+    x0, y0 = data.pin_anchor
+    log.info(
+        "hard pin on: root anchor (x*=%.4f, y*=%.4f), d_ref=%.3f (stored x_pin=%.4f)",
+        x0,
+        y0,
+        cfg.model.pin_d_ref,
+        data.domain.x_pin,
+    )
+    return x0, y0
+
+
 def _initial_state(cfg, equations) -> dict:
     weights = cfg.training.weights
     w = {"data": float(weights.data)}
@@ -574,7 +591,7 @@ def train(
     u_inlet = groups["u_inlet_star"]
     data = BubbleDataset(cfg, paths, device=str(device))
     groups = _pulse_groups(groups, cfg, data.domain)
-    model = BubblePINN(cfg).to(device)
+    model = BubblePINN(cfg, pin=_pin_anchor(cfg, data)).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
     equations = registry.enabled_equations(cfg.model.fields)
@@ -934,7 +951,9 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
     data = BubbleDataset(cfg, paths, device=str(device))
     # `n_cond` (0 for a single-dataset checkpoint) rebuilds the right architecture,
     # so a conditioned joint checkpoint loads without a shape mismatch.
-    model = BubblePINN(cfg, n_cond=int(ckpt.get("n_cond", 0))).to(device)
+    model = BubblePINN(cfg, n_cond=int(ckpt.get("n_cond", 0)), pin=_pin_anchor(cfg, data)).to(
+        device
+    )
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, data, ckpt["state"]
