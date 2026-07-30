@@ -1271,6 +1271,85 @@ def test_nucleation_pulse_trains_its_learnable_magnitude(tmp_path):
     assert paths.checkpoint.exists()
 
 
+def test_pin_nucleation_loss_anchors_the_cavity_as_vapor():
+    """The geometric nucleation pin penalises the fixed cavity (x_pin, mid-height) for
+    not being vapour (alpha=1), sampled across all times -- so the bubble stays rooted
+    at the cavity. Zero when the cavity is vapour, one when it is liquid; the points sit
+    at (x_pin, mid-channel) and vary only in time."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from naviernet.training import _pin_nucleation_loss
+
+    domain = SimpleNamespace(x_pin=0.7, y_min=0.0, y_max=1.0, t_min=0.0, t_max=1.0)
+    cfg = make_config(_TINY_TRAIN)  # model.pin_y defaults to 0.5 (mid-channel)
+    rng = np.random.default_rng(0)
+
+    class Field:
+        def __init__(self, value):
+            self.value = value
+            self.seen = None
+
+        def alpha(self, x, c=None):
+            self.seen = x
+            return torch.full((x.shape[0], 1), self.value)
+
+    vapour, liquid = Field(1.0), Field(0.0)
+    assert _pin_nucleation_loss(vapour, domain, cfg, rng, 32, "cpu").item() == pytest.approx(
+        0.0
+    )
+    assert _pin_nucleation_loss(liquid, domain, cfg, rng, 32, "cpu").item() == pytest.approx(
+        1.0
+    )
+
+    pts = vapour.seen
+    assert torch.allclose(pts[:, 0], torch.full((32,), 0.7)), "streamwise fixed at x_pin"
+    assert torch.allclose(pts[:, 1], torch.full((32,), 0.5)), "fixed at mid-channel height"
+    assert pts[:, 2].min() >= 0.0 and pts[:, 2].max() <= 1.0 and pts[:, 2].std() > 0, (
+        "the anchor sweeps all times"
+    )
+
+
+def test_pin_nucleation_trains_and_reduces_the_anchor_violation(tmp_path):
+    """A run with the geometric pin on trains to finite losses and records + drives down
+    the pin term (the cavity is pulled toward vapour). Default off leaves it absent."""
+    import math
+
+    from naviernet.training import train
+
+    cfg = make_config(
+        [
+            f"paths.root={tmp_path}",
+            *_TINY_TRAIN,
+            "training.steps=4",
+            "training.log_every=1",
+            "model.pin_nucleation=true",
+        ]
+    )
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+
+    _, _, state = train(cfg, paths)
+
+    assert "pin" in state["hist"][-1], "the pin term is logged"
+    for record in state["hist"]:
+        for name, value in record.items():
+            assert math.isfinite(value), f"{name} was not finite"
+    assert paths.checkpoint.exists()
+
+
+def test_pin_nucleation_off_is_absent(tmp_path):
+    """Default (pin off) adds no term -- the history has no `pin` key."""
+    from naviernet.training import train
+
+    cfg = make_config([f"paths.root={tmp_path}", *_TINY_TRAIN, "training.steps=2"])
+    paths = RunPaths.from_config(cfg)
+    _stage(paths)
+    _, _, state = train(cfg, paths)
+    assert "pin" not in state["hist"][-1]
+
+
 def test_nucleation_pulse_requires_temperature(tmp_path):
     """The pulse heats the energy equation, so enabling it on a Stage-A model (no T)
     fails loudly rather than silently doing nothing."""

@@ -63,6 +63,21 @@ def _pulse_groups(groups: dict, cfg, domain) -> dict:
     }
 
 
+def _pin_nucleation_loss(model, domain, cfg, rng, n: int, device, c=None) -> torch.Tensor:
+    """Geometric nucleation pin: penalise the fixed cavity ``(x_pin, mid-height)`` for
+    not being vapour (``alpha=1``) across ``n`` times spanning the run.
+
+    The bubble is rooted at the cavity for all time; anchoring it here keeps it from
+    drifting in the held-out late frames. Unlike a prescribed heat source (which the free
+    T/s fields can compensate away), this constrains the interface field directly."""
+    y = domain.y_min + cfg.model.pin_y * (domain.y_max - domain.y_min)
+    t = rng.uniform(domain.t_min, domain.t_max, n).astype(np.float32)
+    pts = np.stack([np.full(n, domain.x_pin, np.float32), np.full(n, y, np.float32), t], axis=1)
+    x = torch.tensor(pts, device=device)
+    cx = c.expand(n, -1) if c is not None else None
+    return ((model.alpha(x, cx) - 1.0) ** 2).mean()
+
+
 def _initial_state(cfg, equations) -> dict:
     weights = cfg.training.weights
     w = {"data": float(weights.data)}
@@ -688,6 +703,13 @@ def train(
             ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
         else:
             total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
+        # Geometric nucleation pin (opt-in): anchor the bubble at the fixed cavity for all
+        # time. Added after the objective (not rebalanced), and recorded for logging.
+        if cfg.model.pin_nucleation:
+            losses["pin"] = _pin_nucleation_loss(
+                model, data.domain, cfg, rng, tcfg.n_bc, device
+            )
+            total = total + cfg.model.pin_weight * losses["pin"]
         total.backward()
         opt.step()
 
@@ -882,6 +904,17 @@ def _train_joint(
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
         total = _total_loss(model, losses, coll_batches, weights, schedule, step, plan)
+        # Geometric nucleation pin (opt-in): each dataset's cavity, averaged.
+        if cfg.model.pin_nucleation:
+            losses["pin"] = torch.stack(
+                [
+                    _pin_nucleation_loss(
+                        model, cx.data.domain, cfg, rng, tcfg.n_bc, device, c=cx.c
+                    )
+                    for cx in contexts
+                ]
+            ).mean()
+            total = total + cfg.model.pin_weight * losses["pin"]
         total.backward()
         opt.step()
 
