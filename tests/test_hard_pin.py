@@ -9,74 +9,27 @@ checkpoint -> reloaded model.
 
 from __future__ import annotations
 
-import json
 import math
 
 import numpy as np
 import pytest
 import torch
 
-from naviernet.utils.paths import RunPaths
-from tests.conftest import make_config
-
-GROWING_H, GROWING_W, GROWING_FRAMES = 6, 12, 4
-ROOT_COL = 2  # the stationary (nucleation-side) bubble edge, all frames
-VAPOR_ROWS = slice(2, 4)  # the bubble's y-extent at the root
-
-
-def _write_growing_bubble(
-    path, n_frames: int = GROWING_FRAMES, root_col: int = ROOT_COL, groups=None
-) -> None:
-    """A synthetic growth event: the root edge fixed at ``root_col``, the front
-    advancing one column per frame -- the geometry the anchor measurement is for.
-    ``groups`` (when given) is recorded as preprocess would, so the dataset can
-    join a conditioned multi-dataset run."""
-    alpha = np.zeros((n_frames, GROWING_H, GROWING_W), dtype=np.float32)
-    for k in range(n_frames):
-        alpha[k, VAPOR_ROWS, root_col : root_col + 3 + k] = 1.0
-    meta = {
-        "x_pin_star": 0.2,
-        "t_ref_ms": 1.5,
-        "n_frames_usable": n_frames,
-        "n_frames_event": n_frames,
-        "frame_numbers": list(range(1, n_frames + 1)),
-    }
-    if groups is not None:
-        meta["groups"] = groups
-    np.savez_compressed(
-        path,
-        alpha=alpha,
-        sdf=((0.5 - alpha) * 0.1).astype(np.float32),
-        valid=np.ones_like(alpha),
-        masks_camera=(alpha > 0.5).astype(np.uint8),
-        x_star=np.linspace(0, 1.1, GROWING_W, dtype=np.float32),
-        y_star=np.linspace(0, 0.5, GROWING_H, dtype=np.float32),
-        t_star=(np.arange(n_frames) * 0.1).astype(np.float32),
-        meta=json.dumps(meta),
-    )
-
-
-def _staged_run(tmp_path, overrides=None):
-    """Compose a tiny run over the synthetic growth event, as the CLI would."""
-    cfg = make_config(
-        [
-            f"paths.root={tmp_path}",
-            "model.hidden=8",
-            "model.layers=2",
-            "model.fourier_feats=4",
-            "training.steps=2",
-            "training.n_data=16",
-            "training.n_coll=16",
-            "training.n_bc=8",
-            "training.holdout_frame=-1",
-            *(overrides or []),
-        ]
-    )
-    paths = RunPaths.from_config(cfg)
-    paths.ensure()
-    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
-    _write_growing_bubble(paths.tensors)
-    return cfg, paths
+from tests.conftest import (
+    GROWING_FRAMES,
+    GROWING_H,
+    GROWING_W,
+    JOINT_SPECS,
+    ROOT_COL,
+    VAPOR_ROWS,
+    make_config,
+)
+from tests.conftest import (
+    staged_joint_run as _staged_joint_run,
+)
+from tests.conftest import (
+    staged_run as _staged_run,
+)
 
 
 def test_hard_pin_holds_the_interface_at_the_anchor_for_all_t(tmp_path):
@@ -392,39 +345,6 @@ def test_root_position_picks_the_edge_nearer_the_anchor():
 
 # --- Joint (multi-dataset) runs ----------------------------------------------
 
-JOINT_SPECS = (("ds_a", 2.0, 2), ("ds_b", 5.0, 6))  # name, q_wall, root column
-
-
-def _staged_joint_run(tmp_path, overrides=None):
-    """Two synthetic datasets with distinct regimes AND distinct root columns,
-    staged for a conditioned joint run, as preprocess would have left them."""
-    from naviernet.physics.groups import compute_groups
-
-    names = ",".join(name for name, _, _ in JOINT_SPECS)
-    cfg = make_config(
-        [
-            f"paths.root={tmp_path}",
-            f"datasets=[{names}]",
-            "model.hidden=8",
-            "model.layers=2",
-            "model.fourier_feats=4",
-            "training.steps=2",
-            "training.n_data=16",
-            "training.n_coll=16",
-            "training.n_bc=8",
-            "training.holdout_frame=-1",
-            *(overrides or []),
-        ]
-    )
-    paths = RunPaths.from_config(cfg)
-    paths.ensure()
-    for name, q_wall, root_col in JOINT_SPECS:
-        ds_paths = paths.for_dataset(name)
-        ds_paths.processed_dir.mkdir(parents=True, exist_ok=True)
-        groups = compute_groups(make_config([f"experiment.q_wall_W_cm2={q_wall}"]))
-        _write_growing_bubble(ds_paths.tensors, root_col=root_col, groups=groups)
-    return cfg, paths
-
 
 def test_joint_hard_pin_anchors_each_dataset_at_its_own_root(tmp_path):
     """One conditioned model, two datasets with different roots: each dataset's
@@ -517,6 +437,6 @@ def test_joint_hard_pin_evaluates(tmp_path):
 
     report = evaluate_joint(cfg, model, contexts, paths, heldout_datasets=heldout)
 
-    assert set(report["per_dataset"]) == {name for name, _, _ in JOINT_SPECS}
+    assert set(report["per_dataset"]) == {spec[0] for spec in JOINT_SPECS}
     assert paths.metrics_json.exists()
     assert json_mod.loads(paths.metrics_json.read_text())["datasets"]

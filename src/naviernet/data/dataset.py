@@ -211,13 +211,46 @@ class BubbleDataset:
         column in y*. Orientation-agnostic: whichever edge is stationary wins,
         so a flipped series needs no special-casing.
         """
-        rows = [r for r in range(self.n_event) if r not in set(self.validation_rows)]
+        rows = self._training_visible_event_rows()
         col = self._stationary_root_column(rows)
         return float(self.x[col]), self._root_y_center(rows, col)
+
+    def _training_visible_event_rows(self) -> list[int]:
+        """Event rows that supervision can see -- the single definition every
+        leakage-sensitive measurement (root anchor, growth-rate reference)
+        derives from, so 'training-visible' cannot drift between them."""
+        held_out = set(self.validation_rows)
+        return [r for r in range(self.n_event) if r not in held_out]
 
     def _vapor(self, row: int) -> np.ndarray:
         """The row's valid vapour mask (see :data:`INTERFACE_ALPHA`)."""
         return (self.alpha[row] > INTERFACE_ALPHA) & (self.valid[row] > 0)
+
+    @cached_property
+    def supervised_growth_rate(self) -> float:
+        """Measured bubble-area growth rate over the last two *training-visible*
+        event frames, in area* per t*.
+
+        The kinematic growth constraints normalize by this reference so their
+        terms are O(1). Data-visible only: held-out rows never enter, so the
+        reference can leak nothing about the extrapolation window.
+        """
+        rows = self._training_visible_event_rows()
+        if len(rows) < 2:
+            raise ValueError(
+                "training.kinematics needs a growth-rate reference, but fewer than "
+                "two event frames are training-visible."
+            )
+        first, last = rows[-2], rows[-1]
+        area = [float(self._vapor(r).mean()) * self.domain.area for r in (first, last)]
+        rate = (area[1] - area[0]) / (float(self.t[last]) - float(self.t[first]))
+        if rate <= 0:
+            raise ValueError(
+                f"training.kinematics needs a growing supervised tail, but the measured "
+                f"rate over frames {self.frame_numbers[first]}->{self.frame_numbers[last]} "
+                f"is {rate:.4g} (<= 0)."
+            )
+        return rate
 
     def _stationary_root_column(self, rows: list[int]) -> int:
         """The median column of the temporally stationary bubble edge -- of the two

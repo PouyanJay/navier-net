@@ -29,7 +29,7 @@ from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BoundPINN, BubblePINN
-from naviernet.physics import registry, weighting
+from naviernet.physics import kinematics, registry, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
@@ -111,6 +111,84 @@ def _check_pin_compat(cfg, ckpt: dict, path) -> None:
             f"composes model.pin_d_ref={float(cfg.model.pin_d_ref)}; pass the value the "
             f"run was trained with."
         )
+
+
+def _validate_training_config(tcfg, fields) -> None:
+    """Every up-front training-config validation, shared by both loops."""
+    _validate_causal(tcfg)
+    _validate_weighting(tcfg)
+    _validate_kinematics(tcfg, fields)
+
+
+def _validate_kinematics(tcfg, fields) -> None:
+    """Reject a degenerate kinematics config up front, loudly."""
+    if not tcfg.kinematics:
+        return
+    if tcfg.kin_grid < 2:
+        raise ValueError(f"training.kin_grid={tcfg.kin_grid} must be >= 2 (a quadrature grid)")
+    if tcfg.kin_times < 1:
+        raise ValueError(f"training.kin_times={tcfg.kin_times} must be >= 1")
+    if not 0.0 < tcfg.kin_time_frac <= 1.0:
+        raise ValueError(f"training.kin_time_frac={tcfg.kin_time_frac} must be in (0, 1]")
+    for key in (
+        "kin_weight_mono",
+        "kin_weight_balance",
+        "kin_weight_evap",
+        "kin_margin_frac",
+        "kin_evap_floor",
+        "kin_ramp",
+    ):
+        if getattr(tcfg, key) < 0:
+            raise ValueError(f"training.{key}={getattr(tcfg, key)} must be >= 0")
+    if tcfg.kin_weight_evap > 0 and "T" not in fields:
+        raise ValueError(
+            "training.kin_weight_evap > 0 needs the 'T' field (the evaporation drive "
+            "reads the temperature). Use the Stage-B model, or set "
+            "training.kin_weight_evap=0 to run mono+balance only."
+        )
+
+
+def _kin_ramp(step: int, start_step: int, ramp_steps: int) -> float:
+    """Linear ramp from ``start_step`` over ``ramp_steps`` steps (0 disables the
+    ramp; before ``start_step`` the factor is 0)."""
+    if step < start_step:
+        return 0.0
+    if ramp_steps <= 0:
+        return 1.0
+    return min(1.0, (step - start_step + 1) / ramp_steps)
+
+
+def _kin_schedule(step: int, first_step: int, tcfg) -> kinematics.KinematicSchedule:
+    """The per-step ramp factors for the source-reading kinematic terms.
+
+    Balance ramps from this call's first step (the source field is noise
+    early). The evap floor additionally waits out the Stage-B warm-up: until it
+    ends the temperature net has received zero gradient, and flooring the
+    source against an untrained temperature pattern would bias exactly the
+    late-window behaviour the term exists to fix."""
+    balance = _kin_ramp(step, first_step, tcfg.kin_ramp)
+    evap_start = max(first_step, int(tcfg.stage_b_warmup_steps) + 1)
+    return kinematics.KinematicSchedule(
+        balance=balance, evap=_kin_ramp(step, evap_start, tcfg.kin_ramp)
+    )
+
+
+def _kinematic_plan(cfg, data: BubbleDataset, device) -> kinematics.KinematicPlan | None:
+    """The run's fixed kinematic quadrature when the constraints are on, else
+    ``None``. Built once (deterministic, no RNG) so resume reproduces it."""
+    tcfg = cfg.training
+    if not tcfg.kinematics:
+        return None
+    rate = data.supervised_growth_rate
+    plan = kinematics.build_plan(data.domain, rate, tcfg, device)
+    log.info(
+        "kinematics on: %d x %d^2 quadrature over t* >= %.3f, r_ref=%.4f",
+        plan.n_times,
+        int(tcfg.kin_grid),
+        float(plan.points[:, 2].min()),
+        rate,
+    )
+    return plan
 
 
 def _initial_state(cfg, equations) -> dict:
@@ -622,8 +700,7 @@ def train(
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
     tcfg = cfg.training
-    _validate_causal(tcfg)
-    _validate_weighting(tcfg)
+    _validate_training_config(tcfg, cfg.model.fields)
     rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
@@ -637,6 +714,7 @@ def train(
     groups = _pulse_groups(groups, cfg, data.domain)
     model = BubblePINN(cfg, pin=_pin_anchor(cfg, data)).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
+    kin_plan = _kinematic_plan(cfg, data, device)
 
     equations = registry.enabled_equations(cfg.model.fields)
     rebalanced = registry.rebalanced_terms(equations)
@@ -750,11 +828,22 @@ def train(
             ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
         else:
             total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
+        kin_record: dict[str, float] = {}
+        if kin_plan is not None:
+            # Outside the causal gate, RBA, and the rebalancer by construction:
+            # added directly to the total with fixed config weights.
+            kin_total, kin_record = kinematics.kinematic_losses(
+                kinematics.KinematicContext(model, tcfg, groups),
+                kin_plan,
+                _kin_schedule(step, first_step, tcfg),
+            )
+            total = total + kin_total
         total.backward()
         opt.step()
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
+            record.update(kin_record)
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
@@ -802,6 +891,8 @@ class _JointDataset:
     # The dataset's measured root anchor when the hard pin is on, else None.
     # Joint models bind it per call: model.bound(c, pin=pin).
     pin: tuple[float, float] | None = None
+    # The dataset's fixed kinematic quadrature when the constraints are on.
+    kin: kinematics.KinematicPlan | None = None
 
 
 def _load_joint_datasets(
@@ -837,6 +928,7 @@ def _load_joint_datasets(
                 c,
                 float(groups["u_inlet_star"]),
                 pin=_pin_anchor(cfg, data),
+                kin=_kinematic_plan(cfg, data, device),
             )
         )
     return contexts
@@ -878,6 +970,25 @@ def _joint_losses(
     return {name: loss / n for name, loss in aggregate.items()}, coll_batches
 
 
+def _joint_kinematic_losses(
+    model, contexts, tcfg, schedule: kinematics.KinematicSchedule
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """The kinematic total averaged over the datasets, each evaluated through its
+    pin-bound view on its own quadrature/references; the logged values are the
+    across-dataset means of the raw term magnitudes."""
+    totals = []
+    merged: dict[str, float] = {}
+    for cx in contexts:
+        view = model.bound(cx.c, pin=cx.pin)
+        kin_total, kin_record = kinematics.kinematic_losses(
+            kinematics.KinematicContext(view, tcfg, cx.groups), cx.kin, schedule
+        )
+        totals.append(kin_total)
+        for name, value in kin_record.items():
+            merged[name] = merged.get(name, 0.0) + value / len(contexts)
+    return torch.stack(totals).mean(), merged
+
+
 def _train_joint(
     cfg,
     paths: RunPaths,
@@ -894,8 +1005,7 @@ def _train_joint(
     untouched; this runs only when ``cfg.datasets`` names more than one series.
     """
     tcfg = cfg.training
-    _validate_causal(tcfg)
-    _validate_weighting(tcfg)
+    _validate_training_config(tcfg, cfg.model.fields)
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
@@ -965,11 +1075,18 @@ def _train_joint(
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
         total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
+        kin_record: dict[str, float] = {}
+        if tcfg.kinematics:
+            kin_total, kin_record = _joint_kinematic_losses(
+                model, contexts, tcfg, _kin_schedule(step, first_step, tcfg)
+            )
+            total = total + kin_total
         total.backward()
         opt.step()
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
+            record.update(kin_record)
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
