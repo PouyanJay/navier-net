@@ -328,6 +328,19 @@ def test_kinematics_on_diverges_from_off(tmp_path):
     assert any(not torch.equal(off[k], on[k]) for k in off)
 
 
+def test_kinematics_resumes_cleanly(tmp_path):
+    """Chunked training: the deterministic quadrature/references rebuild
+    identically on resume and the terms keep flowing."""
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(tmp_path, [*TINY_KIN, "training.steps=1", "training.log_every=1"])
+    train(cfg, paths)
+    _, _, state = train(cfg, paths)  # resume from the checkpoint
+
+    assert state["done"] == 2, "the second call must resume, not restart"
+    assert "kin_mono" in state["hist"][-1]
+
+
 # --- Front-position metric (bench) -------------------------------------------
 
 
