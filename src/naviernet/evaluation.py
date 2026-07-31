@@ -143,6 +143,21 @@ def root_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
     return lo if abs(lo - x_anchor) <= abs(hi - x_anchor) else hi
 
 
+def front_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
+    """The bubble-front x* of one mask: the x-extent edge FARTHER from the root
+    anchor -- :func:`root_position`'s mirror. ``nan`` for an empty mask.
+
+    The extrapolation bench reports it against the measured front per frame:
+    the late-window front undershoot is the failure the kinematic growth
+    constraints target.
+    """
+    extent = mask_x_extent(mask)
+    if extent is None:
+        return float("nan")
+    lo, hi = float(xs[extent[0]]), float(xs[extent[1]])
+    return hi if abs(lo - x_anchor) <= abs(hi - x_anchor) else lo
+
+
 def measured_trajectory(cfg, data) -> GrowthTrajectory:
     """The same quantities read straight off the segmented camera frames (ms)."""
     n_event = data.n_event

@@ -326,3 +326,50 @@ def test_kinematics_on_diverges_from_off(tmp_path):
     off = torch.load(paths_off.checkpoint, weights_only=False)["model"]
     on = torch.load(paths_on.checkpoint, weights_only=False)["model"]
     assert any(not torch.equal(off[k], on[k]) for k in off)
+
+
+# --- Front-position metric (bench) -------------------------------------------
+
+
+def test_front_position_picks_the_edge_farther_from_the_anchor():
+    """The front is the mask's moving edge -- the x-extent edge FARTHER from the
+    root anchor (root_position's mirror); NaN for an empty mask."""
+    from naviernet.evaluation import front_position
+
+    xs = np.linspace(0.0, 1.0, 11, dtype=np.float32)
+    mask = np.zeros((3, 11), dtype=bool)
+    mask[1, 2:8] = True  # bubble spanning x* 0.2 .. 0.7
+
+    assert front_position(mask, xs, x_anchor=0.15) == pytest.approx(0.7)
+    assert front_position(mask, xs, x_anchor=0.75) == pytest.approx(0.2)
+    assert math.isnan(front_position(np.zeros((3, 11), dtype=bool), xs, x_anchor=0.5))
+
+
+# --- Joint (multi-dataset) runs ----------------------------------------------
+
+
+def test_joint_kinematics_trains_and_logs(tmp_path):
+    """Each dataset gets its own quadrature and growth-rate reference; the
+    logged kin terms are the across-dataset means."""
+    from naviernet.training import train
+    from tests.test_hard_pin import _staged_joint_run
+
+    cfg, paths = _staged_joint_run(tmp_path, [*TINY_KIN, "training.log_every=1"])
+    _, _, state = train(cfg, paths)
+
+    record = state["hist"][-1]
+    assert "kin_mono" in record and math.isfinite(record["kin_mono"])
+    assert "kin_vbal" in record
+
+
+def test_joint_kinematics_composes_with_pin_and_causal(tmp_path):
+    """The full bench stack: joint + hard pin + causal + kinematics trains."""
+    from naviernet.training import train
+    from tests.test_hard_pin import _staged_joint_run
+
+    cfg, paths = _staged_joint_run(
+        tmp_path, [*TINY_KIN, "model.hard_pin=true", "training.causal_weighting=true"]
+    )
+    train(cfg, paths)
+
+    assert paths.checkpoint.exists()

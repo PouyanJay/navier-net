@@ -867,6 +867,8 @@ class _JointDataset:
     # The dataset's measured root anchor when the hard pin is on, else None.
     # Joint models bind it per call: model.bound(c, pin=pin).
     pin: tuple[float, float] | None = None
+    # The dataset's fixed kinematic quadrature when the constraints are on.
+    kin: kinematics.KinematicPlan | None = None
 
 
 def _load_joint_datasets(
@@ -902,6 +904,7 @@ def _load_joint_datasets(
                 c,
                 float(groups["u_inlet_star"]),
                 pin=_pin_anchor(cfg, data),
+                kin=_kinematic_plan(cfg, data, device),
             )
         )
     return contexts
@@ -943,6 +946,23 @@ def _joint_losses(
     return {name: loss / n for name, loss in aggregate.items()}, coll_batches
 
 
+def _joint_kinematic_losses(
+    model, contexts, tcfg, ramp: float
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """The kinematic total averaged over the datasets, each evaluated through its
+    pin-bound view on its own quadrature/references; the logged values are the
+    across-dataset means of the raw term magnitudes."""
+    totals = []
+    merged: dict[str, float] = {}
+    for cx in contexts:
+        view = model.bound(cx.c, pin=cx.pin)
+        kin_total, kin_record = kinematics.kinematic_losses(view, cx.kin, tcfg, cx.groups, ramp)
+        totals.append(kin_total)
+        for name, value in kin_record.items():
+            merged[name] = merged.get(name, 0.0) + value / len(contexts)
+    return torch.stack(totals).mean(), merged
+
+
 def _train_joint(
     cfg,
     paths: RunPaths,
@@ -961,13 +981,7 @@ def _train_joint(
     tcfg = cfg.training
     _validate_causal(tcfg)
     _validate_weighting(tcfg)
-    if getattr(tcfg, "kinematics", False):
-        # Joint kinematic constraints need per-dataset quadratures/references;
-        # wired for single-dataset runs first. Raise rather than silently skip.
-        raise NotImplementedError(
-            "training.kinematics=true is not yet supported for joint (multi-dataset) "
-            "runs; disable it for joint runs for now."
-        )
+    _validate_kinematics(tcfg, cfg.model.fields)
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
@@ -1037,11 +1051,18 @@ def _train_joint(
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
         total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
+        kin_record: dict[str, float] = {}
+        if tcfg.kinematics:
+            kin_total, kin_record = _joint_kinematic_losses(
+                model, contexts, tcfg, _kin_ramp(step, first_step, tcfg.kin_ramp)
+            )
+            total = total + kin_total
         total.backward()
         opt.step()
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
+            record.update(kin_record)
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
