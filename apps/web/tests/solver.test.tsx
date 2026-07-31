@@ -417,7 +417,25 @@ describe("SolverView", () => {
     expect(body.kinematics).toBe(true);
     expect(body.kin_margin_frac).toBe(0.65);
     expect(body.kin_weight_mono).toBe(1);
+    expect(body.kin_weight_balance).toBe(1);
     expect(body.kin_weight_evap).toBe(0);
+  });
+
+  it("toggling the pin and growth constraints off hides their fields again", async () => {
+    stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
+    expect(screen.getByLabelText(/Pin gate scale/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Growth margin/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
+    expect(screen.queryByLabelText(/Pin gate scale/)).toBeNull();
+    expect(screen.getByLabelText(/Growth margin/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
+    expect(screen.queryByLabelText(/Growth margin/)).toBeNull();
   });
 
   it("holds out a whole series from its row and posts it as a transfer condition", async () => {

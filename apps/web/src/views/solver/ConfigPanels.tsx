@@ -380,6 +380,57 @@ function AdvancedTrainingSection({
           onChange={(adaptive_collocation) => onForm({ adaptive_collocation })}
           disabled={locked || !rba}
         />
+      </div>
+      <PinKinematicsControls form={form} onForm={onForm} locked={locked} />
+    </>
+  );
+}
+
+/** The pin/kinematics numeric fields, keyed by the switch that reveals them.
+ * `bounds` names a FORM_BOUNDS entry (the three kin weights share one, like the
+ * loss-weight fields share FORM_BOUNDS.weight). */
+const PIN_KIN_FIELDS = [
+  {
+    key: "pin_d_ref",
+    gate: "hard_pin",
+    label: "Pin gate scale",
+    hint: "d_ref · x* · far field free beyond ~2×",
+    bounds: "pin_d_ref",
+    step: 0.01,
+  },
+  {
+    key: "kin_margin_frac",
+    gate: "kinematics",
+    label: "Growth margin",
+    hint: "× supervised-tail rate",
+    bounds: "kin_margin_frac",
+    step: 0.05,
+  },
+  { key: "kin_weight_mono", gate: "kinematics", label: "Monotone weight", bounds: "kin_weight", step: 0.1 },
+  { key: "kin_weight_balance", gate: "kinematics", label: "Balance weight", bounds: "kin_weight", step: 0.1 },
+  {
+    key: "kin_weight_evap",
+    gate: "kinematics",
+    label: "Evap-floor weight",
+    hint: "0 = off · destabilizes when driven",
+    bounds: "kin_weight",
+    step: 0.1,
+  },
+] as const;
+
+/** The hard root pin and the kinematic growth constraints: two independent
+ * switches whose tuning fields appear only while their feature is on. The evap
+ * floor starts at 0 -- the bench showed it destabilizes the front, so enabling
+ * it is a deliberate act, never a default. */
+function PinKinematicsControls({
+  form,
+  onForm,
+  locked,
+}: AdvancedTrainingSectionProps) {
+  const fields = PIN_KIN_FIELDS.filter((spec) => form[spec.gate]);
+  return (
+    <>
+      <div className="switch-rows">
         <Switch
           label="Hard root pin"
           hint="anchor the root at the measured cavity"
@@ -395,62 +446,21 @@ function AdvancedTrainingSection({
           disabled={locked}
         />
       </div>
-      {(form.hard_pin || form.kinematics) && (
+      {fields.length > 0 && (
         <div className="cfg cfg-narrow">
-          {form.hard_pin && (
+          {fields.map((spec) => (
             <NumberField
-              label="Pin gate scale"
-              hint="d_ref · x* · far field free beyond ~2×"
-              value={form.pin_d_ref}
-              onChange={(pin_d_ref) => onForm({ pin_d_ref })}
-              min={FORM_BOUNDS.pin_d_ref.min}
-              max={FORM_BOUNDS.pin_d_ref.max}
-              step={0.01}
+              key={spec.key}
+              label={spec.label}
+              hint={"hint" in spec ? spec.hint : undefined}
+              value={form[spec.key]}
+              onChange={(value) => onForm({ [spec.key]: value })}
+              min={FORM_BOUNDS[spec.bounds].min}
+              max={FORM_BOUNDS[spec.bounds].max}
+              step={spec.step}
               disabled={locked}
             />
-          )}
-          {form.kinematics && (
-            <>
-              <NumberField
-                label="Growth margin"
-                hint="× supervised-tail rate"
-                value={form.kin_margin_frac}
-                onChange={(kin_margin_frac) => onForm({ kin_margin_frac })}
-                min={FORM_BOUNDS.kin_margin_frac.min}
-                max={FORM_BOUNDS.kin_margin_frac.max}
-                step={0.05}
-                disabled={locked}
-              />
-              <NumberField
-                label="Monotone weight"
-                value={form.kin_weight_mono}
-                onChange={(kin_weight_mono) => onForm({ kin_weight_mono })}
-                min={FORM_BOUNDS.kin_weight.min}
-                max={FORM_BOUNDS.kin_weight.max}
-                step={0.1}
-                disabled={locked}
-              />
-              <NumberField
-                label="Balance weight"
-                value={form.kin_weight_balance}
-                onChange={(kin_weight_balance) => onForm({ kin_weight_balance })}
-                min={FORM_BOUNDS.kin_weight.min}
-                max={FORM_BOUNDS.kin_weight.max}
-                step={0.1}
-                disabled={locked}
-              />
-              <NumberField
-                label="Evap-floor weight"
-                hint="0 = off · destabilizes when driven"
-                value={form.kin_weight_evap}
-                onChange={(kin_weight_evap) => onForm({ kin_weight_evap })}
-                min={FORM_BOUNDS.kin_weight.min}
-                max={FORM_BOUNDS.kin_weight.max}
-                step={0.1}
-                disabled={locked}
-              />
-            </>
-          )}
+          ))}
         </div>
       )}
     </>

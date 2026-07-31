@@ -357,10 +357,13 @@ def test_launch_with_hard_pin_and_kinematics_composes_and_trains(
 
     cfg = client.get(f"/api/runs/{run_id}").json()["config"]
     assert cfg["model"]["hard_pin"] is True
-    assert cfg["model"]["pin_d_ref"] == 0.1
+    assert cfg["model"]["pin_d_ref"] == pytest.approx(0.1)
     assert cfg["training"]["kinematics"] is True
-    assert cfg["training"]["kin_margin_frac"] == 0.5
-    assert cfg["training"]["kin_weight_evap"] == 0.0, "platform must not enable the evap floor"
+    assert cfg["training"]["kin_margin_frac"] == pytest.approx(0.5)
+    assert cfg["training"]["kin_weight_balance"] == pytest.approx(1.0)
+    assert cfg["training"]["kin_weight_evap"] == pytest.approx(0.0), (
+        "platform must not enable the evap floor"
+    )
 
 
 def test_launch_defaults_leave_pin_and_kinematics_off(client: TestClient, repo_root: Path):
@@ -422,6 +425,11 @@ def test_a_failing_run_reports_error_over_the_stream(client: TestClient, repo_ro
             id="adaptive-requires-rba",
         ),
         pytest.param({**TINY_RUN, "weighting": "bogus"}, 422, id="unknown-weighting"),
+        pytest.param({**TINY_RUN, "pin_d_ref": 0}, 422, id="pin-d-ref-must-be-positive"),
+        pytest.param({**TINY_RUN, "pin_d_ref": 2.1}, 422, id="pin-d-ref-above-range"),
+        pytest.param({**TINY_RUN, "kin_margin_frac": -0.1}, 422, id="kin-margin-below-range"),
+        pytest.param({**TINY_RUN, "kin_weight_mono": 101}, 422, id="kin-weight-above-range"),
+        pytest.param({**TINY_RUN, "kin_weight_evap": -1}, 422, id="kin-evap-below-range"),
         pytest.param({"resume": True, "steps": 2}, 422, id="resume-needs-run-id"),
         pytest.param({**TINY_RUN, "dataset": "../evil"}, 404, id="traversal-shaped-dataset"),
         pytest.param({**TINY_RUN, "dataset": "."}, 404, id="dot-dataset"),

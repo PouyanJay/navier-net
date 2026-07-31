@@ -519,6 +519,9 @@ def _configure(
         # Hard root pin (model-level: the gate lives in the architecture) and the
         # kinematic growth constraints. The anchor/growth references are measured
         # from the dataset at load, so only the switches and scales travel here.
+        # NB series_overrides() is appended AFTER this list and Hydra's last
+        # override wins -- these keys deliberately overlap none of the per-series
+        # fields (MODEL_ARCH_FIELDS, Stage-B weight keys); keep it that way.
         f"model.hard_pin={str(request.hard_pin).lower()}",
         f"model.pin_d_ref={request.pin_d_ref}",
         f"training.kinematics={str(request.kinematics).lower()}",
