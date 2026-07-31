@@ -128,34 +128,31 @@ def nose_trajectory(cfg, model, data, c=None) -> GrowthTrajectory:
     return GrowthTrajectory(times, np.asarray(nose), np.asarray(area))
 
 
-def root_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
-    """The bubble-root x* of one mask: of the mask's two x-extent edges, the one
-    nearer the dataset's measured root anchor (orientation-agnostic, the same
-    convention the anchor measurement uses). ``nan`` for an empty mask.
-
-    The extrapolation bench reports this per frame -- the root staying at the
-    anchor on held-out frames is the hard pin's direct mechanistic check.
-    """
+def _bubble_edges(
+    mask: np.ndarray, xs: np.ndarray, x_anchor: float
+) -> tuple[float, float] | None:
+    """One mask's ``(root, front)`` x* -- the x-extent edge nearer the measured
+    root anchor and the one farther (orientation-agnostic, the same convention
+    the anchor measurement uses). ``None`` for an empty mask."""
     extent = mask_x_extent(mask)
     if extent is None:
-        return float("nan")
+        return None
     lo, hi = float(xs[extent[0]]), float(xs[extent[1]])
-    return lo if abs(lo - x_anchor) <= abs(hi - x_anchor) else hi
+    return (lo, hi) if abs(lo - x_anchor) <= abs(hi - x_anchor) else (hi, lo)
+
+
+def root_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
+    """The bubble-root x* of one mask (``nan`` when empty). The root staying at
+    the anchor on held-out frames is the hard pin's direct mechanistic check."""
+    edges = _bubble_edges(mask, xs, x_anchor)
+    return float("nan") if edges is None else edges[0]
 
 
 def front_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
-    """The bubble-front x* of one mask: the x-extent edge FARTHER from the root
-    anchor -- :func:`root_position`'s mirror. ``nan`` for an empty mask.
-
-    The extrapolation bench reports it against the measured front per frame:
-    the late-window front undershoot is the failure the kinematic growth
-    constraints target.
-    """
-    extent = mask_x_extent(mask)
-    if extent is None:
-        return float("nan")
-    lo, hi = float(xs[extent[0]]), float(xs[extent[1]])
-    return hi if abs(lo - x_anchor) <= abs(hi - x_anchor) else lo
+    """The bubble-front x* of one mask (``nan`` when empty). The late-window
+    front undershoot is the failure the kinematic growth constraints target."""
+    edges = _bubble_edges(mask, xs, x_anchor)
+    return float("nan") if edges is None else edges[1]
 
 
 def measured_trajectory(cfg, data) -> GrowthTrajectory:

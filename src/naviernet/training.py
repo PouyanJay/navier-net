@@ -113,9 +113,16 @@ def _check_pin_compat(cfg, ckpt: dict, path) -> None:
         )
 
 
+def _validate_training_config(tcfg, fields) -> None:
+    """Every up-front training-config validation, shared by both loops."""
+    _validate_causal(tcfg)
+    _validate_weighting(tcfg)
+    _validate_kinematics(tcfg, fields)
+
+
 def _validate_kinematics(tcfg, fields) -> None:
     """Reject a degenerate kinematics config up front, loudly."""
-    if not getattr(tcfg, "kinematics", False):
+    if not tcfg.kinematics:
         return
     if tcfg.kin_grid < 2:
         raise ValueError(f"training.kin_grid={tcfg.kin_grid} must be >= 2 (a quadrature grid)")
@@ -141,19 +148,36 @@ def _validate_kinematics(tcfg, fields) -> None:
         )
 
 
-def _kin_ramp(step: int, first_step: int, ramp_steps: int) -> float:
-    """Linear ramp for the balance/evap terms over this call's first
-    ``ramp_steps`` steps (the source field is noise early); 0 disables."""
+def _kin_ramp(step: int, start_step: int, ramp_steps: int) -> float:
+    """Linear ramp from ``start_step`` over ``ramp_steps`` steps (0 disables the
+    ramp; before ``start_step`` the factor is 0)."""
+    if step < start_step:
+        return 0.0
     if ramp_steps <= 0:
         return 1.0
-    return min(1.0, (step - first_step + 1) / ramp_steps)
+    return min(1.0, (step - start_step + 1) / ramp_steps)
+
+
+def _kin_schedule(step: int, first_step: int, tcfg) -> kinematics.KinematicSchedule:
+    """The per-step ramp factors for the source-reading kinematic terms.
+
+    Balance ramps from this call's first step (the source field is noise
+    early). The evap floor additionally waits out the Stage-B warm-up: until it
+    ends the temperature net has received zero gradient, and flooring the
+    source against an untrained temperature pattern would bias exactly the
+    late-window behaviour the term exists to fix."""
+    balance = _kin_ramp(step, first_step, tcfg.kin_ramp)
+    evap_start = max(first_step, int(tcfg.stage_b_warmup_steps) + 1)
+    return kinematics.KinematicSchedule(
+        balance=balance, evap=_kin_ramp(step, evap_start, tcfg.kin_ramp)
+    )
 
 
 def _kinematic_plan(cfg, data: BubbleDataset, device) -> kinematics.KinematicPlan | None:
     """The run's fixed kinematic quadrature when the constraints are on, else
     ``None``. Built once (deterministic, no RNG) so resume reproduces it."""
     tcfg = cfg.training
-    if not getattr(tcfg, "kinematics", False):
+    if not tcfg.kinematics:
         return None
     rate = data.supervised_growth_rate
     plan = kinematics.build_plan(data.domain, rate, tcfg, device)
@@ -676,9 +700,7 @@ def train(
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
     tcfg = cfg.training
-    _validate_causal(tcfg)
-    _validate_weighting(tcfg)
-    _validate_kinematics(tcfg, cfg.model.fields)
+    _validate_training_config(tcfg, cfg.model.fields)
     rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
@@ -811,7 +833,9 @@ def train(
             # Outside the causal gate, RBA, and the rebalancer by construction:
             # added directly to the total with fixed config weights.
             kin_total, kin_record = kinematics.kinematic_losses(
-                model, kin_plan, tcfg, groups, _kin_ramp(step, first_step, tcfg.kin_ramp)
+                kinematics.KinematicContext(model, tcfg, groups),
+                kin_plan,
+                _kin_schedule(step, first_step, tcfg),
             )
             total = total + kin_total
         total.backward()
@@ -947,7 +971,7 @@ def _joint_losses(
 
 
 def _joint_kinematic_losses(
-    model, contexts, tcfg, ramp: float
+    model, contexts, tcfg, schedule: kinematics.KinematicSchedule
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """The kinematic total averaged over the datasets, each evaluated through its
     pin-bound view on its own quadrature/references; the logged values are the
@@ -956,7 +980,9 @@ def _joint_kinematic_losses(
     merged: dict[str, float] = {}
     for cx in contexts:
         view = model.bound(cx.c, pin=cx.pin)
-        kin_total, kin_record = kinematics.kinematic_losses(view, cx.kin, tcfg, cx.groups, ramp)
+        kin_total, kin_record = kinematics.kinematic_losses(
+            kinematics.KinematicContext(view, tcfg, cx.groups), cx.kin, schedule
+        )
         totals.append(kin_total)
         for name, value in kin_record.items():
             merged[name] = merged.get(name, 0.0) + value / len(contexts)
@@ -979,9 +1005,7 @@ def _train_joint(
     untouched; this runs only when ``cfg.datasets`` names more than one series.
     """
     tcfg = cfg.training
-    _validate_causal(tcfg)
-    _validate_weighting(tcfg)
-    _validate_kinematics(tcfg, cfg.model.fields)
+    _validate_training_config(tcfg, cfg.model.fields)
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
@@ -1054,7 +1078,7 @@ def _train_joint(
         kin_record: dict[str, float] = {}
         if tcfg.kinematics:
             kin_total, kin_record = _joint_kinematic_losses(
-                model, contexts, tcfg, _kin_ramp(step, first_step, tcfg.kin_ramp)
+                model, contexts, tcfg, _kin_schedule(step, first_step, tcfg)
             )
             total = total + kin_total
         total.backward()

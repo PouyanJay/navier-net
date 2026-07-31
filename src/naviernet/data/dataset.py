@@ -211,9 +211,16 @@ class BubbleDataset:
         column in y*. Orientation-agnostic: whichever edge is stationary wins,
         so a flipped series needs no special-casing.
         """
-        rows = [r for r in range(self.n_event) if r not in set(self.validation_rows)]
+        rows = self._training_visible_event_rows()
         col = self._stationary_root_column(rows)
         return float(self.x[col]), self._root_y_center(rows, col)
+
+    def _training_visible_event_rows(self) -> list[int]:
+        """Event rows that supervision can see -- the single definition every
+        leakage-sensitive measurement (root anchor, growth-rate reference)
+        derives from, so 'training-visible' cannot drift between them."""
+        held_out = set(self.validation_rows)
+        return [r for r in range(self.n_event) if r not in held_out]
 
     def _vapor(self, row: int) -> np.ndarray:
         """The row's valid vapour mask (see :data:`INTERFACE_ALPHA`)."""
@@ -228,7 +235,7 @@ class BubbleDataset:
         terms are O(1). Data-visible only: held-out rows never enter, so the
         reference can leak nothing about the extrapolation window.
         """
-        rows = [r for r in range(self.n_event) if r not in set(self.validation_rows)]
+        rows = self._training_visible_event_rows()
         if len(rows) < 2:
             raise ValueError(
                 "training.kinematics needs a growth-rate reference, but fewer than "
