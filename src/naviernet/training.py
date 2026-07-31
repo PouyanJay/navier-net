@@ -113,6 +113,42 @@ def _check_pin_compat(cfg, ckpt: dict, path) -> None:
         )
 
 
+def _validate_kinematics(tcfg, fields) -> None:
+    """Reject a degenerate kinematics config up front, loudly."""
+    if not getattr(tcfg, "kinematics", False):
+        return
+    if tcfg.kin_grid < 2:
+        raise ValueError(f"training.kin_grid={tcfg.kin_grid} must be >= 2 (a quadrature grid)")
+    if tcfg.kin_times < 1:
+        raise ValueError(f"training.kin_times={tcfg.kin_times} must be >= 1")
+    if not 0.0 < tcfg.kin_time_frac <= 1.0:
+        raise ValueError(f"training.kin_time_frac={tcfg.kin_time_frac} must be in (0, 1]")
+    for key in (
+        "kin_weight_mono",
+        "kin_weight_balance",
+        "kin_weight_evap",
+        "kin_margin_frac",
+        "kin_evap_floor",
+        "kin_ramp",
+    ):
+        if getattr(tcfg, key) < 0:
+            raise ValueError(f"training.{key}={getattr(tcfg, key)} must be >= 0")
+    if tcfg.kin_weight_evap > 0 and "T" not in fields:
+        raise ValueError(
+            "training.kin_weight_evap > 0 needs the 'T' field (the evaporation drive "
+            "reads the temperature). Use the Stage-B model, or set "
+            "training.kin_weight_evap=0 to run mono+balance only."
+        )
+
+
+def _kin_ramp(step: int, first_step: int, ramp_steps: int) -> float:
+    """Linear ramp for the balance/evap terms over this call's first
+    ``ramp_steps`` steps (the source field is noise early); 0 disables."""
+    if ramp_steps <= 0:
+        return 1.0
+    return min(1.0, (step - first_step + 1) / ramp_steps)
+
+
 def _kinematic_plan(cfg, data: BubbleDataset, device) -> kinematics.KinematicPlan | None:
     """The run's fixed kinematic quadrature when the constraints are on, else
     ``None``. Built once (deterministic, no RNG) so resume reproduces it."""
@@ -642,6 +678,7 @@ def train(
     tcfg = cfg.training
     _validate_causal(tcfg)
     _validate_weighting(tcfg)
+    _validate_kinematics(tcfg, cfg.model.fields)
     rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
@@ -773,7 +810,9 @@ def train(
         if kin_plan is not None:
             # Outside the causal gate, RBA, and the rebalancer by construction:
             # added directly to the total with fixed config weights.
-            kin_total, kin_record = kinematics.kinematic_losses(model, kin_plan, tcfg)
+            kin_total, kin_record = kinematics.kinematic_losses(
+                model, kin_plan, tcfg, groups, _kin_ramp(step, first_step, tcfg.kin_ramp)
+            )
             total = total + kin_total
         total.backward()
         opt.step()
