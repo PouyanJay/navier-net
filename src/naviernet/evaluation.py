@@ -19,6 +19,7 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
+from naviernet.data.dataset import mask_x_extent
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -127,6 +128,21 @@ def nose_trajectory(cfg, model, data, c=None) -> GrowthTrajectory:
     return GrowthTrajectory(times, np.asarray(nose), np.asarray(area))
 
 
+def root_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
+    """The bubble-root x* of one mask: of the mask's two x-extent edges, the one
+    nearer the dataset's measured root anchor (orientation-agnostic, the same
+    convention the anchor measurement uses). ``nan`` for an empty mask.
+
+    The extrapolation bench reports this per frame -- the root staying at the
+    anchor on held-out frames is the hard pin's direct mechanistic check.
+    """
+    extent = mask_x_extent(mask)
+    if extent is None:
+        return float("nan")
+    lo, hi = float(xs[extent[0]]), float(xs[extent[1]])
+    return lo if abs(lo - x_anchor) <= abs(hi - x_anchor) else hi
+
+
 def measured_trajectory(cfg, data) -> GrowthTrajectory:
     """The same quantities read straight off the segmented camera frames (ms)."""
     n_event = data.n_event
@@ -217,7 +233,11 @@ def evaluate_joint(cfg, model, contexts, paths: RunPaths, heldout_datasets=None)
     paths.ensure()
 
     heldout = set(cfg.heldout_datasets if heldout_datasets is None else heldout_datasets)
-    reports = {cx.name: iou_report(cfg, model, cx.data, cx.c) for cx in contexts}
+    # Each dataset scores through its bound view: its conditioning row and -- on a
+    # hard-pin run -- its own root anchor (an unbound hard-pin call raises).
+    reports = {
+        cx.name: iou_report(cfg, model.bound(cx.c, pin=cx.pin), cx.data) for cx in contexts
+    }
 
     per_dataset: dict[str, dict] = {}
     transfer: dict[str, float] = {}
@@ -269,7 +289,7 @@ def _write_joint_trajectories(cfg, model, contexts, paths: RunPaths) -> None:
     """Per-dataset growth kinematics, held-out conditions included: transfer
     kinematics are evidence too."""
     for cx in contexts:
-        predicted = nose_trajectory(cfg, model, cx.data, cx.c)
+        predicted = nose_trajectory(cfg, model.bound(cx.c, pin=cx.pin), cx.data)
         _write_trajectory(cfg, cx.data, paths.trajectory_json_for(cx.name), predicted)
 
 

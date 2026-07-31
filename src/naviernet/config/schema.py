@@ -143,6 +143,13 @@ class ModelConfig:
     nucleation_pulse: bool = False
     pulse_t0: float = 0.1  # pulse active for the first this-fraction of the time window
     pulse_width: float = 0.05  # streamwise Gaussian sigma, as a fraction of the domain width
+    # Hard root pin: transform the level set so the interface (alpha = 0.5) passes
+    # through the dataset's measured bubble-root anchor at EVERY time, including
+    # times beyond the training window -- phi = tanh(dist/pin_d_ref) * N. Off by
+    # default -> phi is the raw network output, byte-for-byte. The anchor is
+    # derived from the data at load time, never configured by hand.
+    hard_pin: bool = False
+    pin_d_ref: float = 0.1  # saturation scale of the pin, in non-dim x* units
 
 
 @dataclass

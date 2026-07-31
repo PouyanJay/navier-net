@@ -17,11 +17,26 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 import torch
 
 from naviernet.utils.paths import RunPaths
+
+# The alpha level defining the interface itself: alpha = sigmoid(phi/eps) is 0.5
+# exactly on phi's zero contour. This is a definition, NOT the tunable IoU
+# threshold in cfg.evaluation.threshold -- do not wire it to config.
+INTERFACE_ALPHA = 0.5
+
+
+def mask_x_extent(mask: np.ndarray) -> tuple[int, int] | None:
+    """The first and last column of a 2-D boolean vapour mask, or ``None`` when
+    the mask is empty. The single convention every root/edge measurement uses."""
+    cols = np.nonzero(mask.any(axis=0))[0]
+    if cols.size == 0:
+        return None
+    return int(cols[0]), int(cols[-1])
 
 
 @dataclass(frozen=True)
@@ -183,6 +198,59 @@ class BubbleDataset:
     def event_frames(self) -> list[int]:
         """Camera frame numbers of the growth event, in row order."""
         return self.frame_numbers[: self.n_event]
+
+    @cached_property
+    def pin_anchor(self) -> tuple[float, float]:
+        """The bubble-root anchor ``(x*, y*)``: where the interface stays for all t.
+
+        Measured from the data, not assumed: over the *training-visible* event
+        frames (held-out rows excluded, so the anchor can never leak validation
+        information), the bubble's two x-extent edges are tracked and the
+        temporally stationary one -- the nucleation-side root -- is taken. The
+        anchor is that edge's median x* and the median centre of its vapour
+        column in y*. Orientation-agnostic: whichever edge is stationary wins,
+        so a flipped series needs no special-casing.
+        """
+        rows = [r for r in range(self.n_event) if r not in set(self.validation_rows)]
+        col = self._stationary_root_column(rows)
+        return float(self.x[col]), self._root_y_center(rows, col)
+
+    def _vapor(self, row: int) -> np.ndarray:
+        """The row's valid vapour mask (see :data:`INTERFACE_ALPHA`)."""
+        return (self.alpha[row] > INTERFACE_ALPHA) & (self.valid[row] > 0)
+
+    def _stationary_root_column(self, rows: list[int]) -> int:
+        """The median column of the temporally stationary bubble edge -- of the two
+        x-extent edges across ``rows``, the one with the smaller temporal spread
+        (ties keep the low edge, deterministically)."""
+        lo_cols, hi_cols = [], []
+        for r in rows:
+            extent = mask_x_extent(self._vapor(r))
+            if extent is None:
+                continue
+            lo_cols.append(extent[0])
+            hi_cols.append(extent[1])
+        if not lo_cols:
+            raise ValueError(
+                "model.hard_pin needs a bubble-root anchor, but no training frame "
+                "has any vapour (alpha > 0.5) -- check the dataset's masks."
+            )
+        root_cols = lo_cols if np.std(lo_cols) <= np.std(hi_cols) else hi_cols
+        return int(round(float(np.median(root_cols))))
+
+    def _root_y_center(self, rows: list[int], col: int) -> float:
+        """The median (over ``rows``) centre y* of the vapour column at ``col``."""
+        centers = []
+        for r in rows:
+            vapor_rows = np.nonzero(self._vapor(r)[:, col])[0]
+            if vapor_rows.size:
+                centers.append(float(self.y[vapor_rows].mean()))
+        if not centers:
+            raise ValueError(
+                "model.hard_pin found a stationary bubble edge but no vapour column "
+                f"at its median station (column {col}) -- the masks look degenerate."
+            )
+        return float(np.median(centers))
 
     def _coords(self, idx: np.ndarray) -> np.ndarray:
         """Map flat tensor indices to ``(x, y, t)`` coordinates."""

@@ -127,7 +127,7 @@ class Pipeline:
                 output_dir=self.paths.output_dir,
                 viz_dataset=context.name,
             ).ensure()
-            yield cfg_ds, model.bound(context.c), context, paths
+            yield cfg_ds, model.bound(context.c, pin=context.pin), context, paths
 
     # -- dispatch ----------------------------------------------------------
     def run(self, stage: str) -> None:
