@@ -29,7 +29,7 @@ from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BoundPINN, BubblePINN
-from naviernet.physics import registry, weighting
+from naviernet.physics import kinematics, registry, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
@@ -111,6 +111,24 @@ def _check_pin_compat(cfg, ckpt: dict, path) -> None:
             f"composes model.pin_d_ref={float(cfg.model.pin_d_ref)}; pass the value the "
             f"run was trained with."
         )
+
+
+def _kinematic_plan(cfg, data: BubbleDataset, device) -> kinematics.KinematicPlan | None:
+    """The run's fixed kinematic quadrature when the constraints are on, else
+    ``None``. Built once (deterministic, no RNG) so resume reproduces it."""
+    tcfg = cfg.training
+    if not getattr(tcfg, "kinematics", False):
+        return None
+    rate = data.supervised_growth_rate
+    plan = kinematics.build_plan(data.domain, rate, tcfg, device)
+    log.info(
+        "kinematics on: %d x %d^2 quadrature over t* >= %.3f, r_ref=%.4f",
+        plan.n_times,
+        int(tcfg.kin_grid),
+        float(plan.points[:, 2].min()),
+        rate,
+    )
+    return plan
 
 
 def _initial_state(cfg, equations) -> dict:
@@ -637,6 +655,7 @@ def train(
     groups = _pulse_groups(groups, cfg, data.domain)
     model = BubblePINN(cfg, pin=_pin_anchor(cfg, data)).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
+    kin_plan = _kinematic_plan(cfg, data, device)
 
     equations = registry.enabled_equations(cfg.model.fields)
     rebalanced = registry.rebalanced_terms(equations)
@@ -750,11 +769,18 @@ def train(
             ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
         else:
             total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
+        kin_record: dict[str, float] = {}
+        if kin_plan is not None:
+            # Outside the causal gate, RBA, and the rebalancer by construction:
+            # added directly to the total with fixed config weights.
+            kin_total, kin_record = kinematics.kinematic_losses(model, kin_plan, tcfg)
+            total = total + kin_total
         total.backward()
         opt.step()
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
+            record.update(kin_record)
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
@@ -896,6 +922,13 @@ def _train_joint(
     tcfg = cfg.training
     _validate_causal(tcfg)
     _validate_weighting(tcfg)
+    if getattr(tcfg, "kinematics", False):
+        # Joint kinematic constraints need per-dataset quadratures/references;
+        # wired for single-dataset runs first. Raise rather than silently skip.
+        raise NotImplementedError(
+            "training.kinematics=true is not yet supported for joint (multi-dataset) "
+            "runs; disable it for joint runs for now."
+        )
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.

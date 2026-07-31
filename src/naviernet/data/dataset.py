@@ -219,6 +219,32 @@ class BubbleDataset:
         """The row's valid vapour mask (see :data:`INTERFACE_ALPHA`)."""
         return (self.alpha[row] > INTERFACE_ALPHA) & (self.valid[row] > 0)
 
+    @cached_property
+    def supervised_growth_rate(self) -> float:
+        """Measured bubble-area growth rate over the last two *training-visible*
+        event frames, in area* per t*.
+
+        The kinematic growth constraints normalize by this reference so their
+        terms are O(1). Data-visible only: held-out rows never enter, so the
+        reference can leak nothing about the extrapolation window.
+        """
+        rows = [r for r in range(self.n_event) if r not in set(self.validation_rows)]
+        if len(rows) < 2:
+            raise ValueError(
+                "training.kinematics needs a growth-rate reference, but fewer than "
+                "two event frames are training-visible."
+            )
+        first, last = rows[-2], rows[-1]
+        area = [float(self._vapor(r).mean()) * self.domain.area for r in (first, last)]
+        rate = (area[1] - area[0]) / (float(self.t[last]) - float(self.t[first]))
+        if rate <= 0:
+            raise ValueError(
+                f"training.kinematics needs a growing supervised tail, but the measured "
+                f"rate over frames {self.frame_numbers[first]}->{self.frame_numbers[last]} "
+                f"is {rate:.4g} (<= 0)."
+            )
+        return rate
+
     def _stationary_root_column(self, rows: list[int]) -> int:
         """The median column of the temporally stationary bubble edge -- of the two
         x-extent edges across ``rows``, the one with the smaller temporal spread

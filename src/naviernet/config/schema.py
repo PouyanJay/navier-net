@@ -249,6 +249,24 @@ class TrainingConfig:
     resample_every: int = 500  # steps between collocation resamples
     resample_fraction: float = 0.5  # fraction of the batch drawn from high-residual regions
 
+    # Kinematic growth constraints (R2): physics-only scalar functionals on a fixed
+    # quadrature grid over the LATE time window, targeting the diagnosed
+    # extrapolation failure (the dilatation source collapses at the supervision
+    # boundary and predicted dV/dt goes negative while the true bubble keeps
+    # growing). Off by default -> the objective is unchanged. The terms sit outside
+    # causal weighting, RBA, and the rebalancer (they are functionals, not
+    # pointwise residuals), normalized by the dataset's supervised-tail growth rate.
+    kinematics: bool = False
+    kin_weight_mono: float = 1.0  # monotone volume: ReLU(margin - dQ/dt)^2
+    kin_weight_balance: float = 1.0  # volume-vs-source balance: (dQ/dt - ∫α·s)^2
+    kin_weight_evap: float = 1.0  # evap floor: ReLU(floor·E - ∫α·s)^2 (needs T)
+    kin_margin_frac: float = 0.3  # mono margin, as a fraction of the reference rate
+    kin_evap_floor: float = 0.5  # require the source to carry ≥ this × the evap drive
+    kin_time_frac: float = 0.4  # quadrature window = last this-fraction of [t_min, t_max]
+    kin_times: int = 12  # fixed time slices in the window
+    kin_grid: int = 48  # fixed spatial quadrature grid, per side
+    kin_ramp: int = 300  # steps to ramp balance/evap in (the source field is noise early)
+
     seed: int = 0
     device: str = "cpu"
     log_every: int = 200
