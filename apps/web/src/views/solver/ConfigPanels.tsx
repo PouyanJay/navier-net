@@ -319,9 +319,13 @@ interface AdvancedTrainingSectionProps {
 
 /** Opt-in accuracy techniques (default no-ops). RBA replaces the gradient-norm
  * rebalancer with bounded per-point attention; causal weighting learns early times
- * first; adaptive collocation refreshes the RBA pool toward high-residual regions.
- * Combinations the trainer rejects (RBA×causal, adaptive without RBA) are gated
- * valid-by-construction here, so the form can never submit one. */
+ * first; adaptive collocation refreshes the RBA pool toward high-residual regions;
+ * the hard root pin anchors the interface at the dataset's measured nucleation
+ * site for all t; the kinematic growth constraints keep the late-window volume
+ * budget physical. Combinations the trainer rejects (RBA×causal, adaptive without
+ * RBA) are gated valid-by-construction here, so the form can never submit one.
+ * The evap-floor weight starts at 0 -- the bench showed it destabilizes the
+ * front, so enabling it is a deliberate act, never a default. */
 function AdvancedTrainingSection({
   form,
   onForm,
@@ -376,7 +380,79 @@ function AdvancedTrainingSection({
           onChange={(adaptive_collocation) => onForm({ adaptive_collocation })}
           disabled={locked || !rba}
         />
+        <Switch
+          label="Hard root pin"
+          hint="anchor the root at the measured cavity"
+          checked={form.hard_pin}
+          onChange={(hard_pin) => onForm({ hard_pin })}
+          disabled={locked}
+        />
+        <Switch
+          label="Growth constraints"
+          hint="monotone volume + source balance"
+          checked={form.kinematics}
+          onChange={(kinematics) => onForm({ kinematics })}
+          disabled={locked}
+        />
       </div>
+      {(form.hard_pin || form.kinematics) && (
+        <div className="cfg cfg-narrow">
+          {form.hard_pin && (
+            <NumberField
+              label="Pin gate scale"
+              hint="d_ref · x* · far field free beyond ~2×"
+              value={form.pin_d_ref}
+              onChange={(pin_d_ref) => onForm({ pin_d_ref })}
+              min={FORM_BOUNDS.pin_d_ref.min}
+              max={FORM_BOUNDS.pin_d_ref.max}
+              step={0.01}
+              disabled={locked}
+            />
+          )}
+          {form.kinematics && (
+            <>
+              <NumberField
+                label="Growth margin"
+                hint="× supervised-tail rate"
+                value={form.kin_margin_frac}
+                onChange={(kin_margin_frac) => onForm({ kin_margin_frac })}
+                min={FORM_BOUNDS.kin_margin_frac.min}
+                max={FORM_BOUNDS.kin_margin_frac.max}
+                step={0.05}
+                disabled={locked}
+              />
+              <NumberField
+                label="Monotone weight"
+                value={form.kin_weight_mono}
+                onChange={(kin_weight_mono) => onForm({ kin_weight_mono })}
+                min={FORM_BOUNDS.kin_weight.min}
+                max={FORM_BOUNDS.kin_weight.max}
+                step={0.1}
+                disabled={locked}
+              />
+              <NumberField
+                label="Balance weight"
+                value={form.kin_weight_balance}
+                onChange={(kin_weight_balance) => onForm({ kin_weight_balance })}
+                min={FORM_BOUNDS.kin_weight.min}
+                max={FORM_BOUNDS.kin_weight.max}
+                step={0.1}
+                disabled={locked}
+              />
+              <NumberField
+                label="Evap-floor weight"
+                hint="0 = off · destabilizes when driven"
+                value={form.kin_weight_evap}
+                onChange={(kin_weight_evap) => onForm({ kin_weight_evap })}
+                min={FORM_BOUNDS.kin_weight.min}
+                max={FORM_BOUNDS.kin_weight.max}
+                step={0.1}
+                disabled={locked}
+              />
+            </>
+          )}
+        </div>
+      )}
     </>
   );
 }

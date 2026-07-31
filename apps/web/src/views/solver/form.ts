@@ -24,6 +24,13 @@ export interface SolverFormState {
   causal_weighting: boolean;
   causal_mode: "weight" | "march";
   adaptive_collocation: boolean;
+  hard_pin: boolean;
+  pin_d_ref: number;
+  kinematics: boolean;
+  kin_margin_frac: number;
+  kin_weight_mono: number;
+  kin_weight_balance: number;
+  kin_weight_evap: number;
 }
 
 export const FORM_DEFAULTS: SolverFormState = {
@@ -51,6 +58,17 @@ export const FORM_DEFAULTS: SolverFormState = {
   causal_weighting: false,
   causal_mode: "weight",
   adaptive_collocation: false,
+  // Hard root pin: anchor the interface at the measured nucleation site for
+  // all t. The anchor is data-derived; only the gate scale is a knob.
+  hard_pin: false,
+  pin_d_ref: 0.1,
+  // Kinematic growth constraints. The evap-floor weight defaults to 0 (the
+  // bench showed it destabilizes the front) -- deliberate opt-in only.
+  kinematics: false,
+  kin_margin_frac: 0.3,
+  kin_weight_mono: 1,
+  kin_weight_balance: 1,
+  kin_weight_evap: 0,
 };
 
 /** Loss-weighting schemes. "gradnorm" is the live rebalancer (needs a hand-picked
@@ -87,6 +105,9 @@ export const FORM_BOUNDS = {
   rebalance_every: { min: 10, max: 100000 },
   log_every: { min: 10, max: 5000 },
   weight: { min: 0, max: 10000 },
+  pin_d_ref: { min: 0.01, max: 2 },
+  kin_margin_frac: { min: 0, max: 2 },
+  kin_weight: { min: 0, max: 100 },
 } as const;
 
 /** Holdout options in physical frame numbers; values are the 0-based index. */
