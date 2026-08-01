@@ -375,6 +375,69 @@ describe("SolverView", () => {
     expect(body.causal_weighting).toBe(false);
   });
 
+  it("starts with the pin and growth constraints off and posts them so", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.getByRole("switch", { name: "Hard root pin" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "Growth constraints" })).not.toBeChecked();
+    // The scale/weight fields only appear once their feature is on.
+    expect(screen.queryByLabelText(/Pin gate scale/)).toBeNull();
+    expect(screen.queryByLabelText(/Growth margin/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.hard_pin).toBe(false);
+    expect(body.kinematics).toBe(false);
+    expect(body.kin_weight_evap).toBe(0); // the bench-rejected floor stays off
+  });
+
+  it("enables the pin + growth constraints and posts the tuned values", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
+    expect(screen.getByLabelText(/Pin gate scale/)).toHaveValue(0.1);
+    fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
+    // Growth fields appear at the recorded defaults; evap floor starts at 0.
+    expect(screen.getByLabelText(/Growth margin/)).toHaveValue(0.3);
+    expect(screen.getByLabelText(/Evap-floor weight/)).toHaveValue(0);
+    fireEvent.change(screen.getByLabelText(/Growth margin/), {
+      target: { value: "0.65" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.hard_pin).toBe(true);
+    expect(body.pin_d_ref).toBe(0.1);
+    expect(body.kinematics).toBe(true);
+    expect(body.kin_margin_frac).toBe(0.65);
+    expect(body.kin_weight_mono).toBe(1);
+    expect(body.kin_weight_balance).toBe(1);
+    expect(body.kin_weight_evap).toBe(0);
+  });
+
+  it("toggling the pin and growth constraints off hides their fields again", async () => {
+    stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
+    expect(screen.getByLabelText(/Pin gate scale/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Growth margin/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
+    expect(screen.queryByLabelText(/Pin gate scale/)).toBeNull();
+    expect(screen.getByLabelText(/Growth margin/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
+    expect(screen.queryByLabelText(/Growth margin/)).toBeNull();
+  });
+
   it("holds out a whole series from its row and posts it as a transfer condition", async () => {
     const posts: unknown[] = [];
     stubMultiDataset(
@@ -610,6 +673,10 @@ describe("SolverView", () => {
     expect(screen.getByRole("switch", { name: "Causal weighting" })).toBeDisabled();
     expect(
       screen.getByRole("switch", { name: "Adaptive collocation" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Hard root pin" })).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Growth constraints" }),
     ).toBeDisabled();
     const resumeSelect = await screen.findByLabelText("Run to resume");
     expect(resumeSelect).toHaveValue("highest_t");

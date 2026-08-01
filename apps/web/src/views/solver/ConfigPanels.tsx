@@ -319,9 +319,13 @@ interface AdvancedTrainingSectionProps {
 
 /** Opt-in accuracy techniques (default no-ops). RBA replaces the gradient-norm
  * rebalancer with bounded per-point attention; causal weighting learns early times
- * first; adaptive collocation refreshes the RBA pool toward high-residual regions.
- * Combinations the trainer rejects (RBA×causal, adaptive without RBA) are gated
- * valid-by-construction here, so the form can never submit one. */
+ * first; adaptive collocation refreshes the RBA pool toward high-residual regions;
+ * the hard root pin anchors the interface at the dataset's measured nucleation
+ * site for all t; the kinematic growth constraints keep the late-window volume
+ * budget physical. Combinations the trainer rejects (RBA×causal, adaptive without
+ * RBA) are gated valid-by-construction here, so the form can never submit one.
+ * The evap-floor weight starts at 0 -- the bench showed it destabilizes the
+ * front, so enabling it is a deliberate act, never a default. */
 function AdvancedTrainingSection({
   form,
   onForm,
@@ -377,6 +381,88 @@ function AdvancedTrainingSection({
           disabled={locked || !rba}
         />
       </div>
+      <PinKinematicsControls form={form} onForm={onForm} locked={locked} />
+    </>
+  );
+}
+
+/** The pin/kinematics numeric fields, keyed by the switch that reveals them.
+ * `bounds` names a FORM_BOUNDS entry (the three kin weights share one, like the
+ * loss-weight fields share FORM_BOUNDS.weight). */
+const PIN_KIN_FIELDS = [
+  {
+    key: "pin_d_ref",
+    gate: "hard_pin",
+    label: "Pin gate scale",
+    hint: "d_ref · x* · far field free beyond ~2×",
+    bounds: "pin_d_ref",
+    step: 0.01,
+  },
+  {
+    key: "kin_margin_frac",
+    gate: "kinematics",
+    label: "Growth margin",
+    hint: "× supervised-tail rate",
+    bounds: "kin_margin_frac",
+    step: 0.05,
+  },
+  { key: "kin_weight_mono", gate: "kinematics", label: "Monotone weight", bounds: "kin_weight", step: 0.1 },
+  { key: "kin_weight_balance", gate: "kinematics", label: "Balance weight", bounds: "kin_weight", step: 0.1 },
+  {
+    key: "kin_weight_evap",
+    gate: "kinematics",
+    label: "Evap-floor weight",
+    hint: "0 = off · destabilizes when driven",
+    bounds: "kin_weight",
+    step: 0.1,
+  },
+] as const;
+
+/** The hard root pin and the kinematic growth constraints: two independent
+ * switches whose tuning fields appear only while their feature is on. The evap
+ * floor starts at 0 -- the bench showed it destabilizes the front, so enabling
+ * it is a deliberate act, never a default. */
+function PinKinematicsControls({
+  form,
+  onForm,
+  locked,
+}: AdvancedTrainingSectionProps) {
+  const fields = PIN_KIN_FIELDS.filter((spec) => form[spec.gate]);
+  return (
+    <>
+      <div className="switch-rows">
+        <Switch
+          label="Hard root pin"
+          hint="anchor the root at the measured cavity"
+          checked={form.hard_pin}
+          onChange={(hard_pin) => onForm({ hard_pin })}
+          disabled={locked}
+        />
+        <Switch
+          label="Growth constraints"
+          hint="monotone volume + source balance"
+          checked={form.kinematics}
+          onChange={(kinematics) => onForm({ kinematics })}
+          disabled={locked}
+        />
+      </div>
+      {fields.length > 0 && (
+        <div className="cfg cfg-narrow">
+          {fields.map((spec) => (
+            <NumberField
+              key={spec.key}
+              label={spec.label}
+              hint={"hint" in spec ? spec.hint : undefined}
+              value={form[spec.key]}
+              onChange={(value) => onForm({ [spec.key]: value })}
+              min={FORM_BOUNDS[spec.bounds].min}
+              max={FORM_BOUNDS[spec.bounds].max}
+              step={spec.step}
+              disabled={locked}
+            />
+          ))}
+        </div>
+      )}
     </>
   );
 }

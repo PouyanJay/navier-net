@@ -342,6 +342,40 @@ def test_launch_with_causal_weighting_composes_and_trains(
     assert cfg["training"]["causal_mode"] == mode
 
 
+def test_launch_with_hard_pin_and_kinematics_composes_and_trains(
+    client: TestClient, repo_root: Path
+):
+    """The hard root pin and the kinematic growth constraints travel from the
+    request to the composed config and the run completes. The evap-floor weight
+    stays at the platform default 0 unless explicitly sent."""
+    run_id = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "hard_pin": True, "kinematics": True, "kin_margin_frac": 0.5},
+    ).json()["run_id"]
+    final = [e["data"] for e in read_stream(client, run_id) if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"run failed: {final.get('message')}"
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["model"]["hard_pin"] is True
+    assert cfg["model"]["pin_d_ref"] == pytest.approx(0.1)
+    assert cfg["training"]["kinematics"] is True
+    assert cfg["training"]["kin_margin_frac"] == pytest.approx(0.5)
+    assert cfg["training"]["kin_weight_balance"] == pytest.approx(1.0)
+    assert cfg["training"]["kin_weight_evap"] == pytest.approx(0.0), (
+        "platform must not enable the evap floor"
+    )
+
+
+def test_launch_defaults_leave_pin_and_kinematics_off(client: TestClient, repo_root: Path):
+    """An unchanged request keeps both features off -- byte-for-byte behavior."""
+    run_id = client.post("/api/runs", json=TINY_RUN).json()["run_id"]
+    read_stream(client, run_id)
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["model"]["hard_pin"] is False
+    assert cfg["training"]["kinematics"] is False
+
+
 def test_launch_is_rejected_while_a_run_is_active(client: TestClient):
     """One training run at a time: a second launch is refused with 409."""
     from naviernet_api.services import run_manager
@@ -391,6 +425,11 @@ def test_a_failing_run_reports_error_over_the_stream(client: TestClient, repo_ro
             id="adaptive-requires-rba",
         ),
         pytest.param({**TINY_RUN, "weighting": "bogus"}, 422, id="unknown-weighting"),
+        pytest.param({**TINY_RUN, "pin_d_ref": 0}, 422, id="pin-d-ref-must-be-positive"),
+        pytest.param({**TINY_RUN, "pin_d_ref": 2.1}, 422, id="pin-d-ref-above-range"),
+        pytest.param({**TINY_RUN, "kin_margin_frac": -0.1}, 422, id="kin-margin-below-range"),
+        pytest.param({**TINY_RUN, "kin_weight_mono": 101}, 422, id="kin-weight-above-range"),
+        pytest.param({**TINY_RUN, "kin_weight_evap": -1}, 422, id="kin-evap-below-range"),
         pytest.param({"resume": True, "steps": 2}, 422, id="resume-needs-run-id"),
         pytest.param({**TINY_RUN, "dataset": "../evil"}, 404, id="traversal-shaped-dataset"),
         pytest.param({**TINY_RUN, "dataset": "."}, 404, id="dot-dataset"),

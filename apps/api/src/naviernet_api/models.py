@@ -318,6 +318,22 @@ class RunLaunchRequest(BaseModel):
     causal_weighting: bool = False
     causal_mode: Literal["weight", "march"] = "weight"
     adaptive_collocation: bool = False
+    # Hard root pin: anchor the interface at the dataset's measured nucleation
+    # site for all t (the anchor is data-derived; only the gate scale is a knob).
+    hard_pin: bool = False
+    pin_d_ref: float = Field(default=0.1, gt=0.0, le=2.0)
+    # Kinematic growth constraints. The evap-floor weight defaults to 0 here
+    # (diverging from the trainer's 1.0 on purpose): the bench showed the floor
+    # destabilizes the front, so the platform hands it out only on explicit
+    # opt-in. The other fine sub-parameters (kin_time_frac/times/grid/ramp,
+    # kin_evap_floor) keep their schema defaults -- CLI-tunable only. The kin
+    # weights operate near O(1), so le=100 is already a generous sanity cap
+    # (unlike the loss weights' 1e4, which the rebalancer can legitimately reach).
+    kinematics: bool = False
+    kin_margin_frac: float = Field(default=0.3, ge=0.0, le=2.0)
+    kin_weight_mono: float = Field(default=1.0, ge=0.0, le=100.0)
+    kin_weight_balance: float = Field(default=1.0, ge=0.0, le=100.0)
+    kin_weight_evap: float = Field(default=0.0, ge=0.0, le=100.0)
 
     def resolved_datasets(self) -> list[str]:
         """The datasets a new run trains on: `datasets` if given, else `[dataset]`.

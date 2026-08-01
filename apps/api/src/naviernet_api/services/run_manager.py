@@ -516,6 +516,19 @@ def _configure(
         f"training.causal_weighting={str(request.causal_weighting).lower()}",
         f"training.causal_mode={request.causal_mode}",
         f"training.adaptive_collocation={str(request.adaptive_collocation).lower()}",
+        # Hard root pin (model-level: the gate lives in the architecture) and the
+        # kinematic growth constraints. The anchor/growth references are measured
+        # from the dataset at load, so only the switches and scales travel here.
+        # NB series_overrides() is appended AFTER this list and Hydra's last
+        # override wins -- these keys deliberately overlap none of the per-series
+        # fields (MODEL_ARCH_FIELDS, Stage-B weight keys); keep it that way.
+        f"model.hard_pin={str(request.hard_pin).lower()}",
+        f"model.pin_d_ref={request.pin_d_ref}",
+        f"training.kinematics={str(request.kinematics).lower()}",
+        f"training.kin_margin_frac={request.kin_margin_frac}",
+        f"training.kin_weight_mono={request.kin_weight_mono}",
+        f"training.kin_weight_balance={request.kin_weight_balance}",
+        f"training.kin_weight_evap={request.kin_weight_evap}",
     ]
     from naviernet_api.services.config_service import compose_cfg_once
     from naviernet_api.services.datasets import series_is_stage_b, series_overrides

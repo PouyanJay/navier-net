@@ -345,6 +345,18 @@ export interface RunLaunchRequest {
   causal_mode: "weight" | "march";
   /** Residual-adaptive collocation (RAR); refreshes the RBA pool, so requires RBA. */
   adaptive_collocation: boolean;
+  /** Hard root pin: anchor the interface at the measured nucleation site for all t. */
+  hard_pin: boolean;
+  /** Pin gate scale (non-dim x*); the far field is untouched beyond ~2x this. */
+  pin_d_ref: number;
+  /** Kinematic growth constraints on the late time window (physics-only). */
+  kinematics: boolean;
+  /** Monotone-growth margin, as a fraction of the supervised-tail rate. */
+  kin_margin_frac: number;
+  kin_weight_mono: number;
+  kin_weight_balance: number;
+  /** Evap-floor weight; platform default 0 (bench: destabilizes when driven). */
+  kin_weight_evap: number;
 }
 
 export interface RunJobStatus {
