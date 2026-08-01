@@ -421,6 +421,26 @@ describe("SolverView", () => {
     expect(body.kin_weight_evap).toBe(0);
   });
 
+  it("gates front geometry against the hard pin valid-by-construction", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // Pin on, then geometry on: the pin is forced off and disabled (the
+    // geometry pins exactly by construction -- the trainer rejects the combo).
+    fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    const pin = screen.getByRole("switch", { name: "Hard root pin" });
+    expect(pin).toBeDisabled();
+    expect(pin).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.front_geometry).toBe(true);
+    expect(body.hard_pin).toBe(false);
+  });
+
   it("toggling the pin and growth constraints off hides their fields again", async () => {
     stubApi();
     render(<SolverView />);
@@ -675,6 +695,7 @@ describe("SolverView", () => {
       screen.getByRole("switch", { name: "Adaptive collocation" }),
     ).toBeDisabled();
     expect(screen.getByRole("switch", { name: "Hard root pin" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Front geometry" })).toBeDisabled();
     expect(
       screen.getByRole("switch", { name: "Growth constraints" }),
     ).toBeDisabled();

@@ -349,6 +349,8 @@ export interface RunLaunchRequest {
   hard_pin: boolean;
   /** Pin gate scale (non-dim x*); the far field is untouched beyond ~2x this. */
   pin_d_ref: number;
+  /** Front geometry (R3): capsule interface with exact root + monotone nose. */
+  front_geometry: boolean;
   /** Kinematic growth constraints on the late time window (physics-only). */
   kinematics: boolean;
   /** Monotone-growth margin, as a fraction of the supervised-tail rate. */

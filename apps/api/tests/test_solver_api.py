@@ -366,6 +366,20 @@ def test_launch_with_hard_pin_and_kinematics_composes_and_trains(
     )
 
 
+def test_launch_with_front_geometry_composes_and_trains(client: TestClient, repo_root: Path):
+    """The R3 capsule interface travels from the request to the composed config
+    and the run completes."""
+    run_id = client.post(
+        "/api/runs", json={**TINY_RUN, "front_geometry": True, "causal_weighting": True}
+    ).json()["run_id"]
+    final = [e["data"] for e in read_stream(client, run_id) if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"run failed: {final.get('message')}"
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["model"]["front_geometry"] is True
+    assert cfg["model"]["hard_pin"] is False
+
+
 def test_launch_defaults_leave_pin_and_kinematics_off(client: TestClient, repo_root: Path):
     """An unchanged request keeps both features off -- byte-for-byte behavior."""
     run_id = client.post("/api/runs", json=TINY_RUN).json()["run_id"]
@@ -430,6 +444,11 @@ def test_a_failing_run_reports_error_over_the_stream(client: TestClient, repo_ro
         pytest.param({**TINY_RUN, "kin_margin_frac": -0.1}, 422, id="kin-margin-below-range"),
         pytest.param({**TINY_RUN, "kin_weight_mono": 101}, 422, id="kin-weight-above-range"),
         pytest.param({**TINY_RUN, "kin_weight_evap": -1}, 422, id="kin-evap-below-range"),
+        pytest.param(
+            {**TINY_RUN, "front_geometry": True, "hard_pin": True},
+            422,
+            id="front-geometry-excludes-hard-pin",
+        ),
         pytest.param({"resume": True, "steps": 2}, 422, id="resume-needs-run-id"),
         pytest.param({**TINY_RUN, "dataset": "../evil"}, 404, id="traversal-shaped-dataset"),
         pytest.param({**TINY_RUN, "dataset": "."}, 404, id="dot-dataset"),

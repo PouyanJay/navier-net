@@ -524,6 +524,7 @@ def _configure(
         # fields (MODEL_ARCH_FIELDS, Stage-B weight keys); keep it that way.
         f"model.hard_pin={str(request.hard_pin).lower()}",
         f"model.pin_d_ref={request.pin_d_ref}",
+        f"model.front_geometry={str(request.front_geometry).lower()}",
         f"training.kinematics={str(request.kinematics).lower()}",
         f"training.kin_margin_frac={request.kin_margin_frac}",
         f"training.kin_weight_mono={request.kin_weight_mono}",

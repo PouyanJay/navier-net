@@ -418,10 +418,13 @@ const PIN_KIN_FIELDS = [
   },
 ] as const;
 
-/** The hard root pin and the kinematic growth constraints: two independent
- * switches whose tuning fields appear only while their feature is on. The evap
- * floor starts at 0 -- the bench showed it destabilizes the front, so enabling
- * it is a deliberate act, never a default. */
+/** The physics-structure switches: front geometry (the R3 capsule interface),
+ * the hard root pin, and the kinematic growth constraints, with tuning fields
+ * that appear only while their feature is on. Front geometry pins the root
+ * exactly by construction, so it and the hard pin are gated valid-by-
+ * construction (turning one on forces the other off), mirroring the trainer's
+ * own rejection. The evap floor starts at 0 -- the bench showed it destabilizes
+ * the front, so enabling it is a deliberate act, never a default. */
 function PinKinematicsControls({
   form,
   onForm,
@@ -432,11 +435,28 @@ function PinKinematicsControls({
     <>
       <div className="switch-rows">
         <Switch
+          label="Front geometry"
+          hint="capsule interface · exact root · monotone nose"
+          checked={form.front_geometry}
+          onChange={(front_geometry) =>
+            onForm(
+              front_geometry
+                ? { front_geometry: true, hard_pin: false }
+                : { front_geometry: false },
+            )
+          }
+          disabled={locked}
+        />
+        <Switch
           label="Hard root pin"
-          hint="anchor the root at the measured cavity"
+          hint={
+            form.front_geometry
+              ? "geometry pins exactly"
+              : "anchor the root at the measured cavity"
+          }
           checked={form.hard_pin}
           onChange={(hard_pin) => onForm({ hard_pin })}
-          disabled={locked}
+          disabled={locked || form.front_geometry}
         />
         <Switch
           label="Growth constraints"
