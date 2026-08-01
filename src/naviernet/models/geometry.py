@@ -50,26 +50,48 @@ ABS_SMOOTH = 1e-3
 
 @dataclass(frozen=True)
 class GeometryPriors:
-    """Data-derived anchors the construction is built around: the measured root
-    point, the measured first-training-frame front (the nose's initial value),
-    and the domain bounds."""
+    """Data-derived anchors the construction is built around AND initializes at:
+    the measured root point, first-frame front and half-width, and the measured
+    front speed. A saturating interface starves gradients when the initial
+    capsule sits far from the true one (alpha is 0/1 more than ~eps away), so
+    the construction starts as a data-shaped moving capsule, not noise."""
 
     x_root: float
     y_root: float
     s0: float
+    w0: float
+    rate0: float
     y_min: float
     y_max: float
     t_min: float
     t_max: float
 
 
-def _mlp(in_dim: int) -> nn.Sequential:
+def _mlp(in_dim: int, out_bias: float = 0.0) -> nn.Sequential:
+    """A small tanh MLP whose LAST layer starts at zero weights and the given
+    bias: the net begins as the constant ``out_bias`` and learns deviations --
+    the data-anchored initialization the priors provide."""
     layers: list[nn.Module] = []
     dims = [in_dim] + [GEO_HIDDEN] * GEO_DEPTH
     for d_in, d_out in zip(dims[:-1], dims[1:], strict=True):
         layers += [nn.Linear(d_in, d_out), nn.Tanh()]
-    layers.append(nn.Linear(dims[-1], 1))
+    last = nn.Linear(dims[-1], 1)
+    # Small (not zero: exact zeros would block gradient into the hidden layers)
+    # so the net starts within a hair of the constant and can still learn.
+    nn.init.normal_(last.weight, std=0.01)
+    nn.init.constant_(last.bias, out_bias)
+    layers.append(last)
     return nn.Sequential(*layers)
+
+
+def _inverse_softplus(value: float) -> float:
+    value = max(value, 1e-6)
+    return float(torch.log(torch.expm1(torch.tensor(value))))
+
+
+def _logit(p: float) -> float:
+    p = min(max(p, 1e-6), 1.0 - 1e-6)
+    return float(torch.logit(torch.tensor(p)))
 
 
 class GeometricInterface(nn.Module):
@@ -90,9 +112,18 @@ class GeometricInterface(nn.Module):
     def __init__(self, priors: GeometryPriors):
         super().__init__()
         self.priors = priors
-        self.rate_net = _mlp(1)
-        self.width_net = _mlp(2)
-        self.center_net = _mlp(2)
+        half = 0.5 * (priors.y_max - priors.y_min)
+        self._y_half = float(half)
+        # Centerline amplitude: the root height must stay strictly inside the
+        # channel, so the tanh swing is the smaller margin to either wall.
+        self._c_amp = float(min(priors.y_root - priors.y_min, priors.y_max - priors.y_root))
+
+        # Data-anchored start: rate = measured front speed, width = measured
+        # first-frame half-width (at the envelope's midpoint), centerline flat
+        # at the measured root height.
+        self.rate_net = _mlp(1, out_bias=_inverse_softplus(priors.rate0))
+        self.width_net = _mlp(2, out_bias=_logit(min(priors.w0 / self._y_half, 1.0)))
+        self.center_net = _mlp(2, out_bias=0.0)
         # s(t_min) = x_root + softplus(_s0_raw): initialized so the nose starts
         # at the measured first-training-frame front.
         gap = max(priors.s0 - priors.x_root, 1e-3)
@@ -103,12 +134,6 @@ class GeometricInterface(nn.Module):
             priors.t_min, priors.t_max + NOSE_GRID_SLACK * span, NOSE_GRID_NODES
         )
         self.register_buffer("t_grid", grid, persistent=False)
-
-        half = 0.5 * (priors.y_max - priors.y_min)
-        self._y_half = float(half)
-        # Centerline amplitude: the root height must stay strictly inside the
-        # channel, so the tanh swing is the smaller margin to either wall.
-        self._c_amp = float(min(priors.y_root - priors.y_min, priors.y_max - priors.y_root))
 
     def nose(self, t: torch.Tensor) -> torch.Tensor:
         """Nose position s(t), shape-preserving for ``t`` of shape (N, 1).

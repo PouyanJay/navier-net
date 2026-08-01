@@ -90,12 +90,24 @@ def _geometry_priors(cfg, data: BubbleDataset):
     x0, y0 = data.pin_anchor
     d = data.domain
     log.info(
-        "front geometry on: root (x*=%.4f, y*=%.4f), nose starts at x*=%.4f",
+        "front geometry on: root (x*=%.4f, y*=%.4f), nose from x*=%.4f at rate %.3f, w0=%.4f",
         x0,
         y0,
         data.initial_front,
+        data.nose_rate,
+        data.initial_half_width,
     )
-    return GeometryPriors(x0, y0, data.initial_front, d.y_min, d.y_max, d.t_min, d.t_max)
+    return GeometryPriors(
+        x0,
+        y0,
+        data.initial_front,
+        data.initial_half_width,
+        data.nose_rate,
+        d.y_min,
+        d.y_max,
+        d.t_min,
+        d.t_max,
+    )
 
 
 def _pin_record(cfg) -> dict:

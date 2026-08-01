@@ -243,6 +243,38 @@ class BubbleDataset:
         return hi if abs(lo - x0) <= abs(hi - x0) else lo
 
     @cached_property
+    def initial_half_width(self) -> float:
+        """Half the vapour y-extent of the first training-visible frame -- the
+        width scale the front-geometry construction initializes at."""
+        rows = self._training_visible_event_rows()
+        vapor_rows = np.nonzero(self._vapor(rows[0]).any(axis=1))[0]
+        if vapor_rows.size == 0:
+            raise ValueError(
+                "model.front_geometry needs a width scale, but the first training "
+                "frame has no vapour (alpha > 0.5) -- check the dataset's masks."
+            )
+        return 0.5 * float(self.y[vapor_rows[-1]] - self.y[vapor_rows[0]]) or float(
+            self.y[1] - self.y[0]
+        )
+
+    @cached_property
+    def nose_rate(self) -> float:
+        """Measured front speed across the training-visible frames (x* per t*) --
+        the rate the front-geometry nose initializes at. Data-visible only."""
+        rows = self._training_visible_event_rows()
+        x0, _ = self.pin_anchor
+
+        def front(row: int) -> float:
+            extent = mask_x_extent(self._vapor(row))
+            lo, hi = float(self.x[extent[0]]), float(self.x[extent[1]])
+            return hi if abs(lo - x0) <= abs(hi - x0) else lo
+
+        span = float(self.t[rows[-1]]) - float(self.t[rows[0]])
+        if len(rows) < 2 or span <= 0:
+            return 0.0
+        return max((front(rows[-1]) - front(rows[0])) / span, 0.0)
+
+    @cached_property
     def supervised_growth_rate(self) -> float:
         """Measured bubble-area growth rate over the last two *training-visible*
         event frames, in area* per t*.
