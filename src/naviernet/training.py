@@ -80,11 +80,34 @@ def _pin_anchor(cfg, data: BubbleDataset) -> tuple[float, float] | None:
     return x0, y0
 
 
+def _geometry_priors(cfg, data: BubbleDataset):
+    """The dataset's measured geometry anchors when the front geometry is on,
+    else ``None`` -- the construction-site helper, like :func:`_pin_anchor`."""
+    if not getattr(cfg.model, "front_geometry", False):
+        return None
+    from naviernet.models.geometry import GeometryPriors
+
+    x0, y0 = data.pin_anchor
+    d = data.domain
+    log.info(
+        "front geometry on: root (x*=%.4f, y*=%.4f), nose starts at x*=%.4f",
+        x0,
+        y0,
+        data.initial_front,
+    )
+    return GeometryPriors(x0, y0, data.initial_front, d.y_min, d.y_max, d.t_min, d.t_max)
+
+
 def _pin_record(cfg) -> dict:
-    """The hard-pin architecture facts persisted in every checkpoint, so a later
-    invocation can be checked against how the run was actually trained."""
+    """The architecture facts persisted in every checkpoint (hard pin and front
+    geometry add no detectable state-dict signature for their *configuration*),
+    so a later invocation can be checked against how the run was trained."""
     hard_pin = bool(getattr(cfg.model, "hard_pin", False))
-    return {"hard_pin": hard_pin, "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None}
+    return {
+        "hard_pin": hard_pin,
+        "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None,
+        "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
+    }
 
 
 def _check_pin_compat(cfg, ckpt: dict, path) -> None:
@@ -110,6 +133,14 @@ def _check_pin_compat(cfg, ckpt: dict, path) -> None:
             f"{path} was trained with model.pin_d_ref={saved_d_ref} but this invocation "
             f"composes model.pin_d_ref={float(cfg.model.pin_d_ref)}; pass the value the "
             f"run was trained with."
+        )
+    saved_geo = ckpt.get("front_geometry")
+    current_geo = bool(getattr(cfg.model, "front_geometry", False))
+    if saved_geo is not None and bool(saved_geo) != current_geo:
+        raise ValueError(
+            f"{path} was trained with model.front_geometry={bool(saved_geo)} but this "
+            f"invocation composes model.front_geometry={current_geo}. The geometry is "
+            f"architectural: pass the same override the run was trained with."
         )
 
 
@@ -712,7 +743,9 @@ def train(
     u_inlet = groups["u_inlet_star"]
     data = BubbleDataset(cfg, paths, device=str(device))
     groups = _pulse_groups(groups, cfg, data.domain)
-    model = BubblePINN(cfg, pin=_pin_anchor(cfg, data)).to(device)
+    model = BubblePINN(
+        cfg, pin=_pin_anchor(cfg, data), geometry=_geometry_priors(cfg, data)
+    ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
 
@@ -1136,9 +1169,12 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
     data = BubbleDataset(cfg, paths, device=str(device))
     # `n_cond` (0 for a single-dataset checkpoint) rebuilds the right architecture,
     # so a conditioned joint checkpoint loads without a shape mismatch.
-    model = BubblePINN(cfg, n_cond=int(ckpt.get("n_cond", 0)), pin=_pin_anchor(cfg, data)).to(
-        device
-    )
+    model = BubblePINN(
+        cfg,
+        n_cond=int(ckpt.get("n_cond", 0)),
+        pin=_pin_anchor(cfg, data),
+        geometry=_geometry_priors(cfg, data),
+    ).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, data, ckpt["state"]

@@ -19,6 +19,7 @@ from collections.abc import Sequence
 import torch
 import torch.nn as nn
 
+from naviernet.models.geometry import GeometricInterface, GeometryPriors
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures
 
 
@@ -91,22 +92,43 @@ class BubblePINN(nn.Module):
         fields: Sequence[str] | None = None,
         n_cond: int = 0,
         pin: tuple[float, float] | None = None,
+        geometry: GeometryPriors | None = None,
     ):
-        # NB one argument over the usual cap: ``fields``/``n_cond``/``pin`` are three
-        # orthogonal opt-ins (field set, joint conditioning, hard pin) and bundling
-        # them into a carrier object would churn every construction site for no
-        # clarity gain -- a reviewed, deliberate deviation.
+        # NB over the usual argument cap: ``fields``/``n_cond``/``pin``/``geometry``
+        # are orthogonal opt-ins (field set, joint conditioning, hard pin, front
+        # geometry) and bundling them into a carrier object would churn every
+        # construction site for no clarity gain -- a reviewed, deliberate deviation.
         super().__init__()
         self.cfg = cfg
         self.eps = float(cfg.model.alpha_eps)
         self.n_cond = int(n_cond)
+        self.front_geometry = bool(getattr(cfg.model, "front_geometry", False))
+        if self.front_geometry:
+            if getattr(cfg.model, "hard_pin", False):
+                raise ValueError(
+                    "model.front_geometry already pins the root exactly by construction; "
+                    "it is mutually exclusive with model.hard_pin -- disable one."
+                )
+            if self.n_cond > 0:
+                raise NotImplementedError(
+                    "model.front_geometry is not yet supported for joint (multi-dataset) "
+                    "runs; disable it for joint runs for now."
+                )
+            if geometry is None:
+                raise ValueError(
+                    "model.front_geometry=true needs the dataset's geometry priors: "
+                    "construct the model with geometry=GeometryPriors(...), as "
+                    "train()/load_model() do."
+                )
         self._init_hard_pin(cfg, pin)
 
         names = list(fields if fields is not None else cfg.model.fields)
         per_field = getattr(cfg.model, "per_field", None) or {}
         self.nets = nn.ModuleDict(
             {
-                name: FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
+                name: GeometricInterface(geometry)
+                if name == "phi" and self.front_geometry
+                else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
                 for name in names
             }
         )

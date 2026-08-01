@@ -227,6 +227,22 @@ class BubbleDataset:
         return (self.alpha[row] > INTERFACE_ALPHA) & (self.valid[row] > 0)
 
     @cached_property
+    def initial_front(self) -> float:
+        """The measured front x* of the FIRST training-visible event frame --
+        the nose's starting value for the front-geometry construction.
+        Data-visible only (held-out rows never enter)."""
+        rows = self._training_visible_event_rows()
+        x0, _ = self.pin_anchor
+        extent = mask_x_extent(self._vapor(rows[0]))
+        if extent is None:
+            raise ValueError(
+                "model.front_geometry needs a nose starting position, but the first "
+                "training frame has no vapour (alpha > 0.5) -- check the dataset's masks."
+            )
+        lo, hi = float(self.x[extent[0]]), float(self.x[extent[1]])
+        return hi if abs(lo - x0) <= abs(hi - x0) else lo
+
+    @cached_property
     def supervised_growth_rate(self) -> float:
         """Measured bubble-area growth rate over the last two *training-visible*
         event frames, in area* per t*.
