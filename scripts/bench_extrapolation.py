@@ -102,18 +102,27 @@ def _report_root_drift(cfg, pipe) -> None:
     threshold = cfg.evaluation.threshold
     xs = data.x[::stride]
 
-    drifts, fronts = [], []
+    from scipy import ndimage
+
+    def perimeter(mask) -> int:
+        return int((mask ^ ndimage.binary_erosion(mask)).sum())
+
+    drifts, fronts, shapes = [], [], []
     for row, frame_no in enumerate(data.frame_numbers):
         mask = predict_alpha(model, data, data.t[row], stride) > threshold
         measured = data.alpha[row, ::stride, ::stride] > threshold
         root = root_position(mask, xs, x_anchor)
         front = front_position(mask, xs, x_anchor)
         front_true = front_position(measured, xs, x_anchor)
+        _, n_comp = ndimage.label(mask)
+        perim_ratio = perimeter(mask) / max(perimeter(measured), 1)
         drifts.append(f"{frame_no}:{root:.3f}({root - x_anchor:+.3f})")
         fronts.append(f"{frame_no}:{front:.3f}({front - front_true:+.3f})")
+        shapes.append(f"{frame_no}:{n_comp}c/{perim_ratio:.2f}p")
     print(f"root anchor x*={x_anchor:.4f}")
     print(f"per-frame root x*(drift): {' '.join(drifts)}")
     print(f"per-frame front x*(vs measured): {' '.join(fronts)}")
+    print(f"per-frame shape (components/perimeter-ratio): {' '.join(shapes)}")
 
 
 if __name__ == "__main__":
