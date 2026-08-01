@@ -13,8 +13,9 @@ Structural guarantees (each regression-tested):
 - the interface passes exactly through the root point at every t;
 - the nose never retreats, and extrapolates at its last learned rate;
 - the vapour region is one connected capsule closed at both ends;
-- the width is bounded by the channel and phi is C-infinity (the ``|y - c|``
-  kink is smoothed -- Stage-B curvature differentiates phi twice, the same
+- the caps are CIRCULAR (constant curvature -- the Young-Laplace cap shape),
+  the width is bounded by the channel, and phi is smooth on the spine (the
+  matched-floor form; Stage-B curvature differentiates phi twice, the same
   lesson the hard-pin gate learned).
 """
 
@@ -95,15 +96,14 @@ def _logit(p: float) -> float:
 
 
 class GeometricInterface(nn.Module):
-    """``phi(x, y, t) = W(xi, t) - smoothabs(y - c(xi, t))`` with
-    ``xi = (x - x_root) / (s(t) - x_root)``.
+    """A varying-radius capsule: a spine from the root apex to the nose apex,
+    inflated by a channel-bounded radius profile, closed by CIRCULAR caps.
 
     ``s(t)`` is the nose: ``s0 + cumulative-trapezoid of softplus(rate(t))`` on
-    the fixed grid (exactly monotone; linear extension beyond the grid).
-    ``W`` is the half-width: channel-bounded sigmoid profile times the
-    ``4 xi (1 - xi)`` envelope -- zero at root and nose, negative outside, so
-    the capsule closes and nothing exists beyond it. ``c`` is the centerline,
-    tanh-bounded inside the channel around the measured root height.
+    the fixed grid (exactly monotone; linear extension beyond the grid). The
+    radius ``R(u, t)`` and centerline ``c(u, t)`` are small nets over the spine
+    parameter; cap centers sit one radius inside each apex so the interface
+    passes exactly through the pinned root and the nose (see ``forward``).
 
     Drop-in for the phi FieldNet: ``forward(x, c=None) -> (N, 1)``. Conditioned
     (joint) calls are rejected by the trainer before construction.
@@ -186,17 +186,41 @@ class GeometricInterface(nn.Module):
             y = self.centerline(torch.ones_like(tt), tt)
         return torch.tensor([float(s), float(y), float(t)], device=device)
 
+    def _radius(self, u: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Half-width (inflation radius) profile along the spine, channel-bounded."""
+        return self._y_half * torch.sigmoid(self.width_net(torch.cat([u, t], dim=1)))
+
     def forward(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        """Varying-radius capsule: the spine from the root apex to the nose apex,
+        inflated by the radius profile, with CIRCULAR end caps.
+
+        The caps are the physics: a bubble cap is constant-curvature
+        (Young-Laplace), i.e. a circular arc -- the earlier ``4 xi (1 - xi)``
+        envelope closed the ends linearly and produced wedge-shaped tips the
+        real bubble never shows. Cap centers sit one radius inside each apex, so
+        the interface passes EXACTLY through the pinned root and the monotone
+        nose (phi compares ``sqrt(R^2 + d^2_floor)`` against the smoothed
+        distance, which cancels the floor identically on the interface).
+        """
         if c is not None:
             raise NotImplementedError(
                 "model.front_geometry does not support conditioned (joint) calls yet."
             )
         t = x[:, 2:3]
-        span = (self.nose(t) - self.priors.x_root).clamp(min=1e-6)
-        xi = (x[:, 0:1] - self.priors.x_root) / span
+        s = self.nose(t)
+        r_root = self._radius(torch.zeros_like(t), t)
+        r_nose = self._radius(torch.ones_like(t), t)
 
-        width = self._y_half * torch.sigmoid(self.width_net(torch.cat([xi, t], dim=1)))
-        envelope = 4.0 * xi * (1.0 - xi)  # 1 mid-capsule, 0 at the ends, negative outside
-        offset = x[:, 1:2] - self.centerline(xi, t)
-        smoothabs = torch.sqrt(offset**2 + ABS_SMOOTH**2) - ABS_SMOOTH
-        return width * envelope - smoothabs
+        # Cap centers: one radius inside each apex; a bubble shorter than the
+        # two cap radii degenerates to (almost) touching caps, never inverts.
+        ax = self.priors.x_root + r_root
+        bx = torch.maximum(s - r_nose, ax + 1e-6)
+        u = ((x[:, 0:1] - ax) / (bx - ax)).clamp(0.0, 1.0)
+
+        radius = self._radius(u, t)
+        spine_x = ax + u * (bx - ax)
+        spine_y = self.centerline(u, t)
+        d_sq = (x[:, 0:1] - spine_x) ** 2 + (x[:, 1:2] - spine_y) ** 2
+        # Matched floors: phi = 0 exactly where d = R (the interface, incl. both
+        # apexes), while staying C-infinity on the spine (the KAPPA lesson).
+        return torch.sqrt(radius**2 + ABS_SMOOTH**2) - torch.sqrt(d_sq + ABS_SMOOTH**2)
