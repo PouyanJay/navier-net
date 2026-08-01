@@ -26,6 +26,7 @@ export interface SolverFormState {
   adaptive_collocation: boolean;
   hard_pin: boolean;
   pin_d_ref: number;
+  front_geometry: boolean;
   kinematics: boolean;
   kin_margin_frac: number;
   kin_weight_mono: number;
@@ -62,6 +63,10 @@ export const FORM_DEFAULTS: SolverFormState = {
   // all t. The anchor is data-derived; only the gate scale is a knob.
   hard_pin: false,
   pin_d_ref: 0.1,
+  // Front geometry (R3): capsule interface -- exact root, monotone nose, one
+  // connected shape at every t. Mutually exclusive with the hard pin (the
+  // geometry pins exactly), gated valid-by-construction in the form.
+  front_geometry: false,
   // Kinematic growth constraints. The evap-floor weight defaults to 0 (the
   // bench showed it destabilizes the front) -- deliberate opt-in only.
   kinematics: false,

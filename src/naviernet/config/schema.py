@@ -150,6 +150,13 @@ class ModelConfig:
     # derived from the data at load time, never configured by hand.
     hard_pin: bool = False
     pin_d_ref: float = 0.1  # saturation scale of the pin, in non-dim x* units
+    # Front geometry (R3): replace the free level-set net with a geometric
+    # construction -- monotone nose, bounded width envelope, bounded centerline --
+    # so a single connected, root-anchored capsule is the ONLY expressible shape.
+    # Fixes the extrapolation shape collapse structurally (the free level set kept
+    # volume and the pinned point but rounded/fragmented the SHAPE off-data).
+    # Mutually exclusive with hard_pin (the geometry pins exactly by construction).
+    front_geometry: bool = False
 
 
 @dataclass

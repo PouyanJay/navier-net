@@ -322,6 +322,11 @@ class RunLaunchRequest(BaseModel):
     # site for all t (the anchor is data-derived; only the gate scale is a knob).
     hard_pin: bool = False
     pin_d_ref: float = Field(default=0.1, gt=0.0, le=2.0)
+    # Front geometry (R3): the interface as a geometric capsule -- exact root,
+    # monotone nose, single connected shape at every t. Mutually exclusive with
+    # hard_pin (the geometry pins exactly by construction; the trainer rejects
+    # the combination, mirrored below as a 422).
+    front_geometry: bool = False
     # Kinematic growth constraints. The evap-floor weight defaults to 0 here
     # (diverging from the trainer's 1.0 on purpose): the bench showed the floor
     # destabilizes the front, so the platform hands it out only on explicit
@@ -357,6 +362,11 @@ class RunLaunchRequest(BaseModel):
             raise ValueError("weighting='rba' is not compatible with causal_weighting yet")
         if self.adaptive_collocation and self.weighting != "rba":
             raise ValueError("adaptive_collocation requires weighting='rba'")
+        if self.front_geometry and self.hard_pin:
+            raise ValueError(
+                "front_geometry already pins the root exactly by construction; "
+                "it is mutually exclusive with hard_pin -- disable one."
+            )
         return self
 
 
