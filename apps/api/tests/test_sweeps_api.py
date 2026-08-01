@@ -46,6 +46,23 @@ def test_sweep_trains_children_sequentially(client: TestClient, repo_root: Path)
         assert len(history) >= 1
 
 
+def test_sweep_accepts_the_datasets_list_form(client: TestClient, repo_root: Path):
+    """The web UI sends ``datasets: [...]`` (the documented request contract:
+    empty/absent singular means 'use resolved_datasets()'). Regression: the
+    sweep read only the singular field and rejected every UI launch with
+    ``unknown dataset ''``."""
+    payload = {**TINY_SWEEP, "seeds": [0], "datasets": [TINY_SWEEP["dataset"]]}
+    payload.pop("dataset")
+
+    response = client.post("/api/sweeps", json=payload)
+
+    assert response.status_code == 202, response.text
+    sweep = response.json()
+    for child in sweep["children"]:
+        final = final_status(read_stream(client, child["run_id"]))
+        assert final["state"] == "done", f"child failed: {final.get('message')}"
+
+
 def test_queued_children_count_against_the_training_slot(client: TestClient):
     """A reserved (queued) child claims the slot even before it starts training.
 

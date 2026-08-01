@@ -95,7 +95,18 @@ def active_sweep(settings: Settings) -> SweepStatus | None:
 
 def launch(settings: Settings, request: SweepLaunchRequest) -> SweepStatus:
     """Validate, reserve every child, and start the sweep worker."""
-    dataset = run_manager.validate_trainable_dataset(settings, request.dataset)
+    # A sweep varies seeds on ONE dataset -- the primary of the request's
+    # resolved list. Reading the singular `request.dataset` field here broke the
+    # documented request contract ("empty/absent means the single dataset; use
+    # resolved_datasets()"): the web UI sends `datasets: [...]`, so the sweep
+    # rejected every UI launch with `unknown dataset ''`.
+    names = request.resolved_datasets()
+    dataset = run_manager.validate_trainable_dataset(settings, names[0] if names else None)
+    # Normalize the request the way run_manager.launch does for ordinary runs:
+    # the child worker's _configure reads the singular field, and a sweep is
+    # single-dataset by design (seeds vary, the series does not).
+    request.dataset = dataset
+    request.datasets = None
     # Minting and registration are not one critical section: two same-second
     # launches could mint the same id, but the loser is rejected by
     # reserve_children's single-slot check before it ever touches _sweeps.
