@@ -16,7 +16,11 @@ Structural guarantees (each regression-tested):
 - the caps are CIRCULAR (constant curvature -- the Young-Laplace cap shape),
   the width is bounded by the channel, and phi is smooth on the spine (the
   matched-floor form; Stage-B curvature differentiates phi twice, the same
-  lesson the hard-pin gate learned).
+  lesson the hard-pin gate learned). At the cap-body seams the u-clamp leaves
+  phi C0-but-not-C1: a measured, accepted trade-off (kappa*grad(alpha) stays
+  O(10-50) there, far under harmful scale; a C1 blend would require tying the
+  boundary radius slope to zero and cost expressivity) -- regression-tested at
+  the seam points.
 """
 
 from __future__ import annotations
@@ -211,13 +215,25 @@ class GeometricInterface(nn.Module):
         r_root = self._radius(torch.zeros_like(t), t)
         r_nose = self._radius(torch.ones_like(t), t)
 
-        # Cap centers: one radius inside each apex; a bubble shorter than the
-        # two cap radii degenerates to (almost) touching caps, never inverts.
+        # Cap centers sit one radius inside each apex. When the bubble is
+        # shorter than the two cap radii (a just-nucleated bubble -- realistic,
+        # review-reproduced), the raw centers would CROSS the opposite apex and
+        # break exact nose closure; rescaling both radii jointly keeps the caps
+        # reaching exactly x_root and s while preserving a minimum spine
+        # segment of ABS_SMOOTH, which also bounds du/dx (and with it alpha_x
+        # in the VOF residual) in the degenerate regime.
+        length = (s - self.priors.x_root).clamp(min=2.0 * ABS_SMOOTH)
+        scale = ((length - ABS_SMOOTH) / (r_root + r_nose)).clamp(max=1.0)
+        r_root = r_root * scale
+        r_nose = r_nose * scale
         ax = self.priors.x_root + r_root
-        bx = torch.maximum(s - r_nose, ax + 1e-6)
+        bx = s - r_nose
         u = ((x[:, 0:1] - ax) / (bx - ax)).clamp(0.0, 1.0)
 
-        radius = self._radius(u, t)
+        # The same scale applies along the whole spine, so the cap radii the
+        # centers were placed with are exactly the radii the field compares
+        # against -- apex exactness survives the degenerate rescale.
+        radius = self._radius(u, t) * scale
         spine_x = ax + u * (bx - ax)
         spine_y = self.centerline(u, t)
         d_sq = (x[:, 0:1] - spine_x) ** 2 + (x[:, 1:2] - spine_y) ** 2

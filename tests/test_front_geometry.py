@@ -148,6 +148,42 @@ def test_interface_closes_exactly_at_root_and_nose():
         )
 
 
+def test_short_bubble_keeps_both_apexes_exact_and_vapor_inside():
+    """Review-reproduced regression: a just-nucleated bubble shorter than its
+    cap radii used to push the root-cap center past the nose (alpha 0.55 at the
+    nose point, vapor overshooting the tracked nose by half the bubble length).
+    The joint radius rescale must keep both apexes exact and the vapor inside
+    [x_root, s]."""
+    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+
+    torch.manual_seed(0)
+    geo = GeometricInterface(GeometryPriors(**{**PRIORS, "s0": 0.21, "rate0": 0.0}))
+
+    for point in (geo.root_point(0.0), geo.nose_point(0.0)):
+        with torch.no_grad():
+            alpha = torch.sigmoid(geo(point.unsqueeze(0)) / 0.05)
+        assert torch.allclose(alpha, torch.tensor([[0.5]]), atol=1e-6), (
+            f"apex lost on the short bubble at {point.tolist()}: {float(alpha)}"
+        )
+
+    with torch.no_grad():
+        s = float(geo.nose(torch.tensor([[0.0]])))
+        xs = torch.linspace(0.15, 0.5, 400)
+        pts = torch.stack([xs, torch.full_like(xs, PRIORS["y_root"]), torch.zeros_like(xs)], 1)
+        vapor = (torch.sigmoid(geo(pts) / 0.05) > 0.5).squeeze(1)
+    reach = xs[vapor]
+    assert reach.numel() > 0 and float(reach.max()) <= s + 1e-3, (
+        f"vapor overshoots the tracked nose: {float(reach.max()):.4f} > s={s:.4f}"
+    )
+    # And the degenerate spine must not spike the VOF-facing gradient.
+    probe = torch.tensor(
+        [[0.5 * (PRIORS["x_root"] + s), PRIORS["y_root"], 0.0]], requires_grad=True
+    )
+    alpha = torch.sigmoid(geo(probe) / 0.05)
+    a_x = torch.autograd.grad(alpha.sum(), probe)[0][0, 0]
+    assert torch.isfinite(a_x) and abs(float(a_x)) < 5e3, f"alpha_x spiked: {float(a_x):.3e}"
+
+
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_random_geometry_is_one_capsule_inside_the_channel(seed):
     from scipy import ndimage
@@ -191,11 +227,21 @@ def test_geometry_keeps_the_surface_tension_term_bounded():
     with torch.no_grad():
         nose = float(geo.nose(torch.tensor([[0.5]])))
         root = geo.root_point(0.5)
+        t_col = torch.full((1, 1), 0.5)
+        r0 = float(geo._radius(torch.zeros(1, 1), t_col))
+        r1 = float(geo._radius(torch.ones(1, 1), t_col))
+    y0 = float(root[1])
     delicate = torch.tensor(
         [
-            [PRIORS["x_root"] + 1e-4, float(root[1]), 0.5],  # at the root cap
-            [nose - 1e-4, float(root[1]), 0.5],  # at the nose cap
-            [0.35, float(root[1]), 0.5],  # on the centerline mid-capsule
+            [PRIORS["x_root"] + 1e-4, y0, 0.5],  # at the root cap apex
+            [nose - 1e-4, y0, 0.5],  # at the nose cap apex
+            [0.35, y0, 0.5],  # on the centerline mid-capsule
+            # The cap-body SEAMS (x = cap-center planes, on the interface
+            # flank): the u-clamp makes phi C0-but-not-C1 there -- a measured,
+            # accepted trade-off (kappa*a_x ~ O(10-50), far under the bound;
+            # a C1 blend would require tying R'(0)=0 and cost expressivity).
+            [PRIORS["x_root"] + r0, y0 + r0, 0.5],
+            [nose - r1, y0 + r1, 0.5],
         ],
         requires_grad=True,
     )
