@@ -144,18 +144,22 @@ class GeometricInterface(nn.Module):
         grid = self.t_grid
         rates = torch.nn.functional.softplus(self.rate_net(grid.unsqueeze(1))).squeeze(1)
         steps = grid[1:] - grid[:-1]
+        # Segment slopes ARE the trapezoid averages: interpolating the cumulative
+        # array with them is continuous at every node and exactly monotone
+        # (slopes >= 0). Interpolating with the raw nodal rate instead creates
+        # node discontinuities that go NEGATIVE once the rate net trains away
+        # from its flat init -- the reviewed, reproduced failure of the very
+        # guarantee this class exists for.
+        slopes = 0.5 * (rates[1:] + rates[:-1])
         cum = torch.cat(
-            [
-                torch.zeros(1, device=grid.device),
-                torch.cumsum(0.5 * (rates[1:] + rates[:-1]) * steps, dim=0),
-            ]
+            [torch.zeros(1, device=grid.device), torch.cumsum(slopes * steps, dim=0)]
         )
 
         tq = t.clamp(min=float(grid[0]))
         idx = (torch.searchsorted(grid, tq.reshape(-1), right=True) - 1).clamp(
             0, grid.numel() - 2
         )
-        s = cum[idx] + (tq.reshape(-1) - grid[idx]) * rates[idx]
+        s = cum[idx] + (tq.reshape(-1) - grid[idx]) * slopes[idx]
         s0 = self.priors.x_root + torch.nn.functional.softplus(self._s0_raw)
         return (s0 + s).reshape(t.shape)
 
@@ -166,10 +170,21 @@ class GeometricInterface(nn.Module):
     def root_point(self, t: float) -> torch.Tensor:
         """The (x, y, t) point the interface passes through at the root -- the
         exact pin, for tests and diagnostics."""
-        tt = torch.tensor([[float(t)]])
+        device = self.t_grid.device
+        tt = torch.tensor([[float(t)]], device=device)
         with torch.no_grad():
             y = self.centerline(torch.zeros_like(tt), tt)
-        return torch.tensor([self.priors.x_root, float(y), float(t)])
+        return torch.tensor([self.priors.x_root, float(y), float(t)], device=device)
+
+    def nose_point(self, t: float) -> torch.Tensor:
+        """The (x, y, t) point the interface passes through at the nose -- the
+        capsule's far closure, ``root_point``'s mirror."""
+        device = self.t_grid.device
+        tt = torch.tensor([[float(t)]], device=device)
+        with torch.no_grad():
+            s = self.nose(tt)
+            y = self.centerline(torch.ones_like(tt), tt)
+        return torch.tensor([float(s), float(y), float(t)], device=device)
 
     def forward(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         if c is not None:

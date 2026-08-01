@@ -19,7 +19,7 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
-from naviernet.data.dataset import mask_x_extent
+from naviernet.data.dataset import edge_pair
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -128,30 +128,17 @@ def nose_trajectory(cfg, model, data, c=None) -> GrowthTrajectory:
     return GrowthTrajectory(times, np.asarray(nose), np.asarray(area))
 
 
-def _bubble_edges(
-    mask: np.ndarray, xs: np.ndarray, x_anchor: float
-) -> tuple[float, float] | None:
-    """One mask's ``(root, front)`` x* -- the x-extent edge nearer the measured
-    root anchor and the one farther (orientation-agnostic, the same convention
-    the anchor measurement uses). ``None`` for an empty mask."""
-    extent = mask_x_extent(mask)
-    if extent is None:
-        return None
-    lo, hi = float(xs[extent[0]]), float(xs[extent[1]])
-    return (lo, hi) if abs(lo - x_anchor) <= abs(hi - x_anchor) else (hi, lo)
-
-
 def root_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
     """The bubble-root x* of one mask (``nan`` when empty). The root staying at
     the anchor on held-out frames is the hard pin's direct mechanistic check."""
-    edges = _bubble_edges(mask, xs, x_anchor)
+    edges = edge_pair(mask, xs, x_anchor)
     return float("nan") if edges is None else edges[0]
 
 
 def front_position(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> float:
     """The bubble-front x* of one mask (``nan`` when empty). The late-window
     front undershoot is the failure the kinematic growth constraints target."""
-    edges = _bubble_edges(mask, xs, x_anchor)
+    edges = edge_pair(mask, xs, x_anchor)
     return float("nan") if edges is None else edges[1]
 
 

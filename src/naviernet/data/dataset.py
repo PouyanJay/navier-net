@@ -39,6 +39,18 @@ def mask_x_extent(mask: np.ndarray) -> tuple[int, int] | None:
     return int(cols[0]), int(cols[-1])
 
 
+def edge_pair(mask: np.ndarray, xs: np.ndarray, x_anchor: float) -> tuple[float, float] | None:
+    """One mask's ``(root, front)`` x*: the x-extent edge nearer the measured
+    root anchor and the one farther (orientation-agnostic). ``None`` when the
+    mask is empty. The single definition every root/front measurement -- the
+    evaluation metrics and the geometry priors -- derives from."""
+    extent = mask_x_extent(mask)
+    if extent is None:
+        return None
+    lo, hi = float(xs[extent[0]]), float(xs[extent[1]])
+    return (lo, hi) if abs(lo - x_anchor) <= abs(hi - x_anchor) else (hi, lo)
+
+
 @dataclass(frozen=True)
 class Domain:
     """Space-time bounds, derived from the tensors rather than assumed."""
@@ -226,21 +238,25 @@ class BubbleDataset:
         """The row's valid vapour mask (see :data:`INTERFACE_ALPHA`)."""
         return (self.alpha[row] > INTERFACE_ALPHA) & (self.valid[row] > 0)
 
+    def _front_x(self, row: int) -> float:
+        """The measured front x* of one row (the edge farther from the root
+        anchor), failing loudly on a vapour-free frame."""
+        x0, _ = self.pin_anchor
+        edges = edge_pair(self._vapor(row), self.x, x0)
+        if edges is None:
+            raise ValueError(
+                f"model.front_geometry needs the bubble front, but training frame "
+                f"{self.frame_numbers[row]} has no vapour (alpha > 0.5) -- check the "
+                f"dataset's masks."
+            )
+        return edges[1]
+
     @cached_property
     def initial_front(self) -> float:
         """The measured front x* of the FIRST training-visible event frame --
         the nose's starting value for the front-geometry construction.
         Data-visible only (held-out rows never enter)."""
-        rows = self._training_visible_event_rows()
-        x0, _ = self.pin_anchor
-        extent = mask_x_extent(self._vapor(rows[0]))
-        if extent is None:
-            raise ValueError(
-                "model.front_geometry needs a nose starting position, but the first "
-                "training frame has no vapour (alpha > 0.5) -- check the dataset's masks."
-            )
-        lo, hi = float(self.x[extent[0]]), float(self.x[extent[1]])
-        return hi if abs(lo - x0) <= abs(hi - x0) else lo
+        return self._front_x(self._training_visible_event_rows()[0])
 
     @cached_property
     def initial_half_width(self) -> float:
@@ -253,26 +269,20 @@ class BubbleDataset:
                 "model.front_geometry needs a width scale, but the first training "
                 "frame has no vapour (alpha > 0.5) -- check the dataset's masks."
             )
-        return 0.5 * float(self.y[vapor_rows[-1]] - self.y[vapor_rows[0]]) or float(
-            self.y[1] - self.y[0]
-        )
+        half_width = 0.5 * float(self.y[vapor_rows[-1]] - self.y[vapor_rows[0]])
+        # A single-row bubble measures 0.0 wide; fall back to one pixel so the
+        # width net's logit init stays finite (a zero prior would saturate it).
+        return half_width if half_width > 0 else float(self.y[1] - self.y[0])
 
     @cached_property
     def nose_rate(self) -> float:
         """Measured front speed across the training-visible frames (x* per t*) --
         the rate the front-geometry nose initializes at. Data-visible only."""
         rows = self._training_visible_event_rows()
-        x0, _ = self.pin_anchor
-
-        def front(row: int) -> float:
-            extent = mask_x_extent(self._vapor(row))
-            lo, hi = float(self.x[extent[0]]), float(self.x[extent[1]])
-            return hi if abs(lo - x0) <= abs(hi - x0) else lo
-
         span = float(self.t[rows[-1]]) - float(self.t[rows[0]])
         if len(rows) < 2 or span <= 0:
             return 0.0
-        return max((front(rows[-1]) - front(rows[0])) / span, 0.0)
+        return max((self._front_x(rows[-1]) - self._front_x(rows[0])) / span, 0.0)
 
     @cached_property
     def supervised_growth_rate(self) -> float:

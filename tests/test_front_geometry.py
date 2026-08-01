@@ -100,8 +100,16 @@ def _random_geo(seed: int):
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_nose_is_monotone_even_beyond_the_grid(seed):
+    """Monotone for TRAINED-scale nets, not just the flat init: near-constant
+    rates hide interpolation bugs (the reviewed nose bug produced negative node
+    jumps only once the rate net had real temporal structure), so the rate net
+    is scaled 10x and the sweep includes the exact grid nodes."""
     geo = _random_geo(seed)
-    times = torch.linspace(0.0, 5.0, 200).unsqueeze(1)  # grid ends at 1.5
+    with torch.no_grad():
+        for p in geo.rate_net.parameters():
+            p.mul_(10.0)
+    dense = torch.linspace(0.0, 5.0, 30_000)
+    times = torch.cat([dense, geo.t_grid]).sort().values.unsqueeze(1)
 
     with torch.no_grad():
         s = geo.nose(times).squeeze(1)
@@ -110,6 +118,34 @@ def test_nose_is_monotone_even_beyond_the_grid(seed):
     assert float(s[0]) == pytest.approx(PRIORS["x_root"] + 0.3, abs=1e-5), (
         "s(t_min) != measured s0"
     )
+
+
+@pytest.mark.parametrize("degenerate", [{"w0": 0.0}, {"rate0": 0.0}, {"w0": 0.0, "rate0": 0.0}])
+def test_degenerate_priors_stay_finite_and_monotone(degenerate):
+    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+
+    torch.manual_seed(0)
+    geo = GeometricInterface(GeometryPriors(**{**PRIORS, **degenerate}))
+    times = torch.linspace(0.0, 3.0, 500).unsqueeze(1)
+
+    with torch.no_grad():
+        s = geo.nose(times).squeeze(1)
+        phi = geo(torch.tensor([[0.35, 0.25, 1.0]]))
+
+    assert torch.isfinite(s).all() and torch.isfinite(phi).all()
+    assert torch.all(s[1:] >= s[:-1] - 1e-7)
+
+
+def test_interface_closes_exactly_at_root_and_nose():
+    """Guarantee #4 measured at both ends: alpha is exactly 0.5 at the root
+    point AND the nose point, for a random net at an extrapolated time."""
+    geo = _random_geo(1)
+    for point in (geo.root_point(2.5), geo.nose_point(2.5)):
+        with torch.no_grad():
+            alpha = torch.sigmoid(geo(point.unsqueeze(0)) / 0.05)
+        assert torch.allclose(alpha, torch.tensor([[0.5]]), atol=1e-6), (
+            f"interface does not close at {point.tolist()}: {float(alpha)}"
+        )
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
@@ -232,18 +268,44 @@ def test_front_geometry_learns_a_representable_target(tmp_path):
         f"student failed to recover the teacher: {hist[0]['data']:.4f} -> tail mean {tail:.4f}"
     )
 
+    # Direct reconstruction, not just a loss ratio: the student's alpha must
+    # track the teacher's on a probe grid (loss can plateau at a mediocre
+    # minimum and still clear a relative bar).
+    from naviernet.training import load_model
+
+    student, _, _ = load_model(cfg, paths)
+    probe_x = torch.linspace(0.05, 1.05, 40)
+    probe_y = torch.linspace(0.02, 0.48, 20)
+    gx2, gy2 = torch.meshgrid(probe_x, probe_y, indexing="ij")
+    for t in (0.05, 0.25):
+        probe = torch.stack([gx2.ravel(), gy2.ravel(), torch.full_like(gx2.ravel(), t)], dim=1)
+        with torch.no_grad():
+            student_alpha = student.alpha(probe)
+            teacher_alpha = torch.sigmoid(teacher(probe) / student.eps)
+        gap = float((student_alpha - teacher_alpha).abs().mean())
+        assert gap < 0.08, f"student/teacher mean alpha gap {gap:.3f} at t={t}"
+
 
 def test_front_geometry_resumes_cleanly(tmp_path):
+    """Resume accumulates steps AND the reloaded model reproduces the trained
+    model's predictions exactly at off-root points (the root-pin invariant alone
+    is true by construction for ANY weights, so it cannot prove the round-trip)."""
     from naviernet.training import load_model, train
 
     cfg, paths = _staged_run(tmp_path, [*TINY_GEO, "training.steps=1"])
     train(cfg, paths)
-    _, _, state = train(cfg, paths)  # resume
+    trained, _, state = train(cfg, paths)  # resume
 
     assert state["done"] == 2
-    model, data, _ = load_model(cfg, paths)
-    root = model.nets["phi"].root_point(2.0 * data.domain.t_max)
-    assert torch.allclose(model.alpha(root.unsqueeze(0)), torch.tensor([[0.5]]), atol=1e-6)
+    probe = torch.tensor(
+        [[0.4, 0.3, 0.15], [0.8, 0.2, 0.35], [0.6, 0.25, 0.9]], dtype=torch.float32
+    )
+    with torch.no_grad():
+        before = trained.alpha(probe)
+    reloaded, _, _ = load_model(cfg, paths)
+    with torch.no_grad():
+        after = reloaded.alpha(probe)
+    assert torch.equal(before, after), "checkpoint round-trip changed the predictions"
 
 
 def test_checkpoint_refuses_a_front_geometry_mismatch(tmp_path):
@@ -269,23 +331,35 @@ def test_front_geometry_rejects_joint_runs(tmp_path):
 
 
 def test_front_geometry_composes_with_causal_and_kinematics(tmp_path):
-    """The bench stack: geometry + causal trains; kinematics' volume terms read
-    alpha and compose untouched."""
+    """The bench stack compositions, each asserted by an effect only the
+    composed technique produces (a bare checkpoint-exists would pass a silent
+    no-op -- the anti-pattern the kinematics review already banned)."""
     from naviernet.training import train
 
-    for name, extra in (
-        ("causal", ["training.causal_weighting=true"]),
-        (
-            "kin",
-            [
-                "training.kinematics=true",
-                "training.kin_grid=6",
-                "training.kin_times=3",
-                "training.kin_weight_evap=0",
-            ],
-        ),
-        ("rba", ["training.weighting=rba"]),
-    ):
-        cfg, paths = _staged_run(tmp_path / name, [*TINY_GEO, *extra])
-        train(cfg, paths)
-        assert paths.checkpoint.exists(), f"{name} composition failed"
+    cfg, paths = _staged_run(tmp_path / "plain", [*TINY_GEO, "training.log_every=1"])
+    _, _, plain_state = train(cfg, paths)
+
+    kin_extra = [
+        "training.kinematics=true",
+        "training.kin_grid=6",
+        "training.kin_times=3",
+        "training.kin_weight_evap=0",
+        "training.log_every=1",
+    ]
+    cfg, paths = _staged_run(tmp_path / "kin", [*TINY_GEO, *kin_extra])
+    _, _, kin_state = train(cfg, paths)
+    assert "kin_mono" in kin_state["hist"][-1], "kinematics silently dropped"
+
+    cfg, paths = _staged_run(tmp_path / "rba", [*TINY_GEO, "training.weighting=rba"])
+    _, _, rba_state = train(cfg, paths)
+    assert "attention" in rba_state, "RBA attention never engaged"
+
+    cfg, paths = _staged_run(
+        tmp_path / "causal",
+        [*TINY_GEO, "training.causal_weighting=true", "training.log_every=1"],
+    )
+    _, _, causal_state = train(cfg, paths)
+    plain_last, causal_last = plain_state["hist"][-1], causal_state["hist"][-1]
+    assert any(
+        plain_last[k] != causal_last[k] for k in plain_last if k not in ("step", "lr")
+    ), "causal weighting had no effect on the trajectory"

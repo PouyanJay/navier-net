@@ -28,6 +28,7 @@ import torch
 from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
+from naviernet.models.geometry import GeometryPriors
 from naviernet.models.pinn import BoundPINN, BubblePINN
 from naviernet.physics import kinematics, registry, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
@@ -80,13 +81,11 @@ def _pin_anchor(cfg, data: BubbleDataset) -> tuple[float, float] | None:
     return x0, y0
 
 
-def _geometry_priors(cfg, data: BubbleDataset):
+def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
     """The dataset's measured geometry anchors when the front geometry is on,
     else ``None`` -- the construction-site helper, like :func:`_pin_anchor`."""
     if not getattr(cfg.model, "front_geometry", False):
         return None
-    from naviernet.models.geometry import GeometryPriors
-
     x0, y0 = data.pin_anchor
     d = data.domain
     log.info(
@@ -98,19 +97,19 @@ def _geometry_priors(cfg, data: BubbleDataset):
         data.initial_half_width,
     )
     return GeometryPriors(
-        x0,
-        y0,
-        data.initial_front,
-        data.initial_half_width,
-        data.nose_rate,
-        d.y_min,
-        d.y_max,
-        d.t_min,
-        d.t_max,
+        x_root=x0,
+        y_root=y0,
+        s0=data.initial_front,
+        w0=data.initial_half_width,
+        rate0=data.nose_rate,
+        y_min=d.y_min,
+        y_max=d.y_max,
+        t_min=d.t_min,
+        t_max=d.t_max,
     )
 
 
-def _pin_record(cfg) -> dict:
+def _architecture_record(cfg) -> dict:
     """The architecture facts persisted in every checkpoint (hard pin and front
     geometry add no detectable state-dict signature for their *configuration*),
     so a later invocation can be checked against how the run was trained."""
@@ -122,13 +121,14 @@ def _pin_record(cfg) -> dict:
     }
 
 
-def _check_pin_compat(cfg, ckpt: dict, path) -> None:
-    """Refuse to consume a checkpoint whose hard-pin architecture disagrees with
-    the composed config. The pin gate adds NO parameters, so ``load_state_dict``
-    succeeds silently either way -- without this guard, evaluating or resuming a
-    pinned run without ``model.hard_pin=true`` (or vice versa) would quietly load
-    the weights into a differently-shaped solution space. Checkpoints written
-    before the record existed pass unchecked (nothing to compare)."""
+def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
+    """Refuse to consume a checkpoint whose recorded architecture flags -- the
+    hard pin AND the front geometry -- disagree with the composed config. The
+    pin gate adds no parameters and a geometry mismatch may load shape-compatible
+    tensors, so ``load_state_dict`` can succeed silently either way; without this
+    guard a mismatched invocation would quietly consume the weights in a
+    differently-shaped solution space. Checkpoints written before the record
+    existed pass unchecked (nothing to compare)."""
     saved = ckpt.get("hard_pin")
     if saved is None:
         return
@@ -769,7 +769,7 @@ def train(
     state = _initial_state(cfg, equations)
     if paths.checkpoint.exists():
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
-        _check_pin_compat(cfg, ckpt, paths.checkpoint)
+        _check_architecture_compat(cfg, ckpt, paths.checkpoint)
         incompatible = model.load_state_dict(ckpt["model"], strict=False)
         if incompatible.unexpected_keys:
             raise RuntimeError(
@@ -914,7 +914,7 @@ def train(
             "model": model.state_dict(),
             "opt": opt.state_dict(),
             "state": state,
-            **_pin_record(cfg),
+            **_architecture_record(cfg),
         },
         paths.checkpoint,
     )
@@ -1155,7 +1155,7 @@ def _train_joint(
             "training_datasets": names,  # the ones actually supervised
             "heldout_datasets": heldout,  # kept out for the transfer test (axis B)
             "n_cond": N_COND,  # so evaluation rebuilds the conditioned architecture
-            **_pin_record(cfg),  # so evaluation rebuilds the pinned architecture
+            **_architecture_record(cfg),  # so evaluation rebuilds the pinned architecture
         },
         paths.checkpoint,
     )
@@ -1177,7 +1177,7 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
         )
     device = torch.device(cfg.training.device)
     ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
-    _check_pin_compat(cfg, ckpt, paths.checkpoint)
+    _check_architecture_compat(cfg, ckpt, paths.checkpoint)
     data = BubbleDataset(cfg, paths, device=str(device))
     # `n_cond` (0 for a single-dataset checkpoint) rebuilds the right architecture,
     # so a conditioned joint checkpoint loads without a shape mismatch.
@@ -1209,7 +1209,7 @@ def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset], l
         )
     device = torch.device(cfg.training.device)
     ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
-    _check_pin_compat(cfg, ckpt, paths.checkpoint)
+    _check_architecture_compat(cfg, ckpt, paths.checkpoint)
     names = list(ckpt.get("datasets") or resolved_datasets(cfg))
     heldout = list(ckpt.get("heldout_datasets", cfg.heldout_datasets))
     contexts = _load_joint_datasets(cfg, paths, device, names)

@@ -85,44 +85,56 @@ def main() -> None:
     _report_root_drift(cfg, pipe)
 
 
-def _report_root_drift(cfg, pipe) -> None:
-    """Per-frame predicted bubble-root and front positions vs the measured ones.
+def _perimeter(mask) -> int:
+    from scipy import ndimage
 
-    Root drift is the failure the hard pin targets; the FRONT undershoot on the
-    held-out frames is the failure the kinematic growth constraints target.
-    Reporting both for every bench run makes the mechanisms visible next to the
-    IoU numbers.
-    """
+    return int((mask ^ ndimage.binary_erosion(mask)).sum())
+
+
+def _frame_report(cfg, model, data, row: int, x_anchor: float) -> dict:
+    """One frame's mechanistic measurements: root drift (the hard pin's check),
+    front error (the growth constraints' check), and shape structure (component
+    count / perimeter ratio -- the front-geometry check)."""
+    from scipy import ndimage
+
     from naviernet.evaluation import front_position, predict_alpha, root_position
+
+    stride = cfg.evaluation.stride
+    xs = data.x[::stride]
+    mask = predict_alpha(model, data, data.t[row], stride) > cfg.evaluation.threshold
+    measured = data.alpha[row, ::stride, ::stride] > cfg.evaluation.threshold
+    _, n_comp = ndimage.label(mask)
+    return {
+        "frame": data.frame_numbers[row],
+        "root": root_position(mask, xs, x_anchor),
+        "front": front_position(mask, xs, x_anchor),
+        "front_true": front_position(measured, xs, x_anchor),
+        "components": n_comp,
+        "perim_ratio": _perimeter(mask) / max(_perimeter(measured), 1),
+    }
+
+
+def _report_root_drift(cfg, pipe) -> None:
+    """Per-frame mechanistic report next to the IoU numbers (see _frame_report)."""
     from naviernet.training import load_model
 
     model, data, _ = load_model(cfg, pipe.paths)
     x_anchor, _ = data.pin_anchor
-    stride = cfg.evaluation.stride
-    threshold = cfg.evaluation.threshold
-    xs = data.x[::stride]
+    reports = [
+        _frame_report(cfg, model, data, row, x_anchor) for row in range(len(data.frame_numbers))
+    ]
 
-    from scipy import ndimage
-
-    def perimeter(mask) -> int:
-        return int((mask ^ ndimage.binary_erosion(mask)).sum())
-
-    drifts, fronts, shapes = [], [], []
-    for row, frame_no in enumerate(data.frame_numbers):
-        mask = predict_alpha(model, data, data.t[row], stride) > threshold
-        measured = data.alpha[row, ::stride, ::stride] > threshold
-        root = root_position(mask, xs, x_anchor)
-        front = front_position(mask, xs, x_anchor)
-        front_true = front_position(measured, xs, x_anchor)
-        _, n_comp = ndimage.label(mask)
-        perim_ratio = perimeter(mask) / max(perimeter(measured), 1)
-        drifts.append(f"{frame_no}:{root:.3f}({root - x_anchor:+.3f})")
-        fronts.append(f"{frame_no}:{front:.3f}({front - front_true:+.3f})")
-        shapes.append(f"{frame_no}:{n_comp}c/{perim_ratio:.2f}p")
     print(f"root anchor x*={x_anchor:.4f}")
-    print(f"per-frame root x*(drift): {' '.join(drifts)}")
-    print(f"per-frame front x*(vs measured): {' '.join(fronts)}")
-    print(f"per-frame shape (components/perimeter-ratio): {' '.join(shapes)}")
+    line = " ".join(
+        f"{r['frame']}:{r['root']:.3f}({r['root'] - x_anchor:+.3f})" for r in reports
+    )
+    print(f"per-frame root x*(drift): {line}")
+    line = " ".join(
+        f"{r['frame']}:{r['front']:.3f}({r['front'] - r['front_true']:+.3f})" for r in reports
+    )
+    print(f"per-frame front x*(vs measured): {line}")
+    line = " ".join(f"{r['frame']}:{r['components']}c/{r['perim_ratio']:.2f}p" for r in reports)
+    print(f"per-frame shape (components/perimeter-ratio): {line}")
 
 
 if __name__ == "__main__":

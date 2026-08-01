@@ -102,24 +102,7 @@ class BubblePINN(nn.Module):
         self.cfg = cfg
         self.eps = float(cfg.model.alpha_eps)
         self.n_cond = int(n_cond)
-        self.front_geometry = bool(getattr(cfg.model, "front_geometry", False))
-        if self.front_geometry:
-            if getattr(cfg.model, "hard_pin", False):
-                raise ValueError(
-                    "model.front_geometry already pins the root exactly by construction; "
-                    "it is mutually exclusive with model.hard_pin -- disable one."
-                )
-            if self.n_cond > 0:
-                raise NotImplementedError(
-                    "model.front_geometry is not yet supported for joint (multi-dataset) "
-                    "runs; disable it for joint runs for now."
-                )
-            if geometry is None:
-                raise ValueError(
-                    "model.front_geometry=true needs the dataset's geometry priors: "
-                    "construct the model with geometry=GeometryPriors(...), as "
-                    "train()/load_model() do."
-                )
+        self._validate_front_geometry(cfg, geometry)
         self._init_hard_pin(cfg, pin)
 
         names = list(fields if fields is not None else cfg.model.fields)
@@ -133,6 +116,36 @@ class BubblePINN(nn.Module):
             }
         )
         self._init_inverse_unknowns(cfg, names)
+
+    def _validate_front_geometry(self, cfg, geometry: GeometryPriors | None) -> None:
+        """Reject unusable front-geometry compositions loudly, before any net is
+        built: the geometry pins exactly (hard_pin is redundant and conflicting),
+        joint conditioning is unsupported, priors are required, and a per-field
+        phi override would be silently ignored."""
+        self.front_geometry = bool(getattr(cfg.model, "front_geometry", False))
+        if not self.front_geometry:
+            return
+        if getattr(cfg.model, "hard_pin", False):
+            raise ValueError(
+                "model.front_geometry already pins the root exactly by construction; "
+                "it is mutually exclusive with model.hard_pin -- disable one."
+            )
+        if self.n_cond > 0:
+            raise NotImplementedError(
+                "model.front_geometry is not yet supported for joint (multi-dataset) "
+                "runs; disable it for joint runs for now."
+            )
+        if geometry is None:
+            raise ValueError(
+                "model.front_geometry=true needs the dataset's geometry priors: "
+                "construct the model with geometry=GeometryPriors(...), as "
+                "train()/load_model() do."
+            )
+        if (getattr(cfg.model, "per_field", None) or {}).get("phi") is not None:
+            raise ValueError(
+                "model.per_field.phi has no effect when model.front_geometry=true "
+                "(the phi net is the geometric construction) -- remove the override."
+            )
 
     def _init_hard_pin(self, cfg, pin: tuple[float, float] | None) -> None:
         """Hard root pin: phi = ell(x, y) * N, so the interface (alpha = 0.5) passes
