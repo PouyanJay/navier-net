@@ -376,3 +376,68 @@ def test_h_star_is_the_channel_gap_over_the_reference_length(tmp_path):
     groups = compute_groups(cfg)
     expected = cfg.experiment.channel_height_um / cfg.scales.L_ref_um
     assert groups["H_star"] == pytest.approx(expected)
+
+
+# --- T5: the kinematic condition, imposed on the front ------------------------
+
+
+def test_kinematic_condition_equates_the_front_speed_to_the_normal_velocity(tmp_path):
+    """v_n = u.n at the interface, term for term. Only the NORMAL component of
+    the flow can move a front; a tangential slip along it moves nothing."""
+    from naviernet.physics.residuals import kinematic_residual
+
+    model, data, _ = _model_and_data(tmp_path)
+    front = model.nets["phi"].front(torch.tensor([[0.3], [0.9]]), n_body=16, n_cap=8)
+
+    u, v = model.velocity(front.points)
+    advected = u * front.normal[:, 0:1] + v * front.normal[:, 1:2]
+    assert torch.allclose(kinematic_residual(model, front), front.normal_speed - advected)
+
+
+def test_kinematic_condition_joins_the_sharp_equation_set(tmp_path):
+    """It is a boundary condition on the front, so -- like `bc` and `laplace` --
+    it is not a collocation term and stays out of the causal/RBA reweighting."""
+    from naviernet.physics import registry
+
+    cfg, _ = _staged_run(tmp_path, TINY_SHARP)
+    equations = registry.enabled_equations(cfg.model.fields, sharp_interface=True)
+    kinematic = next(e for e in equations if e.id == "kinematic")
+    assert kinematic.on_collocation is False
+    assert "kinematic" not in [e.id for e in registry.enabled_equations(cfg.model.fields)]
+
+
+def test_kinematic_condition_is_satisfiable_by_the_velocity_field(tmp_path):
+    """Training the velocity nets against it alone must drive it down -- if it
+    cannot be satisfied, adding it to the objective only fights the other terms."""
+    from naviernet.physics.residuals import kinematic_residual
+
+    torch.manual_seed(0)
+    model, data, _ = _model_and_data(
+        tmp_path, [*TINY_SHARP, "model.hidden=64", "model.layers=3", "model.fourier_feats=32"]
+    )
+    times = torch.linspace(data.domain.t_min, data.domain.t_max, 8).reshape(-1, 1)
+    params = [p for name in ("u", "v") for p in model.nets[name].parameters()]
+    opt = torch.optim.Adam(params, lr=5e-3)
+
+    def loss():
+        front = model.nets["phi"].front(times, n_body=32, n_cap=8)
+        return (kinematic_residual(model, front) ** 2).mean()
+
+    before = float(loss().detach())
+    for _ in range(600):
+        opt.zero_grad()
+        loss().backward()
+        opt.step()
+    after = float(loss().detach())
+    assert after < 0.05 * before, f"kinematic residual {before:.4g} -> {after:.4g}"
+
+
+def test_sharp_run_trains_the_kinematic_condition(tmp_path):
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(tmp_path, TINY_SHARP)
+    train(cfg, paths)
+    last = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)["state"][
+        "hist"
+    ][-1]
+    assert "kinematic" in last, last

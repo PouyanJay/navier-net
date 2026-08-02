@@ -30,6 +30,7 @@ from naviernet.physics.residuals import (
     boundary_losses,
     darcy_residuals,
     energy_residuals,
+    kinematic_residual,
     laplace_jump_residual,
     momentum_residuals,
     source_penalty_sq,
@@ -187,6 +188,10 @@ def _darcy_sq(ctx: LossContext) -> torch.Tensor:
     return res.mom_x**2 + res.mom_y**2
 
 
+def _kinematic_term(ctx: LossContext) -> torch.Tensor:
+    return (kinematic_residual(ctx.model, ctx.front, ctx.c) ** 2).mean()
+
+
 def _laplace_term(ctx: LossContext) -> torch.Tensor:
     return (laplace_jump_residual(ctx.model, ctx.front, ctx.groups) ** 2).mean()
 
@@ -307,6 +312,19 @@ REGISTRY: tuple[Equation, ...] = (
         mode="sharp",
         pointwise=_darcy_sq,
         term=_mean(_darcy_sq),
+    ),
+    Equation(
+        id="kinematic",
+        stage="B",
+        name="Kinematic condition",
+        tex=r"v_n = \mathbf{u}\cdot\mathbf{n} \quad \text{on } \Gamma",
+        weight_key="kinematic",
+        fields_required=("phi", "u", "v"),
+        mode="sharp",
+        # A condition ON the front, not an interior residual -- like `bc`, so it
+        # stays out of the causal/RBA collocation reweighting.
+        on_collocation=False,
+        term=_kinematic_term,
     ),
     Equation(
         id="laplace",

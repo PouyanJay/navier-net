@@ -406,6 +406,27 @@ def gap_curvature(normal_speed: torch.Tensor, groups: dict[str, float]) -> torch
     return (2.0 / groups["H_star"]) * (1.0 + BRETHERTON_COEFF * capillary ** (2.0 / 3.0))
 
 
+def kinematic_residual(model, front, c: torch.Tensor | None = None) -> torch.Tensor:
+    """The kinematic condition on the explicit interface, per sample ``(N, 1)``::
+
+        v_n = u . n
+
+    The front advances at the normal component of the local fluid velocity. Only
+    the normal component can move it: a tangential slip along the interface
+    transports nothing across it, which is why this is projected rather than
+    compared component-wise. (Phase change contributes no extra interface
+    velocity here -- under the Hardt-Wondra treatment its source lives OFF the
+    interface, the same reason the VOF residual is a pure advection.)
+
+    The front-sampled counterpart of the ``vof`` collocation residual, and the
+    reason it is worth having twice: ``vof`` is evaluated at bulk points, where
+    ``grad alpha`` is ~0 and the equation is satisfied by doing nothing. Here
+    every sample is on the interface, so every sample constrains it.
+    """
+    u, v = model.velocity(front.points, _ctx(c, front.points))
+    return front.normal_speed - (u * front.normal[:, 0:1] + v * front.normal[:, 1:2])
+
+
 def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:
     """Young-Laplace across the explicit interface, per front sample ``(N, 1)``::
 

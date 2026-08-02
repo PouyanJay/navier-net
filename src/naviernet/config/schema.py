@@ -188,6 +188,7 @@ class LossWeights:
     energy: float = 1.0  # Stage B: energy
     evap: float = 1.0  # Stage B: evaporation mass-closure penalty
     darcy: float = 1.0  # R4: depth-averaged momentum (replaces `mom` in sharp mode)
+    kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
 
 
