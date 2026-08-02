@@ -402,15 +402,29 @@ class GeometricInterface(nn.Module):
         s = self.nose(t, c, anchors)
         r_root = self._radius(torch.zeros_like(t), t, c, anchors)
         r_nose = self._radius(torch.ones_like(t), t, c, anchors)
-        length = (s - anchors.x_root).clamp(min=2.0 * ABS_SMOOTH)
+        # The length the caps have to share is the one that ACTUALLY exists, not a
+        # clamped stand-in: clamping it up let the caps consume more spine than the
+        # bubble had, and a just-nucleated bubble then closed to bx == ax -- a
+        # zero-length spine that the front's own curvature divides by. Measured:
+        # kappa went non-finite. `forward` never saw it because its u is clamped
+        # to [0, 1] straight afterwards, which turns the same infinity into a
+        # plausible number.
+        available = s - anchors.x_root
         # Only a cap that EXISTS consumes spine length, and under `allow_pinch` a
         # radius may be negative or vanish -- so the positive parts set the
         # rescale, floored so a bubble with no caps at all cannot divide by zero.
         caps = (r_root.clamp(min=0.0) + r_nose.clamp(min=0.0)).clamp(min=ABS_SMOOTH)
-        scale = ((length - ABS_SMOOTH) / caps).clamp(max=1.0)
+        scale = ((available - ABS_SMOOTH) / caps).clamp(min=0.0, max=1.0)
         r_root = r_root * scale
         r_nose = r_nose * scale
-        return CapsuleFrame(s, anchors.x_root + r_root, s - r_nose, r_root, r_nose, scale)
+        ax = anchors.x_root + r_root
+        # The documented invariant, now enforced rather than implied: at least
+        # ABS_SMOOTH of spine survives. It binds only when the bubble is shorter
+        # than that -- there is no bubble left to be exact about -- and everywhere
+        # else `available - caps >= ABS_SMOOTH` already holds by the rescale above,
+        # so both apexes stay exact.
+        bx = torch.maximum(s - r_nose, ax + ABS_SMOOTH)
+        return CapsuleFrame(s, ax, bx, r_root, r_nose, scale)
 
     def forward(
         self,

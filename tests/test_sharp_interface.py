@@ -441,3 +441,78 @@ def test_sharp_run_trains_the_kinematic_condition(tmp_path):
         "hist"
     ][-1]
     assert "kinematic" in last, last
+
+
+# --- T13: variants and edge cases ---------------------------------------------
+
+
+def test_a_sharp_run_resumes_and_keeps_training_the_same_objective(tmp_path):
+    """Two chunks must equal one run: the front times are a deterministic grid
+    and p_v is an ordinary parameter, so resume has to pick both up unchanged."""
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(tmp_path, [*TINY_SHARP, "training.steps=2"])
+    train(cfg, paths)
+    train(cfg, paths)
+
+    ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
+    assert ckpt["state"]["done"] == 4
+    assert "laplace" in ckpt["state"]["hist"][-1]
+
+
+def test_a_degenerate_front_stays_finite(tmp_path):
+    """A just-nucleated bubble is shorter than its own cap radii, so the spine
+    collapses and every per-sample quantity divides by something small. Curvature,
+    normals and speeds must all stay finite -- a NaN here poisons the whole step."""
+    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+
+    torch.manual_seed(0)
+    geo = GeometricInterface(
+        GeometryPriors(
+            x_root=0.2,
+            y_root=0.25,
+            s0=0.201,
+            w0=0.06,
+            rate0=0.0,
+            y_min=0.0,
+            y_max=0.5,
+            t_min=0.0,
+            t_max=1.0,
+        )
+    )
+    front = geo.front(torch.tensor([[0.0], [1.0]]), n_body=16, n_cap=8)
+    for name, tensor in front._asdict().items():
+        assert torch.isfinite(tensor).all(), f"{name} went non-finite on a degenerate front"
+
+
+def test_front_sampling_rejects_a_cap_that_is_not_an_arc(tmp_path):
+    """A one-point cap is a point, not an arc; refuse it rather than silently
+    sampling a degenerate contour."""
+    geo, _ = _geometry(tmp_path)
+    with pytest.raises(ValueError, match="n_cap"):
+        geo.front(torch.tensor([[0.0]]), n_body=8, n_cap=1)
+
+
+def test_sharp_interface_composes_with_causal_weighting(tmp_path):
+    """The interface conditions are boundary terms, so they sit outside the
+    causal collocation reweighting -- the two must compose without exploding."""
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(tmp_path, [*TINY_SHARP, "training.causal_weighting=true"])
+    train(cfg, paths)
+
+    record = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
+    last = record["state"]["hist"][-1]
+    assert all(v == v for v in last.values()), f"a term went NaN: {last}"
+
+
+def test_pinching_and_sharp_interface_compose(tmp_path):
+    """The recipe a detachment study would actually run."""
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(tmp_path, [*TINY_SHARP, "model.allow_pinch=true"])
+    train(cfg, paths)
+    last = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)["state"][
+        "hist"
+    ][-1]
+    assert all(v == v for v in last.values()), f"a term went NaN: {last}"
