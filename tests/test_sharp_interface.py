@@ -299,3 +299,80 @@ def _collocation(data, n: int = 64):
     import numpy as np
 
     return data.sample_collocation(n, np.random.default_rng(0))
+
+
+# --- T4/T5: the front's normal, its own speed, and the gap curvature ----------
+
+
+def test_front_normal_is_the_outward_unit_normal(tmp_path):
+    """Unit length everywhere, and pointing OUT of the vapour: stepping a hair
+    along it must lower alpha (leave the bubble) on every segment."""
+    geo, data = _geometry(tmp_path)
+    front = geo.front(torch.tensor([[0.3 * data.domain.t_max]]), n_body=24, n_cap=12)
+
+    norm = front.normal.norm(dim=1)
+    assert torch.allclose(norm, torch.ones_like(norm), atol=1e-5)
+
+    from naviernet.data.dataset import BubbleDataset  # noqa: F401  (fixture parity)
+
+    step = 1e-3
+    outside = front.points.clone()
+    outside[:, :2] = outside[:, :2] + step * front.normal
+    inside = front.points.clone()
+    inside[:, :2] = inside[:, :2] - step * front.normal
+    phi_out, phi_in = geo(outside), geo(inside)
+    assert (phi_out < phi_in).all(), "the normal must point out of the vapour everywhere"
+
+
+def test_front_normal_speed_matches_the_nose_rate_at_the_nose_apex(tmp_path):
+    """The apex of the nose cap moves at exactly ds/dt: the one point on the
+    front whose speed has an independent closed form to check against."""
+    geo, data = _geometry(tmp_path)
+    t = torch.tensor([[0.4 * data.domain.t_max]], requires_grad=True)
+    nose = geo.nose(t)
+    (rate,) = torch.autograd.grad(nose.sum(), t)
+
+    front = geo.front(t.detach(), n_body=8, n_cap=9)
+    apex = (front.on_cap.squeeze(1) == 1) & (front.u.squeeze(1) == 1.0)
+    # The apex is the cap sample at angle 0, i.e. the one with side == 0.
+    apex = apex & (front.side.squeeze(1) == 0)
+    assert int(apex.sum()) == 1
+
+    assert front.normal_speed[apex].item() == pytest.approx(float(rate), rel=1e-3)
+
+
+def test_gap_curvature_grows_with_the_local_front_speed(tmp_path):
+    """The Bretherton correction is the whole mechanism: a faster-advancing
+    section of front carries MORE capillary pressure than a slow one, which is
+    what inflates the nose and drains the mid-body."""
+    from naviernet.physics.residuals import gap_curvature
+
+    groups = {"H_star": 0.5, "Ca": 0.0107}
+    slow = gap_curvature(torch.tensor([[0.05]]), groups)
+    fast = gap_curvature(torch.tensor([[1.50]]), groups)
+
+    assert float(fast) > float(slow) > 2.0 / groups["H_star"] * 0.999
+    assert float(slow) == pytest.approx(2.0 / groups["H_star"], rel=0.05), (
+        "a nearly stationary front reads the static gap curvature"
+    )
+
+
+def test_gap_curvature_ignores_a_receding_front(tmp_path):
+    """The lubrication film is deposited by an ADVANCING meniscus; a receding one
+    gets no thickening, and a negative capillary number has no 2/3 power."""
+    from naviernet.physics.residuals import gap_curvature
+
+    groups = {"H_star": 0.5, "Ca": 0.0107}
+    receding = gap_curvature(torch.tensor([[-1.0]]), groups)
+    assert float(receding) == pytest.approx(2.0 / groups["H_star"], rel=1e-6)
+
+
+def test_h_star_is_the_channel_gap_over_the_reference_length(tmp_path):
+    """The gap curvature is a property of the channel, computed like every other
+    group -- never a literal."""
+    from naviernet.physics.groups import compute_groups
+
+    cfg, _ = _staged_run(tmp_path, TINY_SHARP)
+    groups = compute_groups(cfg)
+    expected = cfg.experiment.channel_height_um / cfg.scales.L_ref_um
+    assert groups["H_star"] == pytest.approx(expected)

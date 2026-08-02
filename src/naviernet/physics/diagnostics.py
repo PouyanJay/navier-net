@@ -21,6 +21,7 @@ import numpy as np
 import torch
 
 from naviernet.physics.groups import compute_groups
+from naviernet.physics.residuals import gap_curvature
 
 # Stations along the bubble the half-width profiles are compared on. Odd, so a
 # station lands exactly mid-bubble where the measured neck sits.
@@ -164,28 +165,34 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
     """``(nose, whole-front)`` jump error. ``nan`` when the run has no vapour
     pressure to compare against.
 
-    Two different normalisations, deliberately. At the nose the capillary
-    pressure is O(1/r) and well away from zero, so a POINTWISE relative error is
-    meaningful and is what the gate reads. Across the whole front it is not: a
-    straight body section has ``kappa_par -> 0``, and dividing by it turns a
-    perfectly small residual into an arbitrarily large ratio (measured: 1.8e3 on
-    an untrained model). So the front-wide figure is the RMS residual against the
-    RMS capillary pressure -- one global scale, finite wherever the caps are.
+    Two different normalisations, deliberately.
+
+    At the nose the total capillary pressure is far from zero, so a POINTWISE
+    relative error means something, and it is what the gate reads.
+
+    Across the front it is normalised by the capillary pressure's VARIATION, not
+    its magnitude. The gap term ``2/H*`` is a large constant (~4 against an
+    in-plane O(1)), and a space-independent ``p_v`` absorbs any constant exactly
+    -- so scoring against the magnitude would flatter every model, satisfied or
+    not. What a free ``p_v`` cannot absorb is the variation along the front, and
+    that is precisely the part that selects the shape.
     """
     with torch.no_grad():
-        vapour = _vapour_pressure(model, front)
+        capillary = (
+            (front.kappa_par + gap_curvature(front.normal_speed, groups)) / groups["We"]
+        ).detach()
         residual = (
-            vapour - model.pressure(front.points) - front.kappa_par / groups["We"]
+            _vapour_pressure(model, front) - model.pressure(front.points) - capillary
         ).abs()
-    capillary = (front.kappa_par / groups["We"]).abs().detach()
 
     # The nose cap: the far closure, where curvature is largest and the jump is
     # least ambiguous. `u == 1` marks it (see FrontSamples).
-    nose = (front.u.squeeze(1) == 1.0) & (capillary.squeeze(1) > CAPILLARY_FLOOR)
-    nose_error = _rms((residual / capillary.clamp(min=CAPILLARY_FLOOR)).squeeze(1)[nose])
+    magnitude = capillary.abs().squeeze(1)
+    nose = (front.u.squeeze(1) == 1.0) & (magnitude > CAPILLARY_FLOOR)
+    nose_error = _rms((residual.squeeze(1) / magnitude.clamp(min=CAPILLARY_FLOOR))[nose])
 
-    scale = _rms(capillary.squeeze(1))
-    front_error = _rms(residual.squeeze(1)) / max(scale, CAPILLARY_FLOOR)
+    variation = _rms(capillary.squeeze(1) - capillary.mean())
+    front_error = _rms(residual.squeeze(1)) / max(variation, CAPILLARY_FLOOR)
     return nose_error, front_error
 
 
@@ -241,10 +248,11 @@ def _axial_capillary_gradient(front, groups: dict[str, float]) -> float:
     fact perfectly straight where it matters.
     """
     lo, hi = BODY_INTERIOR
+    total = front.kappa_par + gap_curvature(front.normal_speed, groups)
     u = front.u.squeeze(1)
     body = (front.on_cap.squeeze(1) == 0) & (front.side.squeeze(1) > 0) & (u >= lo) & (u <= hi)
     x = front.points[body, 0].detach()
-    pressure = (front.kappa_par[body].squeeze(1) / groups["We"]).detach()
+    pressure = (total[body].squeeze(1) / groups["We"]).detach()
     times = front.points[body, 2].detach()
 
     gradients = []

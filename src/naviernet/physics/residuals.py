@@ -373,6 +373,39 @@ def darcy_residuals(
     return MomentumResiduals(p_x + drag * u, p_y + drag * v, torch.zeros_like(u))
 
 
+# Bretherton's front-meniscus correction, 1.29 (3 Ca)^{2/3} = 2.68 Ca^{2/3}
+# (Bretherton 1961): the dynamic thickening of the capillary pressure across an
+# advancing meniscus that has laid down a lubrication film behind it. A fixed
+# physical coefficient, not a tunable.
+BRETHERTON_COEFF = 1.29 * 3.0 ** (2.0 / 3.0)
+
+
+def gap_curvature(normal_speed: torch.Tensor, groups: dict[str, float]) -> torch.Tensor:
+    """Out-of-plane (gap-direction) interface curvature, ``(N, 1)``::
+
+        kappa_perp = (2 / H*) (1 + 2.68 Ca_local^{2/3})
+
+    A depth-averaged model has no z direction, so this curvature cannot be
+    computed from the in-plane shape -- it has to be supplied. It matters twice
+    over: it is the LARGER principal curvature here (``2/H* = 4`` against an
+    in-plane O(1)), and, through the local capillary number
+    ``Ca_local = Ca * v_n``, it is the only place the front's own SPEED enters
+    the capillary pressure.
+
+    That speed dependence is the mechanism the whole sharp-interface change
+    exists to restore: a fast-advancing nose carries more capillary pressure
+    than a slow mid-body, so vapour is driven forward and the middle thins. With
+    a speed-independent capillary pressure every station along the bubble is
+    interchangeable and no neck can be selected.
+
+    Only an ADVANCING front deposits a film, so a receding section takes the
+    static ``2/H*`` (and a negative capillary number never reaches the 2/3
+    power).
+    """
+    capillary = (groups["Ca"] * normal_speed).clamp(min=0.0)
+    return (2.0 / groups["H_star"]) * (1.0 + BRETHERTON_COEFF * capillary ** (2.0 / 3.0))
+
+
 def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:
     """Young-Laplace across the explicit interface, per front sample ``(N, 1)``::
 
@@ -390,7 +423,8 @@ def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tenso
     there is nothing left to absorb it.
     """
     t = front.points[:, 2:3]
-    return model.p_vapor(t) - model.pressure(front.points) - front.kappa_par / groups["We"]
+    kappa = front.kappa_par + gap_curvature(front.normal_speed, groups)
+    return model.p_vapor(t) - model.pressure(front.points) - kappa / groups["We"]
 
 
 def stage_b_residuals(

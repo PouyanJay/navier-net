@@ -101,7 +101,7 @@ def test_a_satisfied_jump_reads_near_zero_error(tmp_path):
         tmp_path,
         [*TINY_SHARP, "model.hidden=64", "model.layers=3", "model.fourier_feats=32"],
     )
-    _fit_pressure_to_the_jump(model, data, steps=1200)
+    _fit_pressure_to_the_jump(model, data, steps=1500)
 
     diag = interface_diagnostics(model, data)
     assert diag.laplace_error_nose < 0.10, (
@@ -162,15 +162,23 @@ def test_a_diffuse_run_is_measured_by_the_same_definition(tmp_path):
 def _fit_pressure_to_the_jump(model, data, steps: int):
     """Train ONLY the pressure fields against the Young-Laplace condition, so the
     diagnostic is checked against a solution that really does satisfy it."""
+    from naviernet.physics import diagnostics as diag
     from naviernet.physics.groups import compute_groups
     from naviernet.physics.residuals import laplace_jump_residual
 
     groups = compute_groups(model.cfg)
-    times = torch.linspace(data.domain.t_min, data.domain.t_max, 8).reshape(-1, 1)
+    # The diagnostic's own grid, not a coarser one: a model fitted on 8 times and
+    # scored on 16 is not a model that satisfies the condition, and the test would
+    # be measuring coverage rather than the metric.
+    times = torch.linspace(data.domain.t_min, data.domain.t_max, diag.DIAGNOSTIC_TIMES).reshape(
+        -1, 1
+    )
     params = list(model.nets["p"].parameters()) + list(model.vapor_pressure.parameters())
     opt = torch.optim.Adam(params, lr=5e-3)
     for _ in range(steps):
         opt.zero_grad()
-        front = model.nets["phi"].front(times, n_body=32, n_cap=8)
+        front = model.nets["phi"].front(
+            times, n_body=diag.DIAGNOSTIC_BODY_SAMPLES, n_cap=diag.DIAGNOSTIC_CAP_SAMPLES
+        )
         (laplace_jump_residual(model, front, groups) ** 2).mean().backward()
         opt.step()

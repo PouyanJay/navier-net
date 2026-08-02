@@ -82,6 +82,12 @@ class FrontSamples(NamedTuple):
     :func:`~naviernet.physics.residuals.curvature` uses, so a bubble's Laplace
     jump is positive). It is the in-plane half of the total curvature; the
     gap-direction half is a property of the channel, not of this curve.
+
+    ``normal`` is the outward unit normal ``(N, 2)`` -- out of the vapour --
+    and ``normal_speed`` is how fast the front advances along it. The speed is
+    the front's OWN motion, taken from the parameterization; equating it to
+    ``u.n`` is the kinematic condition, and it is also the local capillary
+    number the Bretherton film correction reads.
     """
 
     points: torch.Tensor
@@ -89,6 +95,8 @@ class FrontSamples(NamedTuple):
     side: torch.Tensor
     on_cap: torch.Tensor
     kappa_par: torch.Tensor
+    normal: torch.Tensor
+    normal_speed: torch.Tensor
 
 
 @dataclass(frozen=True)
@@ -291,43 +299,8 @@ class GeometricInterface(nn.Module):
         # apexes), while staying C-infinity on the spine (the KAPPA lesson).
         return torch.sqrt(radius**2 + ABS_SMOOTH**2) - torch.sqrt(d_sq + ABS_SMOOTH**2)
 
-    def _profile_curvature(
-        self, u: torch.Tensor, t: torch.Tensor, scale: torch.Tensor, length: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """``(y_upper, y_lower, kappa_by_side)`` for the body profiles at ``u``.
-
-        The profiles are ``y = c(u,t) +/- R(u,t)``, so their curvature is the
-        textbook ``kappa = -sigma y''/(1 + y'^2)^{3/2}`` (``sigma = +1`` upper,
-        ``-1`` lower; the sign makes a bubble that bulges outward read POSITIVE,
-        matching the diffuse convention). ``x`` is affine in ``u`` along the body
-        -- ``x = ax + u L`` -- so ``y' = y_u / L`` and ``y'' = y_uu / L^2`` with no
-        second term.
-
-        Taken this way rather than by differentiating a smeared alpha twice: the
-        diffuse route has to floor ``|grad alpha|`` (``KAPPA_EPS``) and, on this
-        construction, spikes to ``|kappa| ~ 1e4`` on the spine, where a handful of
-        points then carry most of the momentum loss. There is nothing to floor
-        here. Returns the curvature stacked ``(upper, lower)``.
-        """
-        u = u.detach().requires_grad_(True)
-        centre = self.centerline(u, t)
-        radius = self._radius(u, t) * scale
-
-        def d_du(f: torch.Tensor) -> torch.Tensor:
-            return torch.autograd.grad(f, u, torch.ones_like(f), create_graph=True)[0]
-
-        centre_u, radius_u = d_du(centre), d_du(radius)
-        centre_uu, radius_uu = d_du(centre_u), d_du(radius_u)
-
-        kappa = []
-        for sign in (1.0, -1.0):
-            y_x = (centre_u + sign * radius_u) / length
-            y_xx = (centre_uu + sign * radius_uu) / length**2
-            kappa.append(-sign * y_xx / (1.0 + y_x**2) ** 1.5)
-        return centre + radius, centre - radius, torch.cat(kappa, dim=0)
-
     def front(self, t: torch.Tensor, n_body: int, n_cap: int) -> FrontSamples:
-        """Points sampled exactly ON the interface at each time in ``t``.
+        """The interface at each time in ``t``, as an explicit sampled curve.
 
         This is what makes the sharp-interface conditions possible: the front is
         an explicit object, so the Young-Laplace jump and the kinematic condition
@@ -341,7 +314,10 @@ class GeometricInterface(nn.Module):
         radius), and every point satisfies ``phi = 0`` identically -- see
         :func:`forward`, whose matched floors cancel on the interface.
 
-        Deliberately NOT detached: the loss must be able to move the front.
+        Every sample carries its own outward normal, in-plane curvature, and
+        normal speed, all taken from the parameterization rather than from a
+        smeared field. Deliberately NOT detached: the loss must be able to move
+        the front.
         """
         if n_body < 1 or n_cap < 2:
             raise ValueError(
@@ -349,62 +325,131 @@ class GeometricInterface(nn.Module):
                 f"point), got n_body={n_body}, n_cap={n_cap}"
             )
         t = t.reshape(-1, 1)
-        f = self.frame(t)
+        n_times = t.shape[0]
+        device = t.device
 
-        # Body: the two profiles, off the seams so each u belongs to one segment.
-        u = torch.linspace(0.0, 1.0, n_body + 2, device=t.device)[1:-1].reshape(1, -1)
-        u_body = u.expand(t.shape[0], -1).reshape(-1, 1)
-        t_body = t.expand(-1, n_body).reshape(-1, 1)
-        length = (f.bx - f.ax).repeat_interleave(n_body, dim=0)
-        y_upper, y_lower, kappa_body = self._profile_curvature(
-            u_body, t_body, f.scale.repeat_interleave(n_body, dim=0), length
-        )
-        spine_x = f.ax.repeat_interleave(n_body, dim=0) + u_body * length
+        def tiled(values: torch.Tensor) -> torch.Tensor:
+            """One row of parameter values, repeated for every time (t-major)."""
+            return values.reshape(1, -1).expand(n_times, -1).reshape(-1, 1)
 
-        # Caps: the root sweeps the far half-circle, the nose the near one, so
-        # together with the two profiles they close the contour exactly once.
-        angle = torch.linspace(-0.5 * math.pi, 0.5 * math.pi, n_cap, device=t.device)
-        angle = angle.reshape(1, -1).expand(t.shape[0], -1).reshape(-1, 1)
-        t_cap = t.expand(-1, n_cap).reshape(-1, 1)
-        zeros, ones = torch.zeros_like(t_cap), torch.ones_like(t_cap)
+        # The body's u excludes the seams, so each u belongs to exactly one
+        # segment and the contour is closed exactly once.
+        u_grid = torch.linspace(0.0, 1.0, n_body + 2, device=device)[1:-1]
+        angles = torch.linspace(-0.5 * math.pi, 0.5 * math.pi, n_cap, device=device)
+        body_zeros = torch.zeros(n_times * n_body, 1, device=device)
+        cap_zeros = torch.zeros(n_times * n_cap, 1, device=device)
+        cap_ones = torch.ones(n_times * n_cap, 1, device=device)
 
-        def cap(centre_x, radius_cap, u_end, sign):
-            r = radius_cap.repeat_interleave(n_cap, dim=0)
-            cx = centre_x.repeat_interleave(n_cap, dim=0)
-            cy = self.centerline(u_end, t_cap)
-            return torch.cat(
-                [cx + sign * r * torch.cos(angle), cy + r * torch.sin(angle)], dim=1
-            )
-
-        root_cap = cap(f.ax, f.r_root, zeros, -1.0)
-        nose_cap = cap(f.bx, f.r_nose, ones, +1.0)
-
-        points = torch.cat(
-            [
-                torch.cat([spine_x, y_upper, t_body], dim=1),
-                torch.cat([spine_x, y_lower, t_body], dim=1),
-                torch.cat([root_cap, t_cap], dim=1),
-                torch.cat([nose_cap, t_cap], dim=1),
-            ],
-            dim=0,
-        )
-        # A circular arc is constant-curvature -- which is why the caps are
-        # circles at all -- so each cap reads exactly its own 1/r.
-        kappa_cap = torch.cat(
-            [
-                1.0 / f.r_root.repeat_interleave(n_cap, dim=0),
-                1.0 / f.r_nose.repeat_interleave(n_cap, dim=0),
-            ],
-            dim=0,
-        )
+        u = torch.cat([tiled(u_grid), tiled(u_grid), cap_zeros, cap_ones], dim=0)
+        angle = torch.cat([body_zeros, body_zeros, tiled(angles), tiled(angles)], dim=0)
+        on_cap = torch.cat([body_zeros, body_zeros, cap_ones, cap_ones], dim=0)
         # On the caps ``side`` continues its meaning as the half of the contour the
-        # point sits on (the apex itself, angle = 0, is genuinely on neither); it is
-        # read only for the body profiles, where it selects ``c + R`` vs ``c - R``.
-        half = torch.sign(angle)
-        u_all = torch.cat([u_body, u_body, zeros, ones], dim=0)
-        side = torch.cat([torch.ones_like(u_body), -torch.ones_like(u_body), half, half], dim=0)
-        on_cap = torch.cat(
-            [torch.zeros_like(u_body), torch.zeros_like(u_body), ones, ones], dim=0
+        # point sits on (the apex itself, angle = 0, is on neither); it selects
+        # ``c + R`` vs ``c - R`` only on the body.
+        side = torch.cat(
+            [
+                torch.ones_like(body_zeros),
+                -torch.ones_like(body_zeros),
+                torch.sign(tiled(angles)),
+                torch.sign(tiled(angles)),
+            ],
+            dim=0,
         )
-        kappa = torch.cat([kappa_body, kappa_cap], dim=0)
-        return FrontSamples(points, u_all, side, on_cap, kappa)
+        times = torch.cat(
+            [
+                t.repeat_interleave(n_body, dim=0),
+                t.repeat_interleave(n_body, dim=0),
+                t.repeat_interleave(n_cap, dim=0),
+                t.repeat_interleave(n_cap, dim=0),
+            ],
+            dim=0,
+        )
+        # A leaf, so the front's own motion dP/dt is available by autograd: it is
+        # both the Bretherton correction's local capillary number and the left
+        # side of the kinematic condition.
+        times = times.detach().requires_grad_(True)
+
+        position, normal, kappa = self._front_frame(u, side, on_cap, angle, times)
+        speed = self._normal_speed(position, normal, times)
+        points = torch.cat([position, times], dim=1)
+        return FrontSamples(points, u.detach(), side, on_cap, kappa, normal, speed)
+
+    def _front_frame(
+        self,
+        u: torch.Tensor,
+        side: torch.Tensor,
+        on_cap: torch.Tensor,
+        angle: torch.Tensor,
+        t: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """``(position, outward_normal, kappa_par)`` per sample.
+
+        Both branches -- body profile and circular cap -- are evaluated for every
+        sample and selected by ``on_cap``. Blending rather than indexing keeps one
+        vectorised, twice-differentiable expression, which is what the jump
+        condition needs to be able to move the shape.
+        """
+        f = self.frame(t)
+        length = f.bx - f.ax
+
+        # Body: y = c(u,t) + side R(u,t), with x affine in u -- so y' = y_u/L and
+        # y'' = y_uu/L^2 exactly, with no second term.
+        u_leaf = u.detach().requires_grad_(True)
+        centre = self.centerline(u_leaf, t)
+        radius = self._radius(u_leaf, t) * f.scale
+
+        def d_du(field: torch.Tensor) -> torch.Tensor:
+            return torch.autograd.grad(
+                field, u_leaf, torch.ones_like(field), create_graph=True
+            )[0]
+
+        centre_u, radius_u = d_du(centre), d_du(radius)
+        y_u = centre_u + side * radius_u
+        y_uu = d_du(centre_u) + side * d_du(radius_u)
+        y_x = y_u / length
+        slope = torch.sqrt(1.0 + y_x**2)
+
+        body_xy = torch.cat([f.ax + u * length, centre + side * radius], dim=1)
+        # Outward normal of y = c + side R: (-y', 1)/|.| points up, which is out
+        # of the vapour on the upper profile and into it on the lower -- hence the
+        # side factor.
+        body_normal = side * torch.cat([-y_x, torch.ones_like(y_x)], dim=1) / slope
+        # kappa = -side y''/(1 + y'^2)^{3/2}: the sign makes a bubble that bulges
+        # outward read POSITIVE, matching the diffuse convention.
+        body_kappa = -side * y_uu / length**2 / slope**3
+
+        # Caps: circular arcs about centres one radius inside each apex. A
+        # circular arc is constant-curvature -- which is why the caps are circles
+        # at all -- so each reads exactly its own 1/r, and its outward normal is
+        # simply the radial direction.
+        at_root = u < 0.5
+        cap_r = torch.where(at_root, f.r_root, f.r_nose)
+        cap_x = torch.where(at_root, f.ax, f.bx)
+        cap_sign = torch.where(at_root, -torch.ones_like(u), torch.ones_like(u))
+        cos, sin = torch.cos(angle), torch.sin(angle)
+        cap_xy = torch.cat(
+            [cap_x + cap_sign * cap_r * cos, self.centerline(u, t) + cap_r * sin], dim=1
+        )
+        cap_normal = torch.cat([cap_sign * cos, sin], dim=1)
+
+        return (
+            torch.where(on_cap > 0, cap_xy, body_xy),
+            torch.where(on_cap > 0, cap_normal, body_normal),
+            torch.where(on_cap > 0, 1.0 / cap_r, body_kappa),
+        )
+
+    def _normal_speed(
+        self, position: torch.Tensor, normal: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        """How fast the front advances along its own outward normal, ``(N, 1)``.
+
+        ``dP/dt`` is taken at fixed parameter, which slides along the curve as
+        well as across it; projecting onto the normal discards that tangential
+        part, so the result is the parameterization-independent front speed --
+        the same quantity the kinematic condition equates to ``u.n``, and the one
+        the Bretherton film correction is a function of.
+        """
+        velocity = [
+            torch.autograd.grad(position[:, i].sum(), t, create_graph=True)[0] for i in (0, 1)
+        ]
+        return velocity[0] * normal[:, 0:1] + velocity[1] * normal[:, 1:2]
