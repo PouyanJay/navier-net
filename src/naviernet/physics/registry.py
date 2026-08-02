@@ -28,6 +28,7 @@ from naviernet.physics.residuals import (
     NucleationPulse,
     StageAResiduals,
     boundary_losses,
+    darcy_residuals,
     energy_residuals,
     laplace_jump_residual,
     momentum_residuals,
@@ -77,6 +78,7 @@ class LossContext:
         self.c = c
         self._res_a: StageAResiduals | None = None
         self._mom: MomentumResiduals | None = None
+        self._darcy: MomentumResiduals | None = None
         self._energy: EnergyResiduals | None = None
 
     @property
@@ -107,6 +109,12 @@ class LossContext:
         if self._mom is None:
             self._mom = momentum_residuals(self.model, self.x_coll, self.groups, c=self.c)
         return self._mom
+
+    @property
+    def darcy_res(self) -> MomentumResiduals:
+        if self._darcy is None:
+            self._darcy = darcy_residuals(self.model, self.x_coll, self.groups, c=self.c)
+        return self._darcy
 
     @property
     def energy_res(self) -> EnergyResiduals:
@@ -171,6 +179,11 @@ def _bc_term(ctx: LossContext) -> torch.Tensor:
 
 def _mom_sq(ctx: LossContext) -> torch.Tensor:
     res = ctx.mom_res
+    return res.mom_x**2 + res.mom_y**2
+
+
+def _darcy_sq(ctx: LossContext) -> torch.Tensor:
+    res = ctx.darcy_res
     return res.mom_x**2 + res.mom_y**2
 
 
@@ -278,8 +291,22 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("phi", "u", "v", "p"),
         fields_added=("p",),
         groups=("Re", "We", "hele_shaw"),
+        mode="diffuse",
         pointwise=_mom_sq,
         term=_mean(_mom_sq),
+    ),
+    Equation(
+        id="darcy",
+        stage="B",
+        name="Darcy (depth-averaged momentum)",
+        tex=r"\nabla p = -C_\text{HS}\,\tilde{\mu}(\alpha)\,\mathbf{u}",
+        weight_key="darcy",
+        fields_required=("phi", "u", "v", "p"),
+        fields_added=("p",),
+        groups=("hele_shaw", "mu_ratio"),
+        mode="sharp",
+        pointwise=_darcy_sq,
+        term=_mean(_darcy_sq),
     ),
     Equation(
         id="laplace",

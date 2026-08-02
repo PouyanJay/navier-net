@@ -217,3 +217,85 @@ def test_front_curvature_carries_gradient_to_the_shape(tmp_path):
     assert grad is not None and float(grad.abs().sum()) > 0, (
         "curvature must backpropagate into the width profile"
     )
+
+
+# --- T3: Darcy replaces the 2-D momentum residual -----------------------------
+
+
+def test_darcy_replaces_momentum_in_sharp_mode(tmp_path):
+    """One momentum-family equation at a time: the depth-averaged balance in
+    sharp mode, the 2-D residual in diffuse mode. Never both."""
+    from naviernet.physics import registry
+
+    cfg, _ = _staged_run(tmp_path, TINY_SHARP)
+    sharp = [e.id for e in registry.enabled_equations(cfg.model.fields, sharp_interface=True)]
+    diffuse = [e.id for e in registry.enabled_equations(cfg.model.fields)]
+
+    assert "darcy" in sharp and "mom" not in sharp
+    assert "mom" in diffuse and "darcy" not in diffuse
+
+
+def test_darcy_residual_is_the_depth_averaged_balance(tmp_path):
+    """grad p = -C_HS mu*(alpha) u, term for term -- nothing else."""
+    from naviernet.physics.groups import compute_groups
+    from naviernet.physics.residuals import darcy_residuals, gradients, mixture
+
+    model, data, cfg = _model_and_data(tmp_path)
+    groups = compute_groups(cfg)
+    x = _collocation(data)
+
+    res = darcy_residuals(model, x, groups)
+    u, v = model.velocity(x)
+    p_x, p_y, _ = gradients(model.pressure(x), x)
+    drag = groups["hele_shaw"] * mixture(model.alpha(x), groups["mu_ratio"])
+
+    assert torch.allclose(res.mom_x, p_x + drag * u, atol=1e-6)
+    assert torch.allclose(res.mom_y, p_y + drag * v, atol=1e-6)
+
+
+def test_darcy_carries_no_inertia_no_in_plane_viscosity_no_body_force(tmp_path):
+    """The three terms the regime argument removes. Each is detected by the group
+    it would have entered through: Re for the in-plane Laplacian, We for the CSF
+    surface-tension force. If either changes the residual, the term is still in."""
+    from naviernet.physics.groups import compute_groups
+    from naviernet.physics.residuals import darcy_residuals
+
+    model, data, cfg = _model_and_data(tmp_path)
+    groups = compute_groups(cfg)
+    x = _collocation(data)
+    base = darcy_residuals(model, x, groups)
+
+    for key in ("Re", "We"):
+        perturbed = darcy_residuals(model, x, {**groups, key: groups[key] * 1000.0})
+        assert torch.allclose(perturbed.mom_x, base.mom_x, atol=1e-9), (
+            f"the Darcy residual still depends on {key} -- a term that should be gone"
+        )
+
+
+def test_sharp_run_trains_darcy_and_never_momentum(tmp_path):
+    """End to end: the trained history carries darcy, not mom."""
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(tmp_path, TINY_SHARP)
+    train(cfg, paths)
+
+    record = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
+    last = record["state"]["hist"][-1]
+    assert "darcy" in last and "mom" not in last, last
+
+
+def _model_and_data(tmp_path, overrides=None):
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
+
+    cfg, paths = _staged_run(tmp_path, overrides or TINY_SHARP)
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    return BubblePINN(cfg, geometry=_geometry_priors(cfg, data)), data, cfg
+
+
+def _collocation(data, n: int = 64):
+    import numpy as np
+
+    return data.sample_collocation(n, np.random.default_rng(0))

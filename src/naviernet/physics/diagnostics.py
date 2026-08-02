@@ -3,10 +3,10 @@
 An overlap metric cannot see a violated force balance. The R3 baseline scored
 IoU 0.929 on its trained frames and 0.866 on held-out ones while its momentum
 residual never descended (flat ~4.7 over 1500 steps), its Young-Laplace jump at
-the nose was ~20x too small with the WRONG SIGN, and the axial capillary
-pressure gradient along the bubble was identically zero -- so the localized
-necking that precedes detachment was not merely unlearned but *dynamically
-impossible*. These are the numbers that show that.
+the nose was 85% wrong, and its body carried essentially no in-plane curvature
+variation -- so the localized necking that precedes detachment was not merely
+unlearned but unreachable: measured neck depth 0.000 against the masks' 0.474.
+These are the numbers that show that.
 
 Every quantity here is non-dimensional and read from the model and the measured
 masks; nothing is configured.
@@ -21,7 +21,6 @@ import numpy as np
 import torch
 
 from naviernet.physics.groups import compute_groups
-from naviernet.physics.residuals import laplace_jump_residual
 
 # Stations along the bubble the half-width profiles are compared on. Odd, so a
 # station lands exactly mid-bubble where the measured neck sits.
@@ -62,8 +61,9 @@ class InterfaceDiagnostics:
     # is largest and best-conditioned) and over the whole front.
     laplace_error_nose: float
     laplace_error_front: float
-    # RMS d/dx of the capillary pressure along the body. Zero means the shape
-    # cannot drain: nothing pushes vapour from the mid-body toward the nose.
+    # The capillary pressure's range across the body interior over the length it
+    # varies on. Zero means no station along the bubble is distinguished from any
+    # other, so no neck can be selected however long the run trains.
     axial_capillary_gradient: float
     # The model's own neck, and the measured one, on the last evaluated frame.
     neck_model: Neck
@@ -174,7 +174,9 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
     """
     with torch.no_grad():
         vapour = _vapour_pressure(model, front)
-        residual = (vapour - model.pressure(front.points) - front.kappa_par / groups["We"]).abs()
+        residual = (
+            vapour - model.pressure(front.points) - front.kappa_par / groups["We"]
+        ).abs()
     capillary = (front.kappa_par / groups["We"]).abs().detach()
 
     # The nose cap: the far closure, where curvature is largest and the jump is
@@ -214,9 +216,7 @@ def _vapour_pressure(model, front) -> torch.Tensor:
             [frame.ax + u * (frame.bx - frame.ax), geometry.centerline(u, at_t), at_t], dim=1
         )
         interior[float(t)] = model.pressure(spine).mean()
-    return torch.tensor(
-        [[interior[float(t)]] for t in times.squeeze(1)], device=times.device
-    )
+    return torch.tensor([[interior[float(t)]] for t in times.squeeze(1)], device=times.device)
 
 
 # The body's interior, as a fraction of the spine: the stations the neck lives
@@ -242,9 +242,7 @@ def _axial_capillary_gradient(front, groups: dict[str, float]) -> float:
     """
     lo, hi = BODY_INTERIOR
     u = front.u.squeeze(1)
-    body = (
-        (front.on_cap.squeeze(1) == 0) & (front.side.squeeze(1) > 0) & (u >= lo) & (u <= hi)
-    )
+    body = (front.on_cap.squeeze(1) == 0) & (front.side.squeeze(1) > 0) & (u >= lo) & (u <= hi)
     x = front.points[body, 0].detach()
     pressure = (front.kappa_par[body].squeeze(1) / groups["We"]).detach()
     times = front.points[body, 2].detach()

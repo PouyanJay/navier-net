@@ -338,6 +338,41 @@ def energy_residuals(
 # --- R4: sharp-interface conditions on the explicit front --------------------
 
 
+def darcy_residuals(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> MomentumResiduals:
+    """Depth-averaged (Hele-Shaw) momentum, the leading-order balance here::
+
+        grad p = -C_HS mu*(alpha) u
+
+    paired with the unchanged continuity ``u_x + v_y = s``.
+
+    Why this and not :func:`momentum_residuals`. Darcy is the depth-averaged
+    limit of the *3-D* problem, not a special case of the 2-D one: the dominant
+    force in a 198 um channel is the wall shear in the GAP direction, which a
+    2-D (x, y) formulation does not contain at all -- which is why the 2-D
+    residual has to carry ``hele_shaw`` as a bolted-on stand-in for it. Measured
+    on the R3 baseline, that formulation's in-plane inertia ran at RMS 0.34
+    against the drag's 0.05, so the optimiser spent its effort on terms that are
+    O(eps) in this regime (Ca = 0.011, Bo = 0.073, Re_in = 22) while the actual
+    leading balance sat in the noise.
+
+    No surface-tension body force. In a sharp-interface formulation capillarity
+    is a BOUNDARY CONDITION (:func:`laplace_jump_residual`), not a volumetric
+    term; the CSF force exists only because a diffuse interface has no boundary
+    to put it on. Removing it here is what stops a free ``p`` from absorbing it.
+
+    Returns the same shape as :func:`momentum_residuals` so both momentum-family
+    equations read identically to the registry, with ``kappa`` left at zero:
+    there is no curvature in this balance.
+    """
+    cx = _ctx(c, x)
+    drag = groups["hele_shaw"] * mixture(model.alpha(x, cx), groups["mu_ratio"])
+    u, v = model.velocity(x, cx)
+    p_x, p_y, _ = gradients(model.pressure(x, cx), x)
+    return MomentumResiduals(p_x + drag * u, p_y + drag * v, torch.zeros_like(u))
+
+
 def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:
     """Young-Laplace across the explicit interface, per front sample ``(N, 1)``::
 
