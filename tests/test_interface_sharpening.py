@@ -129,8 +129,12 @@ def test_a_joint_run_also_evaluates_at_the_sharpened_value(tmp_path):
 
     cfg, paths = staged_joint_run(
         tmp_path,
-        ["model.front_geometry=true", "model.alpha_eps=0.05",
-         "training.alpha_eps_final=0.02", "training.alpha_eps_anneal_steps=2"],
+        [
+            "model.front_geometry=true",
+            "model.alpha_eps=0.05",
+            "training.alpha_eps_final=0.02",
+            "training.alpha_eps_anneal_steps=2",
+        ],
     )
     train(cfg, paths)
 

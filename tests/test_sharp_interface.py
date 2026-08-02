@@ -531,10 +531,9 @@ def test_joint_sharp_run_samples_each_datasets_own_front(tmp_path):
     be scored against another dataset's interface. The staged datasets have
     deliberately different roots, so identical fronts are detectable.
     """
-    from naviernet.physics.groups import N_COND
     from naviernet.models.pinn import BubblePINN
+    from naviernet.physics.groups import N_COND
     from naviernet.training import _load_joint_datasets
-    from tests.conftest import staged_joint_run
 
     cfg, paths = _staged_run_joint(tmp_path)
     contexts = _load_joint_datasets(cfg, paths, torch.device("cpu"))
@@ -550,8 +549,7 @@ def test_joint_sharp_run_samples_each_datasets_own_front(tmp_path):
 
     (first, second) = fronts.values()
     assert not torch.allclose(first, second), (
-        "every dataset sampled the same front -- the bound view is not carrying "
-        "its own anchors"
+        "every dataset sampled the same front -- the bound view is not carrying its own anchors"
     )
     for cx in contexts:
         root_x = cx.data.pin_anchor[0]
@@ -568,7 +566,9 @@ def test_a_joint_sharp_run_trains(tmp_path):
     cfg, paths = _staged_run_joint(tmp_path)
     train(cfg, paths)
 
-    last = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)["state"]["hist"][-1]
+    last = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)["state"][
+        "hist"
+    ][-1]
     assert "laplace" in last and "kinematic" in last, last
     assert all(v == v for v in last.values()), f"a term went NaN: {last}"
 
