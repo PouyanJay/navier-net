@@ -157,6 +157,20 @@ class ModelConfig:
     # volume and the pinned point but rounded/fragmented the SHAPE off-data).
     # Mutually exclusive with hard_pin (the geometry pins exactly by construction).
     front_geometry: bool = False
+    # Sharp-interface physics (R4): drive the shape with the conditions that hold
+    # AT a fluid interface -- the Young-Laplace jump and the kinematic condition,
+    # sampled on the explicit front -- instead of a bulk momentum residual a free
+    # pressure field can absorb up to its curl. Requires `front_geometry` (there
+    # is no front to sample without it) and the `p` field. Off by default -> the
+    # equation set and every existing run are unchanged.
+    sharp_interface: bool = False
+    # Front samples per time, per body profile and per end cap, for the interface
+    # conditions. Module-level rather than swept: the front is a smooth 1-D curve,
+    # so this only has to resolve it, not fit anything.
+    front_body_samples: int = 64
+    front_cap_samples: int = 16
+    # Times per step the front is sampled at, spread over the training window.
+    front_times: int = 16
 
 
 @dataclass
@@ -173,6 +187,7 @@ class LossWeights:
     mom: float = 1.0  # Stage B: momentum
     energy: float = 1.0  # Stage B: energy
     evap: float = 1.0  # Stage B: evaporation mass-closure penalty
+    laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
 
 
 @dataclass

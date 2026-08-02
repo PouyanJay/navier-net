@@ -335,6 +335,30 @@ def energy_residuals(
     return EnergyResiduals(energy, src_closure, delta)
 
 
+# --- R4: sharp-interface conditions on the explicit front --------------------
+
+
+def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:
+    """Young-Laplace across the explicit interface, per front sample ``(N, 1)``::
+
+        p_v(t) - p_liq(Gamma) = (1/We) (kappa_par + kappa_perp)
+
+    The vapour is higher-pressure inside a convex bubble, which is the sign the
+    diffuse ``curvature`` above already uses (a compact vapour region reads
+    positive). ``p_v`` is space-independent, so this one condition ties the
+    liquid pressure at every point of the front to the LOCAL total curvature --
+    the constraint that makes shape a consequence of forces.
+
+    Why here and not in the bulk: with a free ``p`` field, the CSF term in
+    :func:`momentum_residuals` can be absorbed by the pressure up to its curl, so
+    the bulk residual constrains ``p``, not the interface. Evaluated ON the front,
+    there is nothing left to absorb it.
+    """
+    t = front.points[:, 2:3]
+    kappa = model.nets["phi"].front_curvature(front)
+    return model.p_vapor(t) - model.pressure(front.points) - kappa / groups["We"]
+
+
 def stage_b_residuals(
     model,
     x: torch.Tensor,

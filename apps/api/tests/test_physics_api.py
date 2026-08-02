@@ -15,7 +15,12 @@ def test_physics_lists_the_registry_equations_with_state(client):
     body = r.json()
 
     eqs = _by_id(body)
-    assert set(eqs) == {"vof", "div", "src", "bc", "mom", "energy", "evap"}
+    assert set(eqs) == {"vof", "div", "src", "bc", "mom", "energy", "evap", "laplace"}
+    # The sharp-interface equations are listed but inactive: the series does not
+    # compose model.sharp_interface, so the diffuse treatment is the active one.
+    assert body["sharp_interface"] is False
+    assert eqs["laplace"]["mode"] == "sharp" and not eqs["laplace"]["enabled"]
+    assert eqs["mom"]["mode"] == "any"
     # Stage-A equations are core and on; Stage B is off until its fields exist.
     assert eqs["vof"]["core"] and eqs["vof"]["enabled"]
     assert eqs["mom"]["stage"] == "B" and not eqs["mom"]["enabled"]

@@ -109,6 +109,27 @@ def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
     )
 
 
+def _sharp(cfg) -> bool:
+    """Whether this run imposes the interface conditions on the explicit front."""
+    return bool(getattr(cfg.model, "sharp_interface", False))
+
+
+def _front_times(cfg, data: BubbleDataset, device) -> torch.Tensor | None:
+    """The times the interface conditions are sampled at, or ``None`` when the run
+    is not sharp-interface.
+
+    A fixed, uniform sweep of the training window rather than a random draw: the
+    front is one smooth curve per time, so what matters is covering the window,
+    and a deterministic grid makes the term reproducible across resume.
+    """
+    if not _sharp(cfg):
+        return None
+    d = data.domain
+    return torch.linspace(d.t_min, d.t_max, int(cfg.model.front_times), device=device).reshape(
+        -1, 1
+    )
+
+
 def _architecture_record(cfg) -> dict:
     """The architecture facts persisted in every checkpoint (hard pin and front
     geometry add no detectable state-dict signature for their *configuration*),
@@ -118,6 +139,7 @@ def _architecture_record(cfg) -> dict:
         "hard_pin": hard_pin,
         "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None,
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
+        "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
     }
 
 
@@ -153,6 +175,15 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
             f"{path} was trained with model.front_geometry={bool(saved_geo)} but this "
             f"invocation composes model.front_geometry={current_geo}. The geometry is "
             f"architectural: pass the same override the run was trained with."
+        )
+    saved_sharp = ckpt.get("sharp_interface")
+    current_sharp = bool(getattr(cfg.model, "sharp_interface", False))
+    if saved_sharp is not None and bool(saved_sharp) != current_sharp:
+        raise ValueError(
+            f"{path} was trained with model.sharp_interface={bool(saved_sharp)} but this "
+            f"invocation composes model.sharp_interface={current_sharp}. The interface "
+            f"treatment changes the objective AND adds the p_v(t) parameters: pass the "
+            f"same override the run was trained with."
         )
 
 
@@ -760,8 +791,9 @@ def train(
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
+    front_times = _front_times(cfg, data, device)
 
-    equations = registry.enabled_equations(cfg.model.fields)
+    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -845,7 +877,9 @@ def train(
         )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
 
-        ctx = registry.LossContext(model, x_coll, inlet, walls, u_inlet, groups)
+        ctx = registry.LossContext(
+            model, x_coll, inlet, walls, u_inlet, groups, front_times=front_times
+        )
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
@@ -1076,7 +1110,7 @@ def _train_joint(
     model = BubblePINN(cfg, n_cond=N_COND).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
-    equations = registry.enabled_equations(cfg.model.fields)
+    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)

@@ -470,6 +470,9 @@ class EquationState(BaseModel):
     core: bool
     enabled: bool
     weight: float
+    # Which interface treatment the equation belongs to: "any", "diffuse" (bulk
+    # residual over a smeared alpha) or "sharp" (imposed on the explicit front).
+    mode: str
 
 
 class PhysicsState(BaseModel):
@@ -479,6 +482,9 @@ class PhysicsState(BaseModel):
     equations: list[EquationState]
     fields: list[str]
     groups: dict[str, float]
+    # Whether this series composes the sharp-interface treatment, which decides
+    # which of the mode-specific equations above are active.
+    sharp_interface: bool
 
 
 class PhysicsUpdate(BaseModel):
