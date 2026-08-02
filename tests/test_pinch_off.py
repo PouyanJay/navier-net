@@ -65,6 +65,7 @@ def test_a_pinched_profile_really_yields_two_components(tmp_path):
     the detachment the construction previously forbade."""
     from scipy import ndimage
 
+    torch.manual_seed(0)
     model, data = _geometry(tmp_path, PINCH)
     # Late enough that the capsule has grown a body to pinch; the synthetic
     # fixture's bubble is nearly all cap at early times.

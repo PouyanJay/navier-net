@@ -185,8 +185,13 @@ class BubblePINN(nn.Module):
     def _validate_front_geometry(self, cfg, geometry: GeometryPriors | None) -> None:
         """Reject unusable front-geometry compositions loudly, before any net is
         built: the geometry pins exactly (hard_pin is redundant and conflicting),
-        joint conditioning is unsupported, priors are required, and a per-field
-        phi override would be silently ignored."""
+        priors are required, and a per-field phi override would be silently
+        ignored.
+
+        Joint conditioning is supported: the nets take the dataset's
+        conditioning row and each dataset's measured anchors are bound per call
+        (``bound(c, pin=, geometry=)``), so one construction serves every
+        condition."""
         self.front_geometry = bool(getattr(cfg.model, "front_geometry", False))
         self.allow_pinch = bool(getattr(cfg.model, "allow_pinch", False))
         if self.allow_pinch and not self.front_geometry:
@@ -317,6 +322,31 @@ class BubblePINN(nn.Module):
         """Volume fraction, bounded in (0, 1) by construction."""
         return torch.sigmoid(self.phi(x, c, pin=pin, geometry=geometry) / self.eps)
 
+    def front(
+        self,
+        t: torch.Tensor,
+        n_body: int,
+        n_cap: int,
+        c: torch.Tensor | None = None,
+        geometry: GeometryPriors | None = None,
+    ):
+        """The explicit interface at times ``t`` -- the object the sharp-interface
+        conditions are imposed on.
+
+        Routed through the model rather than reached for via ``nets["phi"]``
+        because a joint run's per-dataset view binds its own conditioning row and
+        anchors: going around it would hand every dataset the SAME front, and
+        every jump residual after the first would be scored against another
+        condition's interface.
+        """
+        if not self.front_geometry:
+            raise RuntimeError(
+                "front() needs the explicit front: this model was built with "
+                "model.front_geometry=false, so there is no parameterized "
+                "interface to sample."
+            )
+        return self.nets["phi"].front(t, n_body, n_cap, c, geometry)
+
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -412,6 +442,11 @@ class BoundPINN:
         self, x: torch.Tensor, c: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return self._model.velocity(x, c if c is not None else self._ctx(x))
+
+    def front(self, t: torch.Tensor, n_body: int, n_cap: int):
+        """This dataset's own front: its conditioning row and its measured
+        anchors, never the raw model's."""
+        return self._model.front(t, n_body, n_cap, self._c, self._geometry)
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.source(x, c if c is not None else self._ctx(x))

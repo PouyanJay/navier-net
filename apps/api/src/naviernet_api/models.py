@@ -543,11 +543,15 @@ class PhysicsFrame(BaseModel):
 
 
 class ResidualConvergence(BaseModel):
-    """Whether one physics residual descended over its active window."""
+    """Whether one physics residual descended over its active window.
+
+    ``ratio`` is absent when it could not be formed -- a term whose first window
+    averaged exactly zero has nothing to be a ratio of.
+    """
 
     first: float
     last: float
-    ratio: float
+    ratio: float | None = None
 
 
 class PhysicsDiagnostics(BaseModel):

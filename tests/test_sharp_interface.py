@@ -406,6 +406,7 @@ def test_kinematic_condition_joins_the_sharp_equation_set(tmp_path):
     assert "kinematic" not in [e.id for e in registry.enabled_equations(cfg.model.fields)]
 
 
+@pytest.mark.slow  # trains the velocity nets for 600 Adam steps (~3 s)
 def test_kinematic_condition_is_satisfiable_by_the_velocity_field(tmp_path):
     """Training the velocity nets against it alone must drive it down -- if it
     cannot be satisfied, adding it to the objective only fights the other terms."""
@@ -516,3 +517,63 @@ def test_pinching_and_sharp_interface_compose(tmp_path):
         "hist"
     ][-1]
     assert all(v == v for v in last.values()), f"a term went NaN: {last}"
+
+
+# --- joint (multi-dataset) sharp-interface runs -------------------------------
+
+
+def test_joint_sharp_run_samples_each_datasets_own_front(tmp_path):
+    """Each dataset's interface conditions must be imposed on ITS OWN front.
+
+    The front is reached through the dataset's bound view; a view that fell
+    through to the raw model would hand every condition the same front -- the
+    same one, at the same place -- and every jump residual after the first would
+    be scored against another dataset's interface. The staged datasets have
+    deliberately different roots, so identical fronts are detectable.
+    """
+    from naviernet.physics.groups import N_COND
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.training import _load_joint_datasets
+    from tests.conftest import staged_joint_run
+
+    cfg, paths = _staged_run_joint(tmp_path)
+    contexts = _load_joint_datasets(cfg, paths, torch.device("cpu"))
+    model = BubblePINN(cfg, n_cond=N_COND, geometry=contexts[0].geometry)
+
+    fronts = {}
+    for cx in contexts:
+        view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
+        times = torch.tensor([[cx.data.domain.t_min]])
+        # An ODD cap count so the sweep includes angle 0 -- the apex, the only
+        # cap sample that sits exactly on the root.
+        fronts[cx.name] = view.front(times, n_body=8, n_cap=5).points
+
+    (first, second) = fronts.values()
+    assert not torch.allclose(first, second), (
+        "every dataset sampled the same front -- the bound view is not carrying "
+        "its own anchors"
+    )
+    for cx in contexts:
+        root_x = cx.data.pin_anchor[0]
+        assert float(fronts[cx.name][:, 0].min()) == pytest.approx(root_x, abs=1e-3), (
+            f"{cx.name}'s front does not start at its own root"
+        )
+
+
+def test_a_joint_sharp_run_trains(tmp_path):
+    """The combination end to end -- it used to raise from deep inside the first
+    step, blaming a mechanism the joint trainer never wired."""
+    from naviernet.training import train
+
+    cfg, paths = _staged_run_joint(tmp_path)
+    train(cfg, paths)
+
+    last = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)["state"]["hist"][-1]
+    assert "laplace" in last and "kinematic" in last, last
+    assert all(v == v for v in last.values()), f"a term went NaN: {last}"
+
+
+def _staged_run_joint(tmp_path):
+    from tests.conftest import staged_joint_run
+
+    return staged_joint_run(tmp_path, TINY_SHARP)

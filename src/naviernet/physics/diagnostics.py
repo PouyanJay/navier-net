@@ -116,21 +116,33 @@ def model_half_width_profile(
     geometry, t: float, n_stations: int = PROFILE_STATIONS
 ) -> np.ndarray:
     """The model's own half-width profile at time ``t``, on the same stations."""
-    u = torch.tensor(_stations(n_stations), dtype=torch.float32).reshape(-1, 1)
+    u = _station_tensor(n_stations, _device_of(geometry))
     times = torch.full_like(u, float(t))
     with torch.no_grad():
         radius = geometry.half_width(u, times)
     return radius.squeeze(1).cpu().numpy().astype(float)
 
 
-def diagnostic_times(data) -> torch.Tensor:
+def diagnostic_times(data, device=None) -> torch.Tensor:
     """The times the front is measured at: the dataset's own frame instants.
 
     Not an arbitrary grid -- every per-frame figure is then directly comparable
     to the mask it is scored against, and the aggregate covers exactly the window
     the run was supervised on.
     """
-    return torch.tensor(np.asarray(data.t), dtype=torch.float32).reshape(-1, 1)
+    return torch.tensor(np.asarray(data.t), dtype=torch.float32, device=device).reshape(-1, 1)
+
+
+def _device_of(module) -> torch.device | None:
+    """The device a model's parameters live on, so every tensor built here lands
+    beside them instead of defaulting to CPU and crashing the first GPU run."""
+    return next(module.parameters(), torch.empty(0)).device
+
+
+def _station_tensor(n_stations: int, device) -> torch.Tensor:
+    return torch.tensor(_stations(n_stations), dtype=torch.float32, device=device).reshape(
+        -1, 1
+    )
 
 
 def _stations(n_stations: int) -> np.ndarray:
@@ -154,7 +166,7 @@ def interface_diagnostics(model, data, groups: dict[str, float] | None = None):
         )
     groups = groups if groups is not None else compute_groups(model.cfg)
     front = geometry.front(
-        diagnostic_times(data),
+        diagnostic_times(data, _device_of(geometry)),
         n_body=DIAGNOSTIC_BODY_SAMPLES,
         n_cap=DIAGNOSTIC_CAP_SAMPLES,
     )
@@ -227,7 +239,7 @@ def _vapour_pressure(model, front) -> torch.Tensor:
 
     geometry = model.nets["phi"]
     unique = torch.unique(times)
-    u = torch.linspace(0.0, 1.0, PROFILE_STATIONS + 2)[1:-1].reshape(-1, 1)
+    u = _station_tensor(PROFILE_STATIONS, times.device)
     interior = {}
     for t in unique:
         at_t = torch.full_like(u, float(t))

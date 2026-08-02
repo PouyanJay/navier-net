@@ -75,18 +75,26 @@ def test_measured_half_width_profile_reads_the_masks(tmp_path):
 # --- interface conditions ----------------------------------------------------
 
 
-def test_laplace_error_is_scale_free_and_finite(tmp_path):
-    """The jump error is reported RELATIVE to the capillary pressure it should
-    equal, so 'below 10%' means the same thing at every curvature."""
+def test_an_unsatisfied_jump_reads_a_large_error(tmp_path):
+    """The negative control for `test_a_satisfied_jump_reads_near_zero_error`.
+    An untrained pressure field does not satisfy the condition, and the
+    diagnostic has to SAY so -- a metric that always returned a small number
+    would pass the positive test alone and hide exactly the failure it exists to
+    catch."""
     from naviernet.physics.diagnostics import interface_diagnostics
 
-    model, data, cfg = _model(tmp_path)
+    model, data, _ = _model(tmp_path)
     diag = interface_diagnostics(model, data)
+
     assert np.isfinite(diag.laplace_error_nose)
     assert np.isfinite(diag.laplace_error_front)
-    assert diag.laplace_error_nose >= 0.0
+    assert diag.laplace_error_nose > 0.3, (
+        f"an untrained model must read far above the 0.10 gate, got "
+        f"{diag.laplace_error_nose:.3f}"
+    )
 
 
+@pytest.mark.slow  # fits a real pressure net for 1500 Adam steps (~14 s)
 def test_a_satisfied_jump_reads_near_zero_error(tmp_path):
     """Construct the solution the condition asks for -- p_liq = p_v - kappa/We --
     and the diagnostic must agree it is satisfied. Without this the metric could

@@ -92,7 +92,10 @@ class LossContext:
             )
         if self._front is None:
             model_cfg = self.model.cfg.model
-            self._front = self.model.nets["phi"].front(
+            # Through the model, not `nets["phi"]`: a joint run's bound view has
+            # to contribute its own conditioning row and anchors, and reaching
+            # past it would sample the same dataset's front for every condition.
+            self._front = self.model.front(
                 self.front_times,
                 n_body=int(model_cfg.front_body_samples),
                 n_cap=int(model_cfg.front_cap_samples),
@@ -334,7 +337,9 @@ REGISTRY: tuple[Equation, ...] = (
         r"\left(\kappa_\parallel + \kappa_\perp\right)",
         weight_key="laplace",
         fields_required=("phi", "p"),
-        groups=("We",),
+        # Ca and H_star reach it through the gap curvature's Bretherton term --
+        # a first-order effect on the jump, so the UI must show the dependency.
+        groups=("We", "Ca", "H_star"),
         mode="sharp",
         # Evaluated on the front samples, not the interior collocation batch --
         # like `bc`, and for the same reason: it is a boundary condition.

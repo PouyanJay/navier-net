@@ -144,56 +144,60 @@ def _architecture_record(cfg) -> dict:
     }
 
 
-def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
-    """Refuse to consume a checkpoint whose recorded architecture flags -- the
-    hard pin AND the front geometry -- disagree with the composed config. The
-    pin gate adds no parameters and a geometry mismatch may load shape-compatible
-    tensors, so ``load_state_dict`` can succeed silently either way; without this
-    guard a mismatched invocation would quietly consume the weights in a
-    differently-shaped solution space. Checkpoints written before the record
-    existed pass unchecked (nothing to compare)."""
-    saved = ckpt.get("hard_pin")
+def _require_matching_flag(cfg, ckpt: dict, key: str, path, why: str) -> None:
+    """Refuse a checkpoint whose architectural boolean ``key`` disagrees with the
+    composed config.
+
+    Each of these flags changes what the weights MEAN without necessarily
+    changing their shape, so ``load_state_dict`` succeeds either way and a
+    mismatched invocation would quietly consume them in a differently-shaped
+    solution space. Flags absent from the record predate it and pass unchecked.
+    """
+    saved = ckpt.get(key)
     if saved is None:
         return
-    current = bool(getattr(cfg.model, "hard_pin", False))
+    current = bool(getattr(cfg.model, key, False))
     if bool(saved) != current:
         raise ValueError(
-            f"{path} was trained with model.hard_pin={bool(saved)} but this invocation "
-            f"composes model.hard_pin={current}. The pin is architectural: pass the "
-            f"same model.hard_pin override the run was trained with."
+            f"{path} was trained with model.{key}={bool(saved)} but this invocation "
+            f"composes model.{key}={current}. {why} Pass the same override the run "
+            f"was trained with."
         )
+
+
+def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
+    """Refuse to consume a checkpoint whose recorded architecture disagrees with
+    the composed config."""
+    if ckpt.get("hard_pin") is None:
+        return  # written before the record existed; nothing to compare
+    _require_matching_flag(cfg, ckpt, "hard_pin", path, "The pin is architectural.")
+    _require_matching_flag(cfg, ckpt, "front_geometry", path, "The geometry is architectural.")
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "sharp_interface",
+        path,
+        "The interface treatment changes the objective AND adds the p_v(t) parameters.",
+    )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "allow_pinch",
+        path,
+        "The signed radius loads into the same tensors but means a different shape.",
+    )
+
+    # The pin's gate scale is a VALUE, not a flag, so it is checked on its own.
     saved_d_ref = ckpt.get("pin_d_ref")
-    if current and saved_d_ref is not None and float(saved_d_ref) != float(cfg.model.pin_d_ref):
+    if (
+        bool(getattr(cfg.model, "hard_pin", False))
+        and saved_d_ref is not None
+        and float(saved_d_ref) != float(cfg.model.pin_d_ref)
+    ):
         raise ValueError(
             f"{path} was trained with model.pin_d_ref={saved_d_ref} but this invocation "
             f"composes model.pin_d_ref={float(cfg.model.pin_d_ref)}; pass the value the "
             f"run was trained with."
-        )
-    saved_geo = ckpt.get("front_geometry")
-    current_geo = bool(getattr(cfg.model, "front_geometry", False))
-    if saved_geo is not None and bool(saved_geo) != current_geo:
-        raise ValueError(
-            f"{path} was trained with model.front_geometry={bool(saved_geo)} but this "
-            f"invocation composes model.front_geometry={current_geo}. The geometry is "
-            f"architectural: pass the same override the run was trained with."
-        )
-    saved_pinch = ckpt.get("allow_pinch")
-    current_pinch = bool(getattr(cfg.model, "allow_pinch", False))
-    if saved_pinch is not None and bool(saved_pinch) != current_pinch:
-        raise ValueError(
-            f"{path} was trained with model.allow_pinch={bool(saved_pinch)} but this "
-            f"invocation composes model.allow_pinch={current_pinch}. The signed radius "
-            f"loads into the same tensors but means a different shape: pass the same "
-            f"override the run was trained with."
-        )
-    saved_sharp = ckpt.get("sharp_interface")
-    current_sharp = bool(getattr(cfg.model, "sharp_interface", False))
-    if saved_sharp is not None and bool(saved_sharp) != current_sharp:
-        raise ValueError(
-            f"{path} was trained with model.sharp_interface={bool(saved_sharp)} but this "
-            f"invocation composes model.sharp_interface={current_sharp}. The interface "
-            f"treatment changes the objective AND adds the p_v(t) parameters: pass the "
-            f"same override the run was trained with."
         )
 
 
@@ -1033,6 +1037,9 @@ class _JointDataset:
     # Bound the same way, so one shared construction lands on each condition's
     # own root, front, channel and time window.
     geometry: GeometryPriors | None = None
+    # The times this dataset's interface conditions are sampled at (sharp-interface
+    # runs only). Per dataset, because their time windows differ.
+    front_times: torch.Tensor | None = None
     # The dataset's fixed kinematic quadrature when the constraints are on.
     kin: kinematics.KinematicPlan | None = None
 
@@ -1071,6 +1078,7 @@ def _load_joint_datasets(
                 float(groups["u_inlet_star"]),
                 pin=_pin_anchor(cfg, data),
                 geometry=_geometry_priors(cfg, data),
+                front_times=_front_times(cfg, data, device),
                 kin=_kinematic_plan(cfg, data, device),
             )
         )
@@ -1099,7 +1107,16 @@ def _joint_losses(
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
 
-        ctx = registry.LossContext(view, x_coll, inlet, walls, cx.u_inlet, cx.groups, c=cx.c)
+        ctx = registry.LossContext(
+            view,
+            x_coll,
+            inlet,
+            walls,
+            cx.u_inlet,
+            cx.groups,
+            c=cx.c,
+            front_times=cx.front_times,
+        )
         c_data = cx.c.expand(x_data.shape[0], -1)
         per_term = {"data": ((view.alpha(x_data, c_data) - target) ** 2).mean()}
         for eq in equations:
@@ -1327,6 +1344,10 @@ def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset], l
         geometry=contexts[0].geometry,
     ).to(device)
     model.load_state_dict(ckpt["model"])
+    # The thickness the run ENDED at, exactly as `load_model` does: a joint run
+    # scored through its initial blur is a different solution than the one that
+    # was trained.
+    model.eps = float(ckpt.get("alpha_eps", model.eps))
     model.eval()
     return model, contexts, heldout
 

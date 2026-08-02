@@ -68,12 +68,26 @@ def _parse_physics(metrics: dict) -> PhysicsDiagnostics | None:
     block = metrics.get("physics")
     if not isinstance(block, dict):
         return None
-    finite = {
-        key: value
-        for key, value in block.items()
-        if not (isinstance(value, float) and not math.isfinite(value))
-    }
-    return PhysicsDiagnostics.model_validate(finite)
+    return PhysicsDiagnostics.model_validate(_without_nan(block))
+
+
+def _without_nan(value):
+    """Strip non-finite floats at every depth.
+
+    Not just the top level: a residual's convergence ratio is NaN when its first
+    window averaged exactly zero -- a real, reachable state one dict down. A bare
+    `NaN` token is not valid JSON, so leaving it there breaks the response for
+    precisely the runs these diagnostics exist to explain.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _without_nan(item)
+            for key, item in value.items()
+            if not (isinstance(item, float) and not math.isfinite(item))
+        }
+    if isinstance(value, list):
+        return [_without_nan(item) for item in value]
+    return value
 
 
 def _parse_per_dataset(metrics: dict) -> dict[str, DatasetAgreement] | None:

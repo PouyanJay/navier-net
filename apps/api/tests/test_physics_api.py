@@ -142,9 +142,9 @@ def test_validation_carries_the_physics_diagnostics(client, tmp_path):
     }
     physics = build_validation("Series-1", metrics, {}).physics
     assert physics is not None
-    assert physics.laplace_error_nose == 0.06
+    assert physics.laplace_error_nose == pytest.approx(0.06)
     assert physics.per_frame[0].frame == 11
-    assert physics.residual_convergence["darcy"].ratio == 0.046
+    assert physics.residual_convergence["darcy"].ratio == pytest.approx(0.046)
 
 
 def test_validation_drops_unmeasurable_physics_values(client):
@@ -155,10 +155,36 @@ def test_validation_drops_unmeasurable_physics_values(client):
     metrics = {"physics": {"laplace_error_nose": float("nan"), "neck_depth_measured": 0.47}}
     physics = build_validation("Series-1", metrics, {}).physics
     assert physics.laplace_error_nose is None
-    assert physics.neck_depth_measured == 0.47
+    assert physics.neck_depth_measured == pytest.approx(0.47)
 
 
 def test_validation_without_an_explicit_front_has_no_physics_block(client):
     from naviernet_api.services.physics import build_validation
 
     assert build_validation("Series-1", {"iou_mean": 0.9, "physics": None}, {}).physics is None
+
+
+def test_validation_drops_a_nan_nested_inside_residual_convergence(client):
+    """`ratio` is NaN when a term's first window averaged exactly zero -- a real,
+    reachable state. NaN is not JSON, so it must not survive into the response:
+    `json.dumps` would emit a bare `NaN` token that JSON.parse rejects, breaking
+    the Validation tab for exactly the runs these diagnostics exist to explain."""
+    import json
+
+    from naviernet_api.services.physics import build_validation
+
+    metrics = {
+        "physics": {
+            "neck_depth_measured": 0.47,
+            "residual_convergence": {
+                "laplace": {"first": 0.0, "last": 0.0, "ratio": float("nan")},
+                "darcy": {"first": 6.8, "last": 0.31, "ratio": 0.046},
+            },
+        }
+    }
+    physics = build_validation("Series-1", metrics, {}).physics
+
+    assert physics.residual_convergence["darcy"].ratio == pytest.approx(0.046)
+    assert physics.residual_convergence["laplace"].ratio is None
+    # And the whole payload really is serialisable as strict JSON.
+    json.dumps(physics.model_dump(), allow_nan=False)

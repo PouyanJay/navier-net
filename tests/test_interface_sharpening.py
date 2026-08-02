@@ -119,3 +119,22 @@ def test_sharpening_narrows_the_predicted_interface(tmp_path):
     model.eps = 0.01
     sharpened = transition_width()
     assert sharpened < 0.5 * blurred, f"{blurred:.4f} -> {sharpened:.4f}"
+
+
+def test_a_joint_run_also_evaluates_at_the_sharpened_value(tmp_path):
+    """`load_model` restores the annealed thickness; `load_joint` must too, or a
+    joint run is silently scored through a blur it was never trained with."""
+    from naviernet.training import load_joint, train
+    from tests.conftest import staged_joint_run
+
+    cfg, paths = staged_joint_run(
+        tmp_path,
+        ["model.front_geometry=true", "model.alpha_eps=0.05",
+         "training.alpha_eps_final=0.02", "training.alpha_eps_anneal_steps=2"],
+    )
+    train(cfg, paths)
+
+    model, _, _ = load_joint(cfg, paths)
+    assert model.eps == pytest.approx(0.02), (
+        "a joint run must be evaluated at the thickness it ended on"
+    )

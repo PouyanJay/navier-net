@@ -42,12 +42,16 @@ interface ConvergenceRow {
   term: string;
   first: number;
   last: number;
-  ratio: number;
+  ratio: number | null;
 }
 
 const NECK_COLUMNS: Column<PhysicsFrame>[] = [
   { header: "Frame", cell: (row) => row.frame, num: true },
-  { header: "Depth · model", cell: (row) => fmt(row.neck_depth_model), num: true },
+  {
+    header: "Depth · model",
+    cell: (row) => fmt(row.neck_depth_model),
+    num: true,
+  },
   {
     header: "Depth · measured",
     cell: (row) => fmt(row.neck_depth_measured),
@@ -69,12 +73,20 @@ const CONVERGENCE_COLUMNS: Column<ConvergenceRow>[] = [
   { header: "Equation", cell: (row) => row.term },
   { header: "First", cell: (row) => row.first.toPrecision(3), num: true },
   { header: "Last", cell: (row) => row.last.toPrecision(3), num: true },
-  { header: "Ratio", cell: (row) => row.ratio.toPrecision(3), num: true },
   {
-    header: "Status",
-    cell: (row) => (row.ratio < CONVERGED_RATIO ? "converging" : "not solved"),
+    header: "Ratio",
+    cell: (row) => (row.ratio == null ? "—" : row.ratio.toPrecision(3)),
+    num: true,
   },
+  { header: "Status", cell: (row) => convergenceLabel(row.ratio) },
 ];
+
+/** A term with no ratio is not "not solved" — it had nothing to form a ratio
+ * from (its first window averaged exactly zero), which is a different fact. */
+function convergenceLabel(ratio: number | null): string {
+  if (ratio == null) return "not measurable";
+  return ratio < CONVERGED_RATIO ? "converging" : "not solved";
+}
 
 interface InterfacePhysicsPanelProps {
   physics: PhysicsDiagnostics | null;
@@ -96,10 +108,7 @@ export function InterfacePhysicsPanel({
 }: InterfacePhysicsPanelProps) {
   if (!physics) {
     return (
-      <Panel
-        title="Interface physics"
-        subtitle="the conditions at the front"
-      >
+      <Panel title="Interface physics" subtitle="the conditions at the front">
         <p className="state-note">
           {frontGeometry
             ? "No physics diagnostics recorded for this run — re-run the evaluate stage to measure them."
@@ -154,7 +163,10 @@ export function InterfacePhysicsPanel({
           <Stat
             label="Neck depth · model"
             value={fmt(physics.neck_depth_model, 3)}
-            tone={neckTone(physics.neck_depth_model, physics.neck_depth_measured)}
+            tone={neckTone(
+              physics.neck_depth_model,
+              physics.neck_depth_measured,
+            )}
             hint={`measured ${fmt(physics.neck_depth_measured, 3)} at u = ${fmt(
               physics.neck_location_measured,
               2,
@@ -217,7 +229,9 @@ export function InterfacePhysicsPanel({
               rows={convergence}
               rowKey={(row) => row.term}
               rowTone={(row) =>
-                row.ratio < CONVERGED_RATIO ? undefined : "amber"
+                row.ratio != null && row.ratio < CONVERGED_RATIO
+                  ? undefined
+                  : "amber"
               }
             />
           </>

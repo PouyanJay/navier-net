@@ -531,6 +531,7 @@ def test_launch_rejects_sharp_interface_without_the_front(client):
 def test_launch_rejects_pinching_without_the_front(client):
     r = client.post("/api/runs", json={**TINY_RUN, "allow_pinch": True})
     assert r.status_code == 422
+    assert "front_geometry" in r.text
 
 
 def test_launch_rejects_a_sharpening_schedule_with_no_target(client):

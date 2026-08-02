@@ -96,7 +96,9 @@ export interface PhysicsFrame {
 export interface ResidualConvergence {
   first: number;
   last: number;
-  ratio: number;
+  /** Absent when it could not be formed — a term whose first window averaged
+   * exactly zero has nothing to be a ratio of. */
+  ratio: number | null;
 }
 
 /**

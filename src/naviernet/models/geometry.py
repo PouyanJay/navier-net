@@ -103,6 +103,35 @@ class FrontSamples(NamedTuple):
     normal_speed: torch.Tensor
 
 
+class GeometryContext(NamedTuple):
+    """Which dataset a geometry call is about: its conditioning row and its
+    measured anchors.
+
+    The two always travel together -- a joint run binds both per dataset, a
+    single-dataset run binds neither -- so they are one object rather than two
+    optional parameters threaded through the whole construction. ``None``
+    anywhere means "the model's own", which is what a single-dataset run has.
+    """
+
+    c: torch.Tensor | None = None
+    priors: GeometryPriors | None = None
+
+
+class FrontQuery(NamedTuple):
+    """The per-sample parameters that locate one point on the contour.
+
+    Built together in :meth:`GeometricInterface.front` and consumed together in
+    :meth:`GeometricInterface._front_frame`; carrying them as one object is what
+    keeps that evaluation to three arguments.
+    """
+
+    u: torch.Tensor  # spine parameter, 0 at the root apex and 1 at the nose
+    side: torch.Tensor  # +1 upper profile, -1 lower
+    on_cap: torch.Tensor  # 1 on an end cap, where the profile form does not apply
+    angle: torch.Tensor  # sweep angle on a cap; 0 off them
+    t: torch.Tensor  # the sample's own time, a leaf so dP/dt is available
+
+
 @dataclass(frozen=True)
 class GeometryPriors:
     """Data-derived anchors the construction is built around AND initializes at:
@@ -604,9 +633,17 @@ class GeometricInterface(nn.Module):
             dim=1,
         )
         cap_normal = torch.cat([cap_sign * cos, sin], dim=1)
-        # A cap that has vanished has no curvature to report; floor the radius so
-        # the reciprocal stays finite instead of diverging at the pinch.
-        cap_kappa = 1.0 / cap_r.clamp(min=ABS_SMOOTH)
+        # A cap that has VANISHED (a non-positive radius, reachable only under
+        # `allow_pinch`) has no curvature to report. Flooring its radius would
+        # hand the jump condition ~1/ABS_SMOOTH -- a huge positive curvature for
+        # a point that, by this construction's own contract, is not there -- and
+        # that number would flow straight into the Laplace residual at exactly
+        # the pinch the feature exists to make trainable. Report zero instead:
+        # no interface, no capillary pressure.
+        present = cap_r > ABS_SMOOTH
+        cap_kappa = torch.where(
+            present, 1.0 / cap_r.clamp(min=ABS_SMOOTH), torch.zeros_like(cap_r)
+        )
 
         return (
             torch.where(on_cap > 0, cap_xy, body_xy),
