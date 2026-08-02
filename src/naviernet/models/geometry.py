@@ -232,6 +232,14 @@ class GeometricInterface(nn.Module):
         """Half-width (inflation radius) profile along the spine, channel-bounded."""
         return self._y_half * torch.sigmoid(self.width_net(torch.cat([u, t], dim=1)))
 
+    def half_width(self, u: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """The bubble's half-width at spine parameter ``u`` and time ``t`` -- the
+        radius the interface actually sits at, degenerate-case rescale included.
+
+        This is the shape as a diagnostic reads it, and the quantity the measured
+        masks are compared against station by station."""
+        return self._radius(u, t) * self.frame(t).scale
+
     def frame(self, t: torch.Tensor) -> CapsuleFrame:
         """The capsule's scalars at times ``t`` of shape ``(N, 1)``.
 
