@@ -141,6 +141,17 @@ class StageBResiduals(NamedTuple):
     interface_delta: torch.Tensor  # |grad alpha| area-density delta, for inspection
 
 
+def confinement_drag(alpha: torch.Tensor, groups: dict[str, float]) -> torch.Tensor:
+    """The depth-averaged Hele-Shaw drag coefficient, ``C_HS mu*(alpha)``.
+
+    One definition shared by both momentum formulations: it is the same physical
+    closure whether it appears as a term in the 2-D residual or as the whole of
+    the Darcy balance, and a change to one that missed the other would be a
+    silent inconsistency between the two paths.
+    """
+    return groups["hele_shaw"] * mixture(alpha, groups["mu_ratio"])
+
+
 def mixture(alpha: torch.Tensor, ratio: float) -> torch.Tensor:
     """Arithmetic property blend, scaled so liquid (alpha=0) reads 1.
 
@@ -213,11 +224,10 @@ def momentum_residuals(
     """
     re = groups["Re"]
     we = groups["We"]
-    c_hs = groups["hele_shaw"]
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
     rho_t = mixture(alpha, groups["rho_ratio"])
-    mu_t = mixture(alpha, groups["mu_ratio"])
+    drag = confinement_drag(alpha, groups)
 
     a_x, a_y, nx, ny, _ = _interface_normal(alpha, x, eps)
     kappa = -_normal_divergence(nx, ny, x)
@@ -230,14 +240,14 @@ def momentum_residuals(
         rho_t * (u_t + u * u_x + v * u_y)
         + p_x
         - (1.0 / re) * _laplacian(u, x)
-        + c_hs * mu_t * u
+        + drag * u
         - (1.0 / we) * kappa * a_x
     )
     mom_y = (
         rho_t * (v_t + u * v_x + v * v_y)
         + p_y
         - (1.0 / re) * _laplacian(v, x)
-        + c_hs * mu_t * v
+        + drag * v
         - (1.0 / we) * kappa * a_y
     )
     return MomentumResiduals(mom_x, mom_y, kappa)
@@ -367,7 +377,7 @@ def darcy_residuals(
     there is no curvature in this balance.
     """
     cx = _ctx(c, x)
-    drag = groups["hele_shaw"] * mixture(model.alpha(x, cx), groups["mu_ratio"])
+    drag = confinement_drag(model.alpha(x, cx), groups)
     u, v = model.velocity(x, cx)
     p_x, p_y, _ = gradients(model.pressure(x, cx), x)
     return MomentumResiduals(p_x + drag * u, p_y + drag * v, torch.zeros_like(u))

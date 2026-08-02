@@ -19,7 +19,11 @@ from collections.abc import Sequence
 import torch
 import torch.nn as nn
 
-from naviernet.models.geometry import GeometricInterface, GeometryPriors
+from naviernet.models.geometry import (
+    GeometricInterface,
+    GeometryContext,
+    GeometryPriors,
+)
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures
 
 # Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
@@ -345,7 +349,7 @@ class BubblePINN(nn.Module):
                 "model.front_geometry=false, so there is no parameterized "
                 "interface to sample."
             )
-        return self.nets["phi"].front(t, n_body, n_cap, c, geometry)
+        return self.nets["phi"].front(t, n_body, n_cap, GeometryContext(c, geometry))
 
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None

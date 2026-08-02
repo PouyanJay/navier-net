@@ -376,6 +376,7 @@ def test_front_geometry_trains_a_joint_run_and_pins_each_dataset_to_its_own_root
     that ignored the binding -- or bound the primary's anchors to everything --
     would put both interfaces at the same x, and this would catch it.
     """
+    from naviernet.models.geometry import GeometryContext
     from naviernet.training import load_joint, train
     from tests.conftest import staged_joint_run
 
@@ -391,7 +392,7 @@ def test_front_geometry_trains_a_joint_run_and_pins_each_dataset_to_its_own_root
     geo = model.nets["phi"]
     for cx in contexts:
         for t in (cx.data.domain.t_min, cx.data.domain.t_max, 2.0 * cx.data.domain.t_max):
-            point = geo.root_point(t, cx.c, cx.geometry)
+            point = geo.root_point(t, GeometryContext(cx.c, cx.geometry))
             assert float(point[0]) == pytest.approx(roots[cx.name], abs=1e-6), (
                 f"{cx.name} is anchored at {float(point[0])}, not its own root {roots[cx.name]}"
             )
@@ -406,6 +407,7 @@ def test_front_geometry_trains_a_joint_run_and_pins_each_dataset_to_its_own_root
 def test_joint_front_geometry_starts_each_dataset_at_its_own_front(tmp_path):
     """The nose too: the datasets grow at different rates from different fronts,
     and the shared rate/gap are scaled to each condition's measured values."""
+    from naviernet.models.geometry import GeometryContext
     from naviernet.models.pinn import BubblePINN
     from naviernet.physics.groups import N_COND
     from naviernet.training import _load_joint_datasets
@@ -419,7 +421,7 @@ def test_joint_front_geometry_starts_each_dataset_at_its_own_front(tmp_path):
     for cx in contexts:
         t0 = torch.tensor([[cx.data.domain.t_min]])
         with torch.no_grad():
-            start = float(geo.nose(t0, cx.c, cx.geometry))
+            start = float(geo.nose(t0, GeometryContext(cx.c, cx.geometry)))
         assert start == pytest.approx(cx.data.initial_front, abs=1e-4), (
             f"{cx.name} starts its nose at {start}, not its measured front "
             f"{cx.data.initial_front}"
@@ -430,7 +432,11 @@ def test_single_dataset_geometry_is_untouched_by_the_conditioning_support(tmp_pa
     """Every per-dataset rescaling is a ratio against the reference dataset, so
     for a single-dataset run each one is exactly 1 and the construction is what
     it always was. Asserted, not assumed."""
-    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+    from naviernet.models.geometry import (
+        GeometricInterface,
+        GeometryContext,
+        GeometryPriors,
+    )
 
     torch.manual_seed(0)
     priors = GeometryPriors(**PRIORS)
@@ -439,7 +445,7 @@ def test_single_dataset_geometry_is_untouched_by_the_conditioning_support(tmp_pa
 
     with torch.no_grad():
         implicit = geo.nose(t)
-        explicit = geo.nose(t, None, priors)  # the same anchors, passed in
+        explicit = geo.nose(t, GeometryContext(priors=priors))  # same anchors, passed in
     assert torch.equal(implicit, explicit)
     assert float(implicit[0]) == pytest.approx(PRIORS["x_root"] + 0.3, abs=1e-5)
 
