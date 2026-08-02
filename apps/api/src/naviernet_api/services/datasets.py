@@ -364,7 +364,13 @@ MODEL_ARCH_FIELDS: dict[str, tuple[str, float, float]] = {
 _STAGE_A_FIELDS = ("phi", "u", "v", "s")
 FIELD_NAMES = ("phi", "u", "v", "s", "p", "T")
 # The Stage-B equations a series can toggle, keyed by id -> the fields they add.
-_TOGGLEABLE = {e.id: e.fields_added for e in REGISTRY if not e.core and e.fields_added}
+# Sharp-interface equations are excluded: they are governed by the
+# `model.sharp_interface` architecture flag, not by adding a field.
+_TOGGLEABLE = {
+    e.id: e.fields_added
+    for e in REGISTRY
+    if not e.core and e.fields_added and e.mode != "sharp"
+}
 # Only the Stage-B equations' loss weights are owned here. The Stage-A weights
 # (data/vof/div/src/bc) belong to the run-launch form (LossWeightsInput); keeping
 # them out of the saved physics config avoids a silent precedence conflict when a

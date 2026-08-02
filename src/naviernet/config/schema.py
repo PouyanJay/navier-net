@@ -157,6 +157,27 @@ class ModelConfig:
     # volume and the pinned point but rounded/fragmented the SHAPE off-data).
     # Mutually exclusive with hard_pin (the geometry pins exactly by construction).
     front_geometry: bool = False
+    # Let the bubble detach. The front geometry guarantees one connected capsule
+    # with a never-retreating nose -- which is what fixed R3's extrapolation shape
+    # collapse, and is also exactly what makes pinch-off inexpressible. With this
+    # on, the radius is signed (so a station can stop being vapour) and the nose
+    # rate is unconstrained. Requires `front_geometry`; off by default, so both
+    # guarantees stand unless a run asks for the trade.
+    allow_pinch: bool = False
+    # Sharp-interface physics (R4): drive the shape with the conditions that hold
+    # AT a fluid interface -- the Young-Laplace jump and the kinematic condition,
+    # sampled on the explicit front -- instead of a bulk momentum residual a free
+    # pressure field can absorb up to its curl. Requires `front_geometry` (there
+    # is no front to sample without it) and the `p` field. Off by default -> the
+    # equation set and every existing run are unchanged.
+    sharp_interface: bool = False
+    # Front samples per time, per body profile and per end cap, for the interface
+    # conditions. Module-level rather than swept: the front is a smooth 1-D curve,
+    # so this only has to resolve it, not fit anything.
+    front_body_samples: int = 64
+    front_cap_samples: int = 16
+    # Times per step the front is sampled at, spread over the training window.
+    front_times: int = 16
 
 
 @dataclass
@@ -173,6 +194,9 @@ class LossWeights:
     mom: float = 1.0  # Stage B: momentum
     energy: float = 1.0  # Stage B: energy
     evap: float = 1.0  # Stage B: evaporation mass-closure penalty
+    darcy: float = 1.0  # R4: depth-averaged momentum (replaces `mom` in sharp mode)
+    kinematic: float = 1.0  # R4: kinematic condition on the explicit front
+    laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
 
 
 @dataclass
@@ -204,6 +228,14 @@ class TrainingConfig:
     # NB the *aggregate* val IoU is surfaced only for joint runs (``evaluate_joint``);
     # a single-dataset CLI run honours ``val_fraction`` in training but ``evaluate``
     # does not report a separate ``iou_val`` for it.
+    # Interface sharpening: anneal `model.alpha_eps` geometrically down to
+    # `alpha_eps_final` over this many steps (0 = off, the interface thickness
+    # holds where it is configured). alpha = sigmoid(phi / alpha_eps) spreads the
+    # transition over roughly 4*alpha_eps, so at the Stage-A default of 0.05 the
+    # blur is ~0.2 in y* -- the same size as the measured mid-bubble neck. A
+    # feature cannot be resolved through a blur its own width.
+    alpha_eps_anneal_steps: int = 0
+    alpha_eps_final: float = 0.0
     val_fraction: float = 0.0
     val_strategy: str = "tail"  # "tail" (extrapolation) | "scatter" (interpolation)
 

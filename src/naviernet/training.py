@@ -109,6 +109,27 @@ def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
     )
 
 
+def _sharp(cfg) -> bool:
+    """Whether this run imposes the interface conditions on the explicit front."""
+    return bool(getattr(cfg.model, "sharp_interface", False))
+
+
+def _front_times(cfg, data: BubbleDataset, device) -> torch.Tensor | None:
+    """The times the interface conditions are sampled at, or ``None`` when the run
+    is not sharp-interface.
+
+    A fixed, uniform sweep of the training window rather than a random draw: the
+    front is one smooth curve per time, so what matters is covering the window,
+    and a deterministic grid makes the term reproducible across resume.
+    """
+    if not _sharp(cfg):
+        return None
+    d = data.domain
+    return torch.linspace(d.t_min, d.t_max, int(cfg.model.front_times), device=device).reshape(
+        -1, 1
+    )
+
+
 def _architecture_record(cfg) -> dict:
     """The architecture facts persisted in every checkpoint (hard pin and front
     geometry add no detectable state-dict signature for their *configuration*),
@@ -118,49 +139,111 @@ def _architecture_record(cfg) -> dict:
         "hard_pin": hard_pin,
         "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None,
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
+        "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
+        "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
     }
 
 
-def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
-    """Refuse to consume a checkpoint whose recorded architecture flags -- the
-    hard pin AND the front geometry -- disagree with the composed config. The
-    pin gate adds no parameters and a geometry mismatch may load shape-compatible
-    tensors, so ``load_state_dict`` can succeed silently either way; without this
-    guard a mismatched invocation would quietly consume the weights in a
-    differently-shaped solution space. Checkpoints written before the record
-    existed pass unchecked (nothing to compare)."""
-    saved = ckpt.get("hard_pin")
+def _require_matching_flag(cfg, ckpt: dict, key: str, path, why: str) -> None:
+    """Refuse a checkpoint whose architectural boolean ``key`` disagrees with the
+    composed config.
+
+    Each of these flags changes what the weights MEAN without necessarily
+    changing their shape, so ``load_state_dict`` succeeds either way and a
+    mismatched invocation would quietly consume them in a differently-shaped
+    solution space. Flags absent from the record predate it and pass unchecked.
+    """
+    saved = ckpt.get(key)
     if saved is None:
         return
-    current = bool(getattr(cfg.model, "hard_pin", False))
+    current = bool(getattr(cfg.model, key, False))
     if bool(saved) != current:
         raise ValueError(
-            f"{path} was trained with model.hard_pin={bool(saved)} but this invocation "
-            f"composes model.hard_pin={current}. The pin is architectural: pass the "
-            f"same model.hard_pin override the run was trained with."
+            f"{path} was trained with model.{key}={bool(saved)} but this invocation "
+            f"composes model.{key}={current}. {why} Pass the same override the run "
+            f"was trained with."
         )
+
+
+def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
+    """Refuse to consume a checkpoint whose recorded architecture disagrees with
+    the composed config."""
+    if ckpt.get("hard_pin") is None:
+        return  # written before the record existed; nothing to compare
+    _require_matching_flag(cfg, ckpt, "hard_pin", path, "The pin is architectural.")
+    _require_matching_flag(cfg, ckpt, "front_geometry", path, "The geometry is architectural.")
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "sharp_interface",
+        path,
+        "The interface treatment changes the objective AND adds the p_v(t) parameters.",
+    )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "allow_pinch",
+        path,
+        "The signed radius loads into the same tensors but means a different shape.",
+    )
+
+    # The pin's gate scale is a VALUE, not a flag, so it is checked on its own.
     saved_d_ref = ckpt.get("pin_d_ref")
-    if current and saved_d_ref is not None and float(saved_d_ref) != float(cfg.model.pin_d_ref):
+    if (
+        bool(getattr(cfg.model, "hard_pin", False))
+        and saved_d_ref is not None
+        and float(saved_d_ref) != float(cfg.model.pin_d_ref)
+    ):
         raise ValueError(
             f"{path} was trained with model.pin_d_ref={saved_d_ref} but this invocation "
             f"composes model.pin_d_ref={float(cfg.model.pin_d_ref)}; pass the value the "
             f"run was trained with."
         )
-    saved_geo = ckpt.get("front_geometry")
-    current_geo = bool(getattr(cfg.model, "front_geometry", False))
-    if saved_geo is not None and bool(saved_geo) != current_geo:
-        raise ValueError(
-            f"{path} was trained with model.front_geometry={bool(saved_geo)} but this "
-            f"invocation composes model.front_geometry={current_geo}. The geometry is "
-            f"architectural: pass the same override the run was trained with."
-        )
 
 
-def _validate_training_config(tcfg, fields) -> None:
+def _validate_training_config(tcfg, fields, alpha_eps: float | None = None) -> None:
     """Every up-front training-config validation, shared by both loops."""
     _validate_causal(tcfg)
     _validate_weighting(tcfg)
     _validate_kinematics(tcfg, fields)
+    if alpha_eps is not None:
+        _validate_sharpening(tcfg, alpha_eps)
+
+
+def _validate_sharpening(tcfg, alpha_eps: float) -> None:
+    """Reject an interface-sharpening schedule that cannot sharpen."""
+    if tcfg.alpha_eps_anneal_steps <= 0:
+        return
+    final = float(tcfg.alpha_eps_final)
+    if final <= 0.0:
+        raise ValueError(
+            f"training.alpha_eps_final={final} must be > 0: alpha_eps divides phi, "
+            f"so a zero interface thickness is a division by zero, not a sharp "
+            f"interface."
+        )
+    if final >= float(alpha_eps):
+        raise ValueError(
+            f"training.alpha_eps_final={final} must be below model.alpha_eps="
+            f"{alpha_eps}: the schedule sharpens the interface, it does not blur it."
+        )
+
+
+def annealed_alpha_eps(step: int, cfg) -> float:
+    """The interface half-thickness at ``step``.
+
+    Geometric, not linear: ``alpha_eps`` is a scale, so equal FRACTIONAL steps
+    are what keep the sharpening gradual through the end of the schedule, where
+    each further halving costs the most. Held at the final value afterwards, and
+    a function of the absolute step so a resumed run picks the schedule up
+    exactly where it left off.
+    """
+    tcfg = cfg.training
+    start = float(cfg.model.alpha_eps)
+    span = int(tcfg.alpha_eps_anneal_steps)
+    if span <= 0:
+        return start
+    progress = min(max(step / span, 0.0), 1.0)
+    return start * (float(tcfg.alpha_eps_final) / start) ** progress
 
 
 def _validate_kinematics(tcfg, fields) -> None:
@@ -239,7 +322,16 @@ def _initial_state(cfg, equations) -> dict:
     w = {"data": float(weights.data)}
     for eq in equations:
         w[eq.weight_key] = float(getattr(weights, eq.weight_key))
-    return {"done": 0, "hist": [], "w": w}
+    # The warm-up length travels with the run: a later `stage=evaluate` composes
+    # its own config, which need not carry the override the run was launched
+    # with, and reading the wrong one silently averages a term's convergence
+    # across the window where it was held at zero weight.
+    return {
+        "done": 0,
+        "hist": [],
+        "w": w,
+        "stage_b_warmup_steps": int(cfg.training.stage_b_warmup_steps),
+    }
 
 
 def _gradient_norms(model, losses: dict[str, torch.Tensor], opt) -> dict[str, float]:
@@ -743,7 +835,7 @@ def train(
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
     tcfg = cfg.training
-    _validate_training_config(tcfg, cfg.model.fields)
+    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps)
     rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
@@ -760,8 +852,9 @@ def train(
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
+    front_times = _front_times(cfg, data, device)
 
-    equations = registry.enabled_equations(cfg.model.fields)
+    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -822,6 +915,7 @@ def train(
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
+        model.eps = annealed_alpha_eps(step, cfg)
         lr = tcfg.lr * (0.5 ** (step // tcfg.lr_halflife))
         for group in opt.param_groups:
             group["lr"] = lr
@@ -845,7 +939,9 @@ def train(
         )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
 
-        ctx = registry.LossContext(model, x_coll, inlet, walls, u_inlet, groups)
+        ctx = registry.LossContext(
+            model, x_coll, inlet, walls, u_inlet, groups, front_times=front_times
+        )
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
@@ -914,6 +1010,7 @@ def train(
             "model": model.state_dict(),
             "opt": opt.state_dict(),
             "state": state,
+            "alpha_eps": float(model.eps),
             **_architecture_record(cfg),
         },
         paths.checkpoint,
@@ -936,6 +1033,13 @@ class _JointDataset:
     # The dataset's measured root anchor when the hard pin is on, else None.
     # Joint models bind it per call: model.bound(c, pin=pin).
     pin: tuple[float, float] | None = None
+    # The dataset's measured geometry anchors when the front geometry is on.
+    # Bound the same way, so one shared construction lands on each condition's
+    # own root, front, channel and time window.
+    geometry: GeometryPriors | None = None
+    # The times this dataset's interface conditions are sampled at (sharp-interface
+    # runs only). Per dataset, because their time windows differ.
+    front_times: torch.Tensor | None = None
     # The dataset's fixed kinematic quadrature when the constraints are on.
     kin: kinematics.KinematicPlan | None = None
 
@@ -973,6 +1077,8 @@ def _load_joint_datasets(
                 c,
                 float(groups["u_inlet_star"]),
                 pin=_pin_anchor(cfg, data),
+                geometry=_geometry_priors(cfg, data),
+                front_times=_front_times(cfg, data, device),
                 kin=_kinematic_plan(cfg, data, device),
             )
         )
@@ -996,12 +1102,21 @@ def _joint_losses(
         # Every call goes through the dataset's bound view: on a hard-pin run it
         # carries the root anchor; otherwise binding is a behavioral no-op (the
         # view forwards the same c the raw-model calls passed before).
-        view = model.bound(cx.c, pin=cx.pin)
+        view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
 
-        ctx = registry.LossContext(view, x_coll, inlet, walls, cx.u_inlet, cx.groups, c=cx.c)
+        ctx = registry.LossContext(
+            view,
+            x_coll,
+            inlet,
+            walls,
+            cx.u_inlet,
+            cx.groups,
+            c=cx.c,
+            front_times=cx.front_times,
+        )
         c_data = cx.c.expand(x_data.shape[0], -1)
         per_term = {"data": ((view.alpha(x_data, c_data) - target) ** 2).mean()}
         for eq in equations:
@@ -1024,7 +1139,7 @@ def _joint_kinematic_losses(
     totals = []
     merged: dict[str, float] = {}
     for cx in contexts:
-        view = model.bound(cx.c, pin=cx.pin)
+        view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
         kin_total, kin_record = kinematics.kinematic_losses(
             kinematics.KinematicContext(view, tcfg, cx.groups), cx.kin, schedule
         )
@@ -1050,7 +1165,7 @@ def _train_joint(
     untouched; this runs only when ``cfg.datasets`` names more than one series.
     """
     tcfg = cfg.training
-    _validate_training_config(tcfg, cfg.model.fields)
+    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps)
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
@@ -1073,10 +1188,14 @@ def _train_joint(
 
     contexts = _load_joint_datasets(cfg, paths, device, train_names)
     names = [cx.name for cx in contexts]
-    model = BubblePINN(cfg, n_cond=N_COND).to(device)
+    # The first training dataset's anchors set the geometry nets' initial scales;
+    # every dataset's own are bound per call (see `_JointDataset.geometry`), so
+    # this choice fixes only where the shared construction starts, not where it
+    # lands.
+    model = BubblePINN(cfg, n_cond=N_COND, geometry=contexts[0].geometry).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
-    equations = registry.enabled_equations(cfg.model.fields)
+    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -1099,6 +1218,7 @@ def _train_joint(
     )
 
     for step in range(first_step, last_step + 1):
+        model.eps = annealed_alpha_eps(step, cfg)
         lr = tcfg.lr * (0.5 ** (step // tcfg.lr_halflife))
         for group in opt.param_groups:
             group["lr"] = lr
@@ -1155,6 +1275,7 @@ def _train_joint(
             "training_datasets": names,  # the ones actually supervised
             "heldout_datasets": heldout,  # kept out for the transfer test (axis B)
             "n_cond": N_COND,  # so evaluation rebuilds the conditioned architecture
+            "alpha_eps": float(model.eps),  # the thickness the run ENDED at
             **_architecture_record(cfg),  # so evaluation rebuilds the pinned architecture
         },
         paths.checkpoint,
@@ -1188,6 +1309,10 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
         geometry=_geometry_priors(cfg, data),
     ).to(device)
     model.load_state_dict(ckpt["model"])
+    # The interface thickness the run ENDED at, not the one it started from:
+    # scoring a sharpened model through its initial blur would measure a
+    # different solution than the one that was trained.
+    model.eps = float(ckpt.get("alpha_eps", model.eps))
     model.eval()
     return model, data, ckpt["state"]
 
@@ -1213,8 +1338,16 @@ def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset], l
     names = list(ckpt.get("datasets") or resolved_datasets(cfg))
     heldout = list(ckpt.get("heldout_datasets", cfg.heldout_datasets))
     contexts = _load_joint_datasets(cfg, paths, device, names)
-    model = BubblePINN(cfg, n_cond=int(ckpt.get("n_cond", N_COND))).to(device)
+    model = BubblePINN(
+        cfg,
+        n_cond=int(ckpt.get("n_cond", N_COND)),
+        geometry=contexts[0].geometry,
+    ).to(device)
     model.load_state_dict(ckpt["model"])
+    # The thickness the run ENDED at, exactly as `load_model` does: a joint run
+    # scored through its initial blur is a different solution than the one that
+    # was trained.
+    model.eps = float(ckpt.get("alpha_eps", model.eps))
     model.eval()
     return model, contexts, heldout
 

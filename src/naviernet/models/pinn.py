@@ -19,8 +19,18 @@ from collections.abc import Sequence
 import torch
 import torch.nn as nn
 
-from naviernet.models.geometry import GeometricInterface, GeometryPriors
+from naviernet.models.geometry import (
+    GeometricInterface,
+    GeometryContext,
+    GeometryPriors,
+)
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures
+
+# Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
+# one smooth scalar curve in time, and capacity beyond this buys nothing but the
+# freedom to wobble -- which would undo the near-isobaric constraint it encodes.
+VAPOR_HIDDEN = 32
+VAPOR_DEPTH = 2
 
 
 def _resolve(arch, key: str, fallback):
@@ -102,38 +112,104 @@ class BubblePINN(nn.Module):
         self.cfg = cfg
         self.eps = float(cfg.model.alpha_eps)
         self.n_cond = int(n_cond)
+        names = list(fields if fields is not None else cfg.model.fields)
         self._validate_front_geometry(cfg, geometry)
+        self._validate_sharp_interface(cfg, names)
         self._init_hard_pin(cfg, pin)
 
-        names = list(fields if fields is not None else cfg.model.fields)
         per_field = getattr(cfg.model, "per_field", None) or {}
         self.nets = nn.ModuleDict(
             {
-                name: GeometricInterface(geometry)
+                name: GeometricInterface(
+                    geometry, allow_pinch=self.allow_pinch, n_cond=self.n_cond
+                )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
                 for name in names
             }
         )
         self._init_inverse_unknowns(cfg, names)
+        self._init_vapor_pressure()
+
+    def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
+        """Reject a sharp-interface composition that cannot work, before any net
+        is built: there is no front to sample without the front geometry, and no
+        jump to impose without a liquid pressure."""
+        self.sharp_interface = bool(getattr(cfg.model, "sharp_interface", False))
+        if not self.sharp_interface:
+            return
+        if not self.front_geometry:
+            raise ValueError(
+                "model.sharp_interface imposes the interface conditions ON the "
+                "explicit front, so it requires model.front_geometry=true -- enable "
+                "the front geometry, or disable model.sharp_interface."
+            )
+        if "p" not in names:
+            raise ValueError(
+                "model.sharp_interface reads the liquid pressure at the interface, so "
+                "it requires the 'p' field in model.fields (the Stage-B field set); "
+                f"this model has {names}."
+            )
+
+    def _init_vapor_pressure(self) -> None:
+        """``p_v(t)``: the vapour interior's pressure, one scalar per time.
+
+        The bubble is very nearly isobaric inside -- ``mu_l/mu_v ~ 37``, so the
+        viscous pressure drop along the vapour is negligible beside the liquid's.
+        Making that STRUCTURAL rather than hoped-for is the whole point: with
+        ``p_v`` uniform in space, the Young-Laplace jump forces the total
+        curvature to be nearly uniform along the entire front, which is the
+        mechanism that inflates the fast nose cap and drains the slower mid-body
+        into a neck. A free 2-D pressure field asserts nothing of the kind.
+        """
+        if not self.sharp_interface:
+            return
+        dims = [1] + [VAPOR_HIDDEN] * VAPOR_DEPTH
+        layers: list[nn.Module] = []
+        for d_in, d_out in zip(dims[:-1], dims[1:], strict=True):
+            layers += [nn.Linear(d_in, d_out), nn.Tanh()]
+        layers.append(nn.Linear(dims[-1], 1))
+        self.vapor_pressure = nn.Sequential(*layers)
+
+    def p_vapor(self, t: torch.Tensor) -> torch.Tensor:
+        """Vapour-interior pressure at times ``t`` of shape ``(N, 1)``.
+
+        Space-independent by construction (see :meth:`_init_vapor_pressure`). The
+        gauge is fixed by the jump condition itself, which ties ``p_v`` to the
+        liquid pressure at the front, so no positivity or offset constraint is
+        needed or wanted.
+        """
+        if not self.sharp_interface:
+            raise RuntimeError(
+                "p_vapor is only defined for a sharp-interface model; this one was "
+                "built with model.sharp_interface=false."
+            )
+        return self.vapor_pressure(t)
 
     def _validate_front_geometry(self, cfg, geometry: GeometryPriors | None) -> None:
         """Reject unusable front-geometry compositions loudly, before any net is
         built: the geometry pins exactly (hard_pin is redundant and conflicting),
-        joint conditioning is unsupported, priors are required, and a per-field
-        phi override would be silently ignored."""
+        priors are required, and a per-field phi override would be silently
+        ignored.
+
+        Joint conditioning is supported: the nets take the dataset's
+        conditioning row and each dataset's measured anchors are bound per call
+        (``bound(c, pin=, geometry=)``), so one construction serves every
+        condition."""
         self.front_geometry = bool(getattr(cfg.model, "front_geometry", False))
+        self.allow_pinch = bool(getattr(cfg.model, "allow_pinch", False))
+        if self.allow_pinch and not self.front_geometry:
+            raise ValueError(
+                "model.allow_pinch relaxes the front geometry's own topology and "
+                "monotonicity guarantees, so it requires model.front_geometry=true; "
+                "a free level set has no such guarantees to relax."
+            )
         if not self.front_geometry:
             return
         if getattr(cfg.model, "hard_pin", False):
             raise ValueError(
                 "model.front_geometry already pins the root exactly by construction; "
                 "it is mutually exclusive with model.hard_pin -- disable one."
-            )
-        if self.n_cond > 0:
-            raise NotImplementedError(
-                "model.front_geometry is not yet supported for joint (multi-dataset) "
-                "runs; disable it for joint runs for now."
             )
         if geometry is None:
             raise ValueError(
@@ -203,12 +279,20 @@ class BubblePINN(nn.Module):
         x: torch.Tensor,
         c: torch.Tensor | None = None,
         pin: torch.Tensor | None = None,
+        geometry: GeometryPriors | None = None,
     ) -> torch.Tensor:
         """Level-set field; its zero contour is the interface. With the hard pin
         on, the zero contour is anchored to the root for all t (see __init__).
         ``pin`` is the per-call anchor a joint run's bound view supplies; a
-        single-dataset model carries its own."""
-        raw = self.nets["phi"](x, c)
+        single-dataset model carries its own. ``geometry`` is the same idea for
+        the front geometry: a joint run binds each dataset's own measured
+        anchors, so one shared construction lands on each condition's own root,
+        front and channel."""
+        raw = (
+            self.nets["phi"](x, c, priors=geometry)
+            if self.front_geometry
+            else self.nets["phi"](x, c)
+        )
         if not self.hard_pin:
             return raw
         anchor = pin if pin is not None else self.pin_anchor
@@ -237,9 +321,35 @@ class BubblePINN(nn.Module):
         x: torch.Tensor,
         c: torch.Tensor | None = None,
         pin: torch.Tensor | None = None,
+        geometry: GeometryPriors | None = None,
     ) -> torch.Tensor:
         """Volume fraction, bounded in (0, 1) by construction."""
-        return torch.sigmoid(self.phi(x, c, pin=pin) / self.eps)
+        return torch.sigmoid(self.phi(x, c, pin=pin, geometry=geometry) / self.eps)
+
+    def front(
+        self,
+        t: torch.Tensor,
+        n_body: int,
+        n_cap: int,
+        c: torch.Tensor | None = None,
+        geometry: GeometryPriors | None = None,
+    ):
+        """The explicit interface at times ``t`` -- the object the sharp-interface
+        conditions are imposed on.
+
+        Routed through the model rather than reached for via ``nets["phi"]``
+        because a joint run's per-dataset view binds its own conditioning row and
+        anchors: going around it would hand every dataset the SAME front, and
+        every jump residual after the first would be scored against another
+        condition's interface.
+        """
+        if not self.front_geometry:
+            raise RuntimeError(
+                "front() needs the explicit front: this model was built with "
+                "model.front_geometry=false, so there is no parameterized "
+                "interface to sample."
+            )
+        return self.nets["phi"].front(t, n_body, n_cap, GeometryContext(c, geometry))
 
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
@@ -284,10 +394,16 @@ class BubblePINN(nn.Module):
             )
         return self.nets[name]
 
-    def bound(self, c: torch.Tensor, pin: tuple[float, float] | None = None) -> BoundPINN:
+    def bound(
+        self,
+        c: torch.Tensor,
+        pin: tuple[float, float] | None = None,
+        geometry: GeometryPriors | None = None,
+    ) -> BoundPINN:
         """This model with one dataset's conditioning row -- and, for a hard-pin
-        run, that dataset's root anchor -- bound (joint training/eval/viz)."""
-        return BoundPINN(self, c, pin=pin)
+        or front-geometry run, that dataset's measured anchors -- bound (joint
+        training/eval/viz)."""
+        return BoundPINN(self, c, pin=pin, geometry=geometry)
 
 
 class BoundPINN:
@@ -302,25 +418,39 @@ class BoundPINN:
     """
 
     def __init__(
-        self, model: BubblePINN, c: torch.Tensor, pin: tuple[float, float] | None = None
+        self,
+        model: BubblePINN,
+        c: torch.Tensor,
+        pin: tuple[float, float] | None = None,
+        geometry: GeometryPriors | None = None,
     ):
         self._model = model
         self._c = c
         self._pin = None if pin is None else torch.as_tensor(pin, dtype=torch.float32)
+        self._geometry = geometry
 
     def _ctx(self, x: torch.Tensor) -> torch.Tensor:
         return self._c.expand(x.shape[0], -1)
 
     def phi(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        return self._model.phi(x, c if c is not None else self._ctx(x), pin=self._pin)
+        return self._model.phi(
+            x, c if c is not None else self._ctx(x), pin=self._pin, geometry=self._geometry
+        )
 
     def alpha(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        return self._model.alpha(x, c if c is not None else self._ctx(x), pin=self._pin)
+        return self._model.alpha(
+            x, c if c is not None else self._ctx(x), pin=self._pin, geometry=self._geometry
+        )
 
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return self._model.velocity(x, c if c is not None else self._ctx(x))
+
+    def front(self, t: torch.Tensor, n_body: int, n_cap: int):
+        """This dataset's own front: its conditioning row and its measured
+        anchors, never the raw model's."""
+        return self._model.front(t, n_body, n_cap, self._c, self._geometry)
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.source(x, c if c is not None else self._ctx(x))

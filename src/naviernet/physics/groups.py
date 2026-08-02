@@ -117,6 +117,11 @@ def compute_groups(cfg) -> dict[str, float]:
     # Confinement closures
     # Depth-averaged Hele-Shaw drag coefficient for a channel of height H.
     groups["hele_shaw"] = 12.0 * (length / h) ** 2 / groups["Re"]
+    # The channel gap, non-dimensionalised: the length the OUT-OF-PLANE (gap)
+    # interface curvature 2/H* is set by. A depth-averaged model has no z
+    # direction, so this curvature has to be supplied rather than computed --
+    # and it is the larger of the two principal curvatures here.
+    groups["H_star"] = h / length
     # Bretherton lubrication film left behind an advancing meniscus.
     groups["bretherton_film_um"] = 1.34 * groups["Ca"] ** (2.0 / 3.0) * (h / 2) * 1e6
 

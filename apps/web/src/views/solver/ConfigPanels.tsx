@@ -389,6 +389,25 @@ function AdvancedTrainingSection({
 /** The pin/kinematics numeric fields, keyed by the switch that reveals them.
  * `bounds` names a FORM_BOUNDS entry (the three kin weights share one, like the
  * loss-weight fields share FORM_BOUNDS.weight). */
+const SHARPENING_FIELDS = [
+  {
+    key: "alpha_eps_anneal_steps",
+    gate: "sharp_interface",
+    label: "Sharpening steps",
+    hint: "0 = hold the interface thickness",
+    bounds: "alpha_eps_anneal_steps",
+    step: 100,
+  },
+  {
+    key: "alpha_eps_final",
+    gate: "sharp_interface",
+    label: "Final αε",
+    hint: "target interface half-thickness (y*)",
+    bounds: "alpha_eps_final",
+    step: 0.005,
+  },
+] as const;
+
 const PIN_KIN_FIELDS = [
   {
     key: "pin_d_ref",
@@ -430,7 +449,9 @@ function PinKinematicsControls({
   onForm,
   locked,
 }: AdvancedTrainingSectionProps) {
-  const fields = PIN_KIN_FIELDS.filter((spec) => form[spec.gate]);
+  const fields = [...PIN_KIN_FIELDS, ...SHARPENING_FIELDS].filter(
+    (spec) => form[spec.gate],
+  );
   return (
     <>
       <div className="switch-rows">
@@ -442,7 +463,11 @@ function PinKinematicsControls({
             onForm(
               front_geometry
                 ? { front_geometry: true, hard_pin: false }
-                : { front_geometry: false },
+                : {
+                    front_geometry: false,
+                    sharp_interface: false,
+                    allow_pinch: false,
+                  },
             )
           }
           disabled={locked}
@@ -457,6 +482,28 @@ function PinKinematicsControls({
           checked={form.hard_pin}
           onChange={(hard_pin) => onForm({ hard_pin })}
           disabled={locked || form.front_geometry}
+        />
+        <Switch
+          label="Sharp interface"
+          hint={
+            form.front_geometry
+              ? "Young-Laplace jump + kinematic condition on the front · Darcy"
+              : "needs front geometry"
+          }
+          checked={form.sharp_interface}
+          onChange={(sharp_interface) => onForm({ sharp_interface })}
+          disabled={locked || !form.front_geometry}
+        />
+        <Switch
+          label="Allow pinch-off"
+          hint={
+            form.front_geometry
+              ? "signed radius · the bubble may detach"
+              : "needs front geometry"
+          }
+          checked={form.allow_pinch}
+          onChange={(allow_pinch) => onForm({ allow_pinch })}
+          disabled={locked || !form.front_geometry}
         />
         <Switch
           label="Growth constraints"

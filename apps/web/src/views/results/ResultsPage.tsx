@@ -338,6 +338,10 @@ export function ResultsPage({ project }: ResultsPageProps) {
               ) : activeTab === "physics" ? (
                 <PhysicsTab
                   runId={selected.id}
+                  frontGeometry={Boolean(
+                    (detail?.config as { model?: { front_geometry?: boolean } })
+                      ?.model?.front_geometry,
+                  )}
                   dataset={viewDataset}
                   datasetName={
                     viewDataset

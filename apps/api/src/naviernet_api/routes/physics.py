@@ -23,7 +23,8 @@ def _physics_state(settings: Settings, dataset: str) -> PhysicsState:
     overrides = datasets_service.series_overrides(settings, dataset)
     cfg = compose_cfg(dataset, overrides=overrides)
     fields = list(cfg.model.fields)
-    active = {e.id for e in enabled_equations(fields)}
+    sharp = bool(getattr(cfg.model, "sharp_interface", False))
+    active = {e.id for e in enabled_equations(fields, sharp_interface=sharp)}
     weights = cfg.training.weights
     equations = [
         EquationState(
@@ -38,6 +39,7 @@ def _physics_state(settings: Settings, dataset: str) -> PhysicsState:
             core=e.core,
             enabled=e.id in active,
             weight=float(getattr(weights, e.weight_key)),
+            mode=e.mode,
         )
         for e in REGISTRY
     ]
@@ -46,6 +48,7 @@ def _physics_state(settings: Settings, dataset: str) -> PhysicsState:
         equations=equations,
         fields=fields,
         groups=compute_groups_for(dataset, overrides=overrides),
+        sharp_interface=sharp,
     )
 
 

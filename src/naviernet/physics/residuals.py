@@ -141,6 +141,17 @@ class StageBResiduals(NamedTuple):
     interface_delta: torch.Tensor  # |grad alpha| area-density delta, for inspection
 
 
+def confinement_drag(alpha: torch.Tensor, groups: dict[str, float]) -> torch.Tensor:
+    """The depth-averaged Hele-Shaw drag coefficient, ``C_HS mu*(alpha)``.
+
+    One definition shared by both momentum formulations: it is the same physical
+    closure whether it appears as a term in the 2-D residual or as the whole of
+    the Darcy balance, and a change to one that missed the other would be a
+    silent inconsistency between the two paths.
+    """
+    return groups["hele_shaw"] * mixture(alpha, groups["mu_ratio"])
+
+
 def mixture(alpha: torch.Tensor, ratio: float) -> torch.Tensor:
     """Arithmetic property blend, scaled so liquid (alpha=0) reads 1.
 
@@ -213,11 +224,10 @@ def momentum_residuals(
     """
     re = groups["Re"]
     we = groups["We"]
-    c_hs = groups["hele_shaw"]
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
     rho_t = mixture(alpha, groups["rho_ratio"])
-    mu_t = mixture(alpha, groups["mu_ratio"])
+    drag = confinement_drag(alpha, groups)
 
     a_x, a_y, nx, ny, _ = _interface_normal(alpha, x, eps)
     kappa = -_normal_divergence(nx, ny, x)
@@ -230,14 +240,14 @@ def momentum_residuals(
         rho_t * (u_t + u * u_x + v * u_y)
         + p_x
         - (1.0 / re) * _laplacian(u, x)
-        + c_hs * mu_t * u
+        + drag * u
         - (1.0 / we) * kappa * a_x
     )
     mom_y = (
         rho_t * (v_t + u * v_x + v * v_y)
         + p_y
         - (1.0 / re) * _laplacian(v, x)
-        + c_hs * mu_t * v
+        + drag * v
         - (1.0 / we) * kappa * a_y
     )
     return MomentumResiduals(mom_x, mom_y, kappa)
@@ -333,6 +343,119 @@ def energy_residuals(
         + evap  # latent-heat sink at the interface
     )
     return EnergyResiduals(energy, src_closure, delta)
+
+
+# --- R4: sharp-interface conditions on the explicit front --------------------
+
+
+def darcy_residuals(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> MomentumResiduals:
+    """Depth-averaged (Hele-Shaw) momentum, the leading-order balance here::
+
+        grad p = -C_HS mu*(alpha) u
+
+    paired with the unchanged continuity ``u_x + v_y = s``.
+
+    Why this and not :func:`momentum_residuals`. Darcy is the depth-averaged
+    limit of the *3-D* problem, not a special case of the 2-D one: the dominant
+    force in a 198 um channel is the wall shear in the GAP direction, which a
+    2-D (x, y) formulation does not contain at all -- which is why the 2-D
+    residual has to carry ``hele_shaw`` as a bolted-on stand-in for it. Measured
+    on the R3 baseline, that formulation's in-plane inertia ran at RMS 0.34
+    against the drag's 0.05, so the optimiser spent its effort on terms that are
+    O(eps) in this regime (Ca = 0.011, Bo = 0.073, Re_in = 22) while the actual
+    leading balance sat in the noise.
+
+    No surface-tension body force. In a sharp-interface formulation capillarity
+    is a BOUNDARY CONDITION (:func:`laplace_jump_residual`), not a volumetric
+    term; the CSF force exists only because a diffuse interface has no boundary
+    to put it on. Removing it here is what stops a free ``p`` from absorbing it.
+
+    Returns the same shape as :func:`momentum_residuals` so both momentum-family
+    equations read identically to the registry, with ``kappa`` left at zero:
+    there is no curvature in this balance.
+    """
+    cx = _ctx(c, x)
+    drag = confinement_drag(model.alpha(x, cx), groups)
+    u, v = model.velocity(x, cx)
+    p_x, p_y, _ = gradients(model.pressure(x, cx), x)
+    return MomentumResiduals(p_x + drag * u, p_y + drag * v, torch.zeros_like(u))
+
+
+# Bretherton's front-meniscus correction, 1.29 (3 Ca)^{2/3} = 2.68 Ca^{2/3}
+# (Bretherton 1961): the dynamic thickening of the capillary pressure across an
+# advancing meniscus that has laid down a lubrication film behind it. A fixed
+# physical coefficient, not a tunable.
+BRETHERTON_COEFF = 1.29 * 3.0 ** (2.0 / 3.0)
+
+
+def gap_curvature(normal_speed: torch.Tensor, groups: dict[str, float]) -> torch.Tensor:
+    """Out-of-plane (gap-direction) interface curvature, ``(N, 1)``::
+
+        kappa_perp = (2 / H*) (1 + 2.68 Ca_local^{2/3})
+
+    A depth-averaged model has no z direction, so this curvature cannot be
+    computed from the in-plane shape -- it has to be supplied. It matters twice
+    over: it is the LARGER principal curvature here (``2/H* = 4`` against an
+    in-plane O(1)), and, through the local capillary number
+    ``Ca_local = Ca * v_n``, it is the only place the front's own SPEED enters
+    the capillary pressure.
+
+    That speed dependence is the mechanism the whole sharp-interface change
+    exists to restore: a fast-advancing nose carries more capillary pressure
+    than a slow mid-body, so vapour is driven forward and the middle thins. With
+    a speed-independent capillary pressure every station along the bubble is
+    interchangeable and no neck can be selected.
+
+    Only an ADVANCING front deposits a film, so a receding section takes the
+    static ``2/H*`` (and a negative capillary number never reaches the 2/3
+    power).
+    """
+    capillary = (groups["Ca"] * normal_speed).clamp(min=0.0)
+    return (2.0 / groups["H_star"]) * (1.0 + BRETHERTON_COEFF * capillary ** (2.0 / 3.0))
+
+
+def kinematic_residual(model, front, c: torch.Tensor | None = None) -> torch.Tensor:
+    """The kinematic condition on the explicit interface, per sample ``(N, 1)``::
+
+        v_n = u . n
+
+    The front advances at the normal component of the local fluid velocity. Only
+    the normal component can move it: a tangential slip along the interface
+    transports nothing across it, which is why this is projected rather than
+    compared component-wise. (Phase change contributes no extra interface
+    velocity here -- under the Hardt-Wondra treatment its source lives OFF the
+    interface, the same reason the VOF residual is a pure advection.)
+
+    The front-sampled counterpart of the ``vof`` collocation residual, and the
+    reason it is worth having twice: ``vof`` is evaluated at bulk points, where
+    ``grad alpha`` is ~0 and the equation is satisfied by doing nothing. Here
+    every sample is on the interface, so every sample constrains it.
+    """
+    u, v = model.velocity(front.points, _ctx(c, front.points))
+    return front.normal_speed - (u * front.normal[:, 0:1] + v * front.normal[:, 1:2])
+
+
+def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:
+    """Young-Laplace across the explicit interface, per front sample ``(N, 1)``::
+
+        p_v(t) - p_liq(Gamma) = (1/We) (kappa_par + kappa_perp)
+
+    The vapour is higher-pressure inside a convex bubble, which is the sign the
+    diffuse ``curvature`` above already uses (a compact vapour region reads
+    positive). ``p_v`` is space-independent, so this one condition ties the
+    liquid pressure at every point of the front to the LOCAL total curvature --
+    the constraint that makes shape a consequence of forces.
+
+    Why here and not in the bulk: with a free ``p`` field, the CSF term in
+    :func:`momentum_residuals` can be absorbed by the pressure up to its curl, so
+    the bulk residual constrains ``p``, not the interface. Evaluated ON the front,
+    there is nothing left to absorb it.
+    """
+    t = front.points[:, 2:3]
+    kappa = front.kappa_par + gap_curvature(front.normal_speed, groups)
+    return model.p_vapor(t) - model.pressure(front.points) - kappa / groups["We"]
 
 
 def stage_b_residuals(

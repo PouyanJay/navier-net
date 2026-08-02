@@ -21,13 +21,17 @@ from dataclasses import dataclass, field
 
 import torch
 
+from naviernet.models.geometry import FrontSamples
 from naviernet.physics.residuals import (
     EnergyResiduals,
     MomentumResiduals,
     NucleationPulse,
     StageAResiduals,
     boundary_losses,
+    darcy_residuals,
     energy_residuals,
+    kinematic_residual,
+    laplace_jump_residual,
     momentum_residuals,
     source_penalty_sq,
     stage_a_residuals,
@@ -56,6 +60,7 @@ class LossContext:
         u_inlet: float = 0.0,
         groups: dict[str, float] | None = None,
         c: torch.Tensor | None = None,
+        front_times: torch.Tensor | None = None,
     ) -> None:
         self.model = model
         self.x_coll = x_coll
@@ -63,13 +68,39 @@ class LossContext:
         self.walls = walls
         self.u_inlet = u_inlet
         self.groups = groups
+        # Times the interface conditions are sampled at (sharp-interface runs only);
+        # the front itself is built lazily below, once per step, and shared by every
+        # term that reads it -- the same caching the residual bundles use.
+        self.front_times = front_times
+        self._front: FrontSamples | None = None
         # The dataset's conditioning row for this batch (None when unconditioned).
         # Every residual bundle below is evaluated with it, so one joint step is
         # a sum of per-dataset LossContexts, each carrying its own `c`.
         self.c = c
         self._res_a: StageAResiduals | None = None
         self._mom: MomentumResiduals | None = None
+        self._darcy: MomentumResiduals | None = None
         self._energy: EnergyResiduals | None = None
+
+    @property
+    def front(self) -> FrontSamples:
+        """Points on the explicit interface at this step's front times."""
+        if self.front_times is None:
+            raise RuntimeError(
+                "a sharp-interface term was evaluated without front times -- build "
+                "the LossContext with front_times=..., as the trainer does."
+            )
+        if self._front is None:
+            model_cfg = self.model.cfg.model
+            # Through the model, not `nets["phi"]`: a joint run's bound view has
+            # to contribute its own conditioning row and anchors, and reaching
+            # past it would sample the same dataset's front for every condition.
+            self._front = self.model.front(
+                self.front_times,
+                n_body=int(model_cfg.front_body_samples),
+                n_cap=int(model_cfg.front_cap_samples),
+            )
+        return self._front
 
     @property
     def res_a(self) -> StageAResiduals:
@@ -82,6 +113,12 @@ class LossContext:
         if self._mom is None:
             self._mom = momentum_residuals(self.model, self.x_coll, self.groups, c=self.c)
         return self._mom
+
+    @property
+    def darcy_res(self) -> MomentumResiduals:
+        if self._darcy is None:
+            self._darcy = darcy_residuals(self.model, self.x_coll, self.groups, c=self.c)
+        return self._darcy
 
     @property
     def energy_res(self) -> EnergyResiduals:
@@ -149,6 +186,19 @@ def _mom_sq(ctx: LossContext) -> torch.Tensor:
     return res.mom_x**2 + res.mom_y**2
 
 
+def _darcy_sq(ctx: LossContext) -> torch.Tensor:
+    res = ctx.darcy_res
+    return res.mom_x**2 + res.mom_y**2
+
+
+def _kinematic_term(ctx: LossContext) -> torch.Tensor:
+    return (kinematic_residual(ctx.model, ctx.front, ctx.c) ** 2).mean()
+
+
+def _laplace_term(ctx: LossContext) -> torch.Tensor:
+    return (laplace_jump_residual(ctx.model, ctx.front, ctx.groups) ** 2).mean()
+
+
 def _energy_sq(ctx: LossContext) -> torch.Tensor:
     return ctx.energy_res.energy**2
 
@@ -176,6 +226,13 @@ class Equation:
     # boundary batches (False, i.e. the ``bc`` term). Causal temporal weighting
     # reweights only the collocation terms, so it selects on this flag.
     on_collocation: bool = True
+    # Which interface treatment this equation belongs to. ``any`` = both (the
+    # transport, continuity and energy physics is the same either way); ``diffuse``
+    # = only when the shape is driven by bulk residuals over a smeared alpha;
+    # ``sharp`` = only under ``model.sharp_interface``, where the conditions are
+    # imposed on the explicit front. Selecting here keeps the trainer, the API and
+    # the UI reading one table instead of each branching on the flag.
+    mode: str = "any"
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
     # Per-point squared residual (shape ``(n_coll, 1)``, non-negative) for the
     # collocation terms; ``term`` is its mean. ``None`` for boundary terms (bc), which
@@ -242,8 +299,59 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("phi", "u", "v", "p"),
         fields_added=("p",),
         groups=("Re", "We", "hele_shaw"),
+        mode="diffuse",
         pointwise=_mom_sq,
         term=_mean(_mom_sq),
+    ),
+    Equation(
+        id="darcy",
+        stage="B",
+        name="Darcy (depth-averaged momentum)",
+        tex=r"\nabla p = -C_\text{HS}\,\tilde{\mu}(\alpha)\,\mathbf{u}",
+        weight_key="darcy",
+        fields_required=("phi", "u", "v", "p"),
+        fields_added=("p",),
+        groups=("hele_shaw", "mu_ratio"),
+        mode="sharp",
+        pointwise=_darcy_sq,
+        term=_mean(_darcy_sq),
+    ),
+    Equation(
+        id="kinematic",
+        stage="B",
+        name="Kinematic condition",
+        tex=r"v_n = \mathbf{u}\cdot\mathbf{n} \quad \text{on } \Gamma",
+        weight_key="kinematic",
+        fields_required=("phi", "u", "v"),
+        mode="sharp",
+        # A condition ON the front, not an interior residual -- like `bc`, so it
+        # stays out of the causal/RBA collocation reweighting.
+        on_collocation=False,
+        term=_kinematic_term,
+    ),
+    Equation(
+        id="laplace",
+        stage="B",
+        name="Young-Laplace jump",
+        tex=r"p_v(t) - p_\ell(\Gamma) = \frac{1}{\mathrm{We}}"
+        r"\left(\kappa_\parallel + \kappa_\perp\right)",
+        weight_key="laplace",
+        fields_required=("phi", "p"),
+        # Ca and H_star reach it through the gap curvature's Bretherton term --
+        # a first-order effect on the jump, so the UI must show the dependency.
+        groups=("We", "Ca", "H_star"),
+        mode="sharp",
+        # Evaluated on the front samples, not the interior collocation batch --
+        # like `bc`, and for the same reason: it is a boundary condition.
+        on_collocation=False,
+        # NOT rebalanced. The gradient-norm rebalancer drives every term it owns
+        # to parity with the data term -- measured, it holds this one at ~0.85.
+        # Parity is the wrong target here: this condition's whole job is to
+        # overrule the pixel fit where the two disagree about the interface's
+        # shape, and a term pinned to the data term's gradient can never do that.
+        # Its weight is the configured one, so the trade is the user's to set.
+        rebalanced=False,
+        term=_laplace_term,
     ),
     Equation(
         id="energy",
@@ -273,10 +381,21 @@ REGISTRY: tuple[Equation, ...] = (
 )
 
 
-def enabled_equations(fields: Sequence[str]) -> list[Equation]:
-    """The equations active for a model with the given fields, in registry order."""
+def enabled_equations(fields: Sequence[str], sharp_interface: bool = False) -> list[Equation]:
+    """The equations active for a model with the given fields, in registry order.
+
+    ``sharp_interface`` selects the interface treatment (``model.sharp_interface``):
+    it admits the equations imposed on the explicit front and excludes the ones
+    that only make sense over a smeared alpha. Defaulting to ``False`` keeps every
+    existing call site on the diffuse set, byte-for-byte.
+    """
     present = set(fields)
-    return [e for e in REGISTRY if e.implemented and set(e.fields_required) <= present]
+    allowed = {"any", "sharp" if sharp_interface else "diffuse"}
+    return [
+        e
+        for e in REGISTRY
+        if e.implemented and e.mode in allowed and set(e.fields_required) <= present
+    ]
 
 
 def collocation_equations(equations: Sequence[Equation]) -> list[Equation]:

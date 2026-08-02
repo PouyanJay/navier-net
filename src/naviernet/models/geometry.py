@@ -25,7 +25,9 @@ Structural guarantees (each regression-tested):
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import torch
 import torch.nn as nn
@@ -51,6 +53,83 @@ NOSE_GRID_SLACK = 0.5
 # far smaller than the interface half-thickness, so the interface location is
 # unchanged, but phi stays twice-differentiable on the centerline.
 ABS_SMOOTH = 1e-3
+
+# Floor on the measured anchors the per-dataset rescalings divide by, so a
+# dataset whose front never moved (rate0 = 0) cannot produce a division by zero.
+ANCHOR_FLOOR = 1e-3
+
+
+class CapsuleFrame(NamedTuple):
+    """The capsule's per-time scalars: the nose, the two cap centres and radii,
+    and the degenerate-case rescale. The one place the construction's geometry is
+    derived, shared by ``forward`` (which builds phi) and ``front`` (which samples
+    the interface), so the field and its explicit front can never drift apart."""
+
+    s: torch.Tensor  # nose position
+    ax: torch.Tensor  # root cap centre, x
+    bx: torch.Tensor  # nose cap centre, x
+    r_root: torch.Tensor  # root cap radius (already rescaled)
+    r_nose: torch.Tensor  # nose cap radius (already rescaled)
+    scale: torch.Tensor  # joint radius rescale for a shorter-than-its-caps bubble
+
+
+class FrontSamples(NamedTuple):
+    """Points sampled exactly ON the interface, with the parameters they came
+    from. ``points`` is ``(N, 3)`` ordered ``(x, y, t)``; the rest are ``(N, 1)``.
+
+    ``side`` is +1 on the upper profile and -1 on the lower one; ``on_cap`` marks
+    the circular end caps, where the profile parameterization ``y = c +/- R`` does
+    not apply and the curvature is the cap's own constant instead.
+
+    ``kappa_par`` is the IN-PLANE curvature, positive where the vapour region is
+    convex (the sign the diffuse
+    :func:`~naviernet.physics.residuals.curvature` uses, so a bubble's Laplace
+    jump is positive). It is the in-plane half of the total curvature; the
+    gap-direction half is a property of the channel, not of this curve.
+
+    ``normal`` is the outward unit normal ``(N, 2)`` -- out of the vapour --
+    and ``normal_speed`` is how fast the front advances along it. The speed is
+    the front's OWN motion, taken from the parameterization; equating it to
+    ``u.n`` is the kinematic condition, and it is also the local capillary
+    number the Bretherton film correction reads.
+    """
+
+    points: torch.Tensor
+    u: torch.Tensor
+    side: torch.Tensor
+    on_cap: torch.Tensor
+    kappa_par: torch.Tensor
+    normal: torch.Tensor
+    normal_speed: torch.Tensor
+
+
+class GeometryContext(NamedTuple):
+    """Which dataset a geometry call is about: its conditioning row and its
+    measured anchors.
+
+    The two always travel together -- a joint run binds both per dataset, a
+    single-dataset run binds neither -- so they are one object rather than two
+    optional parameters threaded through the whole construction. ``None``
+    anywhere means "the model's own", which is what a single-dataset run has.
+    """
+
+    c: torch.Tensor | None = None
+    priors: GeometryPriors | None = None
+
+
+class FrontQuery(NamedTuple):
+    """The per-sample parameters that locate one point on the contour.
+
+    Built together in :meth:`GeometricInterface.front` and consumed together in
+    :meth:`GeometricInterface._front_frame`; carrying them as one object is what
+    keeps that evaluation to three arguments.
+    """
+
+    u: torch.Tensor  # spine parameter, 0 at the root apex and 1 at the nose
+    side: torch.Tensor  # +1 upper profile, -1 lower
+    on_cap: torch.Tensor  # 1 on an end cap, where the profile form does not apply
+    angle: torch.Tensor  # sweep angle on a cap; 0 off them
+    t: torch.Tensor  # the sample's own time, a leaf so dP/dt is available
 
 
 @dataclass(frozen=True)
@@ -89,6 +168,29 @@ def _mlp(in_dim: int, out_bias: float = 0.0) -> nn.Sequential:
     return nn.Sequential(*layers)
 
 
+def _half_height(priors: GeometryPriors) -> float:
+    """Half the channel height for this dataset -- the bound the width envelope
+    saturates at."""
+    return 0.5 * (priors.y_max - priors.y_min)
+
+
+def _with_context(features: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
+    """Append the dataset's conditioning row to a geometry net's inputs.
+
+    The row is a per-dataset CONSTANT, so it is reduced to its first row and
+    re-broadcast rather than assumed to match the batch. Callers legitimately
+    arrive with either shape -- the trainer's bound view pre-expands ``c`` to its
+    point batch, while the geometry evaluates its own internal batches (the nose
+    grid, the front samples) whose length has nothing to do with that one.
+
+    ``None`` passes through unchanged, which is what makes the unconditioned
+    construction byte-for-byte itself.
+    """
+    if c is None:
+        return features
+    return torch.cat([features, c[:1].expand(features.shape[0], -1)], dim=-1)
+
+
 def _inverse_softplus(value: float) -> float:
     value = max(value, 1e-6)
     return float(torch.log(torch.expm1(torch.tensor(value))))
@@ -113,40 +215,96 @@ class GeometricInterface(nn.Module):
     (joint) calls are rejected by the trainer before construction.
     """
 
-    def __init__(self, priors: GeometryPriors):
+    def __init__(
+        self,
+        priors: GeometryPriors,
+        allow_pinch: bool = False,
+        n_cond: int = 0,
+    ):
         super().__init__()
+        # The REFERENCE dataset's anchors. A single-dataset run has only these; a
+        # joint run passes each dataset's own per call (see `priors=` below) and
+        # uses these solely to set the nets' initial scales.
         self.priors = priors
-        half = 0.5 * (priors.y_max - priors.y_min)
-        self._y_half = float(half)
-        # Centerline amplitude: the root height must stay strictly inside the
-        # channel, so the tanh swing is the smaller margin to either wall.
-        self._c_amp = float(min(priors.y_root - priors.y_min, priors.y_max - priors.y_root))
+        self.n_cond = int(n_cond)
+        # Topology and monotonicity become learnable rather than guaranteed. Off
+        # by default, so the construction is byte-for-byte what it was: the
+        # radius is strictly positive and the nose strictly non-retreating.
+        self.allow_pinch = bool(allow_pinch)
+        self._y_half = _half_height(priors)
+        # The reference dataset's measured start and speed. Every per-dataset
+        # quantity below is expressed RELATIVE to these, so one shared set of
+        # weights lands on each dataset's own measured anchors -- and so a
+        # single-dataset run, where every ratio is exactly 1, is unchanged.
+        self._ref_gap = max(priors.s0 - priors.x_root, ANCHOR_FLOOR)
+        self._ref_rate = max(priors.rate0, ANCHOR_FLOOR)
 
         # Data-anchored start: rate = measured front speed, width = measured
         # first-frame half-width (at the envelope's midpoint), centerline flat
         # at the measured root height.
-        self.rate_net = _mlp(1, out_bias=_inverse_softplus(priors.rate0))
-        self.width_net = _mlp(2, out_bias=_logit(min(priors.w0 / self._y_half, 1.0)))
-        self.center_net = _mlp(2, out_bias=0.0)
+        # Under `allow_pinch` the rate is used raw, so the measured front speed IS
+        # the bias; with the softplus it has to be pre-inverted. Getting this wrong
+        # starts the nose retreating instead of advancing at the measured rate.
+        self.rate_net = _mlp(
+            1 + self.n_cond,
+            out_bias=priors.rate0 if allow_pinch else _inverse_softplus(priors.rate0),
+        )
+        # The signed radius spans (-y_half, y_half), so the same measured w0 sits
+        # at a different point of the sigmoid; without this the construction would
+        # start with a NEGATIVE radius and no bubble at all.
+        # The width starts at the REFERENCE dataset's measured fraction of the
+        # channel for every dataset; unlike the nose and the root there is no
+        # dataset-relative rescaling that keeps a shared sigmoid bias honest, so
+        # a joint run's other conditions start here and the conditioning vector
+        # -- which carries the regime -- has to move them.
+        fraction = min(priors.w0 / self._y_half, 1.0)
+        self.width_net = _mlp(
+            2 + self.n_cond,
+            out_bias=_logit(0.5 * (1.0 + fraction) if allow_pinch else fraction),
+        )
+        self.center_net = _mlp(2 + self.n_cond, out_bias=0.0)
         # s(t_min) = x_root + softplus(_s0_raw): initialized so the nose starts
         # at the measured first-training-frame front.
-        gap = max(priors.s0 - priors.x_root, 1e-3)
-        self._s0_raw = nn.Parameter(torch.log(torch.expm1(torch.tensor(float(gap)))))
+        self._s0_raw = nn.Parameter(torch.log(torch.expm1(torch.tensor(self._ref_gap))))
 
-        span = priors.t_max - priors.t_min
-        grid = torch.linspace(
-            priors.t_min, priors.t_max + NOSE_GRID_SLACK * span, NOSE_GRID_NODES
+    def _anchors(self, ctx: GeometryContext) -> GeometryPriors:
+        """This call's dataset anchors: the bound ones for a joint run, the
+        model's own otherwise."""
+        return self.priors if ctx.priors is None else ctx.priors
+
+    def time_grid(self, ctx: GeometryContext | None = None, device=None) -> torch.Tensor:
+        """The fixed grid the nose rate is integrated on, for THIS dataset's time
+        window. Built per call rather than buffered: a joint run spans datasets
+        whose windows differ, and the grid is a deterministic linspace, so
+        rebuilding it costs nothing and cannot go stale."""
+        anchors = self._anchors(ctx or GeometryContext())
+        span = anchors.t_max - anchors.t_min
+        return torch.linspace(
+            anchors.t_min,
+            anchors.t_max + NOSE_GRID_SLACK * span,
+            NOSE_GRID_NODES,
+            device=device if device is not None else self._s0_raw.device,
         )
-        self.register_buffer("t_grid", grid, persistent=False)
 
-    def nose(self, t: torch.Tensor) -> torch.Tensor:
+    def nose(self, t: torch.Tensor, ctx: GeometryContext | None = None) -> torch.Tensor:
         """Nose position s(t), shape-preserving for ``t`` of shape (N, 1).
 
         Exactly monotone: rates are non-negative and the cumulative trapezoid
         only accumulates; queries beyond the grid extend at the final rate.
+
+        The rate and the starting gap are scaled to THIS dataset's measured
+        values, so one shared set of weights starts every condition at its own
+        front. For a single-dataset run both ratios are exactly 1.
         """
-        grid = self.t_grid
-        rates = torch.nn.functional.softplus(self.rate_net(grid.unsqueeze(1))).squeeze(1)
+        ctx = ctx or GeometryContext()
+        anchors = self._anchors(ctx)
+        grid = self.time_grid(ctx, t.device)
+        raw = self.rate_net(_with_context(grid.unsqueeze(1), ctx.c)).squeeze(1)
+        # softplus is what makes the nose exactly monotone. Under `allow_pinch`
+        # the raw rate is used instead: once a bubble can detach, the front that
+        # remains is no longer the daughter's advancing nose, so requiring it
+        # never to retreat asserts something that is not true of it.
+        rates = raw if self.allow_pinch else torch.nn.functional.softplus(raw)
         steps = grid[1:] - grid[:-1]
         # Segment slopes ARE the trapezoid averages: interpolating the cumulative
         # array with them is continuous at every node and exactly monotone
@@ -164,37 +322,118 @@ class GeometricInterface(nn.Module):
             0, grid.numel() - 2
         )
         s = cum[idx] + (tq.reshape(-1) - grid[idx]) * slopes[idx]
-        s0 = self.priors.x_root + torch.nn.functional.softplus(self._s0_raw)
-        return (s0 + s).reshape(t.shape)
+        rate_scale = max(anchors.rate0, ANCHOR_FLOOR) / self._ref_rate
+        gap = max(anchors.s0 - anchors.x_root, ANCHOR_FLOOR) / self._ref_gap
+        s0 = anchors.x_root + torch.nn.functional.softplus(self._s0_raw) * gap
+        return (s0 + s * rate_scale).reshape(t.shape)
 
-    def centerline(self, xi: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        raw = self.center_net(torch.cat([xi, t], dim=1))
-        return self.priors.y_root + self._c_amp * torch.tanh(raw)
+    def centerline(
+        self, xi: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
+    ) -> torch.Tensor:
+        """Interface centreline, anchored at THIS dataset's measured root height
+        and swinging no further than the nearer channel wall."""
+        ctx = ctx or GeometryContext()
+        anchors = self._anchors(ctx)
+        raw = self.center_net(_with_context(torch.cat([xi, t], dim=1), ctx.c))
+        amplitude = min(anchors.y_root - anchors.y_min, anchors.y_max - anchors.y_root)
+        return anchors.y_root + amplitude * torch.tanh(raw)
 
-    def root_point(self, t: float) -> torch.Tensor:
+    def root_point(self, t: float, ctx: GeometryContext | None = None) -> torch.Tensor:
         """The (x, y, t) point the interface passes through at the root -- the
         exact pin, for tests and diagnostics."""
-        device = self.t_grid.device
+        ctx = ctx or GeometryContext()
+        anchors = self._anchors(ctx)
+        device = self._s0_raw.device
         tt = torch.tensor([[float(t)]], device=device)
         with torch.no_grad():
-            y = self.centerline(torch.zeros_like(tt), tt)
-        return torch.tensor([self.priors.x_root, float(y), float(t)], device=device)
+            y = self.centerline(torch.zeros_like(tt), tt, ctx)
+        return torch.tensor([anchors.x_root, float(y), float(t)], device=device)
 
-    def nose_point(self, t: float) -> torch.Tensor:
+    def nose_point(self, t: float, ctx: GeometryContext | None = None) -> torch.Tensor:
         """The (x, y, t) point the interface passes through at the nose -- the
         capsule's far closure, ``root_point``'s mirror."""
-        device = self.t_grid.device
+        ctx = ctx or GeometryContext()
+        device = self._s0_raw.device
         tt = torch.tensor([[float(t)]], device=device)
         with torch.no_grad():
-            s = self.nose(tt)
-            y = self.centerline(torch.ones_like(tt), tt)
+            s = self.nose(tt, ctx)
+            y = self.centerline(torch.ones_like(tt), tt, ctx)
         return torch.tensor([float(s), float(y), float(t)], device=device)
 
-    def _radius(self, u: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """Half-width (inflation radius) profile along the spine, channel-bounded."""
-        return self._y_half * torch.sigmoid(self.width_net(torch.cat([u, t], dim=1)))
+    def _radius(
+        self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
+    ) -> torch.Tensor:
+        """Half-width (inflation radius) profile along the spine, channel-bounded.
 
-    def forward(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        Under ``allow_pinch`` the radius is SIGNED, spanning
+        ``(-y_half, y_half)`` instead of ``(0, y_half)``. A negative radius means
+        the bubble is simply not present at that station -- which is what lets
+        the vapour region separate into two. With a strictly positive radius,
+        ``phi`` on the spine is ``sqrt(R^2 + e^2) - e >= 0`` at every station, so
+        alpha never drops below 0.5 there and detachment is unreachable however
+        hard the physics pushes for it.
+        """
+        ctx = ctx or GeometryContext()
+        raw = torch.sigmoid(self.width_net(_with_context(torch.cat([u, t], dim=1), ctx.c)))
+        half = _half_height(self._anchors(ctx))
+        return half * (2.0 * raw - 1.0 if self.allow_pinch else raw)
+
+    def half_width(
+        self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
+    ) -> torch.Tensor:
+        """The bubble's half-width at spine parameter ``u`` and time ``t`` -- the
+        radius the interface actually sits at, degenerate-case rescale included.
+
+        This is the shape as a diagnostic reads it, and the quantity the measured
+        masks are compared against station by station."""
+        return self._radius(u, t, ctx) * self.frame(t, ctx).scale
+
+    def frame(self, t: torch.Tensor, ctx: GeometryContext | None = None) -> CapsuleFrame:
+        """The capsule's scalars at times ``t`` of shape ``(N, 1)``.
+
+        Cap centers sit one radius inside each apex. When the bubble is shorter
+        than the two cap radii (a just-nucleated bubble -- realistic,
+        review-reproduced), the raw centers would CROSS the opposite apex and
+        break exact nose closure; rescaling both radii jointly keeps the caps
+        reaching exactly ``x_root`` and ``s`` while preserving a minimum spine
+        segment of ``ABS_SMOOTH``, which also bounds ``du/dx`` (and with it
+        ``alpha_x`` in the VOF residual) in the degenerate regime.
+        """
+        ctx = ctx or GeometryContext()
+        anchors = self._anchors(ctx)
+        s = self.nose(t, ctx)
+        r_root = self._radius(torch.zeros_like(t), t, ctx)
+        r_nose = self._radius(torch.ones_like(t), t, ctx)
+        # The length the caps have to share is the one that ACTUALLY exists, not a
+        # clamped stand-in: clamping it up let the caps consume more spine than the
+        # bubble had, and a just-nucleated bubble then closed to bx == ax -- a
+        # zero-length spine that the front's own curvature divides by. Measured:
+        # kappa went non-finite. `forward` never saw it because its u is clamped
+        # to [0, 1] straight afterwards, which turns the same infinity into a
+        # plausible number.
+        available = s - anchors.x_root
+        # Only a cap that EXISTS consumes spine length, and under `allow_pinch` a
+        # radius may be negative or vanish -- so the positive parts set the
+        # rescale, floored so a bubble with no caps at all cannot divide by zero.
+        caps = (r_root.clamp(min=0.0) + r_nose.clamp(min=0.0)).clamp(min=ABS_SMOOTH)
+        scale = ((available - ABS_SMOOTH) / caps).clamp(min=0.0, max=1.0)
+        r_root = r_root * scale
+        r_nose = r_nose * scale
+        ax = anchors.x_root + r_root
+        # The documented invariant, now enforced rather than implied: at least
+        # ABS_SMOOTH of spine survives. It binds only when the bubble is shorter
+        # than that -- there is no bubble left to be exact about -- and everywhere
+        # else `available - caps >= ABS_SMOOTH` already holds by the rescale above,
+        # so both apexes stay exact.
+        bx = torch.maximum(s - r_nose, ax + ABS_SMOOTH)
+        return CapsuleFrame(s, ax, bx, r_root, r_nose, scale)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        c: torch.Tensor | None = None,
+        priors: GeometryPriors | None = None,
+    ) -> torch.Tensor:
         """Varying-radius capsule: the spine from the root apex to the nose apex,
         inflated by the radius profile, with CIRCULAR end caps.
 
@@ -206,37 +445,198 @@ class GeometricInterface(nn.Module):
         nose (phi compares ``sqrt(R^2 + d^2_floor)`` against the smoothed
         distance, which cancels the floor identically on the interface).
         """
-        if c is not None:
-            raise NotImplementedError(
-                "model.front_geometry does not support conditioned (joint) calls yet."
-            )
+        ctx = GeometryContext(c, priors)
         t = x[:, 2:3]
-        s = self.nose(t)
-        r_root = self._radius(torch.zeros_like(t), t)
-        r_nose = self._radius(torch.ones_like(t), t)
-
-        # Cap centers sit one radius inside each apex. When the bubble is
-        # shorter than the two cap radii (a just-nucleated bubble -- realistic,
-        # review-reproduced), the raw centers would CROSS the opposite apex and
-        # break exact nose closure; rescaling both radii jointly keeps the caps
-        # reaching exactly x_root and s while preserving a minimum spine
-        # segment of ABS_SMOOTH, which also bounds du/dx (and with it alpha_x
-        # in the VOF residual) in the degenerate regime.
-        length = (s - self.priors.x_root).clamp(min=2.0 * ABS_SMOOTH)
-        scale = ((length - ABS_SMOOTH) / (r_root + r_nose)).clamp(max=1.0)
-        r_root = r_root * scale
-        r_nose = r_nose * scale
-        ax = self.priors.x_root + r_root
-        bx = s - r_nose
-        u = ((x[:, 0:1] - ax) / (bx - ax)).clamp(0.0, 1.0)
+        f = self.frame(t, ctx)
+        u = ((x[:, 0:1] - f.ax) / (f.bx - f.ax)).clamp(0.0, 1.0)
 
         # The same scale applies along the whole spine, so the cap radii the
         # centers were placed with are exactly the radii the field compares
         # against -- apex exactness survives the degenerate rescale.
-        radius = self._radius(u, t) * scale
-        spine_x = ax + u * (bx - ax)
-        spine_y = self.centerline(u, t)
+        radius = self._radius(u, t, ctx) * f.scale
+        spine_x = f.ax + u * (f.bx - f.ax)
+        spine_y = self.centerline(u, t, ctx)
         d_sq = (x[:, 0:1] - spine_x) ** 2 + (x[:, 1:2] - spine_y) ** 2
         # Matched floors: phi = 0 exactly where d = R (the interface, incl. both
         # apexes), while staying C-infinity on the spine (the KAPPA lesson).
-        return torch.sqrt(radius**2 + ABS_SMOOTH**2) - torch.sqrt(d_sq + ABS_SMOOTH**2)
+        # `copysign` carries a negative radius through as a negative phi, so a
+        # vanished station is empty rather than a hair of vapour; for a positive
+        # radius -- always, unless `allow_pinch` -- it is the identity.
+        inflated = torch.copysign(torch.sqrt(radius**2 + ABS_SMOOTH**2), radius)
+        return inflated - torch.sqrt(d_sq + ABS_SMOOTH**2)
+
+    def front(
+        self, t: torch.Tensor, n_body: int, n_cap: int, ctx: GeometryContext | None = None
+    ) -> FrontSamples:
+        """The interface at each time in ``t``, as an explicit sampled curve.
+
+        This is what makes the sharp-interface conditions possible: the front is
+        an explicit object, so the Young-Laplace jump and the kinematic condition
+        can be imposed AT the interface instead of being diffused into bulk
+        collocation residuals -- where, away from the interface, they are
+        trivially satisfied and constrain nothing.
+
+        Four segments per time: the upper and lower body profiles
+        ``y = c(u,t) +/- R(u,t)``, and the two circular caps swept in angle. The
+        segments meet exactly at the seams (the cap radius IS the profile's end
+        radius), and every point satisfies ``phi = 0`` identically -- see
+        :func:`forward`, whose matched floors cancel on the interface.
+
+        Every sample carries its own outward normal, in-plane curvature, and
+        normal speed, all taken from the parameterization rather than from a
+        smeared field. Deliberately NOT detached: the loss must be able to move
+        the front.
+        """
+        query = self._sample_grid(t, n_body, n_cap)
+        position, normal, kappa = self._front_frame(query, ctx or GeometryContext())
+        speed = self._normal_speed(position, normal, query.t)
+        points = torch.cat([position, query.t], dim=1)
+        return FrontSamples(
+            points, query.u.detach(), query.side, query.on_cap, kappa, normal, speed
+        )
+
+    @staticmethod
+    def _sample_grid(t: torch.Tensor, n_body: int, n_cap: int) -> FrontQuery:
+        """Where on the contour to sample: the four segments' parameters, laid out
+        t-major and concatenated in the order the profiles and caps are assembled.
+
+        Pure bookkeeping -- no geometry is evaluated here.
+        """
+        if n_body < 1 or n_cap < 2:
+            raise ValueError(
+                f"front() needs n_body >= 1 and n_cap >= 2 (a cap is an arc, not a "
+                f"point), got n_body={n_body}, n_cap={n_cap}"
+            )
+        t = t.reshape(-1, 1)
+        n_times, device = t.shape[0], t.device
+
+        def tiled(values: torch.Tensor) -> torch.Tensor:
+            """One row of parameter values, repeated for every time (t-major)."""
+            return values.reshape(1, -1).expand(n_times, -1).reshape(-1, 1)
+
+        # The body's u excludes the seams, so each u belongs to exactly one
+        # segment and the contour is closed exactly once.
+        u_grid = torch.linspace(0.0, 1.0, n_body + 2, device=device)[1:-1]
+        angles = torch.linspace(-0.5 * math.pi, 0.5 * math.pi, n_cap, device=device)
+        body_zeros = torch.zeros(n_times * n_body, 1, device=device)
+        cap_zeros = torch.zeros(n_times * n_cap, 1, device=device)
+        cap_ones = torch.ones(n_times * n_cap, 1, device=device)
+        body_t = t.repeat_interleave(n_body, dim=0)
+        cap_t = t.repeat_interleave(n_cap, dim=0)
+
+        # On the caps ``side`` continues its meaning as the half of the contour the
+        # point sits on (the apex itself, angle = 0, is on neither); it selects
+        # ``c + R`` vs ``c - R`` only on the body.
+        halves = torch.sign(tiled(angles))
+        return FrontQuery(
+            u=torch.cat([tiled(u_grid), tiled(u_grid), cap_zeros, cap_ones], dim=0),
+            side=torch.cat(
+                [torch.ones_like(body_zeros), -torch.ones_like(body_zeros), halves, halves],
+                dim=0,
+            ),
+            on_cap=torch.cat([body_zeros, body_zeros, cap_ones, cap_ones], dim=0),
+            angle=torch.cat([body_zeros, body_zeros, tiled(angles), tiled(angles)], dim=0),
+            # A leaf, so the front's own motion dP/dt is available by autograd: it
+            # is both the Bretherton correction's local capillary number and the
+            # left side of the kinematic condition.
+            t=torch.cat([body_t, body_t, cap_t, cap_t], dim=0).detach().requires_grad_(True),
+        )
+
+    def _front_frame(
+        self, query: FrontQuery, ctx: GeometryContext
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """``(position, outward_normal, kappa_par)`` per sample.
+
+        Both branches -- body profile and circular cap -- are evaluated for every
+        sample and selected by ``on_cap``. Blending rather than indexing keeps one
+        vectorised, twice-differentiable expression, which is what the jump
+        condition needs to be able to move the shape.
+        """
+        frame = self.frame(query.t, ctx)
+        body = self._body_frame(query, frame, ctx)
+        cap = self._cap_frame(query, frame, ctx)
+        on_cap = query.on_cap > 0
+        return tuple(torch.where(on_cap, c, b) for c, b in zip(cap, body, strict=True))
+
+    def _body_frame(
+        self, query: FrontQuery, frame: CapsuleFrame, ctx: GeometryContext
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """The profile branch: ``y = c(u,t) + side R(u,t)``.
+
+        ``x`` is affine in ``u`` along the body, so ``y' = y_u/L`` and
+        ``y'' = y_uu/L^2`` exactly, with no second term.
+        """
+        side, length = query.side, frame.bx - frame.ax
+        u_leaf = query.u.detach().requires_grad_(True)
+        centre = self.centerline(u_leaf, query.t, ctx)
+        radius = self._radius(u_leaf, query.t, ctx) * frame.scale
+
+        def d_du(field: torch.Tensor) -> torch.Tensor:
+            return torch.autograd.grad(
+                field, u_leaf, torch.ones_like(field), create_graph=True
+            )[0]
+
+        centre_u, radius_u = d_du(centre), d_du(radius)
+        y_x = (centre_u + side * radius_u) / length
+        y_xx = (d_du(centre_u) + side * d_du(radius_u)) / length**2
+        slope = torch.sqrt(1.0 + y_x**2)
+
+        position = torch.cat([frame.ax + query.u * length, centre + side * radius], dim=1)
+        # Outward normal of y = c + side R: (-y', 1)/|.| points up, which is out
+        # of the vapour on the upper profile and into it on the lower -- hence the
+        # side factor. And kappa = -side y''/(1 + y'^2)^{3/2}: the sign makes a
+        # bubble that bulges outward read POSITIVE, matching the diffuse convention.
+        normal = side * torch.cat([-y_x, torch.ones_like(y_x)], dim=1) / slope
+        return position, normal, -side * y_xx / slope**3
+
+    def _cap_frame(
+        self, query: FrontQuery, frame: CapsuleFrame, ctx: GeometryContext
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """The cap branch: circular arcs about centres one radius inside each apex.
+
+        A circular arc is constant-curvature -- which is why the caps are circles
+        at all -- so each reads exactly its own ``1/r``, and its outward normal is
+        simply the radial direction.
+        """
+        at_root = query.u < 0.5
+        radius = torch.where(at_root, frame.r_root, frame.r_nose)
+        centre_x = torch.where(at_root, frame.ax, frame.bx)
+        sign = torch.where(at_root, -torch.ones_like(query.u), torch.ones_like(query.u))
+        cos, sin = torch.cos(query.angle), torch.sin(query.angle)
+
+        position = torch.cat(
+            [
+                centre_x + sign * radius * cos,
+                self.centerline(query.u, query.t, ctx) + radius * sin,
+            ],
+            dim=1,
+        )
+        # A cap that has VANISHED (a non-positive radius, reachable only under
+        # `allow_pinch`) has no curvature to report. Flooring its radius would
+        # hand the jump condition ~1/ABS_SMOOTH -- a huge positive curvature for
+        # a point that, by this construction's own contract, is not there -- and
+        # that number would flow straight into the Laplace residual at exactly
+        # the pinch the feature exists to make trainable. Report zero instead:
+        # no interface, no capillary pressure.
+        kappa = torch.where(
+            radius > ABS_SMOOTH,
+            1.0 / radius.clamp(min=ABS_SMOOTH),
+            torch.zeros_like(radius),
+        )
+        return position, torch.cat([sign * cos, sin], dim=1), kappa
+
+    def _normal_speed(
+        self, position: torch.Tensor, normal: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        """How fast the front advances along its own outward normal, ``(N, 1)``.
+
+        ``dP/dt`` is taken at fixed parameter, which slides along the curve as
+        well as across it; projecting onto the normal discards that tangential
+        part, so the result is the parameterization-independent front speed --
+        the same quantity the kinematic condition equates to ``u.n``, and the one
+        the Bretherton film correction is a function of.
+        """
+        velocity = [
+            torch.autograd.grad(position[:, i].sum(), t, create_graph=True)[0] for i in (0, 1)
+        ]
+        return velocity[0] * normal[:, 0:1] + velocity[1] * normal[:, 1:2]

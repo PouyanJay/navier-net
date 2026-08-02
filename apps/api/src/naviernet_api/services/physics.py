@@ -7,7 +7,9 @@ what the pipeline already wrote. The API performs no physics itself.
 
 from __future__ import annotations
 
-from naviernet_api.models import DatasetAgreement, PhysicsValidation
+import math
+
+from naviernet_api.models import DatasetAgreement, PhysicsDiagnostics, PhysicsValidation
 
 # Measured nose speed (mm/s) reported for each dataset. An experimental datum from
 # the project README ("inferred 177 mm/s vs 180 mm/s measured"); it is not
@@ -54,7 +56,38 @@ def build_validation(
         per_dataset=per_dataset,
         training_datasets=metrics.get("training_datasets"),
         heldout_datasets=metrics.get("heldout_datasets"),
+        physics=_parse_physics(metrics),
     )
+
+
+def _parse_physics(metrics: dict) -> PhysicsDiagnostics | None:
+    """The run's physics block, validated. ``None`` for a run without an explicit
+    front, and NaNs dropped: JSON has no NaN, and a metric that could not be
+    measured must read as absent rather than as a number the UI would plot.
+    """
+    block = metrics.get("physics")
+    if not isinstance(block, dict):
+        return None
+    return PhysicsDiagnostics.model_validate(_without_nan(block))
+
+
+def _without_nan(value):
+    """Strip non-finite floats at every depth.
+
+    Not just the top level: a residual's convergence ratio is NaN when its first
+    window averaged exactly zero -- a real, reachable state one dict down. A bare
+    `NaN` token is not valid JSON, so leaving it there breaks the response for
+    precisely the runs these diagnostics exist to explain.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _without_nan(item)
+            for key, item in value.items()
+            if not (isinstance(item, float) and not math.isfinite(item))
+        }
+    if isinstance(value, list):
+        return [_without_nan(item) for item in value]
+    return value
 
 
 def _parse_per_dataset(metrics: dict) -> dict[str, DatasetAgreement] | None:

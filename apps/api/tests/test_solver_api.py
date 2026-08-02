@@ -7,6 +7,7 @@ the SSE stream is read to completion against the live background thread.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -517,3 +518,45 @@ def test_joint_run_writes_per_dataset_trajectories(client: TestClient, repo_root
         client.get(f"/api/runs/{run_id}/trajectory", params={"dataset": "../evil"}).status_code
         == 404
     )
+
+
+def test_launch_rejects_sharp_interface_without_the_front(client):
+    """There is no front to sample without the geometry: 422 at the boundary with
+    an actionable message, not a failure deep in the worker."""
+    r = client.post("/api/runs", json={**TINY_RUN, "sharp_interface": True})
+    assert r.status_code == 422
+    assert "front_geometry" in r.text
+
+
+def test_launch_rejects_pinching_without_the_front(client):
+    r = client.post("/api/runs", json={**TINY_RUN, "allow_pinch": True})
+    assert r.status_code == 422
+    assert "front_geometry" in r.text
+
+
+def test_launch_rejects_a_sharpening_schedule_with_no_target(client):
+    r = client.post("/api/runs", json={**TINY_RUN, "alpha_eps_anneal_steps": 100})
+    assert r.status_code == 422
+    assert "alpha_eps_final" in r.text
+
+
+def test_launch_with_sharp_interface_composes_and_trains(client, repo_root):
+    """The R4 recipe end to end through the API: the run completes and its
+    metrics carry the physics diagnostics IoU cannot make.
+
+    The jump condition reads the liquid pressure, so the series must be on the
+    Stage-B field set first -- exactly the order a user goes through in the UI
+    (there via PUT /api/physics/<series>; here written straight to the series'
+    model config, which is the file that endpoint edits and every compose site
+    reads).
+    """
+    (repo_root / "data" / "raw" / TINY_RUN["dataset"]).mkdir(parents=True, exist_ok=True)
+    (repo_root / "data" / "raw" / TINY_RUN["dataset"] / "model.json").write_text(
+        json.dumps({"enabled": ["mom"]})
+    )
+    run_id = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "front_geometry": True, "sharp_interface": True},
+    ).json()["run_id"]
+    final = [e["data"] for e in read_stream(client, run_id) if e["event"] == "status"][-1]
+    assert final["state"] == "done", f"run failed: {final.get('message')}"
