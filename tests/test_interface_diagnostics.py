@@ -263,3 +263,26 @@ def test_a_stage_a_run_still_reports_the_shape_diagnostics(tmp_path):
     assert np.isnan(block["laplace_error_nose"]), "an unmeasurable jump reads nan"
     assert np.isfinite(block["neck_depth_measured"])
     assert np.isfinite(block["axial_capillary_gradient"])
+
+
+def test_convergence_reads_the_warmup_the_run_used_not_the_one_recomposed(tmp_path):
+    """A standalone `stage=evaluate` composes its own config, which need not carry
+    the warm-up override the run was launched with. Reading the wrong one averages
+    a term's convergence across the window where it was held at zero weight -- and
+    reported a 15x RISE for a residual that was in fact descending."""
+    from naviernet.evaluation import evaluate
+    from naviernet.training import load_model, train
+
+    cfg, paths = _staged_run(
+        tmp_path, [*TINY_SHARP, "training.steps=4", "training.stage_b_warmup_steps=2"]
+    )
+    train(cfg, paths)
+
+    ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
+    assert ckpt["state"]["stage_b_warmup_steps"] == 2, "the run must record its own warm-up"
+
+    # Evaluate through a config that forgot the override, as a standalone stage does.
+    forgetful, _ = _staged_run(tmp_path, [*TINY_SHARP, "training.stage_b_warmup_steps=0"])
+    model, data, _ = load_model(forgetful, paths)
+    block = evaluate(forgetful, model, data, paths)["physics"]
+    assert block["residual_convergence"] is not None

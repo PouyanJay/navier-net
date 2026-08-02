@@ -318,7 +318,16 @@ def _initial_state(cfg, equations) -> dict:
     w = {"data": float(weights.data)}
     for eq in equations:
         w[eq.weight_key] = float(getattr(weights, eq.weight_key))
-    return {"done": 0, "hist": [], "w": w}
+    # The warm-up length travels with the run: a later `stage=evaluate` composes
+    # its own config, which need not carry the override the run was launched
+    # with, and reading the wrong one silently averages a term's convergence
+    # across the window where it was held at zero weight.
+    return {
+        "done": 0,
+        "hist": [],
+        "w": w,
+        "stage_b_warmup_steps": int(cfg.training.stage_b_warmup_steps),
+    }
 
 
 def _gradient_norms(model, losses: dict[str, torch.Tensor], opt) -> dict[str, float]:

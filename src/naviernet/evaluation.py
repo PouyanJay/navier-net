@@ -180,10 +180,14 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
         cfg.model.fields, bool(getattr(cfg.model, "sharp_interface", False))
     )
     ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
+    state = ckpt.get("state", {})
     block["residual_convergence"] = diagnostics.residual_convergence(
-        ckpt.get("state", {}).get("hist", []),
+        state.get("hist", []),
         registry.stage_b_terms(equations),
-        int(cfg.training.stage_b_warmup_steps),
+        # The warm-up the RUN used, not the one this invocation happens to
+        # compose: a standalone evaluate need not carry the launch override, and
+        # reading the wrong one averages the window where the term was inert.
+        int(state.get("stage_b_warmup_steps", cfg.training.stage_b_warmup_steps)),
     )
     return block
 
