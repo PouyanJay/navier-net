@@ -327,6 +327,20 @@ class RunLaunchRequest(BaseModel):
     # hard_pin (the geometry pins exactly by construction; the trainer rejects
     # the combination, mirrored below as a 422).
     front_geometry: bool = False
+    # Sharp-interface physics (R4): drive the shape with the conditions that hold
+    # AT the interface -- the Young-Laplace jump and the kinematic condition on
+    # the explicit front -- with depth-averaged Darcy in place of the 2-D momentum
+    # residual. Requires front_geometry (there is no front to sample without it),
+    # mirrored below as a 422.
+    sharp_interface: bool = False
+    # Let the bubble detach: the radius becomes signed and the nose may retreat,
+    # so pinch-off is expressible. Requires front_geometry -- it relaxes that
+    # construction's own guarantees.
+    allow_pinch: bool = False
+    # Interface sharpening: anneal alpha_eps down to `alpha_eps_final` over this
+    # many steps, so a neck is not the same width as the interface blur.
+    alpha_eps_anneal_steps: int = Field(default=0, ge=0, le=1_000_000)
+    alpha_eps_final: float = Field(default=0.0, ge=0.0, le=1.0)
     # Kinematic growth constraints. The evap-floor weight defaults to 0 here
     # (diverging from the trainer's 1.0 on purpose): the bench showed the floor
     # destabilizes the front, so the platform hands it out only on explicit
@@ -366,6 +380,16 @@ class RunLaunchRequest(BaseModel):
             raise ValueError(
                 "front_geometry already pins the root exactly by construction; "
                 "it is mutually exclusive with hard_pin -- disable one."
+            )
+        for flag in ("sharp_interface", "allow_pinch"):
+            if getattr(self, flag) and not self.front_geometry:
+                raise ValueError(
+                    f"{flag} requires front_geometry -- enable it, or turn {flag} off"
+                )
+        if self.alpha_eps_anneal_steps and not self.alpha_eps_final:
+            raise ValueError(
+                "alpha_eps_anneal_steps needs alpha_eps_final: a target of 0 would "
+                "divide phi by zero rather than sharpen the interface"
             )
         return self
 
@@ -506,6 +530,45 @@ class DatasetAgreement(BaseModel):
     iou_per_frame: dict[str, float] = Field(default_factory=dict)
 
 
+class PhysicsFrame(BaseModel):
+    """One frame's shape diagnostics, model against the measured mask."""
+
+    frame: int
+    neck_depth_model: float
+    neck_depth_measured: float
+    neck_location_model: float
+    neck_location_measured: float
+    half_width_model: list[float]
+    half_width_measured: list[float]
+
+
+class ResidualConvergence(BaseModel):
+    """Whether one physics residual descended over its active window."""
+
+    first: float
+    last: float
+    ratio: float
+
+
+class PhysicsDiagnostics(BaseModel):
+    """The measurements IoU cannot make: whether the solution obeys the physics.
+
+    Present only for runs with an explicit front (`model.front_geometry`); the
+    jump figures are NaN-free-or-absent when the run has no pressure field.
+    """
+
+    laplace_error_nose: float | None = None
+    laplace_error_front: float | None = None
+    axial_capillary_gradient: float | None = None
+    neck_depth_model: float | None = None
+    neck_depth_measured: float | None = None
+    neck_location_model: float | None = None
+    neck_location_measured: float | None = None
+    profile_stations: list[float] = Field(default_factory=list)
+    per_frame: list[PhysicsFrame] = Field(default_factory=list)
+    residual_convergence: dict[str, ResidualConvergence] = Field(default_factory=dict)
+
+
 class PhysicsValidation(BaseModel):
     """The physics-validation summary the Results view shows.
 
@@ -535,3 +598,6 @@ class PhysicsValidation(BaseModel):
     per_dataset: dict[str, DatasetAgreement] | None = None
     training_datasets: list[str] | None = None
     heldout_datasets: list[str] | None = None
+    # The physics diagnostics, when the run has an explicit front. None for a run
+    # trained without one -- there is no interface to measure the conditions on.
+    physics: PhysicsDiagnostics | None = None

@@ -7,7 +7,9 @@ what the pipeline already wrote. The API performs no physics itself.
 
 from __future__ import annotations
 
-from naviernet_api.models import DatasetAgreement, PhysicsValidation
+import math
+
+from naviernet_api.models import DatasetAgreement, PhysicsDiagnostics, PhysicsValidation
 
 # Measured nose speed (mm/s) reported for each dataset. An experimental datum from
 # the project README ("inferred 177 mm/s vs 180 mm/s measured"); it is not
@@ -54,7 +56,24 @@ def build_validation(
         per_dataset=per_dataset,
         training_datasets=metrics.get("training_datasets"),
         heldout_datasets=metrics.get("heldout_datasets"),
+        physics=_parse_physics(metrics),
     )
+
+
+def _parse_physics(metrics: dict) -> PhysicsDiagnostics | None:
+    """The run's physics block, validated. ``None`` for a run without an explicit
+    front, and NaNs dropped: JSON has no NaN, and a metric that could not be
+    measured must read as absent rather than as a number the UI would plot.
+    """
+    block = metrics.get("physics")
+    if not isinstance(block, dict):
+        return None
+    finite = {
+        key: value
+        for key, value in block.items()
+        if not (isinstance(value, float) and not math.isfinite(value))
+    }
+    return PhysicsDiagnostics.model_validate(finite)
 
 
 def _parse_per_dataset(metrics: dict) -> dict[str, DatasetAgreement] | None:

@@ -108,3 +108,57 @@ def test_absurd_weight_is_capped(client):
 def test_unknown_field_is_forbidden(client):
     r = client.put("/api/physics/sample", json={"enabled": [], "weights": {}, "typo": 1})
     assert r.status_code == 422  # extra="forbid"
+
+
+def test_validation_carries_the_physics_diagnostics(client, tmp_path):
+    """The Results view must be able to see whether the physics holds, not just
+    whether the pixels overlap -- IoU alone is what hid the R3 failure."""
+    from naviernet_api.services.physics import build_validation
+
+    metrics = {
+        "iou_mean": 0.93,
+        "physics": {
+            "laplace_error_nose": 0.06,
+            "laplace_error_front": 0.18,
+            "axial_capillary_gradient": 0.41,
+            "neck_depth_model": 0.44,
+            "neck_depth_measured": 0.47,
+            "neck_location_model": 0.5,
+            "neck_location_measured": 0.5,
+            "profile_stations": [0.1, 0.5, 0.9],
+            "per_frame": [
+                {
+                    "frame": 11,
+                    "neck_depth_model": 0.44,
+                    "neck_depth_measured": 0.47,
+                    "neck_location_model": 0.5,
+                    "neck_location_measured": 0.5,
+                    "half_width_model": [0.2, 0.12, 0.39],
+                    "half_width_measured": [0.21, 0.11, 0.39],
+                }
+            ],
+            "residual_convergence": {"darcy": {"first": 6.8, "last": 0.31, "ratio": 0.046}},
+        },
+    }
+    physics = build_validation("Series-1", metrics, {}).physics
+    assert physics is not None
+    assert physics.laplace_error_nose == 0.06
+    assert physics.per_frame[0].frame == 11
+    assert physics.residual_convergence["darcy"].ratio == 0.046
+
+
+def test_validation_drops_unmeasurable_physics_values(client):
+    """A Stage-A run cannot score the jump, so it writes NaN -- which is not JSON
+    and must not reach the UI as a number it would plot."""
+    from naviernet_api.services.physics import build_validation
+
+    metrics = {"physics": {"laplace_error_nose": float("nan"), "neck_depth_measured": 0.47}}
+    physics = build_validation("Series-1", metrics, {}).physics
+    assert physics.laplace_error_nose is None
+    assert physics.neck_depth_measured == 0.47
+
+
+def test_validation_without_an_explicit_front_has_no_physics_block(client):
+    from naviernet_api.services.physics import build_validation
+
+    assert build_validation("Series-1", {"iou_mean": 0.9, "physics": None}, {}).physics is None
