@@ -116,7 +116,9 @@ class BubblePINN(nn.Module):
         per_field = getattr(cfg.model, "per_field", None) or {}
         self.nets = nn.ModuleDict(
             {
-                name: GeometricInterface(geometry, allow_pinch=self.allow_pinch)
+                name: GeometricInterface(
+                    geometry, allow_pinch=self.allow_pinch, n_cond=self.n_cond
+                )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
                 for name in names
@@ -200,11 +202,6 @@ class BubblePINN(nn.Module):
                 "model.front_geometry already pins the root exactly by construction; "
                 "it is mutually exclusive with model.hard_pin -- disable one."
             )
-        if self.n_cond > 0:
-            raise NotImplementedError(
-                "model.front_geometry is not yet supported for joint (multi-dataset) "
-                "runs; disable it for joint runs for now."
-            )
         if geometry is None:
             raise ValueError(
                 "model.front_geometry=true needs the dataset's geometry priors: "
@@ -273,12 +270,20 @@ class BubblePINN(nn.Module):
         x: torch.Tensor,
         c: torch.Tensor | None = None,
         pin: torch.Tensor | None = None,
+        geometry: GeometryPriors | None = None,
     ) -> torch.Tensor:
         """Level-set field; its zero contour is the interface. With the hard pin
         on, the zero contour is anchored to the root for all t (see __init__).
         ``pin`` is the per-call anchor a joint run's bound view supplies; a
-        single-dataset model carries its own."""
-        raw = self.nets["phi"](x, c)
+        single-dataset model carries its own. ``geometry`` is the same idea for
+        the front geometry: a joint run binds each dataset's own measured
+        anchors, so one shared construction lands on each condition's own root,
+        front and channel."""
+        raw = (
+            self.nets["phi"](x, c, priors=geometry)
+            if self.front_geometry
+            else self.nets["phi"](x, c)
+        )
         if not self.hard_pin:
             return raw
         anchor = pin if pin is not None else self.pin_anchor
@@ -307,9 +312,10 @@ class BubblePINN(nn.Module):
         x: torch.Tensor,
         c: torch.Tensor | None = None,
         pin: torch.Tensor | None = None,
+        geometry: GeometryPriors | None = None,
     ) -> torch.Tensor:
         """Volume fraction, bounded in (0, 1) by construction."""
-        return torch.sigmoid(self.phi(x, c, pin=pin) / self.eps)
+        return torch.sigmoid(self.phi(x, c, pin=pin, geometry=geometry) / self.eps)
 
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
@@ -354,10 +360,16 @@ class BubblePINN(nn.Module):
             )
         return self.nets[name]
 
-    def bound(self, c: torch.Tensor, pin: tuple[float, float] | None = None) -> BoundPINN:
+    def bound(
+        self,
+        c: torch.Tensor,
+        pin: tuple[float, float] | None = None,
+        geometry: GeometryPriors | None = None,
+    ) -> BoundPINN:
         """This model with one dataset's conditioning row -- and, for a hard-pin
-        run, that dataset's root anchor -- bound (joint training/eval/viz)."""
-        return BoundPINN(self, c, pin=pin)
+        or front-geometry run, that dataset's measured anchors -- bound (joint
+        training/eval/viz)."""
+        return BoundPINN(self, c, pin=pin, geometry=geometry)
 
 
 class BoundPINN:
@@ -372,20 +384,29 @@ class BoundPINN:
     """
 
     def __init__(
-        self, model: BubblePINN, c: torch.Tensor, pin: tuple[float, float] | None = None
+        self,
+        model: BubblePINN,
+        c: torch.Tensor,
+        pin: tuple[float, float] | None = None,
+        geometry: GeometryPriors | None = None,
     ):
         self._model = model
         self._c = c
         self._pin = None if pin is None else torch.as_tensor(pin, dtype=torch.float32)
+        self._geometry = geometry
 
     def _ctx(self, x: torch.Tensor) -> torch.Tensor:
         return self._c.expand(x.shape[0], -1)
 
     def phi(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        return self._model.phi(x, c if c is not None else self._ctx(x), pin=self._pin)
+        return self._model.phi(
+            x, c if c is not None else self._ctx(x), pin=self._pin, geometry=self._geometry
+        )
 
     def alpha(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        return self._model.alpha(x, c if c is not None else self._ctx(x), pin=self._pin)
+        return self._model.alpha(
+            x, c if c is not None else self._ctx(x), pin=self._pin, geometry=self._geometry
+        )
 
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None

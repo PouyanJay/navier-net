@@ -265,7 +265,8 @@ def evaluate_joint(cfg, model, contexts, paths: RunPaths, heldout_datasets=None)
     # Each dataset scores through its bound view: its conditioning row and -- on a
     # hard-pin run -- its own root anchor (an unbound hard-pin call raises).
     reports = {
-        cx.name: iou_report(cfg, model.bound(cx.c, pin=cx.pin), cx.data) for cx in contexts
+        cx.name: iou_report(cfg, model.bound(cx.c, pin=cx.pin, geometry=cx.geometry), cx.data)
+        for cx in contexts
     }
 
     per_dataset: dict[str, dict] = {}
@@ -318,7 +319,9 @@ def _write_joint_trajectories(cfg, model, contexts, paths: RunPaths) -> None:
     """Per-dataset growth kinematics, held-out conditions included: transfer
     kinematics are evidence too."""
     for cx in contexts:
-        predicted = nose_trajectory(cfg, model.bound(cx.c, pin=cx.pin), cx.data)
+        predicted = nose_trajectory(
+            cfg, model.bound(cx.c, pin=cx.pin, geometry=cx.geometry), cx.data
+        )
         _write_trajectory(cfg, cx.data, paths.trajectory_json_for(cx.name), predicted)
 
 

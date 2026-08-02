@@ -109,7 +109,7 @@ def test_nose_is_monotone_even_beyond_the_grid(seed):
         for p in geo.rate_net.parameters():
             p.mul_(10.0)
     dense = torch.linspace(0.0, 5.0, 30_000)
-    times = torch.cat([dense, geo.t_grid]).sort().values.unsqueeze(1)
+    times = torch.cat([dense, geo.time_grid()]).sort().values.unsqueeze(1)
 
     with torch.no_grad():
         s = geo.nose(times).squeeze(1)
@@ -368,14 +368,80 @@ def test_checkpoint_refuses_a_front_geometry_mismatch(tmp_path):
         load_model(cfg_off, paths)
 
 
-def test_front_geometry_rejects_joint_runs(tmp_path):
-    from naviernet.training import train
+def test_front_geometry_trains_a_joint_run_and_pins_each_dataset_to_its_own_root(tmp_path):
+    """Transfer, the point of the whole conditioning apparatus: one shared
+    construction, each condition landing on ITS OWN measured anchors.
+
+    The two staged datasets have deliberately different roots, so a construction
+    that ignored the binding -- or bound the primary's anchors to everything --
+    would put both interfaces at the same x, and this would catch it.
+    """
+    from naviernet.training import load_joint, train
     from tests.conftest import staged_joint_run
 
     cfg, paths = staged_joint_run(tmp_path, TINY_GEO)
+    train(cfg, paths)
+    model, contexts, _ = load_joint(cfg, paths)
 
-    with pytest.raises(NotImplementedError, match="front_geometry"):
-        train(cfg, paths)
+    roots = {cx.name: cx.data.pin_anchor[0] for cx in contexts}
+    assert len(set(roots.values())) == len(roots), (
+        "the fixture must give the datasets distinct roots or this proves nothing"
+    )
+
+    geo = model.nets["phi"]
+    for cx in contexts:
+        for t in (cx.data.domain.t_min, cx.data.domain.t_max, 2.0 * cx.data.domain.t_max):
+            point = geo.root_point(t, cx.c, cx.geometry)
+            assert float(point[0]) == pytest.approx(roots[cx.name], abs=1e-6), (
+                f"{cx.name} is anchored at {float(point[0])}, not its own root {roots[cx.name]}"
+            )
+            alpha = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry).alpha(
+                point.unsqueeze(0)
+            )
+            assert torch.allclose(alpha, torch.tensor([[0.5]]), atol=1e-6), (
+                f"{cx.name}'s interface does not pass through its root at t={t}"
+            )
+
+
+def test_joint_front_geometry_starts_each_dataset_at_its_own_front(tmp_path):
+    """The nose too: the datasets grow at different rates from different fronts,
+    and the shared rate/gap are scaled to each condition's measured values."""
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics.groups import N_COND
+    from naviernet.training import _load_joint_datasets
+    from tests.conftest import staged_joint_run
+
+    cfg, paths = staged_joint_run(tmp_path, TINY_GEO)
+    contexts = _load_joint_datasets(cfg, paths, torch.device("cpu"))
+    model = BubblePINN(cfg, n_cond=N_COND, geometry=contexts[0].geometry)
+
+    geo = model.nets["phi"]
+    for cx in contexts:
+        t0 = torch.tensor([[cx.data.domain.t_min]])
+        with torch.no_grad():
+            start = float(geo.nose(t0, cx.c, cx.geometry))
+        assert start == pytest.approx(cx.data.initial_front, abs=1e-4), (
+            f"{cx.name} starts its nose at {start}, not its measured front "
+            f"{cx.data.initial_front}"
+        )
+
+
+def test_single_dataset_geometry_is_untouched_by_the_conditioning_support(tmp_path):
+    """Every per-dataset rescaling is a ratio against the reference dataset, so
+    for a single-dataset run each one is exactly 1 and the construction is what
+    it always was. Asserted, not assumed."""
+    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+
+    torch.manual_seed(0)
+    priors = GeometryPriors(**PRIORS)
+    geo = GeometricInterface(priors)
+    t = torch.linspace(0.0, 2.0, 64).reshape(-1, 1)
+
+    with torch.no_grad():
+        implicit = geo.nose(t)
+        explicit = geo.nose(t, None, priors)  # the same anchors, passed in
+    assert torch.equal(implicit, explicit)
+    assert float(implicit[0]) == pytest.approx(PRIORS["x_root"] + 0.3, abs=1e-5)
 
 
 def test_front_geometry_composes_with_causal_and_kinematics(tmp_path):

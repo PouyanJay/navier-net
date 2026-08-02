@@ -1020,6 +1020,10 @@ class _JointDataset:
     # The dataset's measured root anchor when the hard pin is on, else None.
     # Joint models bind it per call: model.bound(c, pin=pin).
     pin: tuple[float, float] | None = None
+    # The dataset's measured geometry anchors when the front geometry is on.
+    # Bound the same way, so one shared construction lands on each condition's
+    # own root, front, channel and time window.
+    geometry: GeometryPriors | None = None
     # The dataset's fixed kinematic quadrature when the constraints are on.
     kin: kinematics.KinematicPlan | None = None
 
@@ -1057,6 +1061,7 @@ def _load_joint_datasets(
                 c,
                 float(groups["u_inlet_star"]),
                 pin=_pin_anchor(cfg, data),
+                geometry=_geometry_priors(cfg, data),
                 kin=_kinematic_plan(cfg, data, device),
             )
         )
@@ -1080,7 +1085,7 @@ def _joint_losses(
         # Every call goes through the dataset's bound view: on a hard-pin run it
         # carries the root anchor; otherwise binding is a behavioral no-op (the
         # view forwards the same c the raw-model calls passed before).
-        view = model.bound(cx.c, pin=cx.pin)
+        view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
@@ -1108,7 +1113,7 @@ def _joint_kinematic_losses(
     totals = []
     merged: dict[str, float] = {}
     for cx in contexts:
-        view = model.bound(cx.c, pin=cx.pin)
+        view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
         kin_total, kin_record = kinematics.kinematic_losses(
             kinematics.KinematicContext(view, tcfg, cx.groups), cx.kin, schedule
         )
@@ -1157,7 +1162,11 @@ def _train_joint(
 
     contexts = _load_joint_datasets(cfg, paths, device, train_names)
     names = [cx.name for cx in contexts]
-    model = BubblePINN(cfg, n_cond=N_COND).to(device)
+    # The first training dataset's anchors set the geometry nets' initial scales;
+    # every dataset's own are bound per call (see `_JointDataset.geometry`), so
+    # this choice fixes only where the shared construction starts, not where it
+    # lands.
+    model = BubblePINN(cfg, n_cond=N_COND, geometry=contexts[0].geometry).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
     equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg))
@@ -1303,7 +1312,11 @@ def load_joint(cfg, paths: RunPaths) -> tuple[BubblePINN, list[_JointDataset], l
     names = list(ckpt.get("datasets") or resolved_datasets(cfg))
     heldout = list(ckpt.get("heldout_datasets", cfg.heldout_datasets))
     contexts = _load_joint_datasets(cfg, paths, device, names)
-    model = BubblePINN(cfg, n_cond=int(ckpt.get("n_cond", N_COND))).to(device)
+    model = BubblePINN(
+        cfg,
+        n_cond=int(ckpt.get("n_cond", N_COND)),
+        geometry=contexts[0].geometry,
+    ).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, contexts, heldout
