@@ -187,11 +187,49 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         )
 
 
-def _validate_training_config(tcfg, fields) -> None:
+def _validate_training_config(tcfg, fields, alpha_eps: float | None = None) -> None:
     """Every up-front training-config validation, shared by both loops."""
     _validate_causal(tcfg)
     _validate_weighting(tcfg)
     _validate_kinematics(tcfg, fields)
+    if alpha_eps is not None:
+        _validate_sharpening(tcfg, alpha_eps)
+
+
+def _validate_sharpening(tcfg, alpha_eps: float) -> None:
+    """Reject an interface-sharpening schedule that cannot sharpen."""
+    if tcfg.alpha_eps_anneal_steps <= 0:
+        return
+    final = float(tcfg.alpha_eps_final)
+    if final <= 0.0:
+        raise ValueError(
+            f"training.alpha_eps_final={final} must be > 0: alpha_eps divides phi, "
+            f"so a zero interface thickness is a division by zero, not a sharp "
+            f"interface."
+        )
+    if final >= float(alpha_eps):
+        raise ValueError(
+            f"training.alpha_eps_final={final} must be below model.alpha_eps="
+            f"{alpha_eps}: the schedule sharpens the interface, it does not blur it."
+        )
+
+
+def annealed_alpha_eps(step: int, cfg) -> float:
+    """The interface half-thickness at ``step``.
+
+    Geometric, not linear: ``alpha_eps`` is a scale, so equal FRACTIONAL steps
+    are what keep the sharpening gradual through the end of the schedule, where
+    each further halving costs the most. Held at the final value afterwards, and
+    a function of the absolute step so a resumed run picks the schedule up
+    exactly where it left off.
+    """
+    tcfg = cfg.training
+    start = float(cfg.model.alpha_eps)
+    span = int(tcfg.alpha_eps_anneal_steps)
+    if span <= 0:
+        return start
+    progress = min(max(step / span, 0.0), 1.0)
+    return start * (float(tcfg.alpha_eps_final) / start) ** progress
 
 
 def _validate_kinematics(tcfg, fields) -> None:
@@ -774,7 +812,7 @@ def train(
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
     tcfg = cfg.training
-    _validate_training_config(tcfg, cfg.model.fields)
+    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps)
     rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
@@ -854,6 +892,7 @@ def train(
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
+        model.eps = annealed_alpha_eps(step, cfg)
         lr = tcfg.lr * (0.5 ** (step // tcfg.lr_halflife))
         for group in opt.param_groups:
             group["lr"] = lr
@@ -948,6 +987,7 @@ def train(
             "model": model.state_dict(),
             "opt": opt.state_dict(),
             "state": state,
+            "alpha_eps": float(model.eps),
             **_architecture_record(cfg),
         },
         paths.checkpoint,
@@ -1084,7 +1124,7 @@ def _train_joint(
     untouched; this runs only when ``cfg.datasets`` names more than one series.
     """
     tcfg = cfg.training
-    _validate_training_config(tcfg, cfg.model.fields)
+    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps)
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
@@ -1133,6 +1173,7 @@ def _train_joint(
     )
 
     for step in range(first_step, last_step + 1):
+        model.eps = annealed_alpha_eps(step, cfg)
         lr = tcfg.lr * (0.5 ** (step // tcfg.lr_halflife))
         for group in opt.param_groups:
             group["lr"] = lr
@@ -1189,6 +1230,7 @@ def _train_joint(
             "training_datasets": names,  # the ones actually supervised
             "heldout_datasets": heldout,  # kept out for the transfer test (axis B)
             "n_cond": N_COND,  # so evaluation rebuilds the conditioned architecture
+            "alpha_eps": float(model.eps),  # the thickness the run ENDED at
             **_architecture_record(cfg),  # so evaluation rebuilds the pinned architecture
         },
         paths.checkpoint,
@@ -1222,6 +1264,10 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
         geometry=_geometry_priors(cfg, data),
     ).to(device)
     model.load_state_dict(ckpt["model"])
+    # The interface thickness the run ENDED at, not the one it started from:
+    # scoring a sharpened model through its initial blur would measure a
+    # different solution than the one that was trained.
+    model.eps = float(ckpt.get("alpha_eps", model.eps))
     model.eval()
     return model, data, ckpt["state"]
 

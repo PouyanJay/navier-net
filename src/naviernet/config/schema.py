@@ -221,6 +221,14 @@ class TrainingConfig:
     # NB the *aggregate* val IoU is surfaced only for joint runs (``evaluate_joint``);
     # a single-dataset CLI run honours ``val_fraction`` in training but ``evaluate``
     # does not report a separate ``iou_val`` for it.
+    # Interface sharpening: anneal `model.alpha_eps` geometrically down to
+    # `alpha_eps_final` over this many steps (0 = off, the interface thickness
+    # holds where it is configured). alpha = sigmoid(phi / alpha_eps) spreads the
+    # transition over roughly 4*alpha_eps, so at the Stage-A default of 0.05 the
+    # blur is ~0.2 in y* -- the same size as the measured mid-bubble neck. A
+    # feature cannot be resolved through a blur its own width.
+    alpha_eps_anneal_steps: int = 0
+    alpha_eps_final: float = 0.0
     val_fraction: float = 0.0
     val_strategy: str = "tail"  # "tail" (extrapolation) | "scatter" (interpolation)
 
