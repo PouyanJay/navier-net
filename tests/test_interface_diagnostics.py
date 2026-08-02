@@ -167,12 +167,10 @@ def _fit_pressure_to_the_jump(model, data, steps: int):
     from naviernet.physics.residuals import laplace_jump_residual
 
     groups = compute_groups(model.cfg)
-    # The diagnostic's own grid, not a coarser one: a model fitted on 8 times and
-    # scored on 16 is not a model that satisfies the condition, and the test would
-    # be measuring coverage rather than the metric.
-    times = torch.linspace(data.domain.t_min, data.domain.t_max, diag.DIAGNOSTIC_TIMES).reshape(
-        -1, 1
-    )
+    # The diagnostic's own times, not a coarser grid: a model fitted on 8 instants
+    # and scored on 16 is not a model that satisfies the condition, and the test
+    # would be measuring coverage rather than the metric.
+    times = diag.diagnostic_times(data)
     params = list(model.nets["p"].parameters()) + list(model.vapor_pressure.parameters())
     opt = torch.optim.Adam(params, lr=5e-3)
     for _ in range(steps):
@@ -182,3 +180,86 @@ def _fit_pressure_to_the_jump(model, data, steps: int):
         )
         (laplace_jump_residual(model, front, groups) ** 2).mean().backward()
         opt.step()
+
+
+# --- the physics block that travels in metrics.json ---------------------------
+
+
+def test_metrics_json_carries_the_physics_block(tmp_path):
+    """A front-geometry run's report must carry the physics, per frame and in
+    aggregate -- IoU alone is what let a ~55% violated force balance look fine."""
+    import json
+
+    from naviernet.evaluation import evaluate
+    from naviernet.training import load_model, train
+
+    cfg, paths = _staged_run(tmp_path, TINY_SHARP)
+    train(cfg, paths)
+    model, data, _ = load_model(cfg, paths)
+    report = evaluate(cfg, model, data, paths)
+
+    physics = report["physics"]
+    assert set(physics) >= {
+        "laplace_error_nose",
+        "laplace_error_front",
+        "axial_capillary_gradient",
+        "neck_depth_model",
+        "neck_depth_measured",
+        "residual_convergence",
+        "per_frame",
+    }
+    assert len(physics["per_frame"]) == len(data.frame_numbers)
+    row = physics["per_frame"][0]
+    assert len(row["half_width_model"]) == len(row["half_width_measured"])
+    # and it survives the JSON round-trip the API will read it through
+    assert json.loads(paths.metrics_json.read_text())["physics"]["per_frame"]
+
+
+def test_a_run_without_an_explicit_front_reports_no_physics_block(tmp_path):
+    """Nothing to measure the interface conditions on, so the key is present and
+    null rather than fabricated."""
+    from naviernet.evaluation import evaluate
+    from naviernet.training import load_model, train
+
+    cfg, paths = _staged_run(tmp_path, ["model=stage_b"])
+    train(cfg, paths)
+    model, data, _ = load_model(cfg, paths)
+    assert evaluate(cfg, model, data, paths)["physics"] is None
+
+
+def test_residual_convergence_separates_a_descending_term_from_a_stuck_one():
+    """The R3 baseline's momentum term sat at ~4.7 -- neither obviously large nor
+    small. What it never did was fall. The ratio says which."""
+    from naviernet.physics.diagnostics import residual_convergence
+
+    history = [{"step": s, "darcy": 10.0 / s, "mom": 5.0} for s in range(1, 101)]
+    report = residual_convergence(history, ("darcy", "mom"), after_step=0)
+
+    assert report["darcy"]["ratio"] < 0.1, "a converging term"
+    assert report["mom"]["ratio"] == pytest.approx(1.0), "a stuck one"
+
+
+def test_residual_convergence_ignores_the_warmup_window():
+    """Stage-B terms are logged during the warm-up but held at zero weight;
+    averaging across the gate would mix two different objectives."""
+    from naviernet.physics.diagnostics import residual_convergence
+
+    history = [{"step": s, "darcy": 100.0} for s in range(1, 51)]
+    history += [{"step": s, "darcy": 10.0 / (s - 50)} for s in range(51, 101)]
+    report = residual_convergence(history, ("darcy",), after_step=50)
+    assert report["darcy"]["first"] < 100.0, "the warm-up plateau must not be counted"
+
+
+def test_a_stage_a_run_still_reports_the_shape_diagnostics(tmp_path):
+    """No pressure field means no jump to score -- but the neck and the drainage
+    drive are pure geometry, so a Stage-A front-geometry run is not left with an
+    empty physics block (nor with a crash)."""
+    from naviernet.physics.diagnostics import physics_report
+
+    model, data, _ = _model(tmp_path, ["model.front_geometry=true"])
+    assert "p" not in model.fields
+
+    block = physics_report(model, data)
+    assert np.isnan(block["laplace_error_nose"]), "an unmeasurable jump reads nan"
+    assert np.isfinite(block["neck_depth_measured"])
+    assert np.isfinite(block["axial_capillary_gradient"])

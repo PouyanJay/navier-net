@@ -27,9 +27,6 @@ from naviernet.physics.residuals import gap_curvature
 # station lands exactly mid-bubble where the measured neck sits.
 PROFILE_STATIONS = 9
 
-# Times the front diagnostics are evaluated at, spread over the run's window.
-DIAGNOSTIC_TIMES = 16
-
 # Front resolution for the diagnostics. Denser than training needs: this is
 # measurement, and it runs once.
 DIAGNOSTIC_BODY_SAMPLES = 128
@@ -126,6 +123,16 @@ def model_half_width_profile(
     return radius.squeeze(1).cpu().numpy().astype(float)
 
 
+def diagnostic_times(data) -> torch.Tensor:
+    """The times the front is measured at: the dataset's own frame instants.
+
+    Not an arbitrary grid -- every per-frame figure is then directly comparable
+    to the mask it is scored against, and the aggregate covers exactly the window
+    the run was supervised on.
+    """
+    return torch.tensor(np.asarray(data.t), dtype=torch.float32).reshape(-1, 1)
+
+
 def _stations(n_stations: int) -> np.ndarray:
     """Interior stations: the open interval, so the caps are excluded."""
     return np.linspace(0.0, 1.0, n_stations + 2)[1:-1]
@@ -146,9 +153,11 @@ def interface_diagnostics(model, data, groups: dict[str, float] | None = None):
             "to measure the conditions on."
         )
     groups = groups if groups is not None else compute_groups(model.cfg)
-    domain = data.domain
-    times = torch.linspace(domain.t_min, domain.t_max, DIAGNOSTIC_TIMES).reshape(-1, 1)
-    front = geometry.front(times, n_body=DIAGNOSTIC_BODY_SAMPLES, n_cap=DIAGNOSTIC_CAP_SAMPLES)
+    front = geometry.front(
+        diagnostic_times(data),
+        n_body=DIAGNOSTIC_BODY_SAMPLES,
+        n_cap=DIAGNOSTIC_CAP_SAMPLES,
+    )
 
     nose_error, front_error = _laplace_errors(model, front, groups)
     last = len(data.t) - 1
@@ -177,6 +186,10 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
     not. What a free ``p_v`` cannot absorb is the variation along the front, and
     that is precisely the part that selects the shape.
     """
+    if "p" not in getattr(model, "fields", ()):
+        # A Stage-A run has no pressure field, so there is no jump to score. The
+        # shape diagnostics below are pure geometry and stay measurable.
+        return float("nan"), float("nan")
     with torch.no_grad():
         capillary = (
             (front.kappa_par + gap_curvature(front.normal_speed, groups)) / groups["We"]
@@ -270,3 +283,75 @@ def _axial_capillary_gradient(front, groups: dict[str, float]) -> float:
 
 def _rms(values: torch.Tensor) -> float:
     return float(torch.sqrt((values**2).mean())) if values.numel() else float("nan")
+
+
+def residual_convergence(history: list[dict], terms: tuple[str, ...], after_step: int) -> dict:
+    """Whether each physics residual actually DESCENDED, per term.
+
+    The value of a residual says little on its own -- the R3 baseline's momentum
+    term sat at ~4.7, which is neither obviously large nor obviously small. What
+    it never did was fall: 6.78 at the step it engaged, 4.68 at the end. So the
+    figure reported is the ratio of the term's mean over the last fifth of its
+    active window to its mean over the first fifth. Below 1 it is converging;
+    at or above 1 the optimiser is not solving that equation at all.
+
+    ``after_step`` excludes the Stage-B warm-up, where these terms are computed
+    and logged but held at zero weight -- averaging across the gate would mix two
+    different objectives.
+    """
+    report: dict[str, dict[str, float]] = {}
+    for term in terms:
+        values = [r[term] for r in history if term in r and r.get("step", 0) > after_step]
+        if len(values) < 2:
+            continue
+        window = max(1, len(values) // 5)
+        first = float(np.mean(values[:window]))
+        last = float(np.mean(values[-window:]))
+        report[term] = {
+            "first": first,
+            "last": last,
+            "ratio": last / first if first > 0 else float("nan"),
+        }
+    return report
+
+
+def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
+    """The physics block of ``metrics.json``: the interface conditions, the
+    drainage drive, and the neck the model holds against the measured one.
+
+    Per frame as well as in aggregate, so the UI can show WHERE along the run the
+    physics holds, not just whether it does on average.
+    """
+    groups = groups if groups is not None else compute_groups(model.cfg)
+    summary = interface_diagnostics(model, data, groups)
+    geometry = model.nets["phi"]
+
+    per_frame = []
+    for row, frame in enumerate(data.frame_numbers):
+        model_profile = model_half_width_profile(geometry, float(data.t[row]))
+        measured_profile = measured_half_width_profile(data, row)
+        model_neck = neck_of_profile(model_profile)
+        measured_neck = neck_of_profile(measured_profile)
+        per_frame.append(
+            {
+                "frame": int(frame),
+                "neck_depth_model": model_neck.depth,
+                "neck_depth_measured": measured_neck.depth,
+                "neck_location_model": model_neck.location,
+                "neck_location_measured": measured_neck.location,
+                "half_width_model": [float(v) for v in model_profile],
+                "half_width_measured": [float(v) for v in measured_profile],
+            }
+        )
+
+    return {
+        "laplace_error_nose": summary.laplace_error_nose,
+        "laplace_error_front": summary.laplace_error_front,
+        "axial_capillary_gradient": summary.axial_capillary_gradient,
+        "neck_depth_model": summary.neck_model.depth,
+        "neck_depth_measured": summary.neck_measured.depth,
+        "neck_location_model": summary.neck_model.location,
+        "neck_location_measured": summary.neck_measured.location,
+        "profile_stations": [float(u) for u in _stations(PROFILE_STATIONS)],
+        "per_frame": per_frame,
+    }

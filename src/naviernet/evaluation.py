@@ -159,6 +159,35 @@ def measured_trajectory(cfg, data) -> GrowthTrajectory:
     return GrowthTrajectory(times, np.asarray(nose), np.asarray(area))
 
 
+def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
+    """The physics diagnostics, or ``None`` for a run that has no explicit front.
+
+    IoU alone hid a ~55% violated force balance on the R3 baseline, so these
+    travel with every ``metrics.json`` a front-geometry run writes: the
+    Young-Laplace jump error, the drainage drive, the neck against the measured
+    masks, and whether each physics residual actually descended.
+
+    The loss history comes from the checkpoint rather than being threaded through
+    the pipeline: ``evaluate`` is also a standalone stage, so the run's own record
+    on disk is the only source that is right in both cases.
+    """
+    if not getattr(model, "front_geometry", False):
+        return None
+    from naviernet.physics import diagnostics, registry
+
+    block = diagnostics.physics_report(model, data)
+    equations = registry.enabled_equations(
+        cfg.model.fields, bool(getattr(cfg.model, "sharp_interface", False))
+    )
+    ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
+    block["residual_convergence"] = diagnostics.residual_convergence(
+        ckpt.get("state", {}).get("hist", []),
+        registry.stage_b_terms(equations),
+        int(cfg.training.stage_b_warmup_steps),
+    )
+    return block
+
+
 def evaluate(cfg, model, data, paths: RunPaths) -> dict:
     """Full evaluation report; also written to ``metrics.json`` in the run dir."""
     paths.ensure()  # artifacts below need the run directory to exist
@@ -187,6 +216,7 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
         "validation_frames": validation_frames,
         "nose_speed_star": mean_speed_star,
         "nose_speed_mm_s": mean_speed_star * cfg.scales.U_ref * 1e3,
+        "physics": _physics_block(cfg, model, data, paths),
     }
 
     log.info("IoU per frame: %s", {k: round(v, 3) for k, v in ious.items()})
