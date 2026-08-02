@@ -157,6 +157,13 @@ class ModelConfig:
     # volume and the pinned point but rounded/fragmented the SHAPE off-data).
     # Mutually exclusive with hard_pin (the geometry pins exactly by construction).
     front_geometry: bool = False
+    # Let the bubble detach. The front geometry guarantees one connected capsule
+    # with a never-retreating nose -- which is what fixed R3's extrapolation shape
+    # collapse, and is also exactly what makes pinch-off inexpressible. With this
+    # on, the radius is signed (so a station can stop being vapour) and the nose
+    # rate is unconstrained. Requires `front_geometry`; off by default, so both
+    # guarantees stand unless a run asks for the trade.
+    allow_pinch: bool = False
     # Sharp-interface physics (R4): drive the shape with the conditions that hold
     # AT a fluid interface -- the Young-Laplace jump and the kinematic condition,
     # sampled on the explicit front -- instead of a bulk momentum residual a free

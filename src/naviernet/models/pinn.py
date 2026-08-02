@@ -116,7 +116,7 @@ class BubblePINN(nn.Module):
         per_field = getattr(cfg.model, "per_field", None) or {}
         self.nets = nn.ModuleDict(
             {
-                name: GeometricInterface(geometry)
+                name: GeometricInterface(geometry, allow_pinch=self.allow_pinch)
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
                 for name in names
@@ -186,6 +186,13 @@ class BubblePINN(nn.Module):
         joint conditioning is unsupported, priors are required, and a per-field
         phi override would be silently ignored."""
         self.front_geometry = bool(getattr(cfg.model, "front_geometry", False))
+        self.allow_pinch = bool(getattr(cfg.model, "allow_pinch", False))
+        if self.allow_pinch and not self.front_geometry:
+            raise ValueError(
+                "model.allow_pinch relaxes the front geometry's own topology and "
+                "monotonicity guarantees, so it requires model.front_geometry=true; "
+                "a free level set has no such guarantees to relax."
+            )
         if not self.front_geometry:
             return
         if getattr(cfg.model, "hard_pin", False):

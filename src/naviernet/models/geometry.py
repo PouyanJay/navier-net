@@ -159,9 +159,13 @@ class GeometricInterface(nn.Module):
     (joint) calls are rejected by the trainer before construction.
     """
 
-    def __init__(self, priors: GeometryPriors):
+    def __init__(self, priors: GeometryPriors, allow_pinch: bool = False):
         super().__init__()
         self.priors = priors
+        # Topology and monotonicity become learnable rather than guaranteed. Off
+        # by default, so the construction is byte-for-byte what it was: the
+        # radius is strictly positive and the nose strictly non-retreating.
+        self.allow_pinch = bool(allow_pinch)
         half = 0.5 * (priors.y_max - priors.y_min)
         self._y_half = float(half)
         # Centerline amplitude: the root height must stay strictly inside the
@@ -171,8 +175,19 @@ class GeometricInterface(nn.Module):
         # Data-anchored start: rate = measured front speed, width = measured
         # first-frame half-width (at the envelope's midpoint), centerline flat
         # at the measured root height.
-        self.rate_net = _mlp(1, out_bias=_inverse_softplus(priors.rate0))
-        self.width_net = _mlp(2, out_bias=_logit(min(priors.w0 / self._y_half, 1.0)))
+        # Under `allow_pinch` the rate is used raw, so the measured front speed IS
+        # the bias; with the softplus it has to be pre-inverted. Getting this wrong
+        # starts the nose retreating instead of advancing at the measured rate.
+        self.rate_net = _mlp(
+            1, out_bias=priors.rate0 if allow_pinch else _inverse_softplus(priors.rate0)
+        )
+        # The signed radius spans (-y_half, y_half), so the same measured w0 sits
+        # at a different point of the sigmoid; without this the construction would
+        # start with a NEGATIVE radius and no bubble at all.
+        fraction = min(priors.w0 / self._y_half, 1.0)
+        self.width_net = _mlp(
+            2, out_bias=_logit(0.5 * (1.0 + fraction) if allow_pinch else fraction)
+        )
         self.center_net = _mlp(2, out_bias=0.0)
         # s(t_min) = x_root + softplus(_s0_raw): initialized so the nose starts
         # at the measured first-training-frame front.
@@ -192,7 +207,12 @@ class GeometricInterface(nn.Module):
         only accumulates; queries beyond the grid extend at the final rate.
         """
         grid = self.t_grid
-        rates = torch.nn.functional.softplus(self.rate_net(grid.unsqueeze(1))).squeeze(1)
+        raw = self.rate_net(grid.unsqueeze(1)).squeeze(1)
+        # softplus is what makes the nose exactly monotone. Under `allow_pinch`
+        # the raw rate is used instead: once a bubble can detach, the front that
+        # remains is no longer the daughter's advancing nose, so requiring it
+        # never to retreat asserts something that is not true of it.
+        rates = raw if self.allow_pinch else torch.nn.functional.softplus(raw)
         steps = grid[1:] - grid[:-1]
         # Segment slopes ARE the trapezoid averages: interpolating the cumulative
         # array with them is continuous at every node and exactly monotone
@@ -237,8 +257,18 @@ class GeometricInterface(nn.Module):
         return torch.tensor([float(s), float(y), float(t)], device=device)
 
     def _radius(self, u: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """Half-width (inflation radius) profile along the spine, channel-bounded."""
-        return self._y_half * torch.sigmoid(self.width_net(torch.cat([u, t], dim=1)))
+        """Half-width (inflation radius) profile along the spine, channel-bounded.
+
+        Under ``allow_pinch`` the radius is SIGNED, spanning
+        ``(-y_half, y_half)`` instead of ``(0, y_half)``. A negative radius means
+        the bubble is simply not present at that station -- which is what lets
+        the vapour region separate into two. With a strictly positive radius,
+        ``phi`` on the spine is ``sqrt(R^2 + e^2) - e >= 0`` at every station, so
+        alpha never drops below 0.5 there and detachment is unreachable however
+        hard the physics pushes for it.
+        """
+        raw = torch.sigmoid(self.width_net(torch.cat([u, t], dim=1)))
+        return self._y_half * (2.0 * raw - 1.0 if self.allow_pinch else raw)
 
     def half_width(self, u: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """The bubble's half-width at spine parameter ``u`` and time ``t`` -- the
@@ -263,7 +293,11 @@ class GeometricInterface(nn.Module):
         r_root = self._radius(torch.zeros_like(t), t)
         r_nose = self._radius(torch.ones_like(t), t)
         length = (s - self.priors.x_root).clamp(min=2.0 * ABS_SMOOTH)
-        scale = ((length - ABS_SMOOTH) / (r_root + r_nose)).clamp(max=1.0)
+        # Only a cap that EXISTS consumes spine length, and under `allow_pinch` a
+        # radius may be negative or vanish -- so the positive parts set the
+        # rescale, floored so a bubble with no caps at all cannot divide by zero.
+        caps = (r_root.clamp(min=0.0) + r_nose.clamp(min=0.0)).clamp(min=ABS_SMOOTH)
+        scale = ((length - ABS_SMOOTH) / caps).clamp(max=1.0)
         r_root = r_root * scale
         r_nose = r_nose * scale
         return CapsuleFrame(s, self.priors.x_root + r_root, s - r_nose, r_root, r_nose, scale)
@@ -297,7 +331,11 @@ class GeometricInterface(nn.Module):
         d_sq = (x[:, 0:1] - spine_x) ** 2 + (x[:, 1:2] - spine_y) ** 2
         # Matched floors: phi = 0 exactly where d = R (the interface, incl. both
         # apexes), while staying C-infinity on the spine (the KAPPA lesson).
-        return torch.sqrt(radius**2 + ABS_SMOOTH**2) - torch.sqrt(d_sq + ABS_SMOOTH**2)
+        # `copysign` carries a negative radius through as a negative phi, so a
+        # vanished station is empty rather than a hair of vapour; for a positive
+        # radius -- always, unless `allow_pinch` -- it is the identity.
+        inflated = torch.copysign(torch.sqrt(radius**2 + ABS_SMOOTH**2), radius)
+        return inflated - torch.sqrt(d_sq + ABS_SMOOTH**2)
 
     def front(self, t: torch.Tensor, n_body: int, n_cap: int) -> FrontSamples:
         """The interface at each time in ``t``, as an explicit sampled curve.
@@ -431,11 +469,14 @@ class GeometricInterface(nn.Module):
             [cap_x + cap_sign * cap_r * cos, self.centerline(u, t) + cap_r * sin], dim=1
         )
         cap_normal = torch.cat([cap_sign * cos, sin], dim=1)
+        # A cap that has vanished has no curvature to report; floor the radius so
+        # the reciprocal stays finite instead of diverging at the pinch.
+        cap_kappa = 1.0 / cap_r.clamp(min=ABS_SMOOTH)
 
         return (
             torch.where(on_cap > 0, cap_xy, body_xy),
             torch.where(on_cap > 0, cap_normal, body_normal),
-            torch.where(on_cap > 0, 1.0 / cap_r, body_kappa),
+            torch.where(on_cap > 0, cap_kappa, body_kappa),
         )
 
     def _normal_speed(

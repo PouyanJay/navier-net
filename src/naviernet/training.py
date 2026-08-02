@@ -140,6 +140,7 @@ def _architecture_record(cfg) -> dict:
         "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None,
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
         "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
+        "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
     }
 
 
@@ -175,6 +176,15 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
             f"{path} was trained with model.front_geometry={bool(saved_geo)} but this "
             f"invocation composes model.front_geometry={current_geo}. The geometry is "
             f"architectural: pass the same override the run was trained with."
+        )
+    saved_pinch = ckpt.get("allow_pinch")
+    current_pinch = bool(getattr(cfg.model, "allow_pinch", False))
+    if saved_pinch is not None and bool(saved_pinch) != current_pinch:
+        raise ValueError(
+            f"{path} was trained with model.allow_pinch={bool(saved_pinch)} but this "
+            f"invocation composes model.allow_pinch={current_pinch}. The signed radius "
+            f"loads into the same tensors but means a different shape: pass the same "
+            f"override the run was trained with."
         )
     saved_sharp = ckpt.get("sharp_interface")
     current_sharp = bool(getattr(cfg.model, "sharp_interface", False))
