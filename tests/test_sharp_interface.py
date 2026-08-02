@@ -577,3 +577,19 @@ def _staged_run_joint(tmp_path):
     from tests.conftest import staged_joint_run
 
     return staged_joint_run(tmp_path, TINY_SHARP)
+
+
+def test_the_jump_condition_is_not_rebalanced_against_the_data_term(tmp_path):
+    """The gradient-norm rebalancer drives the terms it owns to parity with the
+    data term. That is the wrong target for the Young-Laplace jump: its job is to
+    overrule the pixel fit where the two disagree about the interface's shape, and
+    a term pinned to the data term's gradient can never do that. Its weight stays
+    where it is configured, like `src` and `evap`."""
+    from naviernet.physics import registry
+
+    cfg, _ = _staged_run(tmp_path, TINY_SHARP)
+    equations = registry.enabled_equations(cfg.model.fields, sharp_interface=True)
+    assert "laplace" not in registry.rebalanced_terms(equations)
+    # The kinematic condition IS rebalanced: it agrees with the data rather than
+    # competing with it, and it converges (measured ratio 0.04).
+    assert "kinematic" in registry.rebalanced_terms(equations)

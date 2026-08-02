@@ -344,6 +344,13 @@ REGISTRY: tuple[Equation, ...] = (
         # Evaluated on the front samples, not the interior collocation batch --
         # like `bc`, and for the same reason: it is a boundary condition.
         on_collocation=False,
+        # NOT rebalanced. The gradient-norm rebalancer drives every term it owns
+        # to parity with the data term -- measured, it holds this one at ~0.85.
+        # Parity is the wrong target here: this condition's whole job is to
+        # overrule the pixel fit where the two disagree about the interface's
+        # shape, and a term pinned to the data term's gradient can never do that.
+        # Its weight is the configured one, so the trade is the user's to set.
+        rebalanced=False,
         term=_laplace_term,
     ),
     Equation(
