@@ -115,6 +115,7 @@ class BubblePINN(nn.Module):
         names = list(fields if fields is not None else cfg.model.fields)
         self._validate_front_geometry(cfg, geometry)
         self._validate_sharp_interface(cfg, names)
+        self._validate_film_pressure(cfg)
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -151,6 +152,17 @@ class BubblePINN(nn.Module):
                 f"this model has {names}."
             )
 
+    def _validate_film_pressure(self, cfg) -> None:
+        """The film pressure corrects the Young-Laplace jump; without that
+        condition there is nothing for it to correct."""
+        self.film_pressure = bool(getattr(cfg.model, "film_pressure", False))
+        if self.film_pressure and not self.sharp_interface:
+            raise ValueError(
+                "model.film_pressure corrects the Young-Laplace jump on the front, "
+                "so it requires model.sharp_interface=true -- enable it, or turn "
+                "model.film_pressure off."
+            )
+
     def _init_vapor_pressure(self) -> None:
         """``p_v(t)``: the vapour interior's pressure, one scalar per time.
 
@@ -164,12 +176,33 @@ class BubblePINN(nn.Module):
         """
         if not self.sharp_interface:
             return
+        if self.film_pressure:
+            # ONE scalar, deliberately. It has to absorb the body-to-cap offset
+            # the depth-averaged pressure cannot represent, and it must NOT be
+            # able to absorb variation ALONG the body -- that variation is the
+            # capillary gradient which drains the neck. A spatially constant
+            # offset can do the first and structurally cannot do the second.
+            # Free-signed: the film sits behind an advancing meniscus and is
+            # measured to be at LOWER pressure than the bulk.
+            self.p_film_raw = nn.Parameter(torch.zeros(()))
         dims = [1] + [VAPOR_HIDDEN] * VAPOR_DEPTH
         layers: list[nn.Module] = []
         for d_in, d_out in zip(dims[:-1], dims[1:], strict=True):
             layers += [nn.Linear(d_in, d_out), nn.Tanh()]
         layers.append(nn.Linear(dims[-1], 1))
         self.vapor_pressure = nn.Sequential(*layers)
+
+    def film_offset(self, on_cap: torch.Tensor) -> torch.Tensor:
+        """The film-to-bulk pressure offset at each front sample.
+
+        Zero on the caps: there is no film there -- the meniscus faces bulk
+        liquid, so the model's own pressure is already the right one to compare
+        against, and an offset would be inventing a correction where none is
+        needed. Zero everywhere when the feature is off.
+        """
+        if not self.film_pressure:
+            return torch.zeros_like(on_cap)
+        return self.p_film_raw * (1.0 - on_cap)
 
     def p_vapor(self, t: torch.Tensor) -> torch.Tensor:
         """Vapour-interior pressure at times ``t`` of shape ``(N, 1)``.
