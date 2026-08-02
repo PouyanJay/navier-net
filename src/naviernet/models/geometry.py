@@ -76,12 +76,19 @@ class FrontSamples(NamedTuple):
     ``side`` is +1 on the upper profile and -1 on the lower one; ``on_cap`` marks
     the circular end caps, where the profile parameterization ``y = c +/- R`` does
     not apply and the curvature is the cap's own constant instead.
+
+    ``kappa_par`` is the IN-PLANE curvature, positive where the vapour region is
+    convex (the sign the diffuse
+    :func:`~naviernet.physics.residuals.curvature` uses, so a bubble's Laplace
+    jump is positive). It is the in-plane half of the total curvature; the
+    gap-direction half is a property of the channel, not of this curve.
     """
 
     points: torch.Tensor
     u: torch.Tensor
     side: torch.Tensor
     on_cap: torch.Tensor
+    kappa_par: torch.Tensor
 
 
 @dataclass(frozen=True)
@@ -276,30 +283,40 @@ class GeometricInterface(nn.Module):
         # apexes), while staying C-infinity on the spine (the KAPPA lesson).
         return torch.sqrt(radius**2 + ABS_SMOOTH**2) - torch.sqrt(d_sq + ABS_SMOOTH**2)
 
-    def front_curvature(self, front: FrontSamples) -> torch.Tensor:
-        """In-plane curvature at each front sample ``(N, 1)``, positive where the
-        vapour region is convex -- the sign convention the diffuse
-        :func:`~naviernet.physics.residuals.curvature` uses.
+    def _profile_curvature(
+        self, u: torch.Tensor, t: torch.Tensor, scale: torch.Tensor, length: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """``(y_upper, y_lower, kappa_by_side)`` for the body profiles at ``u``.
 
-        Taken from the parameterization in closed form rather than by
-        differentiating a smeared alpha twice: the diffuse route has to floor
-        ``|grad alpha|`` (``KAPPA_EPS``) and, on this construction, spikes to
-        |kappa| ~ 1e4 on the spine, where a handful of points then carry most of
-        the momentum loss. There is nothing to floor here.
+        The profiles are ``y = c(u,t) +/- R(u,t)``, so their curvature is the
+        textbook ``kappa = -sigma y''/(1 + y'^2)^{3/2}`` (``sigma = +1`` upper,
+        ``-1`` lower; the sign makes a bubble that bulges outward read POSITIVE,
+        matching the diffuse convention). ``x`` is affine in ``u`` along the body
+        -- ``x = ax + u L`` -- so ``y' = y_u / L`` and ``y'' = y_uu / L^2`` with no
+        second term.
 
-        On the caps the curvature is exactly the cap's own ``1/r`` -- a circular
-        arc is constant-curvature, which is why the caps are circles at all.
+        Taken this way rather than by differentiating a smeared alpha twice: the
+        diffuse route has to floor ``|grad alpha|`` (``KAPPA_EPS``) and, on this
+        construction, spikes to ``|kappa| ~ 1e4`` on the spine, where a handful of
+        points then carry most of the momentum loss. There is nothing to floor
+        here. Returns the curvature stacked ``(upper, lower)``.
         """
-        cap = 1.0 / self._cap_radius(front)
-        return front.on_cap * cap
+        u = u.detach().requires_grad_(True)
+        centre = self.centerline(u, t)
+        radius = self._radius(u, t) * scale
 
-    def _cap_radius(self, front: FrontSamples) -> torch.Tensor:
-        """The cap radius each sample belongs to: the root cap's at ``u = 0``, the
-        nose cap's at ``u = 1``. Off the caps the value is unused but must stay
-        finite and non-zero, so the frame's radii are selected, never divided into
-        by zero."""
-        f = self.frame(front.points[:, 2:3])
-        return torch.where(front.u < 0.5, f.r_root, f.r_nose)
+        def d_du(f: torch.Tensor) -> torch.Tensor:
+            return torch.autograd.grad(f, u, torch.ones_like(f), create_graph=True)[0]
+
+        centre_u, radius_u = d_du(centre), d_du(radius)
+        centre_uu, radius_uu = d_du(centre_u), d_du(radius_u)
+
+        kappa = []
+        for sign in (1.0, -1.0):
+            y_x = (centre_u + sign * radius_u) / length
+            y_xx = (centre_uu + sign * radius_uu) / length**2
+            kappa.append(-sign * y_xx / (1.0 + y_x**2) ** 1.5)
+        return centre + radius, centre - radius, torch.cat(kappa, dim=0)
 
     def front(self, t: torch.Tensor, n_body: int, n_cap: int) -> FrontSamples:
         """Points sampled exactly ON the interface at each time in ``t``.
@@ -330,9 +347,11 @@ class GeometricInterface(nn.Module):
         u = torch.linspace(0.0, 1.0, n_body + 2, device=t.device)[1:-1].reshape(1, -1)
         u_body = u.expand(t.shape[0], -1).reshape(-1, 1)
         t_body = t.expand(-1, n_body).reshape(-1, 1)
-        radius = self._radius(u_body, t_body) * f.scale.repeat_interleave(n_body, dim=0)
-        spine_x = (f.ax + u_body.reshape(t.shape[0], -1) * (f.bx - f.ax)).reshape(-1, 1)
-        spine_y = self.centerline(u_body, t_body)
+        length = (f.bx - f.ax).repeat_interleave(n_body, dim=0)
+        y_upper, y_lower, kappa_body = self._profile_curvature(
+            u_body, t_body, f.scale.repeat_interleave(n_body, dim=0), length
+        )
+        spine_x = f.ax.repeat_interleave(n_body, dim=0) + u_body * length
 
         # Caps: the root sweeps the far half-circle, the nose the near one, so
         # together with the two profiles they close the contour exactly once.
@@ -354,10 +373,19 @@ class GeometricInterface(nn.Module):
 
         points = torch.cat(
             [
-                torch.cat([spine_x, spine_y + radius, t_body], dim=1),
-                torch.cat([spine_x, spine_y - radius, t_body], dim=1),
+                torch.cat([spine_x, y_upper, t_body], dim=1),
+                torch.cat([spine_x, y_lower, t_body], dim=1),
                 torch.cat([root_cap, t_cap], dim=1),
                 torch.cat([nose_cap, t_cap], dim=1),
+            ],
+            dim=0,
+        )
+        # A circular arc is constant-curvature -- which is why the caps are
+        # circles at all -- so each cap reads exactly its own 1/r.
+        kappa_cap = torch.cat(
+            [
+                1.0 / f.r_root.repeat_interleave(n_cap, dim=0),
+                1.0 / f.r_nose.repeat_interleave(n_cap, dim=0),
             ],
             dim=0,
         )
@@ -370,4 +398,5 @@ class GeometricInterface(nn.Module):
         on_cap = torch.cat(
             [torch.zeros_like(u_body), torch.zeros_like(u_body), ones, ones], dim=0
         )
-        return FrontSamples(points, u_all, side, on_cap)
+        kappa = torch.cat([kappa_body, kappa_cap], dim=0)
+        return FrontSamples(points, u_all, side, on_cap, kappa)

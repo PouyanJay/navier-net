@@ -120,3 +120,100 @@ def test_front_samples_lie_exactly_on_the_interface(tmp_path):
         f"front samples must sit on alpha=0.5; worst |alpha-0.5| = "
         f"{float((alpha - 0.5).abs().max())}"
     )
+
+
+# --- T1: the interface curvature, taken from the parameterization -------------
+
+
+def _geometry(tmp_path, overrides=None):
+    """A model's geometric interface, built from the staged dataset's priors."""
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
+
+    cfg, paths = _staged_run(tmp_path, overrides or TINY_SHARP)
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
+    return model.nets["phi"], data
+
+
+def _straighten(geo):
+    """Zero the profile nets' output layers so the radius and centerline are
+    exactly constant: a straight-sided capsule whose body curvature is known to
+    be zero. Not a mock -- the nets keep their real forward pass, they are just
+    put in a state whose geometry is analytically known."""
+    for net in (geo.width_net, geo.center_net):
+        torch.nn.init.zeros_(net[-1].weight)
+
+
+def test_body_curvature_vanishes_on_a_straight_sided_capsule(tmp_path):
+    """A constant radius about a flat centerline is two straight lines: the
+    in-plane curvature of the body must be exactly zero, with no epsilon."""
+    geo, data = _geometry(tmp_path)
+    _straighten(geo)
+
+    front = geo.front(torch.tensor([[0.0], [data.domain.t_max]]), n_body=32, n_cap=8)
+    body = front.on_cap.squeeze() == 0
+    kappa = front.kappa_par[body]
+    assert torch.allclose(kappa, torch.zeros_like(kappa), atol=1e-5), (
+        f"a straight body must read zero curvature, got max |kappa| = "
+        f"{float(kappa.abs().max())}"
+    )
+
+
+def test_cap_curvature_is_the_caps_own_reciprocal_radius(tmp_path):
+    """The caps are circles by construction, so their curvature is exactly 1/r --
+    positive, because a vapour bubble is convex (the Laplace jump is positive)."""
+    geo, data = _geometry(tmp_path)
+    times = torch.tensor([[0.0], [data.domain.t_max]])
+    front = geo.front(times, n_body=8, n_cap=8)
+    frame = geo.frame(front.points[:, 2:3])
+
+    cap = front.on_cap.squeeze() == 1
+    expected = torch.where(front.u < 0.5, 1.0 / frame.r_root, 1.0 / frame.r_nose)
+    assert torch.allclose(front.kappa_par[cap], expected[cap], rtol=1e-5)
+    assert (front.kappa_par[cap] > 0).all(), "a convex vapour cap reads positive"
+
+
+def test_analytic_curvature_matches_a_numerical_curvature_of_the_same_front(tmp_path):
+    """The independent check: the closed-form curvature must agree with central
+    differences of the very points the sampler returned. This is what licenses
+    dropping the diffuse kappa, whose |kappa| spikes to ~1e4 on the spine."""
+    geo, data = _geometry(tmp_path)
+    # Perturb the profile nets off their near-constant init so the body has real,
+    # varying curvature to get wrong.
+    with torch.no_grad():
+        for net in (geo.width_net, geo.center_net):
+            net[-1].weight.add_(torch.randn_like(net[-1].weight) * 0.5)
+
+    # 65 samples, not thousands: the second difference divides float32 rounding
+    # by h^2, so too fine a grid measures roundoff rather than curvature.
+    front = geo.front(torch.tensor([[0.5 * data.domain.t_max]]), n_body=65, n_cap=4)
+    body = (front.on_cap.squeeze() == 0) & (front.side.squeeze() > 0)
+    x = front.points[body, 0].detach().double()
+    y = front.points[body, 1].detach().double()
+
+    h = x[1] - x[0]
+    y_x = (y[2:] - y[:-2]) / (2 * h)
+    y_xx = (y[2:] - 2 * y[1:-1] + y[:-2]) / h**2
+    numerical = -y_xx / (1.0 + y_x**2) ** 1.5
+
+    analytic = front.kappa_par[body].squeeze()[1:-1].detach().double()
+    assert torch.allclose(analytic, numerical, atol=5e-3, rtol=2e-2), (
+        f"analytic vs numerical curvature disagree by "
+        f"{float((analytic - numerical).abs().max())}"
+    )
+
+
+def test_front_curvature_carries_gradient_to_the_shape(tmp_path):
+    """The curvature must be differentiable w.r.t. the profile nets, or the
+    Laplace jump cannot move the shape -- which is the entire point."""
+    geo, _ = _geometry(tmp_path)
+    front = geo.front(torch.tensor([[0.4]]), n_body=8, n_cap=4)
+    front.kappa_par.sum().backward()
+
+    grad = geo.width_net[-1].weight.grad
+    assert grad is not None and float(grad.abs().sum()) > 0, (
+        "curvature must backpropagate into the width profile"
+    )

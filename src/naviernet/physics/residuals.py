@@ -355,8 +355,7 @@ def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tenso
     there is nothing left to absorb it.
     """
     t = front.points[:, 2:3]
-    kappa = model.nets["phi"].front_curvature(front)
-    return model.p_vapor(t) - model.pressure(front.points) - kappa / groups["We"]
+    return model.p_vapor(t) - model.pressure(front.points) - front.kappa_par / groups["We"]
 
 
 def stage_b_residuals(
