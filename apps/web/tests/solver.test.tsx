@@ -441,6 +441,56 @@ describe("SolverView", () => {
     expect(body.hard_pin).toBe(false);
   });
 
+  it("gates the sharp-interface switches on the front geometry", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // There is no front to impose the interface conditions on without the
+    // geometry, so both switches stay unusable until it is on.
+    expect(screen.getByRole("switch", { name: "Sharp interface" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Allow pinch-off" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Allow pinch-off" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.sharp_interface).toBe(true);
+    expect(body.allow_pinch).toBe(true);
+  });
+
+  it("turning the front geometry off takes the sharp-interface switches with it", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+
+    // Left set, the request would be a 422 the user never asked for.
+    expect(screen.getByRole("switch", { name: "Sharp interface" })).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).sharp_interface).toBe(false);
+  });
+
+  it("reveals the interface-sharpening fields only while sharp interface is on", async () => {
+    stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.queryByLabelText(/Sharpening steps/)).toBeNull();
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
+    expect(screen.getByLabelText(/Sharpening steps/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Final/)).toBeInTheDocument();
+  });
+
   it("toggling the pin and growth constraints off hides their fields again", async () => {
     stubApi();
     render(<SolverView />);

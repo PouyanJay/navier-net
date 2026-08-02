@@ -5,6 +5,7 @@ import {
   type PhysicsValidation,
 } from "../../lib/api";
 import { fmtIou, noseSpeedTone } from "./format";
+import { InterfacePhysicsPanel } from "./InterfacePhysicsPanel";
 import { useApiResource } from "./useApiResource";
 
 /** Group tiles worth showing, with display labels (subset of groups.json). */
@@ -53,6 +54,9 @@ function CheckRow({ ok, title, detail }: CheckProps) {
 
 interface PhysicsTabProps {
   runId: string;
+  /** Whether the run was trained with an explicit front; decides which empty
+   * state the interface-physics panel shows. */
+  frontGeometry: boolean;
   /** The viewing condition; its groups drive the tiles (joint runs). */
   dataset: string | null;
   /** The series' display label (ids stay in URLs; labels in copy). */
@@ -64,6 +68,7 @@ interface PhysicsTabProps {
  * groups the physics (and the conditioning vector) derive from. */
 export function PhysicsTab({
   runId,
+  frontGeometry,
   dataset,
   datasetName,
   validation,
@@ -180,6 +185,10 @@ export function PhysicsTab({
           </div>
         </div>
       </Panel>
+      <InterfacePhysicsPanel
+        physics={validation?.physics ?? null}
+        frontGeometry={frontGeometry}
+      />
     </>
   );
 }

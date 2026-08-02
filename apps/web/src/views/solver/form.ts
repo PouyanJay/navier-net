@@ -27,6 +27,10 @@ export interface SolverFormState {
   hard_pin: boolean;
   pin_d_ref: number;
   front_geometry: boolean;
+  sharp_interface: boolean;
+  allow_pinch: boolean;
+  alpha_eps_anneal_steps: number;
+  alpha_eps_final: number;
   kinematics: boolean;
   kin_margin_frac: number;
   kin_weight_mono: number;
@@ -67,6 +71,19 @@ export const FORM_DEFAULTS: SolverFormState = {
   // connected shape at every t. Mutually exclusive with the hard pin (the
   // geometry pins exactly), gated valid-by-construction in the form.
   front_geometry: false,
+  // Sharp-interface physics (R4): the Young-Laplace jump and the kinematic
+  // condition imposed ON the explicit front, with depth-averaged Darcy in place
+  // of the 2-D momentum residual. Requires the front geometry -- there is no
+  // front to sample without it -- so the form gates it valid-by-construction.
+  sharp_interface: false,
+  // Pinch-off: relaxes the front geometry's own topology and monotonicity
+  // guarantees so the bubble can detach. Also front-geometry-gated.
+  allow_pinch: false,
+  // Interface sharpening: off (0 steps). alpha = sigmoid(phi/alpha_eps) blurs the
+  // interface over ~4*alpha_eps, which at the default 0.05 is the same width as
+  // the measured mid-bubble neck.
+  alpha_eps_anneal_steps: 0,
+  alpha_eps_final: 0.02,
   // Kinematic growth constraints. The evap-floor weight defaults to 0 (the
   // bench showed it destabilizes the front) -- deliberate opt-in only.
   kinematics: false,
@@ -113,6 +130,8 @@ export const FORM_BOUNDS = {
   pin_d_ref: { min: 0.01, max: 2 },
   kin_margin_frac: { min: 0, max: 2 },
   kin_weight: { min: 0, max: 100 },
+  alpha_eps_anneal_steps: { min: 0, max: 20000 },
+  alpha_eps_final: { min: 0.001, max: 0.2 },
 } as const;
 
 /** Holdout options in physical frame numbers; values are the 0-based index. */

@@ -81,6 +81,42 @@ export interface DatasetAgreement {
   iou_per_frame: Record<string, number>;
 }
 
+/** One frame's shape diagnostics: the model's own bubble against the mask. */
+export interface PhysicsFrame {
+  frame: number;
+  neck_depth_model: number;
+  neck_depth_measured: number;
+  neck_location_model: number;
+  neck_location_measured: number;
+  half_width_model: number[];
+  half_width_measured: number[];
+}
+
+/** Whether one physics residual descended over its active window. */
+export interface ResidualConvergence {
+  first: number;
+  last: number;
+  ratio: number;
+}
+
+/**
+ * The measurements IoU cannot make: whether the solution obeys the physics.
+ * Null for a run trained without an explicit front (`model.front_geometry`) —
+ * there is no interface to impose the conditions on, so nothing to score.
+ */
+export interface PhysicsDiagnostics {
+  laplace_error_nose: number | null;
+  laplace_error_front: number | null;
+  axial_capillary_gradient: number | null;
+  neck_depth_model: number | null;
+  neck_depth_measured: number | null;
+  neck_location_model: number | null;
+  neck_location_measured: number | null;
+  profile_stations: number[];
+  per_frame: PhysicsFrame[];
+  residual_convergence: Record<string, ResidualConvergence>;
+}
+
 export interface PhysicsValidation {
   nose_speed_inferred_mm_s: number | null;
   nose_speed_measured_mm_s: number | null;
@@ -104,6 +140,7 @@ export interface PhysicsValidation {
   per_dataset: Record<string, DatasetAgreement> | null;
   training_datasets: string[] | null;
   heldout_datasets: string[] | null;
+  physics: PhysicsDiagnostics | null;
 }
 
 export interface OperatingConditions {
@@ -351,6 +388,17 @@ export interface RunLaunchRequest {
   pin_d_ref: number;
   /** Front geometry (R3): capsule interface with exact root + monotone nose. */
   front_geometry: boolean;
+  /** Sharp-interface physics (R4): the Young-Laplace jump and the kinematic
+   * condition imposed ON the front, with depth-averaged Darcy replacing the 2-D
+   * momentum residual. Requires front_geometry. */
+  sharp_interface: boolean;
+  /** Let the bubble detach: signed radius, unconstrained nose. Requires
+   * front_geometry, whose guarantees it relaxes. */
+  allow_pinch: boolean;
+  /** Anneal alpha_eps to `alpha_eps_final` over this many steps (0 = off), so a
+   * neck is not the same width as the interface blur. */
+  alpha_eps_anneal_steps: number;
+  alpha_eps_final: number;
   /** Kinematic growth constraints on the late time window (physics-only). */
   kinematics: boolean;
   /** Monotone-growth margin, as a fraction of the supervised-tail rate. */
