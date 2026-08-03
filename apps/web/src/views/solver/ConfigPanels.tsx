@@ -536,6 +536,13 @@ function PinKinematicsControls({
           disabled={locked}
         />
         <Switch
+          label="Two-way evap closure"
+          hint="the closure may raise the temperature, not only lower the source"
+          checked={form.evap_closure_two_way}
+          onChange={(evap_closure_two_way) => onForm({ evap_closure_two_way })}
+          disabled={locked}
+        />
+        <Switch
           label="Allow pinch-off"
           hint={
             form.front_geometry
