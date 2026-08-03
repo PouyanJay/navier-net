@@ -225,17 +225,19 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         )
 
 
-def _validate_training_config(
-    tcfg, fields, alpha_eps: float | None = None, model_cfg=None
-) -> None:
-    """Every up-front training-config validation, shared by both loops."""
+def _validate_training_config(cfg) -> None:
+    """Every up-front training-config validation, shared by both loops.
+
+    Takes the whole config rather than the four pieces it needs: every caller
+    had one to hand, and the two that were optional were never once omitted --
+    an optionality that only made it possible to skip a check by accident.
+    """
+    tcfg = cfg.training
     _validate_causal(tcfg)
     _validate_weighting(tcfg)
-    _validate_kinematics(tcfg, fields)
-    if model_cfg is not None:
-        _validate_front_velocity(tcfg, model_cfg)
-    if alpha_eps is not None:
-        _validate_sharpening(tcfg, alpha_eps)
+    _validate_kinematics(tcfg, cfg.model.fields)
+    _validate_front_velocity(tcfg, cfg.model)
+    _validate_sharpening(tcfg, cfg.model.alpha_eps)
 
 
 def _validate_front_velocity(tcfg, model_cfg) -> None:
@@ -386,7 +388,7 @@ def _front_velocity_plan(
     tcfg = cfg.training
     if not tcfg.front_velocity:
         return None
-    plan = front_velocity.build_plan(data, tcfg, cfg.model, device)
+    plan = front_velocity.build_plan(data, cfg, device)
     log.info(
         "front velocity on: %d frame pairs %s, v_ref=%.4f, %d body / %d cap bins "
         "at %d samples each, blur %.1f px",
@@ -926,7 +928,7 @@ def train(
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
     tcfg = cfg.training
-    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps, cfg.model)
+    _validate_training_config(cfg)
     rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
@@ -1235,42 +1237,54 @@ def _joint_losses(
     return {name: loss / n for name, loss in aggregate.items()}, coll_batches
 
 
+def _joint_functional(
+    model, contexts, term: Callable[[object, _JointDataset], tuple[torch.Tensor, dict]]
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """A per-dataset functional averaged over a joint run's datasets.
+
+    Every dataset is evaluated through its OWN bound view, so it contributes its
+    conditioning row and its measured anchors -- going around that would score
+    every condition against the first one's interface. The logged values are the
+    across-dataset means of the raw term magnitudes.
+
+    Shared by the kinematic constraints and the measured front velocity: both are
+    scalar functionals with per-dataset plans, and only the term itself differs.
+    """
+    totals, merged = [], {}
+    for cx in contexts:
+        total, record = term(model.bound(cx.c, pin=cx.pin, geometry=cx.geometry), cx)
+        totals.append(total)
+        for name, value in record.items():
+            merged[name] = merged.get(name, 0.0) + value / len(contexts)
+    return torch.stack(totals).mean(), merged
+
+
 def _joint_kinematic_losses(
     model, contexts, tcfg, schedule: kinematics.KinematicSchedule
 ) -> tuple[torch.Tensor, dict[str, float]]:
-    """The kinematic total averaged over the datasets, each evaluated through its
-    pin-bound view on its own quadrature/references; the logged values are the
-    across-dataset means of the raw term magnitudes."""
-    totals = []
-    merged: dict[str, float] = {}
-    for cx in contexts:
-        view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
-        kin_total, kin_record = kinematics.kinematic_losses(
+    """The kinematic total over a joint run, on each dataset's own quadrature."""
+    return _joint_functional(
+        model,
+        contexts,
+        lambda view, cx: kinematics.kinematic_losses(
             kinematics.KinematicContext(view, tcfg, cx.groups), cx.kin, schedule
-        )
-        totals.append(kin_total)
-        for name, value in kin_record.items():
-            merged[name] = merged.get(name, 0.0) + value / len(contexts)
-    return torch.stack(totals).mean(), merged
+        ),
+    )
 
 
 def _joint_front_velocity_losses(
     model, contexts, tcfg
 ) -> tuple[torch.Tensor, dict[str, float]]:
-    """The front-velocity total averaged over the datasets, each measured over its
-    own frames and evaluated through its own bound view -- so one condition's
-    front is never scored against another's measurement."""
-    totals = []
-    merged: dict[str, float] = {}
-    for cx in contexts:
-        view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
-        fv_total, fv_record = front_velocity.front_velocity_losses(
+    """The front-velocity total over a joint run, on each dataset's own measured
+    frames -- so one condition's front is never scored against another's
+    measurement."""
+    return _joint_functional(
+        model,
+        contexts,
+        lambda view, cx: front_velocity.front_velocity_losses(
             front_velocity.FrontVelocityContext(view, tcfg), cx.fv
-        )
-        totals.append(fv_total)
-        for name, value in fv_record.items():
-            merged[name] = merged.get(name, 0.0) + value / len(contexts)
-    return torch.stack(totals).mean(), merged
+        ),
+    )
 
 
 def _train_joint(
@@ -1289,7 +1303,7 @@ def _train_joint(
     untouched; this runs only when ``cfg.datasets`` names more than one series.
     """
     tcfg = cfg.training
-    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps, cfg.model)
+    _validate_training_config(cfg)
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.

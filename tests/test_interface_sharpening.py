@@ -56,7 +56,7 @@ def test_annealing_rejects_a_widening_or_non_positive_target(tmp_path):
             tmp_path, ["model.alpha_eps=0.05", bad, "training.alpha_eps_anneal_steps=10"]
         )
         with pytest.raises(ValueError, match="alpha_eps_final"):
-            _validate_training_config(cfg.training, cfg.model.fields, cfg.model.alpha_eps)
+            _validate_training_config(cfg)
 
 
 def test_a_run_ends_sharper_and_evaluates_at_the_sharpened_value(tmp_path):

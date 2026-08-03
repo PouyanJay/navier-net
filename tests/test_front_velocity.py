@@ -26,7 +26,7 @@ import numpy as np
 import pytest
 import torch
 
-from tests.conftest import make_config
+from tests.conftest import staged_run
 
 # The synthetic capsule: a fixed root, a fixed radius, a nose advancing one
 # tenth of x* per frame on a time axis whose step is one tenth of t*.
@@ -75,28 +75,12 @@ def _write_capsule(path) -> None:
 
 
 def _staged(tmp_path, overrides=None):
-    """The capsule dataset staged for a tiny run, as the CLI would compose it."""
-    from naviernet.utils.paths import RunPaths
+    """The capsule dataset staged for a tiny run, as the CLI would compose it.
 
-    cfg = make_config(
-        [
-            f"paths.root={tmp_path}",
-            "model.hidden=8",
-            "model.layers=2",
-            "model.fourier_feats=4",
-            "training.steps=2",
-            "training.n_data=16",
-            "training.n_coll=16",
-            "training.n_bc=8",
-            "training.holdout_frame=-1",
-            *(overrides or []),
-        ]
-    )
-    paths = RunPaths.from_config(cfg)
-    paths.ensure()
-    paths.tensors.parent.mkdir(parents=True, exist_ok=True)
-    _write_capsule(paths.tensors)
-    return cfg, paths
+    The shared staging, with only the writer swapped: this suite needs a TRUE
+    signed distance field, which the standard fixture's placeholder is not.
+    """
+    return staged_run(tmp_path, overrides, write=_write_capsule)
 
 
 def _dataset(tmp_path, overrides=None):
@@ -118,7 +102,7 @@ def _model_and_plan(tmp_path, overrides=None):
     # whatever ran before it in the suite.
     torch.manual_seed(0)
     model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
-    plan = front_velocity.build_plan(data, cfg.training, cfg.model, "cpu")
+    plan = front_velocity.build_plan(data, cfg, "cpu")
     return cfg, data, model, plan
 
 
@@ -177,7 +161,31 @@ def test_normal_velocity_reports_an_unresolvable_gradient_rather_than_a_number()
     v_n, resolvable = normal_velocity(flat, flat + 0.1, 0.1, (0.05, 0.05))
 
     assert not resolvable.any()
+    # Exact, not approximate: `np.divide(where=...)` never writes these entries,
+    # so they are the untouched zeros of the output array, not a computed result.
     assert np.all(v_n == 0.0)
+
+
+def test_the_blur_shrinks_validity_by_its_own_reach(tmp_path):
+    """The blur runs over the whole frame, so a pixel beside an invalid one is
+    mixed with whatever the segmentation put there -- and would otherwise still
+    be reported as a perfectly good measurement. The field-of-view cut on the
+    last usable frame is exactly such a region."""
+    from naviernet.data.velocimetry import survives_blur
+
+    valid = np.ones((12, 12), dtype=bool)
+    valid[:, -3:] = False  # a truncated-column region, as preprocess marks it
+
+    unblurred = survives_blur(valid, 0.0)
+    blurred = survives_blur(valid, 1.5)
+
+    # With no blur each pixel is only ever itself, so validity is untouched.
+    assert np.array_equal(unblurred, valid)
+    # With it, the columns within the blur's reach of the cut go too -- and
+    # nothing far from the cut is lost.
+    assert not blurred[:, -3:].any()
+    assert not blurred[0, -4]
+    assert blurred[:, :5].all()
 
 
 def test_normal_velocity_rejects_a_non_positive_interval():
@@ -300,7 +308,7 @@ def test_the_plan_refuses_to_run_with_nothing_to_measure(tmp_path):
 
     cfg, data = _dataset(tmp_path, [*FV, "training.val_fraction=1.0"])
     with pytest.raises(ValueError, match="at least one pair of consecutive"):
-        front_velocity.build_plan(data, cfg.training, cfg.model, "cpu")
+        front_velocity.build_plan(data, cfg, "cpu")
 
 
 # --- The loss ---------------------------------------------------------------
@@ -324,7 +332,11 @@ def test_the_loss_reaches_the_geometry_that_sets_the_rate(tmp_path):
 
 def test_supervising_the_measurement_moves_the_nose_onto_it(tmp_path):
     """The point of the term, end to end: optimise it alone and the model's own
-    apex displacement converges on the measured one."""
+    apex displacement converges on the measured one.
+
+    Optimises the front geometry for 150 Adam steps (~1 s), so it stays in the
+    fast tier -- an order of magnitude under the runs marked `slow` elsewhere.
+    """
     from naviernet.physics import front_velocity
 
     cfg, _, model, plan = _model_and_plan(tmp_path, ["training.fv_weight=0.0"])
@@ -418,6 +430,7 @@ def test_it_refuses_to_measure_and_then_ignore_the_measurement(tmp_path):
         ("training.fv_samples_per_bin=0", "must be >= 1"),
         ("training.fv_smooth_px=-1.0", "must be >= 0"),
         ("training.fv_weight=-1.0", "must be >= 0"),
+        ("training.fv_apex_weight=-1.0", "must be >= 0"),
     ],
 )
 def test_a_degenerate_knob_fails_before_any_measurement(tmp_path, override, message):
@@ -442,14 +455,57 @@ def test_a_run_records_both_terms_in_its_history(tmp_path):
     assert {"fv_normal", "fv_apex"} <= set(state["hist"][0])
 
 
+def test_a_front_that_has_left_the_measured_domain_fails_loudly(tmp_path):
+    """The diverged-run path. With nothing measurable anywhere on the front, the
+    term would otherwise average an empty set and contribute a quiet zero --
+    reporting success for a run that has left the imaged channel entirely."""
+    from dataclasses import replace
+
+    from naviernet.physics import front_velocity
+
+    cfg, _, model, plan = _model_and_plan(tmp_path)
+    nowhere = replace(plan, weight=torch.zeros_like(plan.weight))
+
+    with pytest.raises(RuntimeError, match="no usable measurement"):
+        front_velocity.front_velocity_losses(
+            front_velocity.FrontVelocityContext(model, cfg.training), nowhere
+        )
+
+
+def test_front_samples_that_drift_off_their_asked_for_times_fail_loudly(tmp_path):
+    """The measurement is matched to a frame pair by exact time. If a front ever
+    returned samples at other times, every one would be scored against a
+    neighbouring pair's measurement -- a wrong answer with no symptom."""
+    from naviernet.physics import front_velocity
+
+    cfg, _, model, plan = _model_and_plan(tmp_path)
+
+    class _DriftingFront:
+        """The model, but its front comes back a hair late."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def front(self, t, n_body, n_cap):
+            return self._inner.front(t + 1e-4, n_body, n_cap)
+
+    with pytest.raises(RuntimeError, match="did not come back at the times"):
+        front_velocity.front_velocity_losses(
+            front_velocity.FrontVelocityContext(_DriftingFront(model), cfg.training), plan
+        )
+
+
 def test_the_measurement_is_identical_when_rebuilt(tmp_path):
     """Deterministic, so a resumed run supervises against exactly the numbers it
     was trained on -- no RNG anywhere in the measurement."""
     from naviernet.physics import front_velocity
 
     cfg, data = _dataset(tmp_path, FV)
-    first = front_velocity.build_plan(data, cfg.training, cfg.model, "cpu")
-    second = front_velocity.build_plan(data, cfg.training, cfg.model, "cpu")
+    first = front_velocity.build_plan(data, cfg, "cpu")
+    second = front_velocity.build_plan(data, cfg, "cpu")
 
     assert first.pairs == second.pairs
     assert torch.equal(first.v_n, second.v_n)

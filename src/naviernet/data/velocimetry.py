@@ -46,8 +46,10 @@ displacement instead, which involves no level-set approximation at all.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, minimum_filter
 
 # Below this, ``|grad sdf|`` carries no usable direction: dividing by it turns
 # segmentation noise into an arbitrarily large velocity. Such pixels are reported
@@ -55,6 +57,11 @@ from scipy.ndimage import gaussian_filter
 # scale is set by a true distance field, where the magnitude is 1 by
 # construction -- so this is three orders of magnitude below "normal".
 GRAD_FLOOR = 1e-3
+
+# How far a Gaussian of a given sigma is treated as reaching, in sigmas. Two
+# covers ~95% of its mass, which is the radius within which a neighbouring
+# pixel's value materially changes this one's after the blur.
+BLUR_REACH_SIGMAS = 2.0
 
 
 def normal_velocity(
@@ -100,6 +107,26 @@ def normal_velocity(
     v_n = np.zeros_like(now)
     np.divide(-(later - now) / dt, magnitude, out=v_n, where=resolvable)
     return v_n.astype(np.float32), resolvable
+
+
+def survives_blur(valid: np.ndarray, smooth_px: float) -> np.ndarray:
+    """The pixels whose smoothed value was built only from valid data.
+
+    The blur in :func:`normal_velocity` runs over the whole frame, so a pixel
+    within reach of an invalid one is mixed with whatever the segmentation put
+    there -- and would then be reported as a perfectly good measurement. The
+    invalid regions are real (the field-of-view cut on the last usable frame,
+    see ``imaging.truncated_cols``), so this shrinks validity by the blur's own
+    reach rather than trusting a value the blur contaminated.
+
+    A no-op when the blur is off, where each pixel is only ever itself.
+    """
+    if smooth_px <= 0:
+        return valid.astype(bool)
+    reach = int(math.ceil(BLUR_REACH_SIGMAS * smooth_px))
+    # A pixel survives only if EVERY pixel within the blur's reach was valid,
+    # which is exactly a minimum filter over the boolean mask.
+    return minimum_filter(valid.astype(bool), size=2 * reach + 1, mode="nearest")
 
 
 def _smoothed(field: np.ndarray, smooth_px: float) -> np.ndarray:

@@ -418,7 +418,7 @@ class RunLaunchRequest(BaseModel):
                 raise ValueError(
                     f"{flag} requires front_geometry -- enable it, or turn {flag} off"
                 )
-        if self.front_velocity and not (self.fv_weight or self.fv_apex_weight):
+        if self.front_velocity and self.fv_weight == 0 and self.fv_apex_weight == 0:
             raise ValueError(
                 "front_velocity with both fv_weight and fv_apex_weight at 0 measures "
                 "the front and then ignores it -- give one a weight, or turn "

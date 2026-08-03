@@ -40,12 +40,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 import torch
 
 from naviernet.data.dataset import BubbleDataset
-from naviernet.data.velocimetry import normal_velocity
+from naviernet.data.velocimetry import normal_velocity, survives_blur
+from naviernet.models.geometry import FrontSamples
 
 # Floor on the reference speed every term is normalised by. A dataset whose
 # front never moved measures a rate of 0, and dividing by it would turn a term
@@ -101,7 +103,7 @@ class FrontVelocityPlan:
         return 2 * (self.bins_body + self.bins_cap)
 
 
-def build_plan(data: BubbleDataset, tcfg, model_cfg, device) -> FrontVelocityPlan:
+def build_plan(data: BubbleDataset, cfg, device) -> FrontVelocityPlan:
     """Measure this dataset's front velocity over every usable frame pair.
 
     Raises when no pair is usable: with the front-velocity term switched on and
@@ -117,45 +119,71 @@ def build_plan(data: BubbleDataset, tcfg, model_cfg, device) -> FrontVelocityPla
             f"{data.event_frames} and {data.validation_frames} are held out of "
             f"supervision (training.holdout_frame / training.val_fraction)."
         )
+    return _assemble_plan(data, cfg, device, _measure_pairs(data, cfg.training, pairs))
 
-    n_body = int(model_cfg.front_body_samples)
-    n_cap = int(model_cfg.front_cap_samples)
-    per_bin = int(tcfg.fv_samples_per_bin)
+
+class _Measured(NamedTuple):
+    """What the masks alone say, before any of it becomes a tensor: the pairs it
+    came from, the grid it was measured on, one velocity raster and usability
+    mask per pair, and each pair's apex displacement."""
+
+    pairs: list[tuple[int, int]]
+    spacing: tuple[float, float]  # (dy*, dx*) per pixel, as np.gradient orders it
+    v_n: list[np.ndarray]
+    weight: list[np.ndarray]
+    apex_shift: list[list[float]]
+
+
+def _measure_pairs(data: BubbleDataset, tcfg, pairs) -> _Measured:
+    """Measure every usable frame pair. Pure measurement -- no config beyond the
+    blur, no tensors, nothing about the model."""
+    smooth_px = float(tcfg.fv_smooth_px)
     spacing = (float(data.y[1] - data.y[0]), float(data.x[1] - data.x[0]))
-    fields, weights, apex_shift = [], [], []
+    measured = _Measured(list(pairs), spacing, [], [], [])
     for row, nxt in pairs:
         dt = float(data.t[nxt]) - float(data.t[row])
-        v_n, resolvable = normal_velocity(
-            data.sdf[row], data.sdf[nxt], dt, spacing, float(tcfg.fv_smooth_px)
-        )
-        fields.append(v_n)
-        weights.append(
-            resolvable & (data.valid[row] > 0) & (data.valid[nxt] > 0),
+        v_n, resolvable = normal_velocity(data.sdf[row], data.sdf[nxt], dt, spacing, smooth_px)
+        measured.v_n.append(v_n)
+        # Both frames' validity, shrunk by the blur's reach: a pixel the blur
+        # mixed with invalid data is not a measurement, however resolvable it looks.
+        measured.weight.append(
+            resolvable
+            & survives_blur(data.valid[row] > 0, smooth_px)
+            & survives_blur(data.valid[nxt] > 0, smooth_px)
         )
         here, there = data.front_apex(row), data.front_apex(nxt)
-        apex_shift.append([there[0] - here[0], there[1] - here[1]])
+        measured.apex_shift.append([there[0] - here[0], there[1] - here[1]])
+    return measured
 
-    def column(rows: list[int]) -> torch.Tensor:
-        return torch.tensor(
-            [[float(data.t[r])] for r in rows], dtype=torch.float32, device=device
-        )
+
+def _assemble_plan(data: BubbleDataset, cfg, device, measured: _Measured) -> FrontVelocityPlan:
+    """The measurement plus the run's fixed sampling parameters, on ``device``."""
+    n_body = int(cfg.model.front_body_samples)
+    n_cap = int(cfg.model.front_cap_samples)
+    per_bin = int(cfg.training.fv_samples_per_bin)
+
+    def tensor(values) -> torch.Tensor:
+        return torch.tensor(np.asarray(values), dtype=torch.float32, device=device)
+
+    def times_of(rows) -> torch.Tensor:
+        return tensor([[float(data.t[r])] for r in rows])
 
     return FrontVelocityPlan(
-        times=column([row for row, _ in pairs]),
-        times_next=column([nxt for _, nxt in pairs]),
-        v_n=torch.tensor(np.stack(fields), dtype=torch.float32, device=device),
-        weight=torch.tensor(
-            np.stack(weights).astype(np.float32), dtype=torch.float32, device=device
-        ),
+        times=times_of([row for row, _ in measured.pairs]),
+        times_next=times_of([nxt for _, nxt in measured.pairs]),
+        v_n=tensor(np.stack(measured.v_n)),
+        weight=tensor(np.stack(measured.weight).astype(np.float32)),
         origin=(float(data.x[0]), float(data.y[0])),
-        spacing=(spacing[1], spacing[0]),
-        apex_shift=torch.tensor(apex_shift, dtype=torch.float32, device=device),
+        # (dx*, dy*): the plan indexes rasters by column then row, the reverse of
+        # the (dy*, dx*) order np.gradient took the measurement in.
+        spacing=(measured.spacing[1], measured.spacing[0]),
+        apex_shift=tensor(measured.apex_shift),
         n_body=n_body,
         n_cap=n_cap,
         bins_body=_bin_count(n_body, per_bin),
         bins_cap=_bin_count(n_cap, per_bin),
         v_ref=max(float(data.nose_rate), RATE_FLOOR),
-        pairs=tuple(pairs),
+        pairs=tuple(measured.pairs),
     )
 
 
@@ -225,12 +253,26 @@ def _apex_loss(ctx: FrontVelocityContext, plan: FrontVelocityPlan) -> torch.Tens
 def _pair_index(plan: FrontVelocityPlan, t: torch.Tensor) -> torch.Tensor:
     """Which raster slice each front sample belongs to, ``(N,)``.
 
-    The front was sampled AT ``plan.times``, and those values reach the samples
-    unmodified, so an exact search is exact -- no tolerance is involved.
+    The front was sampled AT ``plan.times``, and ``_sample_grid`` only reshapes
+    and repeats those values -- it does no arithmetic on them -- so an exact
+    search is exact and no tolerance is involved.
+
+    That invariant is CHECKED rather than trusted. If a future front ever
+    perturbed its times, ``searchsorted`` would quietly hand every sample to a
+    neighbouring frame pair and supervise it against the wrong measurement --
+    a wrong answer with no symptom, which is the one failure mode this feature
+    is built to refuse.
     """
-    return torch.searchsorted(
-        plan.times.reshape(-1).contiguous(), t.reshape(-1).contiguous()
-    ).clamp(max=plan.times.shape[0] - 1)
+    times = plan.times.reshape(-1).contiguous()
+    index = torch.searchsorted(times, t.reshape(-1).contiguous()).clamp(max=times.numel() - 1)
+    if not torch.equal(times[index], t.reshape(-1)):
+        raise RuntimeError(
+            "front samples did not come back at the times they were asked for, so "
+            "they cannot be matched to the frame pair each was measured against. "
+            "The front-velocity term requires model.front(t, ...) to sample "
+            "exactly at t."
+        )
+    return index
 
 
 def _sample_rasters(
@@ -280,7 +322,9 @@ def _sample_rasters(
         return interpolate(plan.v_n).unsqueeze(1), usable.unsqueeze(1)
 
 
-def _bin_index(plan: FrontVelocityPlan, front, pair: torch.Tensor) -> torch.Tensor:
+def _bin_index(
+    plan: FrontVelocityPlan, front: FrontSamples, pair: torch.Tensor
+) -> torch.Tensor:
     """Which profile bin each front sample falls in, ``(N,)``.
 
     One set of bins per (frame pair, segment): each time is its own measurement,

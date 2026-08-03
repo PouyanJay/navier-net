@@ -122,16 +122,23 @@ _TINY_RUN = [
 ]
 
 
-def staged_run(tmp_path, overrides=None):
+def staged_run(tmp_path, overrides=None, write=None):
     """A tiny single-dataset run over the synthetic growth event, staged as the
-    CLI would: composed config + tensors written under a tmp root."""
+    CLI would: composed config + tensors written under a tmp root.
+
+    ``write`` swaps in a different tensor writer for a suite that needs different
+    geometry -- the front-velocity tests need a TRUE signed distance field, which
+    :func:`write_growing_bubble`'s placeholder is not. Only the writer varies; the
+    tiny-run overrides and the staging steps stay in one place, so a new required
+    override reaches every suite.
+    """
     from naviernet.utils.paths import RunPaths
 
     cfg = make_config([f"paths.root={tmp_path}", *_TINY_RUN, *(overrides or [])])
     paths = RunPaths.from_config(cfg)
     paths.ensure()
     paths.tensors.parent.mkdir(parents=True, exist_ok=True)
-    write_growing_bubble(paths.tensors)
+    (write or write_growing_bubble)(paths.tensors)
     return cfg, paths
 
 
