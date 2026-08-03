@@ -455,7 +455,11 @@ def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tenso
     """
     t = front.points[:, 2:3]
     kappa = front.kappa_par + gap_curvature(front.normal_speed, groups)
-    return model.p_vapor(t) - model.pressure(front.points) - kappa / groups["We"]
+    # On the body the liquid the meniscus faces is the Bretherton film, not the
+    # bulk the depth-averaged `p` represents (see BubblePINN.film_offset); the
+    # offset is zero on the caps and zero entirely when the feature is off.
+    liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
+    return model.p_vapor(t) - liquid - kappa / groups["We"]
 
 
 def stage_b_residuals(

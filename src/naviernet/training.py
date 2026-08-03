@@ -141,6 +141,7 @@ def _architecture_record(cfg) -> dict:
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
         "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
         "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
+        "film_pressure": bool(getattr(cfg.model, "film_pressure", False)),
     }
 
 
@@ -178,6 +179,13 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         "sharp_interface",
         path,
         "The interface treatment changes the objective AND adds the p_v(t) parameters.",
+    )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "film_pressure",
+        path,
+        "The film offset adds a parameter and changes the jump condition.",
     )
     _require_matching_flag(
         cfg,

@@ -397,6 +397,10 @@ export interface RunLaunchRequest {
   /** Let the bubble detach: signed radius, unconstrained nose. Requires
    * front_geometry, whose guarantees it relaxes. */
   allow_pinch: boolean;
+  /** Film pressure: at the bubble's sides the capillary pressure is balanced by
+   * the Bretherton film, not the bulk pressure a depth-averaged model carries.
+   * One inferred scalar offset on the body. Requires sharp_interface. */
+  film_pressure: boolean;
   /** Anneal alpha_eps to `alpha_eps_final` over this many steps (0 = off), so a
    * neck is not the same width as the interface blur. */
   alpha_eps_anneal_steps: number;

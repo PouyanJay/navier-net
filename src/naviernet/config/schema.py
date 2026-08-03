@@ -171,6 +171,15 @@ class ModelConfig:
     # is no front to sample without it) and the `p` field. Off by default -> the
     # equation set and every existing run are unchanged.
     sharp_interface: bool = False
+    # Film pressure: the depth-averaged model's stand-in for a pressure it cannot
+    # carry. At the bubble's SIDES the capillary pressure is balanced by the
+    # liquid in the Bretherton film between bubble and gap wall (~4.9 um in a
+    # 150 um gap), not by the bulk -- but that film lies in the gap direction,
+    # which depth-averaging integrates away, so one pressure per (x, y) cannot be
+    # both. One inferred scalar offset, applied on the body only: measured, the
+    # discrepancy is a near-constant 1.25-1.48 across every frame and across
+    # independently trained runs. Requires `sharp_interface`; off by default.
+    film_pressure: bool = False
     # Front samples per time, per body profile and per end cap, for the interface
     # conditions. Module-level rather than swept: the front is a smooth 1-D curve,
     # so this only has to resolve it, not fit anything.

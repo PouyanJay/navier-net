@@ -333,6 +333,10 @@ class RunLaunchRequest(BaseModel):
     # residual. Requires front_geometry (there is no front to sample without it),
     # mirrored below as a 422.
     sharp_interface: bool = False
+    # Film pressure: at the bubble's sides the capillary pressure is balanced by
+    # the Bretherton film, not the bulk the depth-averaged `p` represents. One
+    # inferred scalar offset on the body. Requires sharp_interface.
+    film_pressure: bool = False
     # Let the bubble detach: the radius becomes signed and the nose may retreat,
     # so pinch-off is expressible. Requires front_geometry -- it relaxes that
     # construction's own guarantees.
@@ -386,6 +390,11 @@ class RunLaunchRequest(BaseModel):
                 raise ValueError(
                     f"{flag} requires front_geometry -- enable it, or turn {flag} off"
                 )
+        if self.film_pressure and not self.sharp_interface:
+            raise ValueError(
+                "film_pressure corrects the Young-Laplace jump, so it requires "
+                "sharp_interface -- enable it, or turn film_pressure off"
+            )
         if self.alpha_eps_anneal_steps and not self.alpha_eps_final:
             raise ValueError(
                 "alpha_eps_anneal_steps needs alpha_eps_final: a target of 0 would "

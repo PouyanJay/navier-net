@@ -206,9 +206,8 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
         capillary = (
             (front.kappa_par + gap_curvature(front.normal_speed, groups)) / groups["We"]
         ).detach()
-        residual = (
-            _vapour_pressure(model, front) - model.pressure(front.points) - capillary
-        ).abs()
+        liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
+        residual = (_vapour_pressure(model, front) - liquid - capillary).abs()
 
     # The nose cap: the far closure, where curvature is largest and the jump is
     # least ambiguous. `u == 1` marks it (see FrontSamples).
