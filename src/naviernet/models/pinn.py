@@ -294,6 +294,13 @@ class BubblePINN(nn.Module):
         if "T" in names:
             self._log_r_int = nn.Parameter(torch.zeros(1))
             self._theta_in_raw = nn.Parameter(torch.zeros(1))
+        self.depletable_superheat = bool(getattr(cfg.model, "depletable_superheat", False))
+        if self.depletable_superheat and "T" not in names:
+            raise ValueError(
+                "model.depletable_superheat relaxes the temperature's lower bound, so "
+                "it requires the 'T' field in model.fields (the Stage-B field set); "
+                f"this model has {names}."
+            )
         self.has_nucleation_pulse = bool(getattr(cfg.model, "nucleation_pulse", False))
         if self.has_nucleation_pulse:
             if "T" not in names:
@@ -414,10 +421,22 @@ class BubblePINN(nn.Module):
         return nn.functional.softplus(self._log_q_pulse)
 
     def temperature(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        """Non-dimensional superheat, bounded to (theta_in, 1) so temperature stays
-        between the inlet and the wall. Stage B; raises if T was not configured."""
-        raw = self._require("T")(x, c)
-        return self.theta_in + (1.0 - self.theta_in) * torch.sigmoid(raw)
+        """Non-dimensional superheat. Stage B; raises if T was not configured.
+
+        Bounded to ``(theta_in, 1)`` -- inlet to wall -- by default. Under
+        ``model.depletable_superheat`` the floor becomes SATURATION instead:
+        liquid that has just boiled a bubble is colder than the inlet it arrived
+        at, and that depletion is what throttles evaporation as the bubble
+        blankets the wall. With the inlet as a floor the field has a stable place
+        to sit and measurably does: it collapsed to a constant (std 4e-07) and
+        evaporation became a fixed multiple of interfacial area, which can only
+        grow. ``theta_in`` then anchors the inlet as a boundary condition rather
+        than flooring the whole field.
+        """
+        raw = torch.sigmoid(self._require("T")(x, c))
+        if self.depletable_superheat:
+            return raw
+        return self.theta_in + (1.0 - self.theta_in) * raw
 
     def _require(self, name: str) -> nn.Module:
         if name not in self.nets:

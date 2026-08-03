@@ -109,14 +109,28 @@ def source_penalty(residuals: StageAResiduals) -> torch.Tensor:
 
 
 def boundary_losses(
-    model, inlet_x, wall_x, u_inlet: float, c: torch.Tensor | None = None
+    model,
+    inlet_x,
+    wall_x,
+    u_inlet: float,
+    c: torch.Tensor | None = None,
+    theta_in: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Inlet plug velocity and no-slip side walls (Stage A: velocity only)."""
+    """Inlet plug velocity and no-slip side walls (Stage A: velocity only).
+
+    ``theta_in`` adds the inlet temperature condition. It is passed only when the
+    superheat is depletable: with the default parameterization ``theta_in`` is
+    already the field's floor and anchoring it here would say nothing, but once
+    the floor is saturation the liquid arriving at the inlet still has to arrive
+    at its inlet superheat.
+    """
     u_in, v_in = model.velocity(inlet_x, _ctx(c, inlet_x))
     u_wall, v_wall = model.velocity(wall_x, _ctx(c, wall_x))
 
     inlet = ((u_in - u_inlet) ** 2).mean() + (v_in**2).mean()
     wall = (u_wall**2).mean() + (v_wall**2).mean()
+    if theta_in is not None:
+        inlet = inlet + ((model.temperature(inlet_x, _ctx(c, inlet_x)) - theta_in) ** 2).mean()
     return inlet + wall
 
 

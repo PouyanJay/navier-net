@@ -171,6 +171,16 @@ class ModelConfig:
     # is no front to sample without it) and the `p` field. Off by default -> the
     # equation set and every existing run are unchanged.
     sharp_interface: bool = False
+    # Depletable superheat: bound the temperature below by SATURATION rather than
+    # by the inferred inlet value. Liquid that has just boiled a bubble is colder
+    # than the inlet -- the latent heat came out of it -- and that depletion is
+    # the feedback which shuts evaporation off as the bubble blankets the wall.
+    # Measured with the bound in place, the field collapsed onto its floor and
+    # stayed there (std 4e-07 across the whole domain at every frame), so
+    # evaporation became a fixed multiple of interfacial area and could only
+    # grow. `theta_in` then anchors the inlet instead of flooring the field.
+    # Requires the 'T' field; off by default.
+    depletable_superheat: bool = False
     # Film pressure: the depth-averaged model's stand-in for a pressure it cannot
     # carry. At the bubble's SIDES the capillary pressure is balanced by the
     # liquid in the Bretherton film between bubble and gap wall (~4.9 um in a

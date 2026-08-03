@@ -142,6 +142,7 @@ def _architecture_record(cfg) -> dict:
         "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
         "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
         "film_pressure": bool(getattr(cfg.model, "film_pressure", False)),
+        "depletable_superheat": bool(getattr(cfg.model, "depletable_superheat", False)),
     }
 
 
@@ -179,6 +180,13 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         "sharp_interface",
         path,
         "The interface treatment changes the objective AND adds the p_v(t) parameters.",
+    )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "depletable_superheat",
+        path,
+        "The temperature's floor changes what its weights mean.",
     )
     _require_matching_flag(
         cfg,

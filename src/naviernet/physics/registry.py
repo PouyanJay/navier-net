@@ -178,7 +178,10 @@ def _src_sq(ctx: LossContext) -> torch.Tensor:
 
 
 def _bc_term(ctx: LossContext) -> torch.Tensor:
-    return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet, ctx.c)
+    # The inlet temperature is anchored only when the superheat can leave it --
+    # otherwise theta_in is already the field's floor and the condition is vacuous.
+    theta_in = ctx.model.theta_in if getattr(ctx.model, "depletable_superheat", False) else None
+    return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet, ctx.c, theta_in)
 
 
 def _mom_sq(ctx: LossContext) -> torch.Tensor:
