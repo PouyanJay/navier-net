@@ -560,3 +560,13 @@ def test_launch_with_sharp_interface_composes_and_trains(client, repo_root):
     ).json()["run_id"]
     final = [e["data"] for e in read_stream(client, run_id) if e["event"] == "status"][-1]
     assert final["state"] == "done", f"run failed: {final.get('message')}"
+
+
+def test_launch_rejects_film_pressure_without_the_sharp_interface(client):
+    """It corrects the Young-Laplace jump; without that condition there is
+    nothing for it to correct."""
+    r = client.post(
+        "/api/runs", json={**TINY_RUN, "front_geometry": True, "film_pressure": True}
+    )
+    assert r.status_code == 422
+    assert "sharp_interface" in r.text

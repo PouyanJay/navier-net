@@ -29,6 +29,7 @@ export interface SolverFormState {
   front_geometry: boolean;
   sharp_interface: boolean;
   allow_pinch: boolean;
+  film_pressure: boolean;
   alpha_eps_anneal_steps: number;
   alpha_eps_final: number;
   kinematics: boolean;
@@ -79,6 +80,9 @@ export const FORM_DEFAULTS: SolverFormState = {
   // Pinch-off: relaxes the front geometry's own topology and monotonicity
   // guarantees so the bubble can detach. Also front-geometry-gated.
   allow_pinch: false,
+  // Film pressure: the offset the depth-averaged pressure cannot carry at the
+  // bubble's sides. Also sharp-interface-gated.
+  film_pressure: false,
   // Interface sharpening: off (0 steps). alpha = sigmoid(phi/alpha_eps) blurs the
   // interface over ~4*alpha_eps, which at the default 0.05 is the same width as
   // the measured mid-bubble neck.

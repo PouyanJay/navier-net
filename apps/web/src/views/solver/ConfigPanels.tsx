@@ -306,7 +306,11 @@ export function RunConfigPanel({
         onForm={onForm}
         locked={fixedByResume}
       />
-      <AdvancedTrainingSection form={form} onForm={onForm} locked={fixedByResume} />
+      <AdvancedTrainingSection
+        form={form}
+        onForm={onForm}
+        locked={fixedByResume}
+      />
     </Panel>
   );
 }
@@ -425,8 +429,20 @@ const PIN_KIN_FIELDS = [
     bounds: "kin_margin_frac",
     step: 0.05,
   },
-  { key: "kin_weight_mono", gate: "kinematics", label: "Monotone weight", bounds: "kin_weight", step: 0.1 },
-  { key: "kin_weight_balance", gate: "kinematics", label: "Balance weight", bounds: "kin_weight", step: 0.1 },
+  {
+    key: "kin_weight_mono",
+    gate: "kinematics",
+    label: "Monotone weight",
+    bounds: "kin_weight",
+    step: 0.1,
+  },
+  {
+    key: "kin_weight_balance",
+    gate: "kinematics",
+    label: "Balance weight",
+    bounds: "kin_weight",
+    step: 0.1,
+  },
   {
     key: "kin_weight_evap",
     gate: "kinematics",
@@ -466,6 +482,7 @@ function PinKinematicsControls({
                 : {
                     front_geometry: false,
                     sharp_interface: false,
+                    film_pressure: false,
                     allow_pinch: false,
                   },
             )
@@ -491,8 +508,25 @@ function PinKinematicsControls({
               : "needs front geometry"
           }
           checked={form.sharp_interface}
-          onChange={(sharp_interface) => onForm({ sharp_interface })}
+          onChange={(sharp_interface) =>
+            onForm(
+              sharp_interface
+                ? { sharp_interface: true }
+                : { sharp_interface: false, film_pressure: false },
+            )
+          }
           disabled={locked || !form.front_geometry}
+        />
+        <Switch
+          label="Film pressure"
+          hint={
+            form.sharp_interface
+              ? "Bretherton film offset on the bubble's sides"
+              : "needs sharp interface"
+          }
+          checked={form.film_pressure}
+          onChange={(film_pressure) => onForm({ film_pressure })}
+          disabled={locked || !form.sharp_interface}
         />
         <Switch
           label="Allow pinch-off"

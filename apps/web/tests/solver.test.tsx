@@ -348,25 +348,41 @@ describe("SolverView", () => {
     // Turn causal ON under gradnorm, then switch to RBA: causal is forced off and
     // disabled (RBA and causal are not composable yet).
     fireEvent.click(screen.getByRole("switch", { name: "Causal weighting" }));
-    expect(screen.getByRole("switch", { name: "Causal weighting" })).toBeChecked();
-    fireEvent.change(screen.getByLabelText(/Weighting/), { target: { value: "rba" } });
+    expect(
+      screen.getByRole("switch", { name: "Causal weighting" }),
+    ).toBeChecked();
+    fireEvent.change(screen.getByLabelText(/Weighting/), {
+      target: { value: "rba" },
+    });
     const causal = screen.getByRole("switch", { name: "Causal weighting" });
     expect(causal).toBeDisabled();
     expect(causal).not.toBeChecked();
 
     // Under RBA, adaptive is available; turn it on, then switch back to gradnorm:
     // adaptive is forced off and disabled (it requires RBA).
-    const adaptive = screen.getByRole("switch", { name: "Adaptive collocation" });
+    const adaptive = screen.getByRole("switch", {
+      name: "Adaptive collocation",
+    });
     expect(adaptive).toBeEnabled();
     fireEvent.click(adaptive);
     expect(adaptive).toBeChecked();
-    fireEvent.change(screen.getByLabelText(/Weighting/), { target: { value: "gradnorm" } });
-    expect(screen.getByRole("switch", { name: "Adaptive collocation" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Adaptive collocation" })).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText(/Weighting/), {
+      target: { value: "gradnorm" },
+    });
+    expect(
+      screen.getByRole("switch", { name: "Adaptive collocation" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Adaptive collocation" }),
+    ).not.toBeChecked();
 
     // Finally launch an RBA + adaptive run and confirm the posted combo is valid.
-    fireEvent.change(screen.getByLabelText(/Weighting/), { target: { value: "rba" } });
-    fireEvent.click(screen.getByRole("switch", { name: "Adaptive collocation" }));
+    fireEvent.change(screen.getByLabelText(/Weighting/), {
+      target: { value: "rba" },
+    });
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Adaptive collocation" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
     const body = posts[0] as Record<string, unknown>;
@@ -380,8 +396,12 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    expect(screen.getByRole("switch", { name: "Hard root pin" })).not.toBeChecked();
-    expect(screen.getByRole("switch", { name: "Growth constraints" })).not.toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Hard root pin" }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Growth constraints" }),
+    ).not.toBeChecked();
     // The scale/weight fields only appear once their feature is on.
     expect(screen.queryByLabelText(/Pin gate scale/)).toBeNull();
     expect(screen.queryByLabelText(/Growth margin/)).toBeNull();
@@ -448,8 +468,12 @@ describe("SolverView", () => {
 
     // There is no front to impose the interface conditions on without the
     // geometry, so both switches stay unusable until it is on.
-    expect(screen.getByRole("switch", { name: "Sharp interface" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Allow pinch-off" })).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Sharp interface" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Allow pinch-off" }),
+    ).toBeDisabled();
 
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
     fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
@@ -472,7 +496,9 @@ describe("SolverView", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
 
     // Left set, the request would be a 422 the user never asked for.
-    expect(screen.getByRole("switch", { name: "Sharp interface" })).not.toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Sharp interface" }),
+    ).not.toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -740,12 +766,18 @@ describe("SolverView", () => {
     expect(screen.getByLabelText(/Learning rate/)).toBeDisabled();
     // The accuracy controls are fixed by the original run too (resume ignores them).
     expect(screen.getByLabelText(/Weighting/)).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Causal weighting" })).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Causal weighting" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("switch", { name: "Adaptive collocation" }),
     ).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Hard root pin" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Front geometry" })).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Hard root pin" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("switch", { name: "Front geometry" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("switch", { name: "Growth constraints" }),
     ).toBeDisabled();
@@ -1038,5 +1070,30 @@ describe("solver components", () => {
     expect(container.querySelectorAll("line.chart-marker")).toHaveLength(1);
     const empty = render(<LossChart records={[]} />);
     expect(empty.container.querySelectorAll("path.chart-line")).toHaveLength(0);
+  });
+});
+
+describe("SolverView film pressure", () => {
+  it("gates the film-pressure switch on the sharp interface", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(
+      screen.getByRole("switch", { name: "Film pressure" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Film pressure" }));
+
+    // Turning the jump condition off must take its correction with it.
+    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
+    expect(
+      screen.getByRole("switch", { name: "Film pressure" }),
+    ).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).film_pressure).toBe(false);
   });
 });

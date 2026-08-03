@@ -527,6 +527,7 @@ def _configure(
         f"model.front_geometry={str(request.front_geometry).lower()}",
         f"model.sharp_interface={str(request.sharp_interface).lower()}",
         f"model.allow_pinch={str(request.allow_pinch).lower()}",
+        f"model.film_pressure={str(request.film_pressure).lower()}",
         f"training.alpha_eps_anneal_steps={request.alpha_eps_anneal_steps}",
         f"training.alpha_eps_final={request.alpha_eps_final}",
         f"training.kinematics={str(request.kinematics).lower()}",
