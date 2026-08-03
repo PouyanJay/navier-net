@@ -307,6 +307,7 @@ def energy_residuals(
     eps: float = KAPPA_EPS,
     c: torch.Tensor | None = None,
     pulse: NucleationPulse | None = None,
+    two_way_closure: bool = False,
 ) -> EnergyResiduals:
     """Energy advection-diffusion with wall heating and the two-way evaporation
     closure. Needs ``T`` (and the ``s`` field for the mass consistency).
@@ -336,7 +337,18 @@ def energy_residuals(
     # over-scales the source ~120x -> unphysical interface velocity that collapses
     # alpha (see tests). Detach the flux target so this one-way penalty trains ``s``
     # alone and cannot flatten the interface (delta) or perturb theta to cheat.
-    src_closure = model.source(x, cx) - (1.0 - 1.0 / rho_ratio) * evap.detach()
+    # Which way the closure can push. Detaching the whole target makes it
+    # ONE-WAY: it pulls the source down to the drive and can never raise the
+    # drive, so no weight on it will ever move theta. With `two_way_closure` only
+    # the interfacial area is detached, so the closure may raise the temperature
+    # to justify the source it observes -- but still cannot flatten the interface
+    # to satisfy itself, which is what the detach was there to prevent.
+    target = (
+        groups["Ja"] * (theta / r_int_star) * delta.detach()
+        if two_way_closure
+        else evap.detach()
+    )
+    src_closure = model.source(x, cx) - (1.0 - 1.0 / rho_ratio) * target
 
     # Wall heating gated by liquid contact: the uniform bottom-wall flux plus, when
     # enabled, the localized nucleation pulse that seeds the bubble at the fixed cavity.

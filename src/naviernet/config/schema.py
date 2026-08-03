@@ -247,6 +247,16 @@ class TrainingConfig:
     # NB the *aggregate* val IoU is surfaced only for joint runs (``evaluate_joint``);
     # a single-dataset CLI run honours ``val_fraction`` in training but ``evaluate``
     # does not report a separate ``iou_val`` for it.
+    # Let the evaporation mass closure push the DRIVE up to the source, not only
+    # pull the source down to the drive. The shipped closure detaches its whole
+    # target, so it is one-way and structurally cannot raise the temperature at
+    # any weight -- measured, at weight 10 it closed an 82x gap by shrinking the
+    # source 6x while theta did not move. That matters because the energy
+    # equation is too weakly forced to determine theta (see `q_wall_star`), and
+    # the source is the only evaporation quantity the data constrains, through
+    # the bubble's growth. Only `theta` is freed; the interfacial area stays
+    # detached, so the closure still cannot flatten the interface to cheat.
+    evap_closure_two_way: bool = False
     # Interface sharpening: anneal `model.alpha_eps` geometrically down to
     # `alpha_eps_final` over this many steps (0 = off, the interface thickness
     # holds where it is configured). alpha = sigmoid(phi / alpha_eps) spreads the

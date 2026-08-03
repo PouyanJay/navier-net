@@ -130,6 +130,9 @@ class LossContext:
                 self.model.r_int_star,
                 c=self.c,
                 pulse=self._nucleation_pulse(),
+                two_way_closure=bool(
+                    getattr(self.model.cfg.training, "evap_closure_two_way", False)
+                ),
             )
         return self._energy
 
