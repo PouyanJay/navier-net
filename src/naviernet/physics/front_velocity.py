@@ -192,6 +192,8 @@ def _normal_profile_loss(ctx: FrontVelocityContext, plan: FrontVelocityPlan) -> 
 
     bins = _bin_index(plan, front, pair)
     n_bins = plan.times.shape[0] * plan.bins_per_time
+    # Masked once, here: an unusable sample contributes nothing to either sum and
+    # nothing to the count, so each bin averages exactly the samples it measured.
     model_sum = _bin_sum(front.normal_speed * usable, bins, n_bins)
     measured_sum = _bin_sum(measured * usable, bins, n_bins)
     counts = _bin_sum(usable, bins, n_bins)
@@ -234,8 +236,11 @@ def _pair_index(plan: FrontVelocityPlan, t: torch.Tensor) -> torch.Tensor:
 def _sample_rasters(
     plan: FrontVelocityPlan, points: torch.Tensor, pair: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Bilinearly sample the measured velocity at ``points``, with a 0/1 weight
-    saying whether that sample is a measurement at all.
+    """Bilinearly sample the measured velocity at ``points``, and a 0/1 weight
+    saying whether that sample is a measurement at all -- 0 outside the rasters,
+    or where any of the four surrounding pixels had no usable measurement. The
+    velocity is returned unmasked; the caller applies the weight once, where it
+    also divides by it.
 
     Sampling the measured field at the MODEL's front (rather than pairing points
     between the two contours) is what makes this well-defined while the two are
@@ -272,7 +277,7 @@ def _sample_rasters(
 
         weight = interpolate(plan.weight)
         usable = inside * (weight > 1.0 - VALID_TOL).float()
-        return (interpolate(plan.v_n) * usable).unsqueeze(1), usable.unsqueeze(1)
+        return interpolate(plan.v_n).unsqueeze(1), usable.unsqueeze(1)
 
 
 def _bin_index(plan: FrontVelocityPlan, front, pair: torch.Tensor) -> torch.Tensor:
