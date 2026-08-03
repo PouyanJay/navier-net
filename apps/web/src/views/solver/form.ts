@@ -114,8 +114,10 @@ export const FORM_DEFAULTS: SolverFormState = {
   // term. Front-geometry-gated -- it supervises that construction's own normal
   // speed, which nothing else has.
   front_velocity: false,
-  fv_weight: 1,
-  fv_apex_weight: 1,
+  // 10, matching the trainer and the API: these terms sit outside the
+  // rebalancer, and at 1 they are measurably inert.
+  fv_weight: 10,
+  fv_apex_weight: 10,
 };
 
 /** Loss-weighting schemes. "gradnorm" is the live rebalancer (needs a hand-picked

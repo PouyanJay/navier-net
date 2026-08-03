@@ -353,8 +353,14 @@ class TrainingConfig:
     # Requires `model.front_geometry` (there is no explicit front, and no
     # `normal_speed`, without it). Off by default -> the objective is unchanged.
     front_velocity: bool = False
-    fv_weight: float = 1.0  # binned normal-velocity profile along the front
-    fv_apex_weight: float = 1.0  # nose-apex 2-D displacement (a true (vx, vy))
+    # 10, not 1. These terms sit outside the gradient-norm rebalancer by design
+    # (they are functionals, not pointwise residuals), so nothing corrects a
+    # weight that is too small to act -- and at 1.0 their combined gradient norm
+    # measures 0.094 against the data term's 1.66, which is 1/18th. Benched, a
+    # run at weight 1 scored 0.871/0.929 against a baseline 0.872/0.928: the same
+    # run. A flag whose default makes it inert is a switch that does nothing.
+    fv_weight: float = 10.0  # binned normal-velocity profile along the front
+    fv_apex_weight: float = 10.0  # nose-apex 2-D displacement (a true (vx, vy))
     # Front samples averaged into each profile bin -- the knob is stated this way
     # round deliberately. Averaging within a bin is the ONLY thing keeping
     # single-pixel mask noise out of the learned rate, and a bin count says

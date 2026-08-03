@@ -383,8 +383,11 @@ class RunLaunchRequest(BaseModel):
     # (fv_samples_per_bin, fv_smooth_px) keep their schema defaults, CLI-tunable
     # only, like the fine kinematics sub-parameters. Both weights sit near O(1).
     front_velocity: bool = False
-    fv_weight: float = Field(default=1.0, ge=0.0, le=100.0)
-    fv_apex_weight: float = Field(default=1.0, ge=0.0, le=100.0)
+    # Both default to 10, matching the trainer: these terms sit outside the
+    # rebalancer, and at 1.0 they are measurably inert (benched, a weight-1 run
+    # reproduced the baseline exactly).
+    fv_weight: float = Field(default=10.0, ge=0.0, le=100.0)
+    fv_apex_weight: float = Field(default=10.0, ge=0.0, le=100.0)
 
     def resolved_datasets(self) -> list[str]:
         """The datasets a new run trains on: `datasets` if given, else `[dataset]`.

@@ -1197,8 +1197,8 @@ describe("SolverView measured front velocity", () => {
     await waitFor(() => expect(posts).toHaveLength(1));
     const body = posts[0] as Record<string, unknown>;
     expect(body.front_velocity).toBe(true);
-    expect(body.fv_weight).toBe(1);
-    expect(body.fv_apex_weight).toBe(1);
+    expect(body.fv_weight).toBe(10);
+    expect(body.fv_apex_weight).toBe(10);
   });
 
   it("reveals its weight fields only while it is on", async () => {
