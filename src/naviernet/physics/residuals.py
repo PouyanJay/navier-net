@@ -109,14 +109,28 @@ def source_penalty(residuals: StageAResiduals) -> torch.Tensor:
 
 
 def boundary_losses(
-    model, inlet_x, wall_x, u_inlet: float, c: torch.Tensor | None = None
+    model,
+    inlet_x,
+    wall_x,
+    u_inlet: float,
+    c: torch.Tensor | None = None,
+    theta_in: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Inlet plug velocity and no-slip side walls (Stage A: velocity only)."""
+    """Inlet plug velocity and no-slip side walls (Stage A: velocity only).
+
+    ``theta_in`` adds the inlet temperature condition. It is passed only when the
+    superheat is depletable: with the default parameterization ``theta_in`` is
+    already the field's floor and anchoring it here would say nothing, but once
+    the floor is saturation the liquid arriving at the inlet still has to arrive
+    at its inlet superheat.
+    """
     u_in, v_in = model.velocity(inlet_x, _ctx(c, inlet_x))
     u_wall, v_wall = model.velocity(wall_x, _ctx(c, wall_x))
 
     inlet = ((u_in - u_inlet) ** 2).mean() + (v_in**2).mean()
     wall = (u_wall**2).mean() + (v_wall**2).mean()
+    if theta_in is not None:
+        inlet = inlet + ((model.temperature(inlet_x, _ctx(c, inlet_x)) - theta_in) ** 2).mean()
     return inlet + wall
 
 
@@ -293,6 +307,7 @@ def energy_residuals(
     eps: float = KAPPA_EPS,
     c: torch.Tensor | None = None,
     pulse: NucleationPulse | None = None,
+    two_way_closure: bool = False,
 ) -> EnergyResiduals:
     """Energy advection-diffusion with wall heating and the two-way evaporation
     closure. Needs ``T`` (and the ``s`` field for the mass consistency).
@@ -322,7 +337,18 @@ def energy_residuals(
     # over-scales the source ~120x -> unphysical interface velocity that collapses
     # alpha (see tests). Detach the flux target so this one-way penalty trains ``s``
     # alone and cannot flatten the interface (delta) or perturb theta to cheat.
-    src_closure = model.source(x, cx) - (1.0 - 1.0 / rho_ratio) * evap.detach()
+    # Which way the closure can push. Detaching the whole target makes it
+    # ONE-WAY: it pulls the source down to the drive and can never raise the
+    # drive, so no weight on it will ever move theta. With `two_way_closure` only
+    # the interfacial area is detached, so the closure may raise the temperature
+    # to justify the source it observes -- but still cannot flatten the interface
+    # to satisfy itself, which is what the detach was there to prevent.
+    target = (
+        groups["Ja"] * (theta / r_int_star) * delta.detach()
+        if two_way_closure
+        else evap.detach()
+    )
+    src_closure = model.source(x, cx) - (1.0 - 1.0 / rho_ratio) * target
 
     # Wall heating gated by liquid contact: the uniform bottom-wall flux plus, when
     # enabled, the localized nucleation pulse that seeds the bubble at the fixed cavity.

@@ -419,6 +419,9 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("highest_t");
 
+    // The front geometry is the default and pins the root exactly, so a run that
+    // wants the SOFT pin has to turn it off first.
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
     fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
     expect(screen.getByLabelText(/Pin gate scale/)).toHaveValue(0.1);
     fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
@@ -446,8 +449,9 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    // Pin on, then geometry on: the pin is forced off and disabled (the
-    // geometry pins exactly by construction -- the trainer rejects the combo).
+    // Geometry off, pin on, geometry back on: the pin is forced off and disabled
+    // (the geometry pins exactly by construction -- the trainer rejects the combo).
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
     fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
     const pin = screen.getByRole("switch", { name: "Hard root pin" });
@@ -467,7 +471,8 @@ describe("SolverView", () => {
     await screen.findByLabelText("highest_t");
 
     // There is no front to impose the interface conditions on without the
-    // geometry, so both switches stay unusable until it is on.
+    // geometry, so both switches go unusable the moment it is turned off.
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
     expect(
       screen.getByRole("switch", { name: "Sharp interface" }),
     ).toBeDisabled();
@@ -475,7 +480,13 @@ describe("SolverView", () => {
       screen.getByRole("switch", { name: "Allow pinch-off" }),
     ).toBeDisabled();
 
+    // Bringing the geometry back does NOT silently restore what it cleared --
+    // re-enabling a prerequisite is not consent to everything that hung off it.
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    expect(
+      screen.getByRole("switch", { name: "Sharp interface" }),
+    ).not.toBeChecked();
+
     fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
     fireEvent.click(screen.getByRole("switch", { name: "Allow pinch-off" }));
 
@@ -491,8 +502,6 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
-    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
 
     // Left set, the request would be a 422 the user never asked for.
@@ -510,8 +519,10 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("highest_t");
 
+    // Sharp interface is the default, so the fields are there from the start.
+    expect(screen.getByLabelText(/Sharpening steps/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
     expect(screen.queryByLabelText(/Sharpening steps/)).toBeNull();
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
     fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
     expect(screen.getByLabelText(/Sharpening steps/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Final/)).toBeInTheDocument();
@@ -522,6 +533,7 @@ describe("SolverView", () => {
     render(<SolverView />);
     await screen.findByLabelText("highest_t");
 
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
     fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
     fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
     expect(screen.getByLabelText(/Pin gate scale/)).toBeInTheDocument();
@@ -1079,21 +1091,47 @@ describe("SolverView film pressure", () => {
     render(<SolverView />);
     await screen.findByLabelText("highest_t");
 
+    // It corrects the jump, so it goes unusable without it.
+    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
     expect(
       screen.getByRole("switch", { name: "Film pressure" }),
     ).toBeDisabled();
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
-    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
-    fireEvent.click(screen.getByRole("switch", { name: "Film pressure" }));
-
-    // Turning the jump condition off must take its correction with it.
+    // Turning the jump condition off took its correction with it, and bringing
+    // the jump back does not silently restore it.
     fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
     expect(
       screen.getByRole("switch", { name: "Film pressure" }),
     ).not.toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Film pressure" }),
+    ).not.toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
     expect((posts[0] as Record<string, unknown>).film_pressure).toBe(false);
+  });
+});
+
+describe("SolverView defaults", () => {
+  it("posts the recommended physics recipe without the user touching anything", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // Hitting Run straight away must give the best-known recipe. Every measured
+    // gain in this line of work was built on it.
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.front_geometry).toBe(true);
+    expect(body.sharp_interface).toBe(true);
+    expect(body.film_pressure).toBe(true);
+    expect(body.depletable_superheat).toBe(true);
+    expect(body.evap_closure_two_way).toBe(true);
+    // Not in the recipe: these traded one number for another when measured.
+    expect(body.allow_pinch).toBe(false);
+    expect(body.alpha_eps_anneal_steps).toBe(0);
+    expect(body.hard_pin).toBe(false);
   });
 });

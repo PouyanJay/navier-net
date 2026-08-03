@@ -348,10 +348,21 @@ def test_launch_with_hard_pin_and_kinematics_composes_and_trains(
 ):
     """The hard root pin and the kinematic growth constraints travel from the
     request to the composed config and the run completes. The evap-floor weight
-    stays at the platform default 0 unless explicitly sent."""
+    stays at the platform default 0 unless explicitly sent.
+
+    The front geometry is the default now and pins the root exactly by
+    construction, so a run that wants the SOFT pin has to say so by turning it
+    off -- the two are mutually exclusive.
+    """
     run_id = client.post(
         "/api/runs",
-        json={**TINY_RUN, "hard_pin": True, "kinematics": True, "kin_margin_frac": 0.5},
+        json={
+            **TINY_RUN,
+            "front_geometry": False,
+            "hard_pin": True,
+            "kinematics": True,
+            "kin_margin_frac": 0.5,
+        },
     ).json()["run_id"]
     final = [e["data"] for e in read_stream(client, run_id) if e["event"] == "status"][-1]
     assert final["state"] == "done", f"run failed: {final.get('message')}"
@@ -523,13 +534,18 @@ def test_joint_run_writes_per_dataset_trajectories(client: TestClient, repo_root
 def test_launch_rejects_sharp_interface_without_the_front(client):
     """There is no front to sample without the geometry: 422 at the boundary with
     an actionable message, not a failure deep in the worker."""
-    r = client.post("/api/runs", json={**TINY_RUN, "sharp_interface": True})
+    r = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "front_geometry": False, "sharp_interface": True},
+    )
     assert r.status_code == 422
     assert "front_geometry" in r.text
 
 
 def test_launch_rejects_pinching_without_the_front(client):
-    r = client.post("/api/runs", json={**TINY_RUN, "allow_pinch": True})
+    r = client.post(
+        "/api/runs", json={**TINY_RUN, "front_geometry": False, "allow_pinch": True}
+    )
     assert r.status_code == 422
     assert "front_geometry" in r.text
 
@@ -566,7 +582,59 @@ def test_launch_rejects_film_pressure_without_the_sharp_interface(client):
     """It corrects the Young-Laplace jump; without that condition there is
     nothing for it to correct."""
     r = client.post(
-        "/api/runs", json={**TINY_RUN, "front_geometry": True, "film_pressure": True}
+        "/api/runs",
+        json={**TINY_RUN, "sharp_interface": False, "film_pressure": True},
     )
     assert r.status_code == 422
     assert "sharp_interface" in r.text
+
+
+def test_the_defaults_are_the_recommended_physics_recipe(client, repo_root):
+    """Hitting Run without touching anything must give the best-known recipe.
+
+    On a Stage-B series that is the full set: the capsule front, the interface
+    conditions on it, the film-pressure correction, and a superheat that can
+    deplete. Every measured gain in this line of work came from these.
+    """
+    import json
+
+    from naviernet_api.models import RunLaunchRequest
+    from naviernet_api.services.run_manager import _interface_overrides
+    from naviernet_api.settings import Settings
+
+    raw = repo_root / "data" / "raw" / TINY_RUN["dataset"]
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "model.json").write_text(json.dumps({"enabled": ["mom", "energy"]}))
+
+    request = RunLaunchRequest(**TINY_RUN)
+    assert request.front_geometry is True, "the capsule front is the default"
+    assert request.evap_closure_two_way is True
+
+    resolved = _interface_overrides(Settings(repo_root=repo_root), TINY_RUN["dataset"], request)
+    assert "model.sharp_interface=true" in resolved
+    assert "model.film_pressure=true" in resolved
+    assert "model.depletable_superheat=true" in resolved
+
+
+def test_a_stage_a_series_simply_does_not_get_the_stage_b_recipe(client, repo_root):
+    """The conditions read fields a Stage-A series does not train, so the default
+    does not apply there. A default not matching is not a silent downgrade -- and
+    the run still launches, which is the point."""
+    from naviernet_api.models import RunLaunchRequest
+    from naviernet_api.services.run_manager import _interface_overrides
+    from naviernet_api.settings import Settings
+
+    resolved = _interface_overrides(
+        Settings(repo_root=repo_root), TINY_RUN["dataset"], RunLaunchRequest(**TINY_RUN)
+    )
+    assert "model.sharp_interface=false" in resolved
+    assert "model.film_pressure=false" in resolved
+    assert "model.depletable_superheat=false" in resolved
+
+
+def test_asking_explicitly_for_an_unsupported_condition_is_rejected(client):
+    """A default that does not fit is silent; an explicit ASK that cannot be
+    honoured is an error naming the fix."""
+    r = client.post("/api/runs", json={**TINY_RUN, "sharp_interface": True})
+    assert r.status_code == 422
+    assert "'p'" in r.text and "Stage-B" in r.text

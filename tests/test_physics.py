@@ -489,3 +489,23 @@ def test_stage_b_residuals_are_finite_and_shaped():
     for tensor in (res.mom_x, res.mom_y, res.energy, res.src_closure):
         assert tensor.shape == (20, 1)
         assert torch.isfinite(tensor).all()
+
+
+def test_the_wall_source_is_small_because_the_peclet_number_is_large():
+    """A regression against 'fixing' q_wall_star. Substituting dT_ref collapses
+    it to `2 (L/h)^2 / Pe`, so its ~4e-3 magnitude is the Peclet number, not a
+    scaling slip -- the liquid advects through far faster than the wall heats it.
+
+    This is worth pinning because the consequence is severe: a CONSTANT theta
+    kills every other term in the energy equation, leaving a residual of just
+    q_wall_star. A trained run sits at energy = 1.9e-5 against q_wall_star^2 =
+    1.6e-5 -- the equation alone cannot determine the temperature.
+    """
+    from naviernet.physics.groups import compute_groups
+    from tests.conftest import make_config
+
+    cfg = make_config()
+    groups = compute_groups(cfg)
+    ratio = cfg.scales.L_ref_um / cfg.experiment.channel_height_um
+
+    assert groups["q_wall_star"] == pytest.approx(2.0 * ratio**2 / groups["Pe"], rel=1e-6)
