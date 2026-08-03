@@ -455,6 +455,54 @@ def test_a_run_records_both_terms_in_its_history(tmp_path):
     assert {"fv_normal", "fv_apex"} <= set(state["hist"][0])
 
 
+def test_the_profile_term_leaves_the_nose_to_the_apex_term(tmp_path):
+    """Each estimator supervises only where it is valid.
+
+    The level-set difference is first-order in the distance the front travels,
+    and the nose is where that distance is largest against the smallest radius.
+    Measured on a trained run, the nose cap was 10% of the bins and 76% of this
+    term's residual, sitting a signed 0.194 below a model the apex term had
+    correctly pulled onto its tracked displacement. So the nose cap contributes
+    nothing here -- move the model's nose speed and this term must not notice.
+    """
+    from naviernet.physics import front_velocity
+
+    cfg, _, model, plan = _model_and_plan(tmp_path, ["training.fv_apex_weight=0.0"])
+    context = front_velocity.FrontVelocityContext(model, cfg.training)
+    before, _ = front_velocity.front_velocity_losses(context, plan)
+
+    class _FastNose:
+        """The model, but its nose cap reports a wildly different speed."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def front(self, t, n_body, n_cap):
+            front = self._inner.front(t, n_body, n_cap)
+            on_nose = ((front.on_cap > 0) & (front.u >= 0.5)).float()
+            return front._replace(normal_speed=front.normal_speed + 10.0 * on_nose)
+
+    after, _ = front_velocity.front_velocity_losses(
+        front_velocity.FrontVelocityContext(_FastNose(model), cfg.training), plan
+    )
+    assert float(after.detach()) == pytest.approx(float(before.detach()), rel=1e-6)
+
+    # ...but the root cap and the body are still very much supervised.
+    class _FastBody(_FastNose):
+        def front(self, t, n_body, n_cap):
+            front = self._inner.front(t, n_body, n_cap)
+            on_body = (front.on_cap <= 0).float()
+            return front._replace(normal_speed=front.normal_speed + 10.0 * on_body)
+
+    body, _ = front_velocity.front_velocity_losses(
+        front_velocity.FrontVelocityContext(_FastBody(model), cfg.training), plan
+    )
+    assert float(body.detach()) > 10 * float(before.detach())
+
+
 def test_a_front_that_has_left_the_measured_domain_fails_loudly(tmp_path):
     """The diverged-run path. With nothing measurable anywhere on the front, the
     term would otherwise average an empty set and contribute a quiet zero --

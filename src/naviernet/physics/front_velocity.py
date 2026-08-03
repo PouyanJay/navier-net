@@ -212,11 +212,13 @@ def _normal_profile_loss(ctx: FrontVelocityContext, plan: FrontVelocityPlan) -> 
 
     The model side is an instantaneous ``dP/dt . n`` and the measured side a
     one-frame difference; they agree to first order in ``dt``, which is the same
-    order the measurement itself is good to.
+    order the measurement itself is good to -- everywhere the front is not the
+    nose, which :func:`_off_nose_cap` explains and excludes.
     """
     front = ctx.model.front(plan.times, plan.n_body, plan.n_cap)
     pair = _pair_index(plan, front.points[:, 2:3])
     measured, usable = _sample_rasters(plan, front.points, pair)
+    usable = usable * _off_nose_cap(front)
 
     bins = _bin_index(plan, front, pair)
     n_bins = plan.times.shape[0] * plan.bins_per_time
@@ -237,6 +239,32 @@ def _normal_profile_loss(ctx: FrontVelocityContext, plan: FrontVelocityPlan) -> 
     counts = counts[occupied]
     difference = (model_sum[occupied] - measured_sum[occupied]) / (counts * plan.v_ref)
     return (difference**2).mean()
+
+
+def _off_nose_cap(front: FrontSamples) -> torch.Tensor:
+    """1 where the level-set estimate is trustworthy, 0 on the nose cap.
+
+    The estimate is a difference taken at a fixed point over a whole frame, so it
+    is first-order in the distance the front travels -- and the nose is where
+    that distance is largest against the smallest radius of curvature. Measured
+    on a trained run (fvb-w10-s0, Series-1): the nose cap is 10% of the profile
+    bins but carried 76% of this term's entire residual, at a mean squared error
+    of 0.054 against 0.0014 on the body. Worse, the error is signed and one-way
+    -- the model sat +0.194 ABOVE the measurement there, because ``fv_apex`` had
+    correctly pulled the nose onto its tracked displacement and this term was
+    pulling it back down. Two terms disagreeing at one point, with the biased one
+    outvoting the exact one four to one.
+
+    So each estimator supervises only where it is valid: the profile term carries
+    the body, where the front moves ~2 px per frame against a ~75 px radius and
+    the estimate is solid, and the nose is left to ``fv_apex``, which tracks a
+    real feature and involves no level-set approximation at all.
+
+    The ROOT cap stays in. The root barely moves, so its displacement is small
+    and the estimate is good there (measured error 0.0003), and "the root does
+    not move" is a real thing to hold the front to.
+    """
+    return (~((front.on_cap > 0) & (front.u >= 0.5))).float()
 
 
 def _apex_loss(ctx: FrontVelocityContext, plan: FrontVelocityPlan) -> torch.Tensor:
