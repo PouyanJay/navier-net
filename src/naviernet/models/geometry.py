@@ -90,14 +90,21 @@ class FrontSamples(NamedTuple):
     ``normal`` is the outward unit normal ``(N, 2)`` -- out of the vapour --
     and ``normal_speed`` is how fast the front advances along it. The speed is
     the front's OWN motion, taken from the parameterization; equating it to
-    ``u.n`` is the kinematic condition, and it is also the local capillary
-    number the Bretherton film correction reads.
+    ``u.n`` is the kinematic condition, it is the local capillary number the
+    Bretherton film correction reads, and it is what the measured front velocity
+    supervises.
+
+    ``angle`` is the cap sweep angle in ``[-pi/2, pi/2]``, and 0 on the body. It
+    is what locates a sample ALONG a cap: ``u`` is pinned at 0 or 1 there, so
+    without it the two caps are each a single point as far as a consumer can
+    tell -- which is not enough to bin a profile over them.
     """
 
     points: torch.Tensor
     u: torch.Tensor
     side: torch.Tensor
     on_cap: torch.Tensor
+    angle: torch.Tensor
     kappa_par: torch.Tensor
     normal: torch.Tensor
     normal_speed: torch.Tensor
@@ -361,16 +368,30 @@ class GeometricInterface(nn.Module):
             y = self.centerline(torch.zeros_like(tt), tt, ctx)
         return torch.tensor([anchors.x_root, float(y), float(t)], device=device)
 
+    def apex(self, t: torch.Tensor, ctx: GeometryContext | None = None) -> torch.Tensor:
+        """The nose apex ``(x, y)`` at times ``t`` of shape ``(N, 1)``, as
+        ``(N, 2)``. Batched and differentiable -- ``nose_point``'s trainable
+        counterpart.
+
+        This is the one point on the interface with an honest frame-to-frame
+        CORRESPONDENCE. Everywhere else a curve sliding along itself looks
+        identical between frames, so only the normal component of the motion is
+        observable; the apex is geometrically distinguishable, so its full 2-D
+        displacement is measurable and can be supervised directly.
+        """
+        ctx = ctx or GeometryContext()
+        return torch.cat(
+            [self.nose(t, ctx), self.centerline(torch.ones_like(t), t, ctx)], dim=1
+        )
+
     def nose_point(self, t: float, ctx: GeometryContext | None = None) -> torch.Tensor:
         """The (x, y, t) point the interface passes through at the nose -- the
         capsule's far closure, ``root_point``'s mirror."""
-        ctx = ctx or GeometryContext()
         device = self._s0_raw.device
         tt = torch.tensor([[float(t)]], device=device)
         with torch.no_grad():
-            s = self.nose(tt, ctx)
-            y = self.centerline(torch.ones_like(tt), tt, ctx)
-        return torch.tensor([float(s), float(y), float(t)], device=device)
+            apex = self.apex(tt, ctx).reshape(-1)
+        return torch.tensor([float(apex[0]), float(apex[1]), float(t)], device=device)
 
     def _radius(
         self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
@@ -530,7 +551,14 @@ class GeometricInterface(nn.Module):
         speed = self._normal_speed(position, normal, query.t)
         points = torch.cat([position, query.t], dim=1)
         return FrontSamples(
-            points, query.u.detach(), query.side, query.on_cap, kappa, normal, speed
+            points,
+            query.u.detach(),
+            query.side,
+            query.on_cap,
+            query.angle,
+            kappa,
+            normal,
+            speed,
         )
 
     @staticmethod

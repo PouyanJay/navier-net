@@ -251,6 +251,48 @@ class BubbleDataset:
             )
         return edges[1]
 
+    def front_apex(self, row: int) -> tuple[float, float]:
+        """The measured nose apex ``(x*, y*)`` of one row: the front edge, and
+        the centre of the vapour column standing at it.
+
+        The interface's one geometrically distinguishable point, so the only
+        place a true 2-D displacement can be read between two frames -- along a
+        smooth arc the tangential motion is invisible, and a curve sliding along
+        itself looks identical frame to frame.
+        """
+        x_front = self._front_x(row)
+        # The grid is uniform and ``_front_x`` returned one of its own values, so
+        # this recovers the exact column rather than a nearest neighbour.
+        col = int(np.argmin(np.abs(self.x - x_front)))
+        vapor_rows = np.nonzero(self._vapor(row)[:, col])[0]
+        if vapor_rows.size == 0:
+            raise ValueError(
+                f"frame {self.frame_numbers[row]} reports a front at x*={x_front:.4f} but "
+                f"no vapour column there (column {col}) -- the masks look degenerate."
+            )
+        return x_front, float(self.y[vapor_rows].mean())
+
+    @cached_property
+    def supervised_pairs(self) -> list[tuple[int, int]]:
+        """Consecutive event-row pairs ``(k, k+1)`` a measured front velocity may
+        honestly be taken over.
+
+        Two conditions, both necessary. Both rows must be *training-visible*:
+        differencing a held-out frame's mask would turn the validation set into a
+        training target, which is exactly the leak the holdout exists to prevent
+        -- so a pair touching one is dropped, never interpolated across. And the
+        two rows must be ONE camera frame apart: an excluded frame leaves a real
+        gap on the time axis, and a difference taken across it is a coarser
+        estimate of a different interval, not the same measurement.
+        """
+        visible = set(self._training_visible_event_rows())
+        return [
+            (row, row + 1)
+            for row in range(self.n_event - 1)
+            if {row, row + 1} <= visible
+            and self.frame_numbers[row + 1] - self.frame_numbers[row] == 1
+        ]
+
     @cached_property
     def initial_front(self) -> float:
         """The measured front x* of the FIRST training-visible event frame --

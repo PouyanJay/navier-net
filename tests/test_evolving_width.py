@@ -91,6 +91,12 @@ def test_the_deformation_can_reach_zero_width_so_the_neck_can_pinch(tmp_path):
 def test_the_shape_still_varies_along_the_bubble(tmp_path):
     """The deformation is one direction in time, but that direction is a full
     function of u -- so a neck (a dip at mid-bubble) stays expressible."""
+    # Seeded, because otherwise this assertion is a coin toss: the profile's
+    # variation comes from a RANDOM deformation direction on a randomly
+    # initialised base, and measured over 12 ambient states three landed below
+    # the threshold. A direction that happens to be flat in u says nothing about
+    # whether a neck is expressible, which is what the test is actually about.
+    torch.manual_seed(0)
     geo, data, _ = _geometry(tmp_path, EVOLVING)
     with torch.no_grad():
         geo.width_rate[-1].weight.normal_(0.0, 2.0)

@@ -30,7 +30,7 @@ from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.geometry import GeometryPriors
 from naviernet.models.pinn import BoundPINN, BubblePINN
-from naviernet.physics import kinematics, registry, weighting
+from naviernet.physics import front_velocity, kinematics, registry, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
@@ -225,13 +225,49 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         )
 
 
-def _validate_training_config(tcfg, fields, alpha_eps: float | None = None) -> None:
+def _validate_training_config(
+    tcfg, fields, alpha_eps: float | None = None, model_cfg=None
+) -> None:
     """Every up-front training-config validation, shared by both loops."""
     _validate_causal(tcfg)
     _validate_weighting(tcfg)
     _validate_kinematics(tcfg, fields)
+    if model_cfg is not None:
+        _validate_front_velocity(tcfg, model_cfg)
     if alpha_eps is not None:
         _validate_sharpening(tcfg, alpha_eps)
+
+
+def _validate_front_velocity(tcfg, model_cfg) -> None:
+    """Reject a front-velocity config that cannot supervise anything, loudly and
+    before any measurement is taken."""
+    if not tcfg.front_velocity:
+        return
+    if not bool(getattr(model_cfg, "front_geometry", False)):
+        raise ValueError(
+            "training.front_velocity supervises the explicit front's own normal "
+            "speed, which only the front geometry has -- it requires "
+            "model.front_geometry=true. Enable the front geometry, or turn "
+            "training.front_velocity off."
+        )
+    if tcfg.fv_samples_per_bin < 1:
+        raise ValueError(
+            f"training.fv_samples_per_bin={tcfg.fv_samples_per_bin} must be >= 1: a bin "
+            f"averaging no samples is not a measurement."
+        )
+    if tcfg.fv_smooth_px < 0:
+        raise ValueError(
+            f"training.fv_smooth_px={tcfg.fv_smooth_px} must be >= 0 (a blur radius)"
+        )
+    for key in ("fv_weight", "fv_apex_weight"):
+        if getattr(tcfg, key) < 0:
+            raise ValueError(f"training.{key}={getattr(tcfg, key)} must be >= 0")
+    if tcfg.fv_weight == 0 and tcfg.fv_apex_weight == 0:
+        raise ValueError(
+            "training.front_velocity=true with both training.fv_weight and "
+            "training.fv_apex_weight at 0 measures the front and then ignores it. "
+            "Give one of them a weight, or turn training.front_velocity off."
+        )
 
 
 def _validate_sharpening(tcfg, alpha_eps: float) -> None:
@@ -338,6 +374,37 @@ def _kinematic_plan(cfg, data: BubbleDataset, device) -> kinematics.KinematicPla
         float(plan.points[:, 2].min()),
         rate,
     )
+    return plan
+
+
+def _front_velocity_plan(
+    cfg, data: BubbleDataset, device
+) -> front_velocity.FrontVelocityPlan | None:
+    """The run's measured front kinematics when the term is on, else ``None``.
+    Measured once (deterministic, no RNG) so resume supervises against exactly
+    the same numbers."""
+    tcfg = cfg.training
+    if not tcfg.front_velocity:
+        return None
+    plan = front_velocity.build_plan(data, tcfg, cfg.model, device)
+    log.info(
+        "front velocity on: %d frame pairs %s, v_ref=%.4f, %d body / %d cap bins "
+        "at %d samples each, blur %.1f px",
+        len(plan.pairs),
+        [(data.frame_numbers[a], data.frame_numbers[b]) for a, b in plan.pairs],
+        plan.v_ref,
+        plan.bins_body,
+        plan.bins_cap,
+        int(tcfg.fv_samples_per_bin),
+        float(tcfg.fv_smooth_px),
+    )
+    skipped = sorted(set(range(data.n_event - 1)) - {row for row, _ in plan.pairs})
+    if skipped:
+        log.info(
+            "front velocity: no target from frames %s (held out of supervision, or "
+            "across an excluded frame)",
+            [data.frame_numbers[row] for row in skipped],
+        )
     return plan
 
 
@@ -859,7 +926,7 @@ def train(
         return _train_joint(cfg, paths, steps=steps, on_log=on_log)
 
     tcfg = cfg.training
-    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps)
+    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps, cfg.model)
     rba = tcfg.weighting == "rba"
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
@@ -876,6 +943,7 @@ def train(
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
+    fv_plan = _front_velocity_plan(cfg, data, device)
     front_times = _front_times(cfg, data, device)
 
     equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg))
@@ -1003,12 +1071,21 @@ def train(
                 _kin_schedule(step, first_step, tcfg),
             )
             total = total + kin_total
+        fv_record: dict[str, float] = {}
+        if fv_plan is not None:
+            # Outside the causal gate, RBA and the rebalancer, like the kinematic
+            # terms: supervised functionals on the front, not pointwise residuals.
+            fv_total, fv_record = front_velocity.front_velocity_losses(
+                front_velocity.FrontVelocityContext(model, tcfg), fv_plan
+            )
+            total = total + fv_total
         total.backward()
         opt.step()
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
             record.update(kin_record)
+            record.update(fv_record)
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
@@ -1066,6 +1143,9 @@ class _JointDataset:
     front_times: torch.Tensor | None = None
     # The dataset's fixed kinematic quadrature when the constraints are on.
     kin: kinematics.KinematicPlan | None = None
+    # The dataset's measured front kinematics when that supervision is on. Per
+    # dataset, because each is measured from its own masks over its own frames.
+    fv: front_velocity.FrontVelocityPlan | None = None
 
 
 def _load_joint_datasets(
@@ -1104,6 +1184,7 @@ def _load_joint_datasets(
                 geometry=_geometry_priors(cfg, data),
                 front_times=_front_times(cfg, data, device),
                 kin=_kinematic_plan(cfg, data, device),
+                fv=_front_velocity_plan(cfg, data, device),
             )
         )
     return contexts
@@ -1173,6 +1254,25 @@ def _joint_kinematic_losses(
     return torch.stack(totals).mean(), merged
 
 
+def _joint_front_velocity_losses(
+    model, contexts, tcfg
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """The front-velocity total averaged over the datasets, each measured over its
+    own frames and evaluated through its own bound view -- so one condition's
+    front is never scored against another's measurement."""
+    totals = []
+    merged: dict[str, float] = {}
+    for cx in contexts:
+        view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
+        fv_total, fv_record = front_velocity.front_velocity_losses(
+            front_velocity.FrontVelocityContext(view, tcfg), cx.fv
+        )
+        totals.append(fv_total)
+        for name, value in fv_record.items():
+            merged[name] = merged.get(name, 0.0) + value / len(contexts)
+    return torch.stack(totals).mean(), merged
+
+
 def _train_joint(
     cfg,
     paths: RunPaths,
@@ -1189,7 +1289,7 @@ def _train_joint(
     untouched; this runs only when ``cfg.datasets`` names more than one series.
     """
     tcfg = cfg.training
-    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps)
+    _validate_training_config(tcfg, cfg.model.fields, cfg.model.alpha_eps, cfg.model)
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
@@ -1270,12 +1370,17 @@ def _train_joint(
                 model, contexts, tcfg, _kin_schedule(step, first_step, tcfg)
             )
             total = total + kin_total
+        fv_record: dict[str, float] = {}
+        if tcfg.front_velocity:
+            fv_total, fv_record = _joint_front_velocity_losses(model, contexts, tcfg)
+            total = total + fv_total
         total.backward()
         opt.step()
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
             record.update(kin_record)
+            record.update(fv_record)
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
