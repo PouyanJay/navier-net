@@ -220,6 +220,7 @@ class GeometricInterface(nn.Module):
         priors: GeometryPriors,
         allow_pinch: bool = False,
         n_cond: int = 0,
+        evolving_width: bool = False,
     ):
         super().__init__()
         # The REFERENCE dataset's anchors. A single-dataset run has only these; a
@@ -231,6 +232,7 @@ class GeometricInterface(nn.Module):
         # by default, so the construction is byte-for-byte what it was: the
         # radius is strictly positive and the nose strictly non-retreating.
         self.allow_pinch = bool(allow_pinch)
+        self.evolving_width = bool(evolving_width)
         self._y_half = _half_height(priors)
         # The reference dataset's measured start and speed. Every per-dataset
         # quantity below is expressed RELATIVE to these, so one shared set of
@@ -258,10 +260,20 @@ class GeometricInterface(nn.Module):
         # a joint run's other conditions start here and the conditioning vector
         # -- which carries the regime -- has to move them.
         fraction = min(priors.w0 / self._y_half, 1.0)
-        self.width_net = _mlp(
-            2 + self.n_cond,
-            out_bias=_logit(0.5 * (1.0 + fraction) if allow_pinch else fraction),
-        )
+        start = _logit(0.5 * (1.0 + fraction) if allow_pinch else fraction)
+        if self.evolving_width:
+            # Two nets of u alone: where the profile STARTS, and which way it
+            # travels. Time enters only through the scalar elongation below, so
+            # the profile cannot decay back to its bias off-data -- it can only
+            # keep going the way it was going. The rate starts at zero, so the
+            # construction still opens as the measured first-frame capsule.
+            self.width_base = _mlp(1 + self.n_cond, out_bias=start)
+            self.width_rate = _mlp(1 + self.n_cond, out_bias=0.0)
+        else:
+            self.width_net = _mlp(
+                2 + self.n_cond,
+                out_bias=start,
+            )
         self.center_net = _mlp(2 + self.n_cond, out_bias=0.0)
         # s(t_min) = x_root + softplus(_s0_raw): initialized so the nose starts
         # at the measured first-training-frame front.
@@ -374,9 +386,35 @@ class GeometricInterface(nn.Module):
         hard the physics pushes for it.
         """
         ctx = ctx or GeometryContext()
-        raw = torch.sigmoid(self.width_net(_with_context(torch.cat([u, t], dim=1), ctx.c)))
+        raw = torch.sigmoid(self._width_logit(u, t, ctx))
         half = _half_height(self._anchors(ctx))
         return half * (2.0 * raw - 1.0 if self.allow_pinch else raw)
+
+    def _width_logit(
+        self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext
+    ) -> torch.Tensor:
+        """The pre-sigmoid width profile.
+
+        With ``evolving_width`` it is ``base(u) + rate(u) * elongation(t)``: one
+        learned direction per station, travelled at the bubble's own elongation.
+        The saturating sigmoid then turns "keep going" into a bounded limit --
+        and where the rate is negative that limit is ZERO WIDTH, which is how a
+        neck is able to pinch rather than merely deepen.
+        """
+        if not self.evolving_width:
+            return self.width_net(_with_context(torch.cat([u, t], dim=1), ctx.c))
+        features = _with_context(u, ctx.c)
+        return self.width_base(features) + self.width_rate(features) * self._elongation(t, ctx)
+
+    def _elongation(self, t: torch.Tensor, ctx: GeometryContext) -> torch.Tensor:
+        """How much longer the bubble is than when it was first measured, as a
+        fraction of that first length. Zero at ``t_min`` and monotone after,
+        because the nose is -- so it carries the nose's own extrapolation
+        guarantee into the shape instead of leaving time to a saturating net.
+        """
+        anchors = self._anchors(ctx)
+        gap = max(anchors.s0 - anchors.x_root, ANCHOR_FLOOR)
+        return (self.nose(t, ctx) - anchors.x_root) / gap - 1.0
 
     def half_width(
         self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None

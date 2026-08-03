@@ -164,6 +164,16 @@ class ModelConfig:
     # rate is unconstrained. Requires `front_geometry`; off by default, so both
     # guarantees stand unless a run asks for the trade.
     allow_pinch: bool = False
+    # Evolving width: deform the profile along a LEARNED DIRECTION at a rate tied
+    # to the bubble's own elongation, instead of letting it be a raw function of
+    # time. A tanh net in t saturates past the trained range and drifts back to
+    # its bias, so the shape RELAXES off-data -- measured, the neck deepens
+    # +0.075/frame through the last supervised frame, rolls off to +0.013, then
+    # REVERSES and un-necks at -0.028/frame. The bubble heals; the real one
+    # detaches. This is the treatment R3 already gave the nose (s = s0 + integral
+    # of a rate, which continues at its last learned rate); the width never got
+    # it. Requires `front_geometry`; off by default.
+    evolving_width: bool = False
     # Sharp-interface physics (R4): drive the shape with the conditions that hold
     # AT a fluid interface -- the Young-Laplace jump and the kinematic condition,
     # sampled on the explicit front -- instead of a bulk momentum residual a free

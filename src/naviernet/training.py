@@ -141,6 +141,7 @@ def _architecture_record(cfg) -> dict:
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
         "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
         "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
+        "evolving_width": bool(getattr(cfg.model, "evolving_width", False)),
         "film_pressure": bool(getattr(cfg.model, "film_pressure", False)),
         "depletable_superheat": bool(getattr(cfg.model, "depletable_superheat", False)),
     }
@@ -194,6 +195,13 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         "film_pressure",
         path,
         "The film offset adds a parameter and changes the jump condition.",
+    )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "evolving_width",
+        path,
+        "The width reparameterisation replaces one net with two.",
     )
     _require_matching_flag(
         cfg,

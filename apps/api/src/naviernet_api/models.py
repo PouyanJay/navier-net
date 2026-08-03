@@ -350,6 +350,10 @@ class RunLaunchRequest(BaseModel):
     # Let the evaporation mass closure raise the temperature, not only lower the
     # source. Inert without the energy equation, so it needs no gating.
     evap_closure_two_way: bool = True
+    # Evolving width: the profile deforms along a learned direction at a rate tied
+    # to the bubble's elongation, instead of being a raw function of time that
+    # relaxes back toward flat past the data. Requires front_geometry.
+    evolving_width: bool = False
     # Let the bubble detach: the radius becomes signed and the nose may retreat,
     # so pinch-off is expressible. Requires front_geometry -- it relaxes that
     # construction's own guarantees.
@@ -398,7 +402,7 @@ class RunLaunchRequest(BaseModel):
                 "front_geometry already pins the root exactly by construction; "
                 "it is mutually exclusive with hard_pin -- disable one."
             )
-        for flag in ("sharp_interface", "allow_pinch"):
+        for flag in ("sharp_interface", "allow_pinch", "evolving_width"):
             if getattr(self, flag) and not self.front_geometry:
                 raise ValueError(
                     f"{flag} requires front_geometry -- enable it, or turn {flag} off"

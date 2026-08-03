@@ -29,6 +29,7 @@ export interface SolverFormState {
   front_geometry: boolean;
   sharp_interface: boolean;
   allow_pinch: boolean;
+  evolving_width: boolean;
   film_pressure: boolean;
   depletable_superheat: boolean;
   evap_closure_two_way: boolean;
@@ -84,6 +85,8 @@ export const FORM_DEFAULTS: SolverFormState = {
   // Pinch-off: relaxes the front geometry's own topology and monotonicity
   // guarantees so the bubble can detach. Also front-geometry-gated.
   allow_pinch: false,
+  // Evolving width: opt-in until benched. Off by default.
+  evolving_width: false,
   // Film pressure: the offset the depth-averaged pressure cannot carry at the
   // bubble's sides. Also sharp-interface-gated.
   film_pressure: true,
