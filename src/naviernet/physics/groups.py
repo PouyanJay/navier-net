@@ -99,8 +99,21 @@ def compute_groups(cfg) -> dict[str, float]:
 
     # Stage-B energy closures.
     # Conduction superheat over the half-height: the temperature scale the wall
-    # flux sets by pure conduction, so the non-dim wall source stays O(1). Also
-    # the reference for the superheat theta = (T - T_sat) / dT_ref.
+    # flux sets by pure conduction across the GAP, and the reference for the
+    # superheat theta = (T - T_sat) / dT_ref.
+    #
+    # NB it does NOT make the depth-averaged wall source O(1), and an earlier
+    # comment here claimed it did. Substituting dT_ref below collapses
+    # q_wall_star to 2 (L/h)^2 / Pe -- so at Pe ~ 2e3 it is ~4e-3, and that is
+    # physics, not a scaling slip: the liquid advects through far faster than the
+    # wall can heat it. The consequence is worth knowing before trusting the
+    # energy equation to determine anything. A CONSTANT theta kills every other
+    # term in it (theta_t, u.grad theta, lap theta all vanish; at saturation the
+    # evaporation sink vanishes too), leaving a residual of just q_wall_star --
+    # measured, a trained run sits at energy = 1.9e-5 against q_wall_star^2 =
+    # 1.6e-5. The energy equation alone cannot pin the temperature; only the
+    # evaporation mass closure can, because the source it ties theta to is
+    # observed through the bubble's growth.
     q_wall = exp.q_wall_W_cm2 * 1e4  # W/cm^2 -> W/m^2
     groups["dT_ref"] = q_wall * (h / 2.0) / fluid.k_l
     # Stefan/Jakob number at the actual superheat (generalises Ja_per_5K).
