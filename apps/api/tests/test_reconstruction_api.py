@@ -49,3 +49,31 @@ def test_interface_missing_for_untrained_runs(client: TestClient):
     assert client.get("/api/runs/scratch/interface").status_code == 404
     assert client.get("/api/runs/scratch/trajectory").status_code == 404
     assert client.get("/api/runs/no-such/interface").status_code == 404
+
+
+def test_the_reconstruction_reaches_the_last_camera_frame(client: TestClient, trained_run: str):
+    """Every consumer picks the reconstructed frame NEAREST in time to the camera
+    instant it is drawing. Stopping the reconstruction one frame short therefore
+    left the last two camera frames with the same nearest neighbour -- so they
+    rendered an identical PINN contour, whatever the model actually predicted.
+
+    The trajectory legitimately stops early (the final frame is FOV-truncated, so
+    its MEASURED nose is unreliable), but the model's own prediction there is
+    perfectly well defined.
+    """
+    payload = client.get(f"/api/runs/{trained_run}/interface?frames=8").json()
+    last_predicted = payload["frames"][-1]["t_ms"]
+    last_measured = payload["measured"][-1]["t_ms"]
+    assert last_predicted == pytest.approx(last_measured, rel=1e-6), (
+        f"reconstruction ends at {last_predicted} ms but the camera runs to "
+        f"{last_measured} ms — the final frames would share a contour"
+    )
+
+    # And the two final camera instants must resolve to DIFFERENT contours.
+    def nearest(t_ms):
+        return min(payload["frames"], key=lambda f: abs(f["t_ms"] - t_ms))
+
+    a, b = payload["measured"][-2]["t_ms"], payload["measured"][-1]["t_ms"]
+    assert nearest(a)["t_ms"] != nearest(b)["t_ms"], (
+        "the last two camera frames still map to the same reconstructed frame"
+    )

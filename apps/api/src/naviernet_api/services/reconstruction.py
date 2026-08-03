@@ -127,9 +127,17 @@ def _predicted_frames(scene: _Scene, n_frames: int) -> list[dict]:
     from naviernet.evaluation import predict_alpha
 
     t_ref_ms = float(scene.data.meta["t_ref_ms"])
-    # The final camera frame is FOV-truncated; stop one frame short, like the
-    # evaluation's own trajectory does.
-    times = np.linspace(float(scene.data.t[0]), float(scene.data.t[-2]), n_frames)
+    # Through the LAST camera instant, not one short of it. The trajectory
+    # stops early because the final frame is FOV-truncated and its MEASURED
+    # nose is unreliable -- but the model's own prediction there is perfectly
+    # well defined, and stopping short left the viewport with nothing nearer to
+    # the last frame than the second-to-last. Every consumer picks the
+    # reconstructed frame nearest in time, so the last two camera frames were
+    # handed the same contour and rendered identically.
+    # The last EVENT frame, which is what is scored and drawn -- `t` can run past
+    # it when the archive holds more instants than the event does.
+    last = float(scene.data.t[int(scene.data.n_event) - 1])
+    times = np.linspace(float(scene.data.t[0]), last, n_frames)
     return [
         {
             "t_ms": round(float(t) * t_ref_ms, 4),
