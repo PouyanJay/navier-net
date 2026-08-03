@@ -1135,3 +1135,26 @@ describe("SolverView defaults", () => {
     expect(body.hard_pin).toBe(false);
   });
 });
+
+describe("SolverView two-way closure", () => {
+  it("is switchable, not just silently sent", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // It ships on by default; the point of this test is that the panel can turn
+    // it OFF -- a knob that is sent but has no control is not configurable.
+    const closure = screen.getByRole("switch", {
+      name: "Two-way evap closure",
+    });
+    expect(closure).toBeChecked();
+    fireEvent.click(closure);
+    expect(closure).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).evap_closure_two_way).toBe(
+      false,
+    );
+  });
+});
