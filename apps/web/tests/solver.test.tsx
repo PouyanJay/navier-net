@@ -1177,3 +1177,55 @@ describe("SolverView evolving width", () => {
     expect((posts[0] as Record<string, unknown>).evolving_width).toBe(true);
   });
 });
+
+describe("SolverView measured front velocity", () => {
+  it("is gated on the front geometry and reaches the request", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    expect(
+      screen.getByRole("switch", { name: "Measured front velocity" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Measured front velocity" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.front_velocity).toBe(true);
+    expect(body.fv_weight).toBe(1);
+    expect(body.fv_apex_weight).toBe(1);
+  });
+
+  it("reveals its weight fields only while it is on", async () => {
+    stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.queryByLabelText(/Normal-speed weight/)).toBeNull();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Measured front velocity" }),
+    );
+    expect(screen.getByLabelText(/Normal-speed weight/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Apex weight/)).toBeInTheDocument();
+  });
+
+  it("turning the front geometry off takes it with it", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Measured front velocity" }),
+    );
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).front_velocity).toBe(false);
+  });
+});

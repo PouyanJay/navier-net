@@ -423,6 +423,16 @@ export interface RunLaunchRequest {
   kin_weight_balance: number;
   /** Evap-floor weight; platform default 0 (bench: destabilizes when driven). */
   kin_weight_evap: number;
+  /** Supervise the front's own normal speed against the velocity measured from
+   * consecutive masks, and the nose apex against its measured 2-D displacement.
+   * The shape is already supervised at every training frame; its RATE is not.
+   * Requires front_geometry. */
+  front_velocity: boolean;
+  /** Weight on the binned normal-velocity profile along the front. */
+  fv_weight: number;
+  /** Weight on the nose apex's 2-D displacement -- the one interface point with
+   * an honest frame-to-frame correspondence. */
+  fv_apex_weight: number;
 }
 
 export interface RunJobStatus {
