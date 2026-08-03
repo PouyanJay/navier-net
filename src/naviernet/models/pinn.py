@@ -122,7 +122,10 @@ class BubblePINN(nn.Module):
         self.nets = nn.ModuleDict(
             {
                 name: GeometricInterface(
-                    geometry, allow_pinch=self.allow_pinch, n_cond=self.n_cond
+                    geometry,
+                    allow_pinch=self.allow_pinch,
+                    n_cond=self.n_cond,
+                    evolving_width=self.evolving_width,
                 )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
@@ -231,6 +234,12 @@ class BubblePINN(nn.Module):
         condition."""
         self.front_geometry = bool(getattr(cfg.model, "front_geometry", False))
         self.allow_pinch = bool(getattr(cfg.model, "allow_pinch", False))
+        self.evolving_width = bool(getattr(cfg.model, "evolving_width", False))
+        if self.evolving_width and not self.front_geometry:
+            raise ValueError(
+                "model.evolving_width reparameterises the front geometry's width "
+                "profile, so it requires model.front_geometry=true."
+            )
         if self.allow_pinch and not self.front_geometry:
             raise ValueError(
                 "model.allow_pinch relaxes the front geometry's own topology and "
