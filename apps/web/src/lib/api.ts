@@ -397,6 +397,10 @@ export interface RunLaunchRequest {
   /** Let the bubble detach: signed radius, unconstrained nose. Requires
    * front_geometry, whose guarantees it relaxes. */
   allow_pinch: boolean;
+  /** The width profile deforms along a learned direction at a rate tied to the
+   * bubble's elongation, so it keeps going past the data instead of relaxing
+   * back toward flat. Requires front_geometry. */
+  evolving_width: boolean;
   /** Film pressure: at the bubble's sides the capillary pressure is balanced by
    * the Bretherton film, not the bulk pressure a depth-averaged model carries.
    * One inferred scalar offset on the body. Requires sharp_interface. */

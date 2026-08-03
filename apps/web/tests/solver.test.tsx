@@ -1158,3 +1158,22 @@ describe("SolverView two-way closure", () => {
     );
   });
 });
+
+describe("SolverView evolving width", () => {
+  it("is gated on the front geometry and reaches the request", async () => {
+    const posts = stubApi();
+    render(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    expect(
+      screen.getByRole("switch", { name: "Evolving width" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Evolving width" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).evolving_width).toBe(true);
+  });
+});

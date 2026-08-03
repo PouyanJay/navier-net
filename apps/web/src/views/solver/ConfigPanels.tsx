@@ -484,6 +484,7 @@ function PinKinematicsControls({
                     sharp_interface: false,
                     film_pressure: false,
                     allow_pinch: false,
+                    evolving_width: false,
                   },
             )
           }
@@ -541,6 +542,17 @@ function PinKinematicsControls({
           checked={form.evap_closure_two_way}
           onChange={(evap_closure_two_way) => onForm({ evap_closure_two_way })}
           disabled={locked}
+        />
+        <Switch
+          label="Evolving width"
+          hint={
+            form.front_geometry
+              ? "the profile keeps deforming past the data"
+              : "needs front geometry"
+          }
+          checked={form.evolving_width}
+          onChange={(evolving_width) => onForm({ evolving_width })}
+          disabled={locked || !form.front_geometry}
         />
         <Switch
           label="Allow pinch-off"
