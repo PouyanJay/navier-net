@@ -211,6 +211,11 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
         request.datasets = datasets
         request.dataset = datasets[0]
         dataset = datasets[0]
+        # Rejected here, not in the worker: an unsupported request should come
+        # back as a 422 the caller can act on, not as a run that starts and then
+        # dies. (The resolution itself happens again at compose time, where the
+        # overrides are actually built.)
+        _interface_overrides(settings, dataset, request)
 
     with _lock:
         if _slot_busy():
@@ -525,9 +530,8 @@ def _configure(
         f"model.hard_pin={str(request.hard_pin).lower()}",
         f"model.pin_d_ref={request.pin_d_ref}",
         f"model.front_geometry={str(request.front_geometry).lower()}",
-        f"model.sharp_interface={str(request.sharp_interface).lower()}",
         f"model.allow_pinch={str(request.allow_pinch).lower()}",
-        f"model.film_pressure={str(request.film_pressure).lower()}",
+        f"training.evap_closure_two_way={str(request.evap_closure_two_way).lower()}",
         f"training.alpha_eps_anneal_steps={request.alpha_eps_anneal_steps}",
         f"training.alpha_eps_final={request.alpha_eps_final}",
         f"training.kinematics={str(request.kinematics).lower()}",
@@ -538,6 +542,8 @@ def _configure(
     ]
     from naviernet_api.services.config_service import compose_cfg_once
     from naviernet_api.services.datasets import series_is_stage_b, series_overrides
+
+    overrides.extend(_interface_overrides(settings, dataset, request))
 
     # The series' saved conditions and frame exclusions travel with every run.
     overrides.extend(series_overrides(settings, dataset))
@@ -558,6 +564,52 @@ def _configure(
     if heldout:
         overrides.append(f"heldout_datasets=[{','.join(heldout)}]")
     return compose_cfg_once(dataset, overrides=overrides), 0
+
+
+def _resolved_interface_flags(request: RunLaunchRequest, fields: list[str]) -> list[str]:
+    """The sharp-interface family, resolved against what the series can support.
+
+    Each is ``None`` by default, meaning "apply the recommended recipe where it
+    fits". These conditions read fields a Stage-A series does not have, so on
+    such a series the default simply does not apply -- that is a default not
+    matching, not a silent downgrade. Asking for one EXPLICITLY on a series that
+    cannot support it is rejected in :func:`_require_supported`.
+    """
+    resolved = {
+        "model.sharp_interface": _resolve(request.sharp_interface, "p" in fields),
+        "model.film_pressure": _resolve(request.film_pressure, "p" in fields),
+        "model.depletable_superheat": _resolve(request.depletable_superheat, "T" in fields),
+    }
+    # The film pressure corrects the jump; it cannot outlive it.
+    resolved["model.film_pressure"] &= resolved["model.sharp_interface"]
+    return [f"{key}={str(value).lower()}" for key, value in resolved.items()]
+
+
+def _resolve(requested: bool | None, supported: bool) -> bool:
+    """An explicit choice wins; ``None`` takes the recipe where the series fits."""
+    return supported if requested is None else bool(requested)
+
+
+def _interface_overrides(
+    settings: Settings, dataset: str, request: RunLaunchRequest
+) -> list[str]:
+    """Resolve the family, rejecting an explicit ask the series cannot honour."""
+    from naviernet_api.services.datasets import series_fields
+
+    fields = series_fields(settings, dataset)
+    for flag, needed in (
+        ("sharp_interface", "p"),
+        ("film_pressure", "p"),
+        ("depletable_superheat", "T"),
+    ):
+        if getattr(request, flag) and needed not in fields:
+            raise LaunchRejected(
+                422,
+                f"{flag} needs the {needed!r} field, which series {dataset!r} does not "
+                f"train (it has {fields}). Enable the Stage-B physics that unlocks it, "
+                f"or leave {flag} unset to take the default where it fits.",
+            )
+    return _resolved_interface_flags(request, fields)
 
 
 def _resume_config(

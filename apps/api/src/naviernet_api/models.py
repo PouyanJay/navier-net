@@ -326,17 +326,30 @@ class RunLaunchRequest(BaseModel):
     # monotone nose, single connected shape at every t. Mutually exclusive with
     # hard_pin (the geometry pins exactly by construction; the trainer rejects
     # the combination, mirrored below as a 422).
-    front_geometry: bool = False
+    # ON by default: the recommended physics recipe. The capsule interface is what
+    # makes the interface conditions below expressible at all, and it is the
+    # recipe every measured gain in this line of work was built on.
+    front_geometry: bool = True
     # Sharp-interface physics (R4): drive the shape with the conditions that hold
     # AT the interface -- the Young-Laplace jump and the kinematic condition on
     # the explicit front -- with depth-averaged Darcy in place of the 2-D momentum
     # residual. Requires front_geometry (there is no front to sample without it),
     # mirrored below as a 422.
-    sharp_interface: bool = False
+    # `None` means "apply the recommended default where the series can support it"
+    # -- these need the Stage-B field set, so a Stage-A series simply does not get
+    # them. Asking for one EXPLICITLY on a series that cannot support it is an
+    # error, not a silent downgrade.
+    sharp_interface: bool | None = None
     # Film pressure: at the bubble's sides the capillary pressure is balanced by
     # the Bretherton film, not the bulk the depth-averaged `p` represents. One
     # inferred scalar offset on the body. Requires sharp_interface.
-    film_pressure: bool = False
+    film_pressure: bool | None = None
+    # Let the superheat deplete below the inlet, so evaporation can throttle
+    # itself as the bubble blankets the wall. Needs the 'T' field.
+    depletable_superheat: bool | None = None
+    # Let the evaporation mass closure raise the temperature, not only lower the
+    # source. Inert without the energy equation, so it needs no gating.
+    evap_closure_two_way: bool = True
     # Let the bubble detach: the radius becomes signed and the nose may retreat,
     # so pinch-off is expressible. Requires front_geometry -- it relaxes that
     # construction's own guarantees.
@@ -390,7 +403,7 @@ class RunLaunchRequest(BaseModel):
                 raise ValueError(
                     f"{flag} requires front_geometry -- enable it, or turn {flag} off"
                 )
-        if self.film_pressure and not self.sharp_interface:
+        if self.film_pressure and self.sharp_interface is False:
             raise ValueError(
                 "film_pressure corrects the Young-Laplace jump, so it requires "
                 "sharp_interface -- enable it, or turn film_pressure off"

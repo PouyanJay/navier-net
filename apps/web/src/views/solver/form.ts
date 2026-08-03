@@ -30,6 +30,8 @@ export interface SolverFormState {
   sharp_interface: boolean;
   allow_pinch: boolean;
   film_pressure: boolean;
+  depletable_superheat: boolean;
+  evap_closure_two_way: boolean;
   alpha_eps_anneal_steps: number;
   alpha_eps_final: number;
   kinematics: boolean;
@@ -68,21 +70,28 @@ export const FORM_DEFAULTS: SolverFormState = {
   // all t. The anchor is data-derived; only the gate scale is a knob.
   hard_pin: false,
   pin_d_ref: 0.1,
-  // Front geometry (R3): capsule interface -- exact root, monotone nose, one
-  // connected shape at every t. Mutually exclusive with the hard pin (the
-  // geometry pins exactly), gated valid-by-construction in the form.
-  front_geometry: false,
+  // The recommended physics recipe, ON by default -- every measured gain in this
+  // line of work was built on it. The capsule interface (exact root, monotone
+  // nose, one connected shape at every t) is what makes the interface conditions
+  // below expressible at all. Mutually exclusive with the hard pin (the geometry
+  // pins exactly), gated valid-by-construction in the form.
+  front_geometry: true,
   // Sharp-interface physics (R4): the Young-Laplace jump and the kinematic
   // condition imposed ON the explicit front, with depth-averaged Darcy in place
   // of the 2-D momentum residual. Requires the front geometry -- there is no
   // front to sample without it -- so the form gates it valid-by-construction.
-  sharp_interface: false,
+  sharp_interface: true,
   // Pinch-off: relaxes the front geometry's own topology and monotonicity
   // guarantees so the bubble can detach. Also front-geometry-gated.
   allow_pinch: false,
   // Film pressure: the offset the depth-averaged pressure cannot carry at the
   // bubble's sides. Also sharp-interface-gated.
-  film_pressure: false,
+  film_pressure: true,
+  // A superheat that can be depleted, and a closure that can raise it: without
+  // these the temperature field collapses to a constant and evaporation becomes
+  // a fixed multiple of interfacial area, which can only grow.
+  depletable_superheat: true,
+  evap_closure_two_way: true,
   // Interface sharpening: off (0 steps). alpha = sigmoid(phi/alpha_eps) blurs the
   // interface over ~4*alpha_eps, which at the default 0.05 is the same width as
   // the measured mid-bubble neck.

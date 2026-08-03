@@ -529,6 +529,13 @@ function PinKinematicsControls({
           disabled={locked || !form.sharp_interface}
         />
         <Switch
+          label="Depletable superheat"
+          hint="the liquid may cool below the inlet, throttling evaporation"
+          checked={form.depletable_superheat}
+          onChange={(depletable_superheat) => onForm({ depletable_superheat })}
+          disabled={locked}
+        />
+        <Switch
           label="Allow pinch-off"
           hint={
             form.front_geometry

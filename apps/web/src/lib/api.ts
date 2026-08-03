@@ -401,6 +401,12 @@ export interface RunLaunchRequest {
    * the Bretherton film, not the bulk pressure a depth-averaged model carries.
    * One inferred scalar offset on the body. Requires sharp_interface. */
   film_pressure: boolean;
+  /** Let the superheat deplete below the inlet, so evaporation can throttle
+   * itself as the bubble blankets the wall. Requires the 'T' field. */
+  depletable_superheat: boolean;
+  /** Let the evaporation mass closure raise the temperature, not only lower the
+   * source. Inert without the energy equation. */
+  evap_closure_two_way: boolean;
   /** Anneal alpha_eps to `alpha_eps_final` over this many steps (0 = off), so a
    * neck is not the same width as the interface blur. */
   alpha_eps_anneal_steps: number;
