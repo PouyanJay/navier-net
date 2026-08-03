@@ -113,6 +113,10 @@ def _model_and_plan(tmp_path, overrides=None):
     from naviernet.training import _geometry_priors
 
     cfg, data = _dataset(tmp_path, [*FV, *(overrides or [])])
+    # Seeded: the model's initial front is randomly initialised, so every
+    # assertion about how far a term moves it would otherwise be a function of
+    # whatever ran before it in the suite.
+    torch.manual_seed(0)
     model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
     plan = front_velocity.build_plan(data, cfg.training, cfg.model, "cpu")
     return cfg, data, model, plan
@@ -435,6 +439,53 @@ def test_a_run_records_both_terms_in_its_history(tmp_path):
     cfg, _ = _staged(tmp_path, FV)
     _, _, state = train(cfg, RunPaths.from_config(cfg))
 
+    assert {"fv_normal", "fv_apex"} <= set(state["hist"][0])
+
+
+def test_the_measurement_is_identical_when_rebuilt(tmp_path):
+    """Deterministic, so a resumed run supervises against exactly the numbers it
+    was trained on -- no RNG anywhere in the measurement."""
+    from naviernet.physics import front_velocity
+
+    cfg, data = _dataset(tmp_path, FV)
+    first = front_velocity.build_plan(data, cfg.training, cfg.model, "cpu")
+    second = front_velocity.build_plan(data, cfg.training, cfg.model, "cpu")
+
+    assert first.pairs == second.pairs
+    assert torch.equal(first.v_n, second.v_n)
+    assert torch.equal(first.apex_shift, second.apex_shift)
+
+
+def test_a_resumed_run_keeps_supervising_the_front(tmp_path):
+    from naviernet.training import train
+    from naviernet.utils.paths import RunPaths
+
+    cfg, _ = _staged(tmp_path, FV)
+    paths = RunPaths.from_config(cfg)
+    train(cfg, paths)
+    _, _, state = train(cfg, paths)
+
+    assert state["done"] == 4
+    assert {"fv_normal", "fv_apex"} <= set(state["hist"][-1])
+
+
+def test_a_joint_run_measures_each_dataset_over_its_own_frames(tmp_path):
+    """One shared construction, but each condition's front is scored against its
+    OWN masks -- measuring one dataset's velocity against another's would be
+    worse than not measuring at all."""
+    from naviernet.training import _load_joint_datasets, train
+    from naviernet.utils.paths import RunPaths
+    from tests.conftest import staged_joint_run
+
+    cfg, paths = staged_joint_run(tmp_path, FV)
+    contexts = _load_joint_datasets(cfg, paths, "cpu")
+
+    assert [cx.name for cx in contexts] == ["ds_a", "ds_b"]
+    assert all(cx.fv is not None for cx in contexts)
+    # Distinct growth rates in the fixture, so distinct measured references.
+    assert contexts[0].fv.v_ref != contexts[1].fv.v_ref
+
+    _, _, state = train(cfg, RunPaths.from_config(cfg))
     assert {"fv_normal", "fv_apex"} <= set(state["hist"][0])
 
 
