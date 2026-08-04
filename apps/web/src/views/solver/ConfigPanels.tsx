@@ -451,15 +451,34 @@ const PIN_KIN_FIELDS = [
     bounds: "kin_weight",
     step: 0.1,
   },
+  {
+    key: "fv_weight",
+    gate: "front_velocity",
+    label: "Normal-speed weight",
+    hint: "binned profile along the front",
+    bounds: "fv_weight",
+    step: 0.1,
+  },
+  {
+    key: "fv_apex_weight",
+    gate: "front_velocity",
+    label: "Apex weight",
+    hint: "the nose's measured 2-D displacement",
+    bounds: "fv_weight",
+    step: 0.1,
+  },
 ] as const;
 
 /** The physics-structure switches: front geometry (the R3 capsule interface),
- * the hard root pin, and the kinematic growth constraints, with tuning fields
- * that appear only while their feature is on. Front geometry pins the root
- * exactly by construction, so it and the hard pin are gated valid-by-
- * construction (turning one on forces the other off), mirroring the trainer's
- * own rejection. The evap floor starts at 0 -- the bench showed it destabilizes
- * the front, so enabling it is a deliberate act, never a default. */
+ * the hard root pin, the kinematic growth constraints and the measured front
+ * velocity, with tuning fields that appear only while their feature is on.
+ * Front geometry pins the root exactly by construction, so it and the hard pin
+ * are gated valid-by-construction (turning one on forces the other off),
+ * mirroring the trainer's own rejection. The evap floor starts at 0 -- the bench
+ * showed it destabilizes the front, so enabling it is a deliberate act, never a
+ * default. The measured front velocity is front-geometry-gated like the other
+ * interface flags: it supervises that construction's own normal speed, and
+ * nothing else has one. */
 function PinKinematicsControls({
   form,
   onForm,
@@ -485,6 +504,7 @@ function PinKinematicsControls({
                     film_pressure: false,
                     allow_pinch: false,
                     evolving_width: false,
+                    front_velocity: false,
                   },
             )
           }
@@ -571,6 +591,17 @@ function PinKinematicsControls({
           checked={form.kinematics}
           onChange={(kinematics) => onForm({ kinematics })}
           disabled={locked}
+        />
+        <Switch
+          label="Measured front velocity"
+          hint={
+            form.front_geometry
+              ? "supervise the front's rate from the masks"
+              : "needs front geometry"
+          }
+          checked={form.front_velocity}
+          onChange={(front_velocity) => onForm({ front_velocity })}
+          disabled={locked || !form.front_geometry}
         />
       </div>
       {fields.length > 0 && (

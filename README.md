@@ -199,6 +199,57 @@ implemented behind config flags; an unchanged config trains exactly as before.
   Wu et al., [arXiv:2207.10289](https://arxiv.org/abs/2207.10289)) periodically refreshes
   the collocation pool toward high-residual regions, keeping a uniform base.
 
+**Measured front velocity** (`training.front_velocity=true`, requires
+`model.front_geometry`). The interface's *shape* is supervised at every training
+frame; its *rate* is not — and under the front geometry the rate is what carries
+the shape past the last supervised frame. This measures it from the masks and
+supervises it: the front's normal velocity via the level-set form
+`v_n = -(sdf_next - sdf_now) / (dt·|∇sdf_now|)`, plus the nose apex's tracked 2-D
+displacement. Only a pair of *consecutive, training-visible* frames is used, so a
+held-out frame is never differenced into a training target.
+
+Measured on Series-1 (2 seeds, seed spread 0.003), it is **neutral**: held-out
+frame 11 goes 0.8705 → 0.8720 and the trained-frame mean is unchanged at 0.9275.
+Two results worth keeping from getting there, both recorded rather than tidied
+away:
+
+- Supervising the nose with the level-set estimate actively **hurt** (frame 11
+  −0.0075, same sign on both seeds). The estimate is first-order in the distance
+  the front travels, and at the nose that is ~52 px per frame against a ~75 px
+  cap radius: the nose cap was 10% of the profile bins and 76% of the term's
+  residual, pulling the nose *down* against the apex term that had correctly
+  pulled it up. The nose is now left to the apex term, which tracks a real
+  feature and involves no approximation.
+- The likeliest reason for the neutral result is that `v_n` is not independent
+  information — it is a time derivative of the same masks the shape supervision
+  already fits to 0.93 IoU. It is a different functional of the same data, not
+  new data.
+
+That last point is exactly why the measurement earns its place as an **output**
+even though it earned nothing as a loss: it is redundant to the optimiser and
+entirely new to a *reader*, who otherwise has no record of the interface's rate
+anywhere except the nose's position curve. Every `evaluate` now writes
+`front_velocity.json` beside `trajectory.json` (one per dataset on a joint run),
+and the **Front velocity** tab charts it — the nose's speed and the apex's exact
+`(vx, vy)` against the camera's own finite differences, the normal-speed profile
+along the front with a frame-pair scrubber, a kymograph of that profile over
+continuous time, and a velocity-arrow overlay on the reconstruction viewport.
+
+Three things it is careful about, each carried into the UI rather than left as
+lore:
+
+- These are **normal** speeds. Two masks cannot give a surface point's material
+  velocity — a curve sliding along itself looks identical between frames — so
+  the tangential component is unobservable. It is also the component that does
+  not change the shape, so the normal projection is complete for the interface's
+  evolution. The apex is the exception, and is reported separately for it.
+- The measurement is **suppressed across the nose cap**, from the same function
+  the loss uses. The model's own curve continues through it: that disagreement
+  is the finding above, not a rendering gap.
+- Charts report **every** consecutive frame pair, including the ones spanning a
+  held-out frame, marked. The leak guard belongs to supervision; a report that
+  hid the held-out interval would hide the one a reader most wants.
+
 Measured on Series-1 (3000 steps, held-out tail frames): RBA fixes the rebalancer's
 mean-collapse (mean IoU 0.88 → 0.90, weights bounded, no manual tuning). None of the
 three reliably lifts the *last* held-out extrapolation frame above the tamed-rebalancer

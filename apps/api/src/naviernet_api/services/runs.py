@@ -12,9 +12,10 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
@@ -343,21 +344,56 @@ def read_groups(settings: Settings, run_id: str) -> dict | None:
     return payload.get("groups") if payload else None
 
 
-def read_trajectory(settings: Settings, run_id: str, dataset: str | None = None) -> dict | None:
-    """The growth-kinematics arrays the evaluate stage wrote, or None.
+class _Artifact(NamedTuple):
+    """Where one of the evaluate stage's artifacts lives: the single-run path,
+    the per-dataset path a joint run writes, and what to call it in a log."""
 
-    With `dataset`, a joint run's per-dataset file; the name is validated
-    because it becomes part of a path.
+    shared: Path
+    per_dataset: Callable[[str], Path]
+    kind: str
+
+
+def _dataset_scoped_json(artifact: _Artifact, dataset: str | None) -> dict | None:
+    """One of the evaluate stage's artifacts, optionally scoped to a joint run's
+    dataset. The name is validated because it becomes part of a path."""
+    if dataset is None:
+        return _read_json(artifact.shared)
+    if not _RUN_ID_RE.match(dataset):
+        log.warning("rejecting unsafe %s dataset name %r", artifact.kind, dataset)
+        return None
+    return _read_json(artifact.per_dataset(dataset))
+
+
+def read_trajectory(settings: Settings, run_id: str, dataset: str | None = None) -> dict | None:
+    """The growth-kinematics arrays the evaluate stage wrote, or None."""
+    paths = _run_paths_or_none(settings, run_id)
+    if paths is None:
+        return None
+    return _dataset_scoped_json(
+        _Artifact(paths.trajectory_json, paths.trajectory_json_for, "trajectory"),
+        dataset,
+    )
+
+
+def read_front_velocity(
+    settings: Settings, run_id: str, dataset: str | None = None
+) -> dict | None:
+    """The front-velocity report the evaluate stage wrote, or None.
+
+    Absent for any run evaluated before this artifact existed, which the caller
+    reports as "re-run evaluate" rather than as an error.
     """
     paths = _run_paths_or_none(settings, run_id)
     if paths is None:
         return None
-    if dataset is None:
-        return _read_json(paths.trajectory_json)
-    if not _RUN_ID_RE.match(dataset):
-        log.warning("rejecting unsafe trajectory dataset name %r", dataset)
-        return None
-    return _read_json(paths.trajectory_json_for(dataset))
+    return _dataset_scoped_json(
+        _Artifact(
+            paths.front_velocity_json,
+            paths.front_velocity_json_for,
+            "front-velocity",
+        ),
+        dataset,
+    )
 
 
 def read_loss_history(settings: Settings, run_id: str) -> list[dict] | None:

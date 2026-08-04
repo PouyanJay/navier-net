@@ -550,6 +550,43 @@ def test_launch_rejects_pinching_without_the_front(client):
     assert "front_geometry" in r.text
 
 
+def test_launch_rejects_measured_front_velocity_without_the_front(client):
+    """The term supervises the explicit front's own normal speed; without the
+    geometry there is no such speed to supervise."""
+    r = client.post(
+        "/api/runs", json={**TINY_RUN, "front_geometry": False, "front_velocity": True}
+    )
+    assert r.status_code == 422
+    assert "front_geometry" in r.text
+
+
+def test_launch_rejects_measuring_the_front_and_then_ignoring_it(client):
+    """Both weights at zero is a run that does the measurement and throws it
+    away -- a silent no-op wearing a switched-on flag."""
+    r = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "front_velocity": True, "fv_weight": 0, "fv_apex_weight": 0},
+    )
+    assert r.status_code == 422
+    assert "fv_weight" in r.text
+
+
+def test_launch_with_measured_front_velocity_composes_and_trains(client, repo_root):
+    """End to end through the API: the flag reaches the trainer, the run
+    completes, and both measured terms appear in its history."""
+    run_id = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "front_geometry": True, "front_velocity": True},
+    ).json()["run_id"]
+    events = read_stream(client, run_id)
+
+    final = [e["data"] for e in events if e["event"] == "status"][-1]
+    assert final["state"] == "done", final
+    history = [e["data"] for e in events if e["event"] == "hist"]
+    assert history and {"fv_normal", "fv_apex"} <= set(history[0])
+    assert (repo_root / "outputs" / run_id / "metrics.json").is_file()
+
+
 def test_launch_rejects_a_sharpening_schedule_with_no_target(client):
     r = client.post("/api/runs", json={**TINY_RUN, "alpha_eps_anneal_steps": 100})
     assert r.status_code == 422

@@ -165,6 +165,22 @@ def get_trajectory(
     return trajectory
 
 
+@router.get("/{run_id}/front-velocity")
+def get_front_velocity(
+    run_id: str,
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """How fast the interface moved, model against the masks (evaluate stage).
+    Joint runs record one report per spanned dataset; select it with `?dataset=`."""
+    report = runs_service.read_front_velocity(settings, run_id, dataset)
+    if report is None:
+        raise HTTPException(
+            status_code=404, detail=f"no front-velocity report for run {run_id!r}"
+        )
+    return report
+
+
 def _csv_response(body: str | None, filename: str, run_id: str) -> Response:
     if body is None:
         raise HTTPException(status_code=404, detail=f"nothing to export for run {run_id!r}")
@@ -192,6 +208,18 @@ def export_trajectory(
     body = exports_service.trajectory_csv(settings, run_id, dataset)
     suffix = f"_{dataset}" if dataset else ""
     return _csv_response(body, f"{run_id}{suffix}_trajectory.csv", run_id)
+
+
+@router.get("/{run_id}/export/front-velocity.csv")
+def export_front_velocity(
+    run_id: str,
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+):
+    """The front's motion (nose, apex and profile) in long format, both units."""
+    body = exports_service.front_velocity_csv(settings, run_id, dataset)
+    suffix = f"_{dataset}" if dataset else ""
+    return _csv_response(body, f"{run_id}{suffix}_front_velocity.csv", run_id)
 
 
 @router.get("/{run_id}/export/loss.csv")

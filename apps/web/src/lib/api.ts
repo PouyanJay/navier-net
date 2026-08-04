@@ -423,6 +423,16 @@ export interface RunLaunchRequest {
   kin_weight_balance: number;
   /** Evap-floor weight; platform default 0 (bench: destabilizes when driven). */
   kin_weight_evap: number;
+  /** Supervise the front's own normal speed against the velocity measured from
+   * consecutive masks, and the nose apex against its measured 2-D displacement.
+   * The shape is already supervised at every training frame; its RATE is not.
+   * Requires front_geometry. */
+  front_velocity: boolean;
+  /** Weight on the binned normal-velocity profile along the front. */
+  fv_weight: number;
+  /** Weight on the nose apex's 2-D displacement -- the one interface point with
+   * an honest frame-to-frame correspondence. */
+  fv_apex_weight: number;
 }
 
 export interface RunJobStatus {
@@ -483,10 +493,136 @@ export interface Trajectory {
   };
 }
 
+/**
+ * One measured speed series: a finite difference per consecutive camera-frame
+ * pair, each at the midpoint of the interval it measures. `heldout[i]` marks a
+ * pair spanning a frame held out of supervision — reported, never dropped,
+ * because nothing reading this trains.
+ */
+export interface MeasuredSpeed {
+  t_ms: KinematicsSeries;
+  v_um_per_ms: KinematicsSeries;
+  heldout: boolean[];
+}
+
+/** The bubble nose's own speed over time, model against the camera frames. */
+export interface NoseSpeed {
+  t_ms: KinematicsSeries;
+  v_um_per_ms: KinematicsSeries;
+  measured: MeasuredSpeed;
+}
+
+/**
+ * The nose apex's velocity — the one interface point with a true `(vx, vy)`.
+ *
+ * Everywhere else only the normal component is observable: a curve sliding
+ * along itself looks identical between frames, so a generic point has no
+ * frame-to-frame correspondence. The apex is geometrically distinguishable, so
+ * both components mean something. The model side is exact (autodiff of the
+ * parameterised apex), not a finite difference.
+ */
+export interface ApexVelocity {
+  t_ms: KinematicsSeries;
+  x_um: KinematicsSeries;
+  y_um: KinematicsSeries;
+  vx_um_per_ms: KinematicsSeries;
+  vy_um_per_ms: KinematicsSeries;
+  measured: {
+    t_ms: KinematicsSeries;
+    vx_um_per_ms: KinematicsSeries;
+    vy_um_per_ms: KinematicsSeries;
+    heldout: boolean[];
+  };
+}
+
+/** One segment of the closed front, and where it sits on the `s` axis. */
+export interface FrontSegment {
+  name: "root_cap" | "upper_body" | "nose_cap" | "lower_body";
+  bin_start: number;
+  bin_end: number;
+  s_start: number;
+  s_end: number;
+  /** False where the level-set measurement is not trustworthy — the nose cap,
+   * where the estimate is first-order in a distance that is not small. */
+  measured: boolean;
+}
+
+/** The model's and the camera's normal speed along the front at one instant. */
+export interface FrontProfileFrame {
+  t_ms: number;
+  /** The two camera frames the measurement was differenced between. */
+  frames: [number, number];
+  heldout: boolean;
+  /** The model's own speed, defined over the whole front. */
+  model: KinematicsSeries;
+  /** The measurement — null on the nose cap, and wherever no usable pixel
+   * backed the bin. */
+  measured: KinematicsSeries;
+}
+
+/**
+ * The normal-speed profile along the front.
+ *
+ * `s` runs once around the closed contour: root cap, up the upper body to the
+ * nose, around the nose cap, back down the lower body. Only the normal
+ * component appears here — the tangential one is unobservable from masks.
+ */
+export interface FrontProfile {
+  s: number[];
+  segments: FrontSegment[];
+  /** One model-against-measured profile per reportable frame pair; empty when
+   * the dataset has no consecutive pair to difference. */
+  times: FrontProfileFrame[];
+  /** The model's profile over the continuous time axis — dense, because it
+   * needs no measurement. */
+  kymograph: {
+    t_ms: KinematicsSeries;
+    v_um_per_ms: KinematicsSeries[];
+  };
+}
+
+/**
+ * How fast the interface moved, written by the evaluate stage (physical units).
+ *
+ * `front_geometry` is false for a run trained without an explicit front. Such a
+ * run still has a nose speed — the nose is read off the predicted mask — but no
+ * per-point normal speed and no apex, so those blocks are absent and the view
+ * says why rather than drawing an empty axis.
+ */
+export interface FrontVelocityReport {
+  front_geometry: boolean;
+  nose_speed: NoseSpeed;
+  /** Null when the run has no explicit front — there is no parameterised nose
+   * to differentiate, which the view states rather than drawing empty. */
+  apex: ApexVelocity | null;
+  /** Null for the same reason: no explicit front, no per-point normal speed. */
+  profile: FrontProfile | null;
+}
+
+/**
+ * One front-velocity arrow: `[x_um, y_um, nx, ny, v_um_per_ms]`.
+ *
+ * `(nx, ny)` is the outward unit normal and `v` the speed along it, so the
+ * arrow to draw is `v * n`. Only the normal component exists here — a curve
+ * sliding along itself looks identical between frames, so the tangential part
+ * is unobservable from masks. It is also the part that does not move the
+ * interface, which is why the normal component alone is complete for the shape.
+ */
+export type FrontArrow = [
+  x_um: number,
+  y_um: number,
+  nx: number,
+  ny: number,
+  v_um_per_ms: number,
+];
+
 /** One reconstructed instant: interface contour polylines in µm. */
 export interface InterfaceFrame {
   t_ms: number;
   contours: number[][][];
+  /** Null for a run with no explicit front — nothing to read a per-point
+   * velocity from, which the viewport states rather than silently omitting. */
+  front: FrontArrow[] | null;
 }
 
 /** One predicted field evaluated on a grid at t* (the /field endpoint). */
@@ -614,6 +750,11 @@ export const api = {
   getTrajectory: (id: string, dataset?: string) =>
     getJson<Trajectory>(
       `${runPath(id)}/trajectory` +
+        (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
+    ),
+  getFrontVelocity: (id: string, dataset?: string) =>
+    getJson<FrontVelocityReport>(
+      `${runPath(id)}/front-velocity` +
         (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
     ),
   getField: (id: string, name: string, t: number, dataset?: string) =>

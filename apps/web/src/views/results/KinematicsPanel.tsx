@@ -1,37 +1,19 @@
 import { useEffect, useState } from "react";
 
-import { Callout, Panel, ViewCanvas } from "../../components";
-import { ChartFrame } from "../../components/ChartFrame";
+import { Callout, Panel } from "../../components";
 import {
   CompareChart,
-  type ComparePoint,
+  toComparePoints,
 } from "../../components/charts/CompareChart";
-import {
-  api,
-  ApiError,
-  type KinematicsSeries,
-  type Trajectory,
-} from "../../lib/api";
+import { api, ApiError, type Trajectory } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
+import { ChartCard } from "./ChartCard";
 
 type Load =
   | { status: "loading" }
   | { status: "unavailable" }
   | { status: "error"; message: string }
   | { status: "ready"; trajectory: Trajectory };
-
-/** Pair times with values, skipping instants where either is null (a gap). */
-function toSeries(
-  t: KinematicsSeries,
-  values: KinematicsSeries,
-): ComparePoint[] {
-  const points: ComparePoint[] = [];
-  t.forEach((time, i) => {
-    const value = values[i];
-    if (time != null && value != null) points.push({ x: time, y: value });
-  });
-  return points;
-}
 
 interface KinematicsPanelProps {
   runId: string;
@@ -54,51 +36,45 @@ function QuantityChart({
   exportName: string;
 }) {
   const rows = [
-    ...toSeries(trajectory.t_ms, trajectory[field]).map((point) => ({
+    ...toComparePoints(trajectory.t_ms, trajectory[field]).map((point) => ({
       series: "pinn",
       t_ms: point.x,
       [field]: point.y,
     })),
-    ...toSeries(trajectory.measured.t_ms, trajectory.measured[field]).map(
-      (point) => ({ series: "measured", t_ms: point.x, [field]: point.y }),
-    ),
+    ...toComparePoints(
+      trajectory.measured.t_ms,
+      trajectory.measured[field],
+    ).map((point) => ({ series: "measured", t_ms: point.x, [field]: point.y })),
   ];
   return (
-    <div className="kin-chart">
-      <div className="kin-chart-head">
-        <h3>{title}</h3>
-        <span className="kin-unit">{unit}</span>
-      </div>
-      <ChartFrame
-        name={exportName}
-        title={title}
-        rows={rows}
-        render={() => (
-          <ViewCanvas>
-            <CompareChart
-              series={[
-                {
-                  id: "PINN",
-                  points: toSeries(trajectory.t_ms, trajectory[field]),
-                },
-                {
-                  id: "measured",
-                  points: toSeries(
-                    trajectory.measured.t_ms,
-                    trajectory.measured[field],
-                  ),
-                  markers: true,
-                },
-              ]}
-              xLabel="t (ms)"
-              yLabel={`${title.toLowerCase()} · ${unit}`}
-              ariaLabel={`${title}: continuous PINN curve versus measured camera instants (circles).`}
-              yFormat={(v) => v.toFixed(0)}
-            />
-          </ViewCanvas>
-        )}
-      />
-    </div>
+    <ChartCard
+      title={title}
+      unit={unit}
+      name={exportName}
+      rows={rows}
+      render={() => (
+        <CompareChart
+          series={[
+            {
+              id: "PINN",
+              points: toComparePoints(trajectory.t_ms, trajectory[field]),
+            },
+            {
+              id: "measured",
+              points: toComparePoints(
+                trajectory.measured.t_ms,
+                trajectory.measured[field],
+              ),
+              markers: true,
+            },
+          ]}
+          xLabel="t (ms)"
+          yLabel={`${title.toLowerCase()} · ${unit}`}
+          ariaLabel={`${title}: continuous PINN curve versus measured camera instants (circles).`}
+          yFormat={(v) => v.toFixed(0)}
+        />
+      )}
+    />
   );
 }
 

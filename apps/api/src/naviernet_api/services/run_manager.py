@@ -540,6 +540,9 @@ def _configure(
         f"training.kin_weight_mono={request.kin_weight_mono}",
         f"training.kin_weight_balance={request.kin_weight_balance}",
         f"training.kin_weight_evap={request.kin_weight_evap}",
+        f"training.front_velocity={str(request.front_velocity).lower()}",
+        f"training.fv_weight={request.fv_weight}",
+        f"training.fv_apex_weight={request.fv_apex_weight}",
     ]
     from naviernet_api.services.config_service import compose_cfg_once
     from naviernet_api.services.datasets import series_is_stage_b, series_overrides

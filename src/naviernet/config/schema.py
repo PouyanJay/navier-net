@@ -345,6 +345,35 @@ class TrainingConfig:
     kin_grid: int = 48  # fixed spatial quadrature grid, per side
     kin_ramp: int = 300  # steps to ramp balance/evap in (the source field is noise early)
 
+    # Measured front velocity: supervise the front's own normal speed against the
+    # velocity measured from consecutive masks, and the nose apex against its
+    # measured 2-D displacement. The shape is already supervised at every training
+    # frame; its RATE is not -- and under the front-geometry parameterisation the
+    # rate is exactly what carries the profile past the last supervised frame.
+    # Requires `model.front_geometry` (there is no explicit front, and no
+    # `normal_speed`, without it). Off by default -> the objective is unchanged.
+    front_velocity: bool = False
+    # 10, not 1. These terms sit outside the gradient-norm rebalancer by design
+    # (they are functionals, not pointwise residuals), so nothing corrects a
+    # weight that is too small to act -- and at 1.0 their combined gradient norm
+    # measures 0.094 against the data term's 1.66, which is 1/18th. Benched, a
+    # run at weight 1 scored 0.871/0.929 against a baseline 0.872/0.928: the same
+    # run. A flag whose default makes it inert is a switch that does nothing.
+    fv_weight: float = 10.0  # binned normal-velocity profile along the front
+    fv_apex_weight: float = 10.0  # nose-apex 2-D displacement (a true (vx, vy))
+    # Front samples averaged into each profile bin -- the knob is stated this way
+    # round deliberately. Averaging within a bin is the ONLY thing keeping
+    # single-pixel mask noise out of the learned rate, and a bin count says
+    # nothing about how much averaging it buys: at 16 bins the default 16 cap
+    # samples land one per bin, which is no averaging at all. Each segment gets
+    # its own bin count derived from this, so body and caps are both averaged.
+    fv_samples_per_bin: int = 4
+    # Gaussian blur (in pixels) on the signed distance fields before differencing.
+    # A binary mask quantises the interface onto the pixel grid and its distance
+    # field inherits that staircase; both frames are blurred identically, so the
+    # interface is not shifted.
+    fv_smooth_px: float = 1.5
+
     seed: int = 0
     device: str = "cpu"
     log_every: int = 200

@@ -163,6 +163,44 @@ def test_loss_csv_exports_the_checkpoint_history(client):
     assert lines[1].startswith("200,")
 
 
+def test_front_velocity_csv_exports_every_series_in_both_units(client):
+    """One flat file for a paper's analysis: the whole-front speeds and the
+    profile, each row carrying the reporting unit and the SI one."""
+    response = client.get("/api/runs/demo_run/export/front-velocity.csv")
+    assert response.status_code == 200
+    lines = response.text.strip().splitlines()
+
+    assert lines[0] == "series,t_ms,s,v_um_per_ms,v_m_per_s,heldout"
+    series = {line.split(",")[0] for line in lines[1:]}
+    assert series == {
+        "nose_speed",
+        "nose_speed_measured",
+        "apex_vx",
+        "apex_vx_measured",
+        "apex_vy",
+        "apex_vy_measured",
+        "profile_model",
+        "profile_measured",
+    }
+    # µm/ms and m/s on the same row, so the file needs no conversion to read.
+    assert "nose_speed,0.0,,120.5,0.1205," in response.text
+    # The pair that spans a held-out frame says so.
+    assert "nose_speed_measured,0.25,,131.0,0.131,True" in response.text
+
+
+def test_front_velocity_csv_keeps_a_suppressed_bin_as_a_row(client):
+    """The nose cap's measurement is deliberately absent, not missing. Dropping
+    the row would say the position does not exist; an empty value says it was
+    looked at and nothing trustworthy was found."""
+    text = client.get("/api/runs/demo_run/export/front-velocity.csv").text
+
+    assert "profile_measured,0.0,0.25,3.0,0.003,False" in text
+    assert "profile_measured,0.0,0.75,,,False" in text
+    # The model's own value is still there at the same position.
+    assert "profile_model,0.0,0.75,120.0,0.12,False" in text
+
+
 def test_exports_404_when_the_artifact_is_absent(client):
     assert client.get("/api/runs/scratch/export/loss.csv").status_code == 404
     assert client.get("/api/runs/nope/export/iou.csv").status_code == 404
+    assert client.get("/api/runs/scratch/export/front-velocity.csv").status_code == 404

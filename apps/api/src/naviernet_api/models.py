@@ -374,6 +374,20 @@ class RunLaunchRequest(BaseModel):
     kin_weight_mono: float = Field(default=1.0, ge=0.0, le=100.0)
     kin_weight_balance: float = Field(default=1.0, ge=0.0, le=100.0)
     kin_weight_evap: float = Field(default=0.0, ge=0.0, le=100.0)
+    # Measured front velocity: supervise the front's own normal speed against the
+    # velocity measured from consecutive masks, and the nose apex against its
+    # measured 2-D displacement. The shape is already supervised at every training
+    # frame; its RATE is not, and the rate is what carries the shape past the data.
+    # Requires front_geometry -- there is no explicit front, and no normal speed,
+    # without it -- mirrored below as a 422. The measurement's own knobs
+    # (fv_samples_per_bin, fv_smooth_px) keep their schema defaults, CLI-tunable
+    # only, like the fine kinematics sub-parameters. Both weights sit near O(1).
+    front_velocity: bool = False
+    # Both default to 10, matching the trainer: these terms sit outside the
+    # rebalancer, and at 1.0 they are measurably inert (benched, a weight-1 run
+    # reproduced the baseline exactly).
+    fv_weight: float = Field(default=10.0, ge=0.0, le=100.0)
+    fv_apex_weight: float = Field(default=10.0, ge=0.0, le=100.0)
 
     def resolved_datasets(self) -> list[str]:
         """The datasets a new run trains on: `datasets` if given, else `[dataset]`.
@@ -402,11 +416,17 @@ class RunLaunchRequest(BaseModel):
                 "front_geometry already pins the root exactly by construction; "
                 "it is mutually exclusive with hard_pin -- disable one."
             )
-        for flag in ("sharp_interface", "allow_pinch", "evolving_width"):
+        for flag in ("sharp_interface", "allow_pinch", "evolving_width", "front_velocity"):
             if getattr(self, flag) and not self.front_geometry:
                 raise ValueError(
                     f"{flag} requires front_geometry -- enable it, or turn {flag} off"
                 )
+        if self.front_velocity and self.fv_weight == 0 and self.fv_apex_weight == 0:
+            raise ValueError(
+                "front_velocity with both fv_weight and fv_apex_weight at 0 measures "
+                "the front and then ignores it -- give one a weight, or turn "
+                "front_velocity off"
+            )
         if self.film_pressure and self.sharp_interface is False:
             raise ValueError(
                 "film_pressure corrects the Young-Laplace jump, so it requires "

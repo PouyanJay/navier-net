@@ -251,6 +251,68 @@ class BubbleDataset:
             )
         return edges[1]
 
+    def front_apex(self, row: int) -> tuple[float, float]:
+        """The measured nose apex ``(x*, y*)`` of one row: the front edge, and
+        the centre of the vapour column standing at it.
+
+        The interface's one geometrically distinguishable point, so the only
+        place a true 2-D displacement can be read between two frames -- along a
+        smooth arc the tangential motion is invisible, and a curve sliding along
+        itself looks identical frame to frame.
+        """
+        x_front = self._front_x(row)
+        # The grid is uniform and ``_front_x`` returned one of its own values, so
+        # this recovers the exact column rather than a nearest neighbour.
+        col = int(np.argmin(np.abs(self.x - x_front)))
+        vapor_rows = np.nonzero(self._vapor(row)[:, col])[0]
+        if vapor_rows.size == 0:
+            raise ValueError(
+                f"frame {self.frame_numbers[row]} reports a front at x*={x_front:.4f} but "
+                f"no vapour column there (column {col}) -- the masks look degenerate."
+            )
+        return x_front, float(self.y[vapor_rows].mean())
+
+    @cached_property
+    def report_pairs(self) -> list[tuple[int, int]]:
+        """Consecutive event-row pairs ``(k, k+1)`` a measured front velocity may
+        be taken over *for a report*.
+
+        One condition: the two rows must be ONE camera frame apart. An excluded
+        frame leaves a real gap on the time axis, and a difference taken across
+        it is a coarser estimate of a different interval, not the same
+        measurement -- so the gap is never bridged.
+
+        Held-out frames are NOT excluded here. Nothing reading this trains, so
+        there is no validation set to leak into, and the held-out interval is
+        exactly the one a reader most wants to see the model's rate over.
+        Consumers mark those pairs; :attr:`supervised_pairs` is what drops them.
+        """
+        return [
+            (row, row + 1)
+            for row in range(self.n_event - 1)
+            if self.frame_numbers[row + 1] - self.frame_numbers[row] == 1
+        ]
+
+    def spans_held_out(self, pair: tuple[int, int]) -> bool:
+        """Whether either row of a pair was held out of supervision."""
+        return bool(set(pair) & set(self.validation_rows))
+
+    @cached_property
+    def supervised_pairs(self) -> list[tuple[int, int]]:
+        """The :attr:`report_pairs` a measured front velocity may honestly be
+        used to SUPERVISE with.
+
+        The extra condition is that both rows be *training-visible*:
+        differencing a held-out frame's mask would turn the validation set into a
+        training target, which is exactly the leak the holdout exists to prevent
+        -- so a pair touching one is dropped, never interpolated across.
+
+        Derived from ``report_pairs`` rather than rebuilt beside it, so the
+        frame-adjacency rule cannot come to mean two different things.
+        """
+        visible = set(self._training_visible_event_rows())
+        return [pair for pair in self.report_pairs if set(pair) <= visible]
+
     @cached_property
     def initial_front(self) -> float:
         """The measured front x* of the FIRST training-visible event frame --

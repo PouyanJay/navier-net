@@ -31,6 +31,33 @@ def test_trajectory_is_written_and_served(client: TestClient, trained_run: str):
     assert measured_nose[-1] > measured_nose[0]
 
 
+def test_front_velocity_report_is_written_and_served(client: TestClient, trained_run: str):
+    """Evaluate persists the front's motion too, and the endpoint serves it.
+
+    The synthetic bubble grows, so its nose speed is positive somewhere -- a
+    report that came back all zeros would mean the derivative never reached the
+    trajectory it is supposed to be the slope of.
+    """
+    report = client.get(f"/api/runs/{trained_run}/front-velocity").json()
+
+    nose = report["nose_speed"]
+    assert len(nose["t_ms"]) == len(nose["v_um_per_ms"]) > 10
+    assert any(v is not None and v > 0 for v in nose["v_um_per_ms"])
+
+
+def test_front_velocity_missing_for_untrained_runs(client: TestClient):
+    assert client.get("/api/runs/scratch/front-velocity").status_code == 404
+    assert client.get("/api/runs/no-such/front-velocity").status_code == 404
+
+
+def test_front_velocity_rejects_a_traversing_dataset_name(client: TestClient, trained_run: str):
+    """The dataset name becomes part of a path (SECURITY.md §3)."""
+    response = client.get(
+        f"/api/runs/{trained_run}/front-velocity", params={"dataset": "../evil"}
+    )
+    assert response.status_code == 404
+
+
 def test_interface_frames_serve_contours(client: TestClient, trained_run: str):
     """The viewport endpoint returns per-timestep interface polylines."""
     payload = client.get(f"/api/runs/{trained_run}/interface?frames=8").json()
@@ -43,6 +70,79 @@ def test_interface_frames_serve_contours(client: TestClient, trained_run: str):
     first = measured_with_contours[0]["contours"][0]
     assert len(first) >= 8  # a polyline, not speckle
     assert all(len(point) == 2 for point in first)
+
+
+def test_interface_frames_carry_the_front_s_own_velocity(client: TestClient, trained_run: str):
+    """Each reconstructed instant carries arrows for the viewport overlay:
+    position in µm, the outward unit normal, and the normal speed along it.
+
+    The speed is the NORMAL component only -- the tangential one is unobservable
+    from masks -- so the arrow is `v * n` and nothing here implies otherwise.
+    """
+    import math
+
+    payload = client.get(f"/api/runs/{trained_run}/interface?frames=8").json()
+    arrows = payload["frames"][0]["front"]
+
+    assert arrows, "the default recipe has an explicit front, so it has arrows"
+    assert all(len(arrow) == 5 for arrow in arrows)
+    # Sparse enough to read as an annotation rather than a band of ink.
+    assert 8 <= len(arrows) < 80
+    for x_um, y_um, nx, ny, _v in arrows:
+        assert payload["domain"]["x_um"][0] - 1 <= x_um
+        assert math.hypot(nx, ny) == pytest.approx(1.0, abs=1e-3), (
+            "the normal must be a unit vector; the viewport scales it by the speed"
+        )
+        assert not math.isnan(y_um)  # JSON has no token for one
+
+
+def test_the_arrows_agree_with_the_report_at_the_same_instant(
+    client: TestClient, trained_run: str
+):
+    """The viewport overlay and the Front velocity tab must not tell different
+    stories about the same moment.
+
+    Both read the model's own front, but through separate call sites and at
+    different sample densities, so they could drift. The apex is where they are
+    directly comparable: its speed IS the front's normal speed at the nose, so
+    the fastest arrow in a frame must match the report's apex velocity there.
+    """
+    import math
+
+    interface = client.get(f"/api/runs/{trained_run}/interface?frames=8").json()
+    report = client.get(f"/api/runs/{trained_run}/front-velocity").json()
+
+    frame = interface["frames"][len(interface["frames"]) // 2]
+    fastest = max(abs(arrow[4]) for arrow in frame["front"])
+
+    apex = report["apex"]
+    i = min(
+        range(len(apex["t_ms"])),
+        key=lambda k: abs(apex["t_ms"][k] - frame["t_ms"]),
+    )
+    speed = math.hypot(apex["vx_um_per_ms"][i], apex["vy_um_per_ms"][i])
+    assert fastest == pytest.approx(speed, rel=0.1), (
+        f"the viewport's fastest arrow ({fastest:.3f} µm/ms) disagrees with the "
+        f"report's apex speed ({speed:.3f}) at t = {frame['t_ms']} ms"
+    )
+
+
+def test_a_run_without_an_explicit_front_offers_no_arrows(client: TestClient):
+    """No parameterised interface, so there is no per-point velocity to draw.
+    The key is present and null, which is what lets the viewport disable its
+    layer toggle and say why instead of offering an empty overlay."""
+    request = {**TINY_RUN, "front_geometry": False}
+    run_id = client.post("/api/runs", json=request).json()["run_id"]
+    final = final_status(read_stream(client, run_id))
+    assert final["state"] == "done", f"run failed: {final.get('message')}"
+
+    payload = client.get(f"/api/runs/{run_id}/interface?frames=8").json()
+    assert payload["frames"]
+    assert all(frame["front"] is None for frame in payload["frames"])
+    # And the report agrees, through its own code path.
+    report = client.get(f"/api/runs/{run_id}/front-velocity").json()
+    assert report["front_geometry"] is False
+    assert report["apex"] is None and report["profile"] is None
 
 
 def test_interface_missing_for_untrained_runs(client: TestClient):

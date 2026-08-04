@@ -400,6 +400,26 @@ class BubblePINN(nn.Module):
             )
         return self.nets["phi"].front(t, n_body, n_cap, GeometryContext(c, geometry))
 
+    def apex(
+        self,
+        t: torch.Tensor,
+        c: torch.Tensor | None = None,
+        geometry: GeometryPriors | None = None,
+    ) -> torch.Tensor:
+        """The nose apex ``(x, y)`` at times ``t`` of shape ``(N, 1)``.
+
+        Routed through the model for the same reason as :meth:`front`: a joint
+        run's per-dataset view binds its own conditioning row and anchors, and
+        going around it would report one dataset's apex for every condition.
+        """
+        if not self.front_geometry:
+            raise RuntimeError(
+                "apex() needs the explicit front: this model was built with "
+                "model.front_geometry=false, so there is no parameterized nose "
+                "to locate."
+            )
+        return self.nets["phi"].apex(t, GeometryContext(c, geometry))
+
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -512,6 +532,10 @@ class BoundPINN:
         """This dataset's own front: its conditioning row and its measured
         anchors, never the raw model's."""
         return self._model.front(t, n_body, n_cap, self._c, self._geometry)
+
+    def apex(self, t: torch.Tensor):
+        """This dataset's own nose apex -- bound exactly like :meth:`front`."""
+        return self._model.apex(t, self._c, self._geometry)
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.source(x, c if c is not None else self._ctx(x))
