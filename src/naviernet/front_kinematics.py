@@ -68,11 +68,18 @@ def build_report(cfg, model, data) -> dict:
     ``front_geometry`` is not decoration: without an explicit front there is no
     ``normal_speed`` and no apex to differentiate, so the blocks that need one
     are ``None`` and the consumer says why rather than rendering an empty axis.
+
+    Every block shares ONE continuous time axis -- the trajectory's own -- so the
+    charts can be scrubbed together and a reader comparing two of them is
+    comparing the same instants.
     """
     scale = _Scale.of(cfg, data)
+    predicted = nose_trajectory(cfg, model, data)
+    front_geometry = bool(getattr(model, "front_geometry", False))
     return {
-        "front_geometry": bool(getattr(model, "front_geometry", False)),
-        "nose_speed": _nose_speed(cfg, model, data, scale),
+        "front_geometry": front_geometry,
+        "nose_speed": _nose_speed(cfg, data, scale, predicted),
+        "apex": _apex_velocity(model, data, scale, predicted.times) if front_geometry else None,
     }
 
 
@@ -105,7 +112,7 @@ class _Scale:
         return physical_series(values, self.t_ref_ms, 4)
 
 
-def _nose_speed(cfg, model, data, scale: _Scale) -> dict:
+def _nose_speed(cfg, data, scale: _Scale, predicted) -> dict:
     """How fast the bubble's leading edge advances, model and measured.
 
     The model side is the derivative of the same continuous trajectory
@@ -114,7 +121,6 @@ def _nose_speed(cfg, model, data, scale: _Scale) -> dict:
     explicit front -- the nose is read off the predicted mask -- so it is the one
     block every run has.
     """
-    predicted = nose_trajectory(cfg, model, data)
     return {
         "t_ms": scale.times(predicted.times),
         "v_um_per_ms": scale.speeds(np.gradient(predicted.nose, predicted.times)),
@@ -150,5 +156,72 @@ def _measured_nose_speed(cfg, data, scale: _Scale) -> dict:
     return {
         "t_ms": physical_series(times, 1.0, 4),
         "v_um_per_ms": physical_series(speeds, scale.l_ref_um, SPEED_DIGITS),
+        "heldout": heldout,
+    }
+
+
+def _apex_velocity(model, data, scale: _Scale, times) -> dict:
+    """The nose apex's full 2-D velocity -- the one honest ``(vx, vy)`` here.
+
+    Everywhere else on the interface only the normal component is observable: a
+    curve sliding along itself looks identical between frames, so a generic point
+    has no frame-to-frame correspondence to track. The apex is geometrically
+    distinguishable, so it does, and both components mean something.
+
+    The model side is taken by AUTODIFF rather than differenced. Under this
+    parameterisation the apex is a differentiable function of time, so its exact
+    velocity is available and there is no reason to report an estimate whose
+    error depends on a step size nobody chose.
+    """
+    positions, velocity = _apex_path(model, data, times)
+    return {
+        "t_ms": scale.times(times),
+        "x_um": physical_series(positions[:, 0], scale.l_ref_um, 2),
+        "y_um": physical_series(positions[:, 1], scale.l_ref_um, 2),
+        "vx_um_per_ms": scale.speeds(velocity[:, 0]),
+        "vy_um_per_ms": scale.speeds(velocity[:, 1]),
+        "measured": _measured_apex_velocity(data, scale),
+    }
+
+
+def _apex_path(model, data, times) -> tuple[np.ndarray, np.ndarray]:
+    """The apex's position and its exact velocity at each of ``times``."""
+    import torch
+
+    t = torch.tensor(
+        np.asarray(times, dtype=np.float32).reshape(-1, 1), device=data.device
+    ).requires_grad_(True)
+    apex = model.apex(t)
+    # One grad call per component: `apex` is (N, 2) and each column is a
+    # separate function of t. Summing within a column is safe because sample i
+    # depends only on t_i, so the sum's gradient is each sample's own.
+    velocity = [
+        torch.autograd.grad(apex[:, axis].sum(), t, retain_graph=axis == 0)[0] for axis in (0, 1)
+    ]
+    return (
+        apex.detach().cpu().numpy(),
+        torch.cat(velocity, dim=1).detach().cpu().numpy(),
+    )
+
+
+def _measured_apex_velocity(data, scale: _Scale) -> dict:
+    """What the masks say the apex did, over each consecutive frame pair.
+
+    ``front_apex`` is the segmented front edge and the centre of the vapour
+    column standing at it -- a tracked feature, so this is a displacement, with
+    no level-set approximation anywhere in it.
+    """
+    times, vx, vy, heldout = [], [], [], []
+    for row, nxt in data.report_pairs:
+        interval = float(data.t[nxt]) - float(data.t[row])
+        here, there = data.front_apex(row), data.front_apex(nxt)
+        times.append(0.5 * (float(data.t[row]) + float(data.t[nxt])))
+        vx.append((there[0] - here[0]) / interval)
+        vy.append((there[1] - here[1]) / interval)
+        heldout.append(data.spans_held_out((row, nxt)))
+    return {
+        "t_ms": scale.times(times),
+        "vx_um_per_ms": scale.speeds(vx),
+        "vy_um_per_ms": scale.speeds(vy),
         "heldout": heldout,
     }

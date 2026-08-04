@@ -493,17 +493,44 @@ export interface Trajectory {
   };
 }
 
+/**
+ * One measured speed series: a finite difference per consecutive camera-frame
+ * pair, each at the midpoint of the interval it measures. `heldout[i]` marks a
+ * pair spanning a frame held out of supervision — reported, never dropped,
+ * because nothing reading this trains.
+ */
+export interface MeasuredSpeed {
+  t_ms: KinematicsSeries;
+  v_um_per_ms: KinematicsSeries;
+  heldout: boolean[];
+}
+
 /** The bubble nose's own speed over time, model against the camera frames. */
 export interface NoseSpeed {
   t_ms: KinematicsSeries;
   v_um_per_ms: KinematicsSeries;
-  /** One finite difference per consecutive camera-frame pair, each at the
-   * midpoint of the interval it measures. `heldout[i]` marks a pair spanning a
-   * frame held out of supervision — reported, never dropped, because nothing
-   * reading this trains. */
+  measured: MeasuredSpeed;
+}
+
+/**
+ * The nose apex's velocity — the one interface point with a true `(vx, vy)`.
+ *
+ * Everywhere else only the normal component is observable: a curve sliding
+ * along itself looks identical between frames, so a generic point has no
+ * frame-to-frame correspondence. The apex is geometrically distinguishable, so
+ * both components mean something. The model side is exact (autodiff of the
+ * parameterised apex), not a finite difference.
+ */
+export interface ApexVelocity {
+  t_ms: KinematicsSeries;
+  x_um: KinematicsSeries;
+  y_um: KinematicsSeries;
+  vx_um_per_ms: KinematicsSeries;
+  vy_um_per_ms: KinematicsSeries;
   measured: {
     t_ms: KinematicsSeries;
-    v_um_per_ms: KinematicsSeries;
+    vx_um_per_ms: KinematicsSeries;
+    vy_um_per_ms: KinematicsSeries;
     heldout: boolean[];
   };
 }
@@ -519,6 +546,9 @@ export interface NoseSpeed {
 export interface FrontVelocityReport {
   front_geometry: boolean;
   nose_speed: NoseSpeed;
+  /** Null when the run has no explicit front — there is no parameterised nose
+   * to differentiate, which the view states rather than drawing empty. */
+  apex: ApexVelocity | null;
 }
 
 /** One reconstructed instant: interface contour polylines in µm. */

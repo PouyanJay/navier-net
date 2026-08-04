@@ -46,6 +46,19 @@ def _report(tmp_path, overrides=None) -> dict:
     return json.loads(paths.front_velocity_json.read_text())
 
 
+def _report_without_front_geometry(tmp_path) -> dict:
+    """The same run with no explicit front -- every block that needs one is
+    absent, and the blocks read off the predicted mask survive."""
+    from naviernet.evaluation import evaluate
+    from naviernet.training import load_model, train
+
+    cfg, paths = conftest.staged_capsule_run(tmp_path, ["model=stage_b"])
+    train(cfg, paths)
+    model, data, _ = load_model(cfg, paths)
+    evaluate(cfg, model, data, paths)
+    return json.loads(paths.front_velocity_json.read_text())
+
+
 # --- The walking skeleton: evaluate produces a report the platform can read ---
 
 
@@ -172,6 +185,76 @@ def test_a_measured_pair_is_reported_at_the_instant_it_spans(tmp_path):
         0.5 * (float(data.t[row]) + float(data.t[nxt])) * t_ref for row, nxt in data.report_pairs
     ]
     assert report["nose_speed"]["measured"]["t_ms"] == pytest.approx(expected, abs=1e-4)
+
+
+# --- The apex: the one point with an honest 2-D velocity ---------------------
+
+
+def test_the_measured_apex_velocity_recovers_the_capsule_s_growth_in_both_axes(tmp_path):
+    """The capsule advances along +x at a known rate and never moves in y.
+
+    The apex is the one interface point with a real frame-to-frame
+    correspondence, so unlike the normal velocity this is a true ``(vx, vy)`` --
+    and both components have an analytic answer here.
+    """
+    import numpy as np
+
+    cfg, paths, _ = _evaluated(tmp_path)
+    measured = json.loads(paths.front_velocity_json.read_text())["apex"]["measured"]
+
+    scale = cfg.scales.L_ref_um / conftest.CAPSULE_T_REF_MS
+    assert np.mean(measured["vx_um_per_ms"]) == pytest.approx(NOSE_SPEED_STAR * scale, rel=0.06)
+    assert np.allclose(measured["vy_um_per_ms"], 0.0, atol=0.02 * scale)
+
+
+def test_the_model_apex_velocity_is_the_derivative_of_its_own_apex_path(tmp_path):
+    """Taken by autodiff, not differenced: the apex is a differentiable function
+    of time under this parameterisation, so the report gives its exact velocity
+    rather than an estimate whose error depends on a step size nobody chose.
+
+    Held to that claim by comparing against a central difference of the model's
+    OWN apex -- if the reported values were themselves a coarse difference over
+    the report's grid, they would not match one taken over a step three orders
+    of magnitude smaller.
+
+    The step is chosen, not guessed: the model is float32, so a central
+    difference trades truncation (growing with the step) against cancellation
+    (~eps*|apex|/step, shrinking with it). At 1e-3 t* both sit near 1e-2 µm/ms
+    for this fixture, which is what the tolerance below allows for -- it is the
+    REFERENCE's precision, not the report's.
+    """
+    import numpy as np
+    import torch
+
+    from naviernet.training import load_model
+
+    cfg, paths, data = _evaluated(tmp_path)
+    model, _, _ = load_model(cfg, paths)
+    apex = json.loads(paths.front_velocity_json.read_text())["apex"]
+
+    t_ref = conftest.CAPSULE_T_REF_MS
+    scale = cfg.scales.L_ref_um / t_ref
+    step = 1e-3
+    for index in (1, len(apex["t_ms"]) // 2, len(apex["t_ms"]) - 2):
+        t_star = apex["t_ms"][index] / t_ref
+        with torch.no_grad():
+            ahead = model.apex(torch.tensor([[t_star + step]], dtype=torch.float32))
+            behind = model.apex(torch.tensor([[t_star - step]], dtype=torch.float32))
+        expected = ((ahead - behind) / (2 * step)).reshape(2).numpy() * scale
+
+        reported = np.array([apex["vx_um_per_ms"][index], apex["vy_um_per_ms"][index]])
+        assert reported == pytest.approx(expected, rel=1e-3, abs=1e-4 * scale)
+
+
+def test_a_run_without_an_explicit_front_reports_no_apex(tmp_path):
+    """No parameterised nose to differentiate. The key is present and null, so
+    the view says why rather than drawing an empty axis."""
+    report = _report_without_front_geometry(tmp_path)
+
+    assert report["front_geometry"] is False
+    assert report["apex"] is None
+    # The nose speed survives -- it is read off the predicted mask, not the front.
+    assert report["nose_speed"]["v_um_per_ms"]
 
 
 def test_the_report_states_its_units_rather_than_leaving_them_to_the_reader(tmp_path):

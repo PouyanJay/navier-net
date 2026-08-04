@@ -5,7 +5,11 @@ import {
   type ComparePoint,
   type CompareSeries,
 } from "../../components/charts/CompareChart";
-import type { KinematicsSeries, NoseSpeed } from "../../lib/api";
+import type {
+  ApexVelocity,
+  KinematicsSeries,
+  MeasuredSpeed,
+} from "../../lib/api";
 import { ChartCard } from "./ChartCard";
 import { useFrontVelocity } from "./useFrontVelocity";
 
@@ -57,10 +61,10 @@ function speedRow(series: string, point: ComparePoint) {
  * Amber is this app's holdout tone, and the series' own name carries the same
  * fact -- so the distinction survives for a reader who cannot use colour.
  */
-function measuredSeries(nose: NoseSpeed): CompareSeries[] {
-  const points = toSeries(nose.measured.t_ms, nose.measured.v_um_per_ms);
-  const { heldout } = nose.measured;
-  const pick = (want: boolean) => points.filter((_, i) => heldout[i] === want);
+function measuredSeries(measured: MeasuredSpeed): CompareSeries[] {
+  const points = toSeries(measured.t_ms, measured.v_um_per_ms);
+  const pick = (want: boolean) =>
+    points.filter((_, i) => measured.heldout[i] === want);
   return [
     {
       id: "measured",
@@ -77,16 +81,37 @@ function measuredSeries(nose: NoseSpeed): CompareSeries[] {
   ];
 }
 
-function NoseSpeedChart({ nose, name }: { nose: NoseSpeed; name: string }) {
-  const predicted = toSeries(nose.t_ms, nose.v_um_per_ms);
-  const measured = measuredSeries(nose);
+interface SpeedChartProps {
+  title: string;
+  /** File stem for the chart's downloads. */
+  name: string;
+  /** What the y numbers are, for the screen-reader description. */
+  quantity: string;
+  model: { t_ms: KinematicsSeries; v_um_per_ms: KinematicsSeries };
+  measured: MeasuredSpeed;
+}
+
+/**
+ * One speed against time: the model's continuous curve, and one circle per
+ * consecutive camera-frame pair. The shape the nose and both apex components
+ * share.
+ */
+function SpeedChart({
+  title,
+  name,
+  quantity,
+  model,
+  measured,
+}: SpeedChartProps) {
+  const predicted = toSeries(model.t_ms, model.v_um_per_ms);
+  const camera = measuredSeries(measured);
   const rows = [
     ...predicted.map((point) => speedRow("pinn", point)),
-    ...measured.flatMap((s) => s.points.map((point) => speedRow(s.id, point))),
+    ...camera.flatMap((s) => s.points.map((point) => speedRow(s.id, point))),
   ];
   return (
     <ChartCard
-      title="Nose speed"
+      title={title}
       unit="µm/ms"
       name={name}
       rows={rows}
@@ -94,19 +119,52 @@ function NoseSpeedChart({ nose, name }: { nose: NoseSpeed; name: string }) {
         <CompareChart
           series={[
             { id: "PINN", points: predicted, slot: SERIES_SLOT.primary },
-            ...measured,
+            ...camera,
           ]}
           xLabel="t (ms)"
-          yLabel="nose speed · µm/ms"
+          yLabel={`${quantity} · µm/ms`}
           ariaLabel={
-            "Nose speed over time: the continuous reconstruction as a line, " +
-            "and one circle per consecutive camera-frame pair. Pairs spanning " +
-            "a held-out frame are drawn separately."
+            `${title}: the continuous reconstruction as a line, and one circle ` +
+            "per consecutive camera-frame pair. Pairs spanning a held-out " +
+            "frame are drawn separately."
           }
           yFormat={speedReadout}
         />
       )}
     />
+  );
+}
+
+/** The apex's two components, each against time. Same unit on both, but one
+ * axis per quantity -- never a dual axis. */
+function ApexCharts({ apex, stem }: { apex: ApexVelocity; stem: string }) {
+  const component = (axis: "x" | "y") => ({
+    model: {
+      t_ms: apex.t_ms,
+      v_um_per_ms: axis === "x" ? apex.vx_um_per_ms : apex.vy_um_per_ms,
+    },
+    measured: {
+      t_ms: apex.measured.t_ms,
+      v_um_per_ms:
+        axis === "x" ? apex.measured.vx_um_per_ms : apex.measured.vy_um_per_ms,
+      heldout: apex.measured.heldout,
+    },
+  });
+  return (
+    <>
+      <SpeedChart
+        title="Apex velocity · along x"
+        quantity="apex vₓ"
+        name={`${stem}-apex-vx`}
+        {...component("x")}
+      />
+      <SpeedChart
+        title="Apex velocity · across y"
+        quantity="apex v_y"
+        name={`${stem}-apex-vy`}
+        {...component("y")}
+      />
+    </>
   );
 }
 
@@ -126,7 +184,7 @@ interface FrontVelocityTabProps {
  */
 export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
   const { report, error, loading } = useFrontVelocity(runId, dataset);
-  const exportStem = `${runId}${dataset ? `-${dataset}` : ""}`;
+  const stem = `${runId}${dataset ? `-${dataset}` : ""}`;
 
   if (loading)
     return (
@@ -155,23 +213,41 @@ export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
     );
 
   return (
-    <Panel
-      title="Front velocity"
-      subtitle="how fast the interface moved · the rate, not the shape"
-    >
-      <div className="kin-grid">
-        <NoseSpeedChart
-          nose={report.nose_speed}
-          name={`${exportStem}-nose-speed`}
-        />
-      </div>
-      <p className="figcap">
-        <b>Figure 1.</b> The reconstruction's nose speed is continuous; each
-        measured circle is one finite difference between consecutive camera
-        frames, plotted at the midpoint of the interval it measures. An interval
-        spanning a held-out frame is drawn apart and labelled — nothing trained
-        on it, so it is the model's rate where it was never shown the answer.
-      </p>
-    </Panel>
+    <>
+      <Panel
+        title="Front velocity"
+        subtitle="how fast the interface moved · the rate, not the shape"
+      >
+        <div className="kin-grid">
+          <SpeedChart
+            title="Nose speed"
+            quantity="nose speed"
+            name={`${stem}-nose-speed`}
+            model={report.nose_speed}
+            measured={report.nose_speed.measured}
+          />
+          {report.apex && <ApexCharts apex={report.apex} stem={stem} />}
+        </div>
+        <p className="figcap">
+          <b>Figure 1.</b> The reconstruction's speed is continuous; each
+          measured circle is one finite difference between consecutive camera
+          frames, plotted at the midpoint of the interval it measures. An
+          interval spanning a held-out frame is drawn apart and labelled —
+          nothing trained on it, so it is the model's rate where it was never
+          shown the answer.
+        </p>
+      </Panel>
+
+      {!report.apex && (
+        <Panel title="Apex velocity" subtitle="the one honest 2-D velocity">
+          <p className="state-note">
+            This run was trained without an explicit front
+            (model.front_geometry), so there is no parameterised nose to
+            differentiate and no apex to track. Enable Front geometry in the
+            Solver to measure it.
+          </p>
+        </Panel>
+      )}
+    </>
   );
 }
