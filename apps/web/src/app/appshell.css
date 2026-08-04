@@ -208,11 +208,24 @@
 }
 
 /* Sidebar rail; dark navy chrome */
+/* The two rails' surfaces are swapped: the pipeline rail carries the panel
+   surface and the stage aside carries the chrome one. Each rail re-points the
+   token family its own descendants already use, so the swap re-tones their
+   text, borders and insets too -- a bare background swap would have left the
+   pipeline rail's chrome-tuned text on a paper surface, unreadable in light. */
 .sidebar {
   grid-column: 1;
   grid-row: 2;
-  background: var(--side);
-  border-right: 1px solid var(--sideline);
+  --sidetxt: var(--ink2);
+  --sidehl: var(--ink);
+  --sideline: var(--line);
+  /* The stage markers and the back button fill with --side/--side2, so those
+     have to follow the surface too -- left raw, a navy marker would carry the
+     now-dark numeral on top of it. */
+  --side: var(--panel2);
+  --side2: var(--panel2);
+  background: var(--panel);
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   padding: var(--s4) var(--s3);
@@ -368,8 +381,17 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+  /* The chrome surface, with the paper token family re-pointed onto it so the
+     stage's own content (rows, values, chips, callouts) stays legible. */
+  --ink: var(--sidehl);
+  --ink2: var(--sidetxt);
+  --ink3: var(--sidetxt);
+  --line: var(--sideline);
+  --line2: var(--sideline);
+  --panel: var(--side);
+  --panel2: var(--side2);
+  background: var(--side);
+  border-right: 1px solid var(--sideline);
 }
 .stage-aside-hd {
   display: flex;
