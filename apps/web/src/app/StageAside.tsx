@@ -11,10 +11,13 @@ import { createPortal } from "react-dom";
 
 import { initialAsideCollapsed, storeAsideCollapsed } from "./asidePreference";
 
-/** What a stage tells the shell about the rail it is filling. */
+/** What a stage tells the shell about the aside it is filling. */
 export interface AsideHeading {
   title: string;
   subtitle?: string;
+  /** Expanded width in px, when this stage's content needs more room than the
+   * default. A stage that omits it gets the shell's own width. */
+  width?: number;
 }
 
 export interface AsideSlot {

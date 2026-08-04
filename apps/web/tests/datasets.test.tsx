@@ -5,34 +5,14 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "../src/app/AppShell";
-import { AsideSlotProvider } from "../src/app/StageAside";
 import { ToastProvider } from "../src/components/Toast";
 import type { ProjectSummary } from "../src/lib/api";
 import { DatasetsView } from "../src/views/DatasetsView";
-
-/**
- * Stands in for AppShell's secondary rail. The datasets stage renders its
- * series library into that slot, so a test without one would mount no library
- * at all — this provides a real node exactly as the shell does.
- */
-function StageHarness({ children }: { children: ReactNode }) {
-  const [node, setNode] = useState<HTMLElement | null>(null);
-  const slot = useMemo(() => ({ node, claim: () => {} }), [node]);
-  return (
-    <AsideSlotProvider slot={slot}>
-      <div ref={setNode} />
-      {children}
-    </AsideSlotProvider>
-  );
-}
-
-function renderStage(ui: ReactNode) {
-  return render(<StageHarness>{ui}</StageHarness>);
-}
+import { renderStage } from "./stageHarness";
 
 /** Owns project state like App does, so attach flows re-render the view. */
 function Harness({

@@ -456,7 +456,9 @@ describe("results routing", () => {
 
     // Open the confirm from the run header, then approve the destructive action.
     fireEvent.click(screen.getByRole("button", { name: /delete run/i }));
-    expect(await screen.findByText("This cannot be undone.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("This cannot be undone."),
+    ).toBeInTheDocument();
     fireEvent.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
         name: /delete run/i,

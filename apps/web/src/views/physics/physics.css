@@ -102,15 +102,44 @@
   color: var(--ink);
 }
 
-.pm-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+/* The stage's inputs -- dataset, equations, capacity -- live in the shell's
+   aside; the canvas carries only what they derive. */
+.pm-capacity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
 }
-@media (max-width: 1150px) {
-  .pm-grid {
-    grid-template-columns: 1fr;
-  }
+.pm-capacity h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.pm-capacity .seg {
+  /* Three presets in an aside column: let them share the width evenly rather
+     than sizing to their labels. */
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* The derived shapes read out under the ensemble they describe, on the
+   always-dark view canvas -- so the paper ink family is re-pointed onto the
+   chrome one, the same move the aside makes. */
+.viewport .derived {
+  --ink: var(--sidehl);
+  --ink2: var(--sidetxt);
+  --ink3: var(--sidetxt);
+  --line: var(--viewline);
+  --line2: var(--viewline);
+  /* The inset surfaces too, or the info buttons read as white discs on the
+     dark canvas in the light theme. */
+  --panel: var(--view2);
+  --panel2: var(--view2);
+  padding: 0 var(--s4) var(--s3);
+  color: var(--ink);
+}
+.viewport .derived .reco-note {
+  margin-top: 0;
 }
 
 /* ---- equation rows ---- */
@@ -321,11 +350,12 @@
   color: var(--ink);
   box-shadow: var(--sh);
 }
+/* The stage's headline numbers, leading the canvas. Wraps rather than
+   crushing: three tiles need real width to keep their mono values legible. */
 .budget {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
-  margin-top: 12px;
 }
 .bud {
   background: var(--panel2);

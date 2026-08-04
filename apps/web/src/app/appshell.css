@@ -216,6 +216,7 @@
 .sidebar {
   grid-column: 1;
   grid-row: 2;
+  color: var(--ink);
   --sidetxt: var(--ink2);
   --sidehl: var(--ink);
   --sideline: var(--line);
@@ -392,6 +393,11 @@
   --panel2: var(--side2);
   background: var(--side);
   border-right: 1px solid var(--sideline);
+  /* Re-pointing the tokens is not enough on its own: inheritance carries a
+     RESOLVED colour, so any descendant that sets no colour of its own would
+     inherit the one computed outside this element -- dark ink on a dark
+     surface. Setting it here gives them something to inherit. */
+  color: var(--ink);
 }
 .stage-aside-hd {
   display: flex;

@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 
@@ -394,6 +395,11 @@ export function AppShell({
       className="shell"
       data-aside={
         aside.heading ? (aside.collapsed ? "collapsed" : "open") : undefined
+      }
+      style={
+        aside.heading?.width
+          ? ({ "--stage-aside-w": `${aside.heading.width}px` } as CSSProperties)
+          : undefined
       }
     >
       <header className="topbar">
