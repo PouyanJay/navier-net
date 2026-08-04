@@ -15,7 +15,7 @@ import shutil
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
@@ -344,20 +344,24 @@ def read_groups(settings: Settings, run_id: str) -> dict | None:
     return payload.get("groups") if payload else None
 
 
-def _dataset_scoped_json(
-    dataset: str | None,
-    shared: Path,
-    per_dataset: Callable[[str], Path],
-    kind: str,
-) -> dict | None:
+class _Artifact(NamedTuple):
+    """Where one of the evaluate stage's artifacts lives: the single-run path,
+    the per-dataset path a joint run writes, and what to call it in a log."""
+
+    shared: Path
+    per_dataset: Callable[[str], Path]
+    kind: str
+
+
+def _dataset_scoped_json(artifact: _Artifact, dataset: str | None) -> dict | None:
     """One of the evaluate stage's artifacts, optionally scoped to a joint run's
     dataset. The name is validated because it becomes part of a path."""
     if dataset is None:
-        return _read_json(shared)
+        return _read_json(artifact.shared)
     if not _RUN_ID_RE.match(dataset):
-        log.warning("rejecting unsafe %s dataset name %r", kind, dataset)
+        log.warning("rejecting unsafe %s dataset name %r", artifact.kind, dataset)
         return None
-    return _read_json(per_dataset(dataset))
+    return _read_json(artifact.per_dataset(dataset))
 
 
 def read_trajectory(settings: Settings, run_id: str, dataset: str | None = None) -> dict | None:
@@ -366,7 +370,8 @@ def read_trajectory(settings: Settings, run_id: str, dataset: str | None = None)
     if paths is None:
         return None
     return _dataset_scoped_json(
-        dataset, paths.trajectory_json, paths.trajectory_json_for, "trajectory"
+        _Artifact(paths.trajectory_json, paths.trajectory_json_for, "trajectory"),
+        dataset,
     )
 
 
@@ -382,10 +387,12 @@ def read_front_velocity(
     if paths is None:
         return None
     return _dataset_scoped_json(
+        _Artifact(
+            paths.front_velocity_json,
+            paths.front_velocity_json_for,
+            "front-velocity",
+        ),
         dataset,
-        paths.front_velocity_json,
-        paths.front_velocity_json_for,
-        "front-velocity",
     )
 
 

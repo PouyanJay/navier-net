@@ -208,6 +208,29 @@ def test_the_measured_apex_velocity_recovers_the_capsule_s_growth_in_both_axes(t
     assert np.allclose(measured["vy_um_per_ms"], 0.0, atol=0.02 * scale)
 
 
+def test_the_model_apex_velocity_lands_on_the_capsule_s_true_speed(tmp_path):
+    """The MODEL side against an analytic answer, not just against itself.
+
+    Every other model-side assertion here checks the report against the model's
+    own numbers, which cannot catch a scale error common to both. This one has
+    ground truth: the capsule's nose advances at a known rate, and the
+    front-geometry construction initialises its own from the measured one, so
+    even a two-step run sits within a fraction of a percent of it.
+
+    That makes this the test that would fail if `_Scale.speed` ever stopped
+    dividing by `t_ref_ms` -- an error of 1/0.4 here, against a 5% tolerance.
+    """
+    import numpy as np
+
+    cfg, paths, _ = _evaluated(tmp_path)
+    apex = json.loads(paths.front_velocity_json.read_text())["apex"]
+
+    expected = NOSE_SPEED_STAR * cfg.scales.L_ref_um / conftest.CAPSULE_T_REF_MS
+    assert np.mean(apex["vx_um_per_ms"]) == pytest.approx(expected, rel=0.05)
+    # And across the channel it is going nowhere, as the capsule is.
+    assert np.allclose(apex["vy_um_per_ms"], 0.0, atol=0.05 * expected)
+
+
 def test_the_model_apex_velocity_is_the_derivative_of_its_own_apex_path(tmp_path):
     """Taken by autodiff, not differenced: the apex is a differentiable function
     of time under this parameterisation, so the report gives its exact velocity

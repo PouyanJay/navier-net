@@ -156,21 +156,41 @@ def _measured_nose_speed(cfg, data, scale: _Scale) -> dict:
     it is read against.
     """
     measured = measured_trajectory(cfg, data)  # times already in ms
-    pairs = data.report_pairs
 
     times, speeds, heldout = [], [], []
-    for row, nxt in pairs:
-        interval = measured.times[nxt] - measured.times[row]
+    for pair in data.report_pairs:
+        row, nxt = pair
+        interval = _pair_interval(data, pair) * scale.t_ref_ms
         times.append(0.5 * (measured.times[row] + measured.times[nxt]))
         # x* per ms -> µm per ms: only the LENGTH needs referencing, the time
         # axis is already physical here.
         speeds.append((measured.nose[nxt] - measured.nose[row]) / interval)
-        heldout.append(data.spans_held_out((row, nxt)))
+        heldout.append(data.spans_held_out(pair))
     return {
         "t_ms": physical_series(times, 1.0, 4),
         "v_um_per_ms": physical_series(speeds, scale.l_ref_um, SPEED_DIGITS),
         "heldout": heldout,
     }
+
+
+def _pair_interval(data, pair: tuple[int, int]) -> float:
+    """One reportable pair's own ``dt`` in t*, refused if it is not positive.
+
+    ``report_pairs`` only ever returns adjacent event rows, so on any sane
+    archive this cannot fire. It exists because the failure it prevents is
+    undiagnosable: two frames sharing a timestamp would divide by zero, and the
+    resulting infinity would be caught only by ``json.dumps(allow_nan=False)``,
+    which reports a float-range problem rather than a data one.
+    """
+    row, nxt = pair
+    interval = float(data.t[nxt]) - float(data.t[row])
+    if interval <= 0:
+        raise ValueError(
+            f"frames {data.frame_numbers[row]} and {data.frame_numbers[nxt]} of "
+            f"{data.cfg.dataset!r} are {interval} apart on the time axis, so no "
+            f"velocity can be measured over them -- check the dataset's t_star."
+        )
+    return interval
 
 
 def _apex_velocity(model, data, scale: _Scale, times) -> dict:
@@ -427,13 +447,14 @@ def _measured_apex_velocity(data, scale: _Scale) -> dict:
     no level-set approximation anywhere in it.
     """
     times, vx, vy, heldout = [], [], [], []
-    for row, nxt in data.report_pairs:
-        interval = float(data.t[nxt]) - float(data.t[row])
+    for pair in data.report_pairs:
+        row, nxt = pair
+        interval = _pair_interval(data, pair)
         here, there = data.front_apex(row), data.front_apex(nxt)
         times.append(0.5 * (float(data.t[row]) + float(data.t[nxt])))
         vx.append((there[0] - here[0]) / interval)
         vy.append((there[1] - here[1]) / interval)
-        heldout.append(data.spans_held_out((row, nxt)))
+        heldout.append(data.spans_held_out(pair))
     return {
         "t_ms": scale.times(times),
         "vx_um_per_ms": scale.speeds(vx),

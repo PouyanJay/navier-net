@@ -156,7 +156,11 @@ CAPSULE_X_ROOT, CAPSULE_Y_CENTER, CAPSULE_RADIUS = 0.3, 0.5, 0.12
 CAPSULE_S0, CAPSULE_GROWTH_PER_FRAME, CAPSULE_DT = 0.6, 0.1, 0.1
 CAPSULE_FRAMES = 6
 CAPSULE_NOSE_SPEED = CAPSULE_GROWTH_PER_FRAME / CAPSULE_DT  # x* per t*
-CAPSULE_T_REF_MS = 1.0
+# Deliberately NOT 1.0. A speed is scaled by `L_ref_um / t_ref_ms`, so a
+# fixture whose time reference is 1 cannot tell that conversion apart from one
+# that forgot to divide by it at all -- every assertion about a physical speed
+# would pass against a bug.
+CAPSULE_T_REF_MS = 0.4
 
 
 def capsule_sdf(xs, ys, nose: float):

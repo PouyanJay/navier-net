@@ -99,6 +99,10 @@ _M_PER_S_PER_UM_PER_MS = 1e-3
 
 
 def _si(value) -> float | None:
+    """Converted from the artifact's own already-rounded value, not recomputed
+    from a raw float. That costs a little precision and buys the guarantee this
+    module exists for: the CSV and the Results page can never disagree, because
+    both read the same number."""
     return None if value is None else round(value * _M_PER_S_PER_UM_PER_MS, 9)
 
 
