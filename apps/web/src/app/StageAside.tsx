@@ -1,5 +1,15 @@
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
+
+import { initialAsideCollapsed, storeAsideCollapsed } from "./asidePreference";
 
 /** What a stage tells the shell about the rail it is filling. */
 export interface AsideHeading {
@@ -19,6 +29,32 @@ export interface AsideSlot {
 const NO_SLOT: AsideSlot = { node: null, claim: () => {} };
 
 const AsideSlotContext = createContext<AsideSlot>(NO_SLOT);
+
+/**
+ * The shell's half of the aside: which stage has claimed it, whether it is
+ * folded, and the slot its body mounts into.
+ *
+ * Kept here rather than in AppShell so the claim-and-fold logic lives beside
+ * the `StageAside` it serves, and so the shell stays a composer of chrome.
+ */
+export function useAsideState() {
+  const [node, setNode] = useState<HTMLElement | null>(null);
+  const [heading, setHeading] = useState<AsideHeading | null>(null);
+  const [collapsed, setCollapsed] = useState(initialAsideCollapsed);
+
+  const toggle = useCallback(() => {
+    setCollapsed((current) => {
+      storeAsideCollapsed(!current);
+      return !current;
+    });
+  }, []);
+
+  // `claim` is identity-stable, so a stage's effect runs when its own heading
+  // changes rather than on every shell render.
+  const slot = useMemo(() => ({ node, claim: setHeading }), [node]);
+
+  return { heading, collapsed, toggle, slot, setNode };
+}
 
 export function AsideSlotProvider({
   slot,

@@ -24,7 +24,7 @@ function shell(children: React.ReactNode) {
   );
 }
 
-const RAIL = () => document.querySelector(".shell")!;
+const SHELL = () => document.querySelector(".shell")!;
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
@@ -34,8 +34,8 @@ describe("StageAside", () => {
     shell(<p>just the canvas</p>);
 
     expect(screen.getByText("just the canvas")).toBeInTheDocument();
-    expect(RAIL()).not.toHaveAttribute("data-aside");
-    expect(document.querySelector(".rail2")).toBeNull();
+    expect(SHELL()).not.toHaveAttribute("data-aside");
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 
   it("gives a claiming stage a titled rail and renders its body there", async () => {
@@ -50,19 +50,28 @@ describe("StageAside", () => {
     });
     expect(rail).toHaveTextContent("per-series conditions");
     // The body is INSIDE the rail, not left in the canvas.
-    expect(rail.querySelector(".rail2-body")!.textContent).toContain(
+    expect(rail.querySelector(".stage-aside-body")!.textContent).toContain(
       "+ Upload new series",
     );
-    expect(RAIL()).toHaveAttribute("data-aside", "open");
+    expect(SHELL()).toHaveAttribute("data-aside", "open");
   });
 
   it("folds away and back, and says which it will do", async () => {
     shell(
       <StageAside title="Series library">
-        <p>library body</p>
+        <label>
+          draft
+          <input defaultValue="" />
+        </label>
       </StageAside>,
     );
     await screen.findByRole("complementary", { name: "Series library" });
+
+    // Half-finished work in the rail: a static child could not tell "stayed
+    // mounted" apart from "unmounted and remounted with identical markup",
+    // which is exactly the difference that matters here.
+    const draft = screen.getByLabelText("draft");
+    fireEvent.change(draft, { target: { value: "half typed" } });
 
     const collapse = screen.getByRole("button", {
       name: "Collapse Series library",
@@ -70,17 +79,22 @@ describe("StageAside", () => {
     expect(collapse).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(collapse);
 
-    expect(RAIL()).toHaveAttribute("data-aside", "collapsed");
+    expect(SHELL()).toHaveAttribute("data-aside", "collapsed");
     const expand = screen.getByRole("button", {
       name: "Expand Series library",
     });
     expect(expand).toHaveAttribute("aria-expanded", "false");
-
-    // Folded, not unmounted: whatever the stage has open in there survives.
-    expect(screen.getByText("library body")).toBeInTheDocument();
+    // Folded by CSS, so the state flag and the actual fold cannot drift apart.
+    expect(
+      getComputedStyle(document.querySelector(".stage-aside-body")!).display,
+    ).toBe("none");
+    // Focus went to the toggle rather than falling to <body> when the element
+    // it was inside was hidden.
+    expect(document.activeElement).toBe(expand);
 
     fireEvent.click(expand);
-    expect(RAIL()).toHaveAttribute("data-aside", "open");
+    expect(SHELL()).toHaveAttribute("data-aside", "open");
+    expect(screen.getByLabelText("draft")).toHaveValue("half typed");
   });
 
   it("remembers the fold across visits", async () => {
@@ -101,7 +115,7 @@ describe("StageAside", () => {
       </StageAside>,
     );
     await screen.findByRole("complementary", { name: "Series library" });
-    expect(RAIL()).toHaveAttribute("data-aside", "collapsed");
+    expect(SHELL()).toHaveAttribute("data-aside", "collapsed");
   });
 
   it("gives the rail up when the stage leaves it", async () => {
@@ -127,7 +141,7 @@ describe("StageAside", () => {
       </ToastProvider>,
     );
 
-    expect(RAIL()).not.toHaveAttribute("data-aside");
-    expect(document.querySelector(".rail2")).toBeNull();
+    expect(SHELL()).not.toHaveAttribute("data-aside");
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 });

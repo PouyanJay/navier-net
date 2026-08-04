@@ -1,8 +1,9 @@
-/** Whether the secondary rail is collapsed, remembered across visits.
+/** Whether the stage aside is folded, remembered across visits.
  *
- * Kept beside the theme's own storage helper and read the same way: a
- * researcher who folds the rail away to give the frame strip the full canvas
- * should not have to fold it again on the next visit.
+ * A researcher who folds it away to give the canvas the full width should not
+ * have to fold it again on the next visit. Unlike the theme's helper this one
+ * guards the storage calls, because the aside is chrome a refused store must
+ * not be able to take down.
  */
 
 const STORAGE_KEY = "naviernet-aside-collapsed";

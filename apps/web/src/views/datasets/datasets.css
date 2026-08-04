@@ -1,5 +1,5 @@
 /* The datasets stage: the series library is the shell's secondary rail (see
-   .rail2), so the canvas is a single stacked column of the selected series'
+   .stage-aside), so the canvas is a single stacked column of the selected series'
    frames, QC and dimensionless groups. */
 .dsx-main {
   display: grid;
@@ -900,7 +900,7 @@
   flex: none;
 }
 
-/* Selected-series inputs, read-only, in the series-library side card. */
+/* Selected-series inputs, read-only, in the datasets stage's aside. */
 .ds-conditions {
   border-top: 1px solid var(--line2);
   margin-top: var(--s3);

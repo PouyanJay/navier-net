@@ -1,19 +1,19 @@
 /* App chrome: one full-width top bar over the stage rail + paper workspace.
-   A stage may claim a secondary rail between the two (see .rail2), which adds
+   A stage may claim a secondary rail between the two (see .stage-aside), which adds
    a third column; stages that do not stay at two. */
 .shell {
   display: grid;
   grid-template-columns: 248px 1fr;
   grid-template-rows: 56px 1fr;
   height: 100%;
-  --rail2-w: 320px;
-  --rail2-w-collapsed: 44px;
+  --stage-aside-w: 320px;
+  --stage-aside-w-collapsed: 44px;
 }
 .shell[data-aside="open"] {
-  grid-template-columns: 248px var(--rail2-w) 1fr;
+  grid-template-columns: 248px var(--stage-aside-w) 1fr;
 }
 .shell[data-aside="collapsed"] {
-  grid-template-columns: 248px var(--rail2-w-collapsed) 1fr;
+  grid-template-columns: 248px var(--stage-aside-w-collapsed) 1fr;
 }
 .shell[data-aside] .topbar {
   grid-column: 1 / 4;
@@ -362,7 +362,7 @@
    that scrolls independently of the canvas. Paper, not chrome — what it holds
    is data and controls, so it belongs to the workspace's surface rather than
    to the navy navigation. */
-.rail2 {
+.stage-aside {
   grid-column: 2;
   grid-row: 2;
   display: flex;
@@ -371,35 +371,35 @@
   background: var(--panel);
   border-right: 1px solid var(--line);
 }
-.rail2-hd {
+.stage-aside-hd {
   display: flex;
   align-items: center;
   gap: var(--s2);
   padding: var(--s3) var(--s3) var(--s3) var(--s4);
   border-bottom: 1px solid var(--line2);
 }
-.shell[data-aside="collapsed"] .rail2-hd {
+.shell[data-aside="collapsed"] .stage-aside-hd {
   justify-content: center;
   padding: var(--s3) 0;
 }
-.rail2-title {
+.stage-aside-title {
   min-width: 0;
   flex: 1;
 }
-.rail2-title h2 {
+.stage-aside-title h2 {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
 }
-.rail2-title .sub {
+.stage-aside-title .sub {
   display: block;
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--ink3);
 }
-.rail2-toggle {
+.stage-aside-toggle {
   flex: none;
   display: flex;
   align-items: center;
@@ -416,11 +416,11 @@
     background 0.12s ease,
     border-color 0.12s ease;
 }
-.rail2-toggle:hover {
+.stage-aside-toggle:hover {
   color: var(--acc);
   border-color: var(--acc2);
 }
-.rail2-body {
+.stage-aside-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -432,7 +432,7 @@
 /* Folded, the rail names itself along its own length rather than sitting as an
    anonymous strip. Decorative (aria-hidden): the toggle's own label already
    carries the name for assistive tech. */
-.rail2-folded {
+.stage-aside-folded {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
   margin: var(--s4) auto 0;
@@ -446,7 +446,7 @@
 
 /* Collapsed: the body keeps its DOM (so nothing the stage has open is torn
    down) but takes no space and no tab stops. */
-.shell[data-aside="collapsed"] .rail2-body {
+.shell[data-aside="collapsed"] .stage-aside-body {
   display: none;
 }
 
@@ -455,7 +455,7 @@
    only way to reach that stage's selection. */
 @media (max-width: 1180px) {
   .shell {
-    --rail2-w: 272px;
+    --stage-aside-w: 272px;
   }
 }
 .workspace .page {
@@ -688,7 +688,7 @@
   .shell[data-aside] .topbar {
     grid-column: 1;
   }
-  .rail2 {
+  .stage-aside {
     grid-column: 1;
     grid-row: 3;
     max-height: 45vh;

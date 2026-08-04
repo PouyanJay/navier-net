@@ -8,7 +8,9 @@ import {
 import { useMemo, useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AppShell } from "../src/app/AppShell";
 import { AsideSlotProvider } from "../src/app/StageAside";
+import { ToastProvider } from "../src/components/Toast";
 import type { ProjectSummary } from "../src/lib/api";
 import { DatasetsView } from "../src/views/DatasetsView";
 
@@ -350,6 +352,76 @@ function mockApi({
 afterEach(() => vi.unstubAllGlobals());
 
 const noop = vi.fn();
+
+/**
+ * The real shell around the real stage. `StageHarness` above stubs the chrome so
+ * the rest of this suite can stay focused, but nothing there proves the two
+ * actually compose — that DatasetsView's heading reaches the shell's rail and
+ * that the library survives being portalled into the shell's own body element.
+ */
+describe("DatasetsView inside the real shell", () => {
+  function renderInShell() {
+    return render(
+      <ToastProvider>
+        <AppShell
+          active="datasets"
+          onNavigate={vi.fn()}
+          activeRun={null}
+          status={{ latestRun: null, projects: 1 }}
+          project={PROJECT.id}
+          onHome={vi.fn()}
+        >
+          <DatasetsView project={PROJECT} onProjectChanged={noop} />
+        </AppShell>
+      </ToastProvider>,
+    );
+  }
+
+  it("puts the library in the shell's rail, under the stage's own heading", async () => {
+    mockApi();
+
+    renderInShell();
+
+    const rail = await screen.findByRole("complementary", {
+      name: "Series library",
+    });
+    expect(rail).toHaveTextContent("per-series conditions");
+    expect(
+      within(rail).getByRole("button", { name: /Upload new series/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(rail).getByRole("button", { name: /sample/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps an open dialog when the rail folds under it", async () => {
+    // The reason both condition dialogs portal to the body: folding the rail
+    // sets display:none on the element they used to render inside.
+    mockApi({ processed: true });
+    renderInShell();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit conditions/ }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Edit .*conditions/,
+    });
+    expect(dialog.closest(".stage-aside-body")).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse Series library" }),
+    );
+
+    // Still there, and still outside the folded region. Note that a computed
+    // `display` check would prove nothing: a descendant of a display:none
+    // ancestor still reports its own display, so the containment is the test.
+    expect(
+      screen.getByRole("dialog", { name: /Edit .*conditions/ }),
+    ).toBeInTheDocument();
+    expect(dialog.closest(".stage-aside-body")).toBeNull();
+    expect(document.querySelector(".stage-aside-body")).toBeInTheDocument();
+  });
+});
 
 describe("DatasetsView", () => {
   it("shows the series library, frame strip, QC, and groups", async () => {

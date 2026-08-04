@@ -13,6 +13,10 @@ import {
 import "./datasets/datasets.css";
 import "./runs.css";
 
+/** The stage's aside heading; the shell draws it, so both the loading and the
+ * loaded render must name it identically. */
+const ASIDE = { title: "Series library", subtitle: "per-series conditions" };
+
 interface DatasetsViewProps {
   /** The stage is always entered from a project; series live inside it. */
   project: ProjectSummary;
@@ -38,7 +42,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   if (data.datasets === null) {
     return (
       <>
-        <StageAside title="Series library" subtitle="per-series conditions">
+        <StageAside {...ASIDE}>
           <p className="state-note" role="status">
             {data.error ? "Series unavailable." : "Loading series…"}
           </p>
@@ -61,7 +65,7 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
 
   return (
     <>
-      <StageAside title="Series library" subtitle="per-series conditions">
+      <StageAside {...ASIDE}>
         <SeriesLibrary
           project={project}
           series={series}

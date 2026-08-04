@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -13,8 +14,11 @@ import {
 import { useToast } from "../components/Toast";
 import type { RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
-import { initialAsideCollapsed, storeAsideCollapsed } from "./asidePreference";
-import { AsideSlotProvider, type AsideHeading } from "./StageAside";
+import {
+  AsideSlotProvider,
+  useAsideState,
+  type AsideHeading,
+} from "./StageAside";
 import "./appshell.css";
 
 export interface NavItem {
@@ -259,16 +263,16 @@ function Sidebar({
 }
 
 /**
- * The stage's secondary rail: a paper column between the pipeline rail and the
- * canvas, holding the stage's own selection and settings.
+ * The frame the shell draws around a stage's aside: a paper column between the
+ * pipeline rail and the canvas, holding that stage's selection and settings.
  *
  * The shell owns the frame -- heading, collapse control, scrolling -- and the
  * stage portals only its body in, so every stage that adopts the rail gets the
- * same behaviour without reimplementing it. Collapsed, it keeps a slim strip
+ * same behaviour without reimplementing it. Folded, it keeps a slim strip
  * carrying the expand control: a toggle that hides itself is a toggle a
  * researcher has to hunt for.
  */
-function StageRail({
+function AsideFrame({
   heading,
   collapsed,
   onToggle,
@@ -279,11 +283,12 @@ function StageRail({
   onToggle: () => void;
   onBody: (node: HTMLDivElement | null) => void;
 }) {
+  const toggle = useRef<HTMLButtonElement>(null);
   return (
-    <aside className="rail2" aria-label={heading.title}>
-      <div className="rail2-hd">
+    <aside className="stage-aside" aria-label={heading.title}>
+      <div className="stage-aside-hd">
         {!collapsed && (
-          <div className="rail2-title">
+          <div className="stage-aside-title">
             <h2>{heading.title}</h2>
             {heading.subtitle && (
               <span className="sub">{heading.subtitle}</span>
@@ -292,8 +297,15 @@ function StageRail({
         )}
         <button
           type="button"
-          className="rail2-toggle"
-          onClick={onToggle}
+          ref={toggle}
+          className="stage-aside-toggle"
+          // Focus the toggle before folding. Hiding the body while focus is
+          // inside it drops focus to <body>, and Safari does not focus a button
+          // on click, so this cannot be left to the browser.
+          onClick={() => {
+            toggle.current?.focus();
+            onToggle();
+          }}
           aria-expanded={!collapsed}
           aria-label={`${collapsed ? "Expand" : "Collapse"} ${heading.title}`}
         >
@@ -303,13 +315,13 @@ function StageRail({
       {collapsed && (
         // A folded rail should still say what is in it; an anonymous strip
         // makes the reader expand it just to find out.
-        <span className="rail2-folded" aria-hidden="true">
+        <span className="stage-aside-folded" aria-hidden="true">
           {heading.title}
         </span>
       )}
       {/* Kept mounted while collapsed -- unmounting it would tear down whatever
           the stage has open in it, including a half-filled dialog. */}
-      <div className="rail2-body" ref={onBody} />
+      <div className="stage-aside-body" ref={onBody} />
     </aside>
   );
 }
@@ -326,24 +338,8 @@ export function AppShell({
 }: AppShellProps) {
   const [theme, setTheme] = useState<Theme>(() => initialTheme());
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [asideNode, setAsideNode] = useState<HTMLElement | null>(null);
-  const [asideHeading, setAsideHeading] = useState<AsideHeading | null>(null);
-  const [asideCollapsed, setAsideCollapsed] = useState(initialAsideCollapsed);
+  const aside = useAsideState();
   const toast = useToast();
-
-  const toggleAside = useCallback(() => {
-    setAsideCollapsed((current) => {
-      storeAsideCollapsed(!current);
-      return !current;
-    });
-  }, []);
-
-  // `claim` is identity-stable so a stage's effect runs on its own heading
-  // changing, not on every shell render.
-  const asideSlot = useMemo(
-    () => ({ node: asideNode, claim: setAsideHeading }),
-    [asideNode],
-  );
 
   const toggleTheme = useCallback(() => {
     setTheme((current) => {
@@ -397,7 +393,7 @@ export function AppShell({
     <div
       className="shell"
       data-aside={
-        asideHeading ? (asideCollapsed ? "collapsed" : "open") : undefined
+        aside.heading ? (aside.collapsed ? "collapsed" : "open") : undefined
       }
     >
       <header className="topbar">
@@ -505,18 +501,18 @@ export function AppShell({
         onHome={onHome}
       />
 
-      {asideHeading && (
-        <StageRail
-          heading={asideHeading}
-          collapsed={asideCollapsed}
-          onToggle={toggleAside}
-          onBody={setAsideNode}
+      {aside.heading && (
+        <AsideFrame
+          heading={aside.heading}
+          collapsed={aside.collapsed}
+          onToggle={aside.toggle}
+          onBody={aside.setNode}
         />
       )}
 
       <main className="workspace">
         <div className="page">
-          <AsideSlotProvider slot={asideSlot}>{children}</AsideSlotProvider>
+          <AsideSlotProvider slot={aside.slot}>{children}</AsideSlotProvider>
         </div>
       </main>
 
