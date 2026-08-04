@@ -1,9 +1,25 @@
-/* App chrome: one full-width top bar over the stage rail + paper workspace. */
+/* App chrome: one full-width top bar over the stage rail + paper workspace.
+   A stage may claim a secondary rail between the two (see .stage-aside), which adds
+   a third column; stages that do not stay at two. */
 .shell {
   display: grid;
   grid-template-columns: 248px 1fr;
   grid-template-rows: 56px 1fr;
   height: 100%;
+  --stage-aside-w: 320px;
+  --stage-aside-w-collapsed: 44px;
+}
+.shell[data-aside="open"] {
+  grid-template-columns: 248px var(--stage-aside-w) 1fr;
+}
+.shell[data-aside="collapsed"] {
+  grid-template-columns: 248px var(--stage-aside-w-collapsed) 1fr;
+}
+.shell[data-aside] .topbar {
+  grid-column: 1 / 4;
+}
+.shell[data-aside] .workspace {
+  grid-column: 3;
 }
 
 /* Brand, inside the top bar. Its width mirrors the rail below so the
@@ -192,11 +208,25 @@
 }
 
 /* Sidebar rail; dark navy chrome */
+/* The two rails' surfaces are swapped: the pipeline rail carries the panel
+   surface and the stage aside carries the chrome one. Each rail re-points the
+   token family its own descendants already use, so the swap re-tones their
+   text, borders and insets too -- a bare background swap would have left the
+   pipeline rail's chrome-tuned text on a paper surface, unreadable in light. */
 .sidebar {
   grid-column: 1;
   grid-row: 2;
-  background: var(--side);
-  border-right: 1px solid var(--sideline);
+  color: var(--ink);
+  --sidetxt: var(--ink2);
+  --sidehl: var(--ink);
+  --sideline: var(--line);
+  /* The stage markers and the back button fill with --side/--side2, so those
+     have to follow the surface too -- left raw, a navy marker would carry the
+     now-dark numeral on top of it. */
+  --side: var(--panel2);
+  --side2: var(--panel2);
+  background: var(--panel);
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   padding: var(--s4) var(--s3);
@@ -340,6 +370,121 @@
   grid-row: 2;
   overflow-y: auto;
   padding: var(--s6) var(--s7);
+}
+
+/* Secondary rail: the stage's own selection and settings, in a fixed column
+   that scrolls independently of the canvas. Paper, not chrome — what it holds
+   is data and controls, so it belongs to the workspace's surface rather than
+   to the navy navigation. */
+.stage-aside {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* The chrome surface, with the paper token family re-pointed onto it so the
+     stage's own content (rows, values, chips, callouts) stays legible. */
+  --ink: var(--sidehl);
+  --ink2: var(--sidetxt);
+  --ink3: var(--sidetxt);
+  --line: var(--sideline);
+  --line2: var(--sideline);
+  --panel: var(--side);
+  --panel2: var(--side2);
+  background: var(--side);
+  border-right: 1px solid var(--sideline);
+  /* Re-pointing the tokens is not enough on its own: inheritance carries a
+     RESOLVED colour, so any descendant that sets no colour of its own would
+     inherit the one computed outside this element -- dark ink on a dark
+     surface. Setting it here gives them something to inherit. */
+  color: var(--ink);
+}
+.stage-aside-hd {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s3) var(--s3) var(--s4);
+  border-bottom: 1px solid var(--line2);
+}
+.shell[data-aside="collapsed"] .stage-aside-hd {
+  justify-content: center;
+  padding: var(--s3) 0;
+}
+.stage-aside-title {
+  min-width: 0;
+  flex: 1;
+}
+.stage-aside-title h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.stage-aside-title .sub {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+.stage-aside-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+  background: var(--panel2);
+  color: var(--ink2);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.stage-aside-toggle:hover {
+  color: var(--acc);
+  border-color: var(--acc2);
+}
+.stage-aside-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+/* Folded, the rail names itself along its own length rather than sitting as an
+   anonymous strip. Decorative (aria-hidden): the toggle's own label already
+   carries the name for assistive tech. */
+.stage-aside-folded {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  margin: var(--s4) auto 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink3);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Collapsed: the body keeps its DOM (so nothing the stage has open is torn
+   down) but takes no space and no tab stops. */
+.shell[data-aside="collapsed"] .stage-aside-body {
+  display: none;
+}
+
+/* Two rails cost the canvas real width, so the secondary one narrows before
+   the canvas does. It is never hidden: everything a stage keeps here is the
+   only way to reach that stage's selection. */
+@media (max-width: 1180px) {
+  .shell {
+    --stage-aside-w: 272px;
+  }
 }
 .workspace .page {
   max-width: 1220px;
@@ -558,6 +703,29 @@
   .workspace {
     grid-column: 1;
     grid-row: 3;
+  }
+  /* One column: the secondary rail becomes a band above the canvas rather than
+     a column beside it, capped so it cannot push the canvas off-screen. */
+  .shell[data-aside] {
+    grid-template-rows: 56px auto auto 1fr;
+  }
+  .shell[data-aside="open"],
+  .shell[data-aside="collapsed"] {
+    grid-template-columns: 1fr;
+  }
+  .shell[data-aside] .topbar {
+    grid-column: 1;
+  }
+  .stage-aside {
+    grid-column: 1;
+    grid-row: 3;
+    max-height: 45vh;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .shell[data-aside] .workspace {
+    grid-column: 1;
+    grid-row: 4;
   }
   .sidebar .spacer {
     display: none;

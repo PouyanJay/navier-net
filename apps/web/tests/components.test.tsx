@@ -59,7 +59,9 @@ describe("ConfirmDeleteDialog", () => {
   });
 
   it("keeps itself open and surfaces the reason when the delete fails", async () => {
-    const { onClose } = setup(vi.fn().mockRejectedValue(new Error("run is training")));
+    const { onClose } = setup(
+      vi.fn().mockRejectedValue(new Error("run is training")),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Delete run" }));
     expect(await screen.findByText("run is training")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled(); // still open, so the user can retry/cancel

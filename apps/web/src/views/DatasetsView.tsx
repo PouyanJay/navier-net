@@ -1,3 +1,4 @@
+import { StageAside } from "../app/StageAside";
 import { Callout } from "../components";
 import { type ProjectSummary } from "../lib/api";
 import { seriesName } from "../lib/series";
@@ -11,6 +12,10 @@ import {
 } from "./datasets/useDatasetData";
 import "./datasets/datasets.css";
 import "./runs.css";
+
+/** The stage's aside heading; the shell draws it, so both the loading and the
+ * loaded render must name it identically. */
+const ASIDE = { title: "Series library", subtitle: "per-series conditions" };
 
 interface DatasetsViewProps {
   /** The stage is always entered from a project; series live inside it. */
@@ -31,18 +36,25 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
     data.dataVersion,
   );
 
-  if (data.datasets === null && data.error) {
-    return (
-      <Callout tone="error" title="Could not load datasets">
-        {data.error}. Is the API running on :8000?
-      </Callout>
-    );
-  }
+  // The rail is claimed on every render of this stage, loading included: an
+  // early return would leave the canvas full-width for a beat and then shove it
+  // sideways once the series arrive.
   if (data.datasets === null) {
     return (
-      <p className="state-note" role="status">
-        Loading datasets…
-      </p>
+      <>
+        <StageAside {...ASIDE}>
+          <p className="state-note" role="status">
+            {data.error ? "Series unavailable." : "Loading series…"}
+          </p>
+        </StageAside>
+        {/* The failure is a whole-stage one, so it stays at the canvas's full
+            width rather than being folded into a 320px rail. */}
+        {data.error && (
+          <Callout tone="error" title="Could not load datasets">
+            {data.error}. Is the API running on :8000?
+          </Callout>
+        )}
+      </>
     );
   }
 
@@ -52,24 +64,26 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
   const detail = inScope ? data.detail : null;
 
   return (
-    <div className="dsx">
-      <SeriesLibrary
-        project={project}
-        series={series}
-        trainedIds={trainedIds}
-        selected={inScope ? data.selected : null}
-        detail={detail}
-        onSelect={data.setSelected}
-        onProjectChanged={(updated) => {
-          // The new series must appear in the library without a reload.
-          onProjectChanged(updated);
-          data.refresh().catch(() => {});
-        }}
-        onSaveConditions={data.saveConditions}
-        onSaveLabel={data.saveLabel}
-        onPreprocess={() => void data.runPreprocess()}
-        preprocessing={data.preprocess?.state === "running"}
-      />
+    <>
+      <StageAside {...ASIDE}>
+        <SeriesLibrary
+          project={project}
+          series={series}
+          trainedIds={trainedIds}
+          selected={inScope ? data.selected : null}
+          detail={detail}
+          onSelect={data.setSelected}
+          onProjectChanged={(updated) => {
+            // The new series must appear in the library without a reload.
+            onProjectChanged(updated);
+            data.refresh().catch(() => {});
+          }}
+          onSaveConditions={data.saveConditions}
+          onSaveLabel={data.saveLabel}
+          onPreprocess={() => void data.runPreprocess()}
+          preprocessing={data.preprocess?.state === "running"}
+        />
+      </StageAside>
 
       <div className="dsx-main">
         {data.error && <Callout tone="error">{data.error}</Callout>}
@@ -97,6 +111,6 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
           </>
         )}
       </div>
-    </div>
+    </>
   );
 }

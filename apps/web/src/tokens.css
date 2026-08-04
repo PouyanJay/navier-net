@@ -1,7 +1,13 @@
 /*
- * naviernet design tokens: the single source of visual truth.
- * Values taken verbatim from the platform mockup
- * (.claude/references/naviernet_platform.html). See the enterprise-ui skill.
+ * naviernet design tokens.
+ *
+ * The specification is .claude/docs/reference/DESIGN_SYSTEM.md; this file is its
+ * implementation. The mockups under .claude/references/ are structure-only —
+ * their colours and type sizes are superseded.
+ *
+ * MIGRATION IN PROGRESS: these are the pre-migration token names. See
+ * .claude/plans/design-system-migration-plan.md for the mapping onto the
+ * design system's role-named vocabulary.
  *
  * Never write a raw hex/px in a component; reference a token so light and dark
  * both stay correct.

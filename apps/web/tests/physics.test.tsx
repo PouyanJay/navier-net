@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EquationBlock } from "../src/components";
 import type { DatasetSummary } from "../src/lib/api";
 import { PhysicsModelView } from "../src/views/PhysicsModelView";
+import { renderStage } from "./stageHarness";
 
 const DATASETS = [
   { id: "sample", n_frames: 3, processed: true },
@@ -92,18 +93,23 @@ describe("EquationBlock", () => {
 });
 
 describe("PhysicsModelView", () => {
-  it("renders the equations, model builder, ensemble, table and run bar", async () => {
+  it("renders the equations, capacity, ensemble, table and run bar", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
 
     expect(
       await screen.findByRole("heading", { name: "Governing equations" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Momentum")).toBeInTheDocument();
+    // The Model builder dissolved: its preset is config and went to the aside,
+    // its budget and derived shapes are readouts and went to the canvas.
     expect(
-      screen.getByRole("heading", { name: "Model builder" }),
+      screen.getByRole("heading", { name: "Capacity" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Medium/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Model budget" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Per-field architecture" }),
     ).toBeInTheDocument();
@@ -117,7 +123,7 @@ describe("PhysicsModelView", () => {
 
   it("enabling Momentum unlocks the pressure field", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     const momentum = await screen.findByRole("switch", { name: "Momentum" });
     expect(momentum).toHaveAttribute("aria-checked", "false");
 
@@ -134,7 +140,7 @@ describe("PhysicsModelView", () => {
 
   it("enabling Energy lights up the coupled evaporation closure", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     const energy = await screen.findByRole("switch", {
       name: "Energy + evaporation",
     });
@@ -152,7 +158,7 @@ describe("PhysicsModelView", () => {
 
   it("core equations are locked on and cannot be toggled off", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     const vof = await screen.findByRole("switch", {
       name: "Interface transport",
     });
@@ -165,12 +171,12 @@ describe("PhysicsModelView", () => {
       "fetch",
       vi.fn(async () => new Response("nope", { status: 500 })),
     );
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
 
   it("prompts to upload when there are no datasets", () => {
-    render(<PhysicsModelView datasets={[]} />);
+    renderStage(<PhysicsModelView datasets={[]} />);
     expect(screen.getByText(/No datasets yet/)).toBeInTheDocument();
   });
 
@@ -179,7 +185,7 @@ describe("PhysicsModelView", () => {
 
   it("applying the Large preset grows the parameter budget", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     const before = paramK(
       (await screen.findByText(/networks · /)).textContent ?? "",
     );
@@ -196,7 +202,7 @@ describe("PhysicsModelView", () => {
 
   it("clicking a lane inspects that field", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     // The u lane; the inspector starts on phi (φ→α).
     const uLane = await screen.findByRole("button", { name: /^u network,/ });
 
@@ -209,7 +215,7 @@ describe("PhysicsModelView", () => {
 
   it("editing a Stage-B weight is reflected in the reproducible command", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     fireEvent.click(await screen.findByRole("switch", { name: "Momentum" }));
 
     const momWeight = screen
@@ -226,7 +232,7 @@ describe("PhysicsModelView", () => {
 
   it("core-equation weights are not editable here (owned by the run config)", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     await screen.findByText("Momentum");
     const vofWeight = document.querySelector("#w-vof") as HTMLInputElement;
     expect(vofWeight).toBeDisabled();
@@ -234,7 +240,7 @@ describe("PhysicsModelView", () => {
 
   it("locked Stage-B rows name the equation that unlocks them", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     await screen.findByRole("heading", { name: "Per-field architecture" });
     expect(screen.getByText(/enable Momentum to unlock/)).toBeInTheDocument();
     expect(screen.getByText(/enable Energy to unlock/)).toBeInTheDocument();
@@ -242,7 +248,7 @@ describe("PhysicsModelView", () => {
 
   it("editing a per-field width marks it overridden with a reset control", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     const widthInput = (await screen.findByLabelText(
       "φ→α width",
     )) as HTMLInputElement;
@@ -258,7 +264,7 @@ describe("PhysicsModelView", () => {
 
   it("flags an interface epsilon that is too small", async () => {
     mockApi();
-    render(<PhysicsModelView datasets={DATASETS} />);
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
     const eps = (await screen.findByLabelText(
       /Interface ε/,
     )) as HTMLInputElement;

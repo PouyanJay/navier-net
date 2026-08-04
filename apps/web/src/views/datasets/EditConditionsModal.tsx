@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Button, Callout } from "../../components";
 import { type ConditionsUpdate, type DatasetDetail } from "../../lib/api";
@@ -159,7 +160,9 @@ export function EditConditionsModal({
     );
   };
 
-  return (
+  // Portalled to the body, like ConfirmDeleteDialog: this dialog opens from the
+  // collapsible series rail, and a modal a layout change can hide is not a modal.
+  return createPortal(
     <div
       className="modal-ov"
       role="presentation"
@@ -241,6 +244,7 @@ export function EditConditionsModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

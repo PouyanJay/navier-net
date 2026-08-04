@@ -1,15 +1,25 @@
 import { useState } from "react";
 
+import { StageAside } from "../app/StageAside";
 import { Callout } from "../components";
 import type { DatasetSummary } from "../lib/api";
 import { seriesName, seriesNameOf } from "../lib/series";
+import { CapacityPreset } from "./physics/CapacityPreset";
 import { EnsembleCanvas } from "./physics/EnsembleCanvas";
 import { EquationsPanel } from "./physics/EquationsPanel";
-import { ModelBuilder } from "./physics/ModelBuilder";
+import { ModelBudget } from "./physics/ModelBudget";
 import { PerFieldTable } from "./physics/PerFieldTable";
 import { RunBar } from "./physics/RunBar";
 import { usePhysicsModel } from "./physics/usePhysicsModel";
 import "./physics/physics.css";
+
+/** The equation rows carry a toggle, a name, badges and a weight field, so this
+ * stage's aside needs more room than the default. */
+const ASIDE = {
+  title: "Physics & model",
+  subtitle: "equations · architecture",
+  width: 384,
+};
 
 interface PhysicsModelViewProps {
   datasets: DatasetSummary[];
@@ -55,25 +65,10 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
     <div className="stack">
       <div className="pm-head">
         <div>
-          {datasets.length > 1 && (
-            <label className="pm-dataset">
-              <span className="runlead">Dataset</span>
-              <select
-                value={dataset ?? ""}
-                onChange={(e) => setSelected(e.target.value)}
-                aria-label="Dataset"
-              >
-                {datasets.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {seriesName(d)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
           <p>
-            Toggle the governing equations; the builder derives the network
-            ensemble. Hover any equation for its math and detail.
+            Set the equations and capacity on the left; everything here is
+            derived from them. Hover any equation for its math and detail, or
+            any derived row for its reasoning.
           </p>
         </div>
         <div className="pm-headacts">
@@ -112,13 +107,33 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
       {model && (
         <>
           {model.saveError && <Callout tone="error">{model.saveError}</Callout>}
-          <div className="pm-grid">
+          <StageAside {...ASIDE}>
+            {datasets.length > 1 && (
+              <label className="pm-dataset">
+                <span className="runlead">Dataset</span>
+                <select
+                  value={dataset ?? ""}
+                  onChange={(e) => setSelected(e.target.value)}
+                  aria-label="Dataset"
+                >
+                  {datasets.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {seriesName(d)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <EquationsPanel
               model={model}
               datasetName={seriesNameOf(datasets, model.dataset)}
             />
-            <ModelBuilder model={model} />
-          </div>
+            <CapacityPreset model={model} />
+          </StageAside>
+
+          {/* Canvas: what the configuration above derives, in the order a
+              researcher reads it — the cost, then the architecture it buys. */}
+          <ModelBudget model={model} />
           <EnsembleCanvas model={model} />
           <PerFieldTable model={model} />
           <RunBar model={model} />

@@ -41,9 +41,7 @@ const DIAGNOSTICS: PhysicsDiagnostics = {
 
 describe("InterfacePhysicsPanel", () => {
   it("shows the interface conditions and the neck against the measured masks", () => {
-    render(
-      <InterfacePhysicsPanel physics={DIAGNOSTICS} frontGeometry />,
-    );
+    render(<InterfacePhysicsPanel physics={DIAGNOSTICS} frontGeometry />);
 
     expect(screen.getByText("Young–Laplace · nose")).toBeInTheDocument();
     expect(screen.getByText("6.0")).toBeInTheDocument();

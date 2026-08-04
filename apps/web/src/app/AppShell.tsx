@@ -2,7 +2,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 
@@ -13,6 +15,11 @@ import {
 import { useToast } from "../components/Toast";
 import type { RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
+import {
+  AsideSlotProvider,
+  useAsideState,
+  type AsideHeading,
+} from "./StageAside";
 import "./appshell.css";
 
 export interface NavItem {
@@ -256,6 +263,70 @@ function Sidebar({
   );
 }
 
+/**
+ * The frame the shell draws around a stage's aside: a paper column between the
+ * pipeline rail and the canvas, holding that stage's selection and settings.
+ *
+ * The shell owns the frame -- heading, collapse control, scrolling -- and the
+ * stage portals only its body in, so every stage that adopts the rail gets the
+ * same behaviour without reimplementing it. Folded, it keeps a slim strip
+ * carrying the expand control: a toggle that hides itself is a toggle a
+ * researcher has to hunt for.
+ */
+function AsideFrame({
+  heading,
+  collapsed,
+  onToggle,
+  onBody,
+}: {
+  heading: AsideHeading;
+  collapsed: boolean;
+  onToggle: () => void;
+  onBody: (node: HTMLDivElement | null) => void;
+}) {
+  const toggle = useRef<HTMLButtonElement>(null);
+  return (
+    <aside className="stage-aside" aria-label={heading.title}>
+      <div className="stage-aside-hd">
+        {!collapsed && (
+          <div className="stage-aside-title">
+            <h2>{heading.title}</h2>
+            {heading.subtitle && (
+              <span className="sub">{heading.subtitle}</span>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          ref={toggle}
+          className="stage-aside-toggle"
+          // Focus the toggle before folding. Hiding the body while focus is
+          // inside it drops focus to <body>, and Safari does not focus a button
+          // on click, so this cannot be left to the browser.
+          onClick={() => {
+            toggle.current?.focus();
+            onToggle();
+          }}
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? "Expand" : "Collapse"} ${heading.title}`}
+        >
+          <span aria-hidden="true">{collapsed ? "»" : "«"}</span>
+        </button>
+      </div>
+      {collapsed && (
+        // A folded rail should still say what is in it; an anonymous strip
+        // makes the reader expand it just to find out.
+        <span className="stage-aside-folded" aria-hidden="true">
+          {heading.title}
+        </span>
+      )}
+      {/* Kept mounted while collapsed -- unmounting it would tear down whatever
+          the stage has open in it, including a half-filled dialog. */}
+      <div className="stage-aside-body" ref={onBody} />
+    </aside>
+  );
+}
+
 /** Fixed dark chrome (brand + rail) and top bar around the paper workspace. */
 export function AppShell({
   active,
@@ -268,6 +339,7 @@ export function AppShell({
 }: AppShellProps) {
   const [theme, setTheme] = useState<Theme>(() => initialTheme());
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const aside = useAsideState();
   const toast = useToast();
 
   const toggleTheme = useCallback(() => {
@@ -319,7 +391,17 @@ export function AppShell({
   );
 
   return (
-    <div className="shell">
+    <div
+      className="shell"
+      data-aside={
+        aside.heading ? (aside.collapsed ? "collapsed" : "open") : undefined
+      }
+      style={
+        aside.heading?.width
+          ? ({ "--stage-aside-w": `${aside.heading.width}px` } as CSSProperties)
+          : undefined
+      }
+    >
       <header className="topbar">
         <div className="brandblock">
           {/* One transparent mark; the brand blue reads on both the light and
@@ -425,8 +507,19 @@ export function AppShell({
         onHome={onHome}
       />
 
+      {aside.heading && (
+        <AsideFrame
+          heading={aside.heading}
+          collapsed={aside.collapsed}
+          onToggle={aside.toggle}
+          onBody={aside.setNode}
+        />
+      )}
+
       <main className="workspace">
-        <div className="page">{children}</div>
+        <div className="page">
+          <AsideSlotProvider slot={aside.slot}>{children}</AsideSlotProvider>
+        </div>
       </main>
 
       <CommandPalette

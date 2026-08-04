@@ -372,6 +372,81 @@ function Legend({ active }: { active: FieldName[] }) {
 
 /** The live network ensemble: shared input → Fourier → per-field lanes →
  * residual/supervision hub. Click a lane to inspect it. */
+interface Reco {
+  value: string;
+  why: string;
+  modified: boolean;
+}
+
+function recommendations(model: PhysicsModel): Reco[] {
+  const g = model.globals;
+  const pf = model.perField;
+  const pOn = model.fieldOn("p") || model.fieldOn("T");
+  return [
+    {
+      value: `σ_B = ${g.ffScale} · ε = ${g.alphaEps}`,
+      why: `Spectral scale sized so ${g.ff} Fourier pairs resolve the interface half-width.`,
+      modified:
+        model.globalOverridden("ff") || model.globalOverridden("ffScale"),
+    },
+    {
+      value: `α network ${pf.phi.width} × ${pf.phi.depth}`,
+      why: "The steepest field — it carries the sigmoid(φ/ε) interface.",
+      modified: model.fieldOverridden("phi"),
+    },
+    {
+      value: `u, v, s networks ${pf.u.width} × ${pf.u.depth}`,
+      why: "Smooth hidden fields; capacity follows α at ratio 1.0.",
+      modified:
+        model.fieldOverridden("u") ||
+        model.fieldOverridden("v") ||
+        model.fieldOverridden("s"),
+    },
+    {
+      value: pOn
+        ? `p, T networks ${pf.p.width} × ${pf.p.depth}`
+        : "p, T — locked",
+      why: pOn
+        ? "Stage-B fields sized +33% width, +2 depth for stiffer residuals."
+        : "Enable Momentum or Energy to unlock pressure and temperature.",
+      modified:
+        pOn && (model.fieldOverridden("p") || model.fieldOverridden("T")),
+    },
+  ];
+}
+
+/**
+ * The shapes the drawing above is made of, in words, each with the reasoning
+ * that produced it.
+ *
+ * These used to sit a panel away from the ensemble they describe; they are
+ * captions for it, so they live with it.
+ */
+function DerivedShapes({ model }: { model: PhysicsModel }) {
+  return (
+    <div className="derived">
+      <p className="reco-note">
+        <b>Derived from your physics.</b> Parameter count is exact; time and
+        memory are estimates. Hover a row for the reasoning; edit anything in
+        the per-field table below to override.
+      </p>
+      {recommendations(model).map((reco, i) => (
+        <div key={i} className={reco.modified ? "rrow mod" : "rrow"}>
+          <span className="rv">{reco.value}</span>
+          <span className="hasinfo" tabIndex={0}>
+            <span className="infob" aria-hidden="true">
+              i
+            </span>
+            <div className="infopop rwhy" role="tooltip">
+              {reco.why}
+            </div>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function EnsembleCanvas({ model }: { model: PhysicsModel }) {
   const active = model.activeFields;
   const [selected, setSelected] = useState<FieldName>("phi");
@@ -445,6 +520,7 @@ export function EnsembleCanvas({ model }: { model: PhysicsModel }) {
         params={model.fieldParamCount(inspected)}
       />
       <Legend active={active} />
+      <DerivedShapes model={model} />
     </section>
   );
 }
