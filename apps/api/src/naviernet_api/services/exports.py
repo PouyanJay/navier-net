@@ -135,7 +135,9 @@ def _append_speed_rows(rows: list[list], report: dict) -> None:
     if not apex:
         return
     for axis in ("vx", "vy"):
-        _append_series(rows, f"apex_{axis}", apex.get("t_ms"), apex.get(f"{axis}_um_per_ms"), None)
+        _append_series(
+            rows, f"apex_{axis}", apex.get("t_ms"), apex.get(f"{axis}_um_per_ms"), None
+        )
         apex_measured = apex.get("measured") or {}
         _append_series(
             rows,
