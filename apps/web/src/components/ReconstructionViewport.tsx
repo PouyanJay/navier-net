@@ -139,13 +139,15 @@ export function ReconstructionViewport({ data }: ViewportProps) {
             type="button"
             className="lbtn"
             aria-pressed={showVelocity}
-            disabled={arrows == null}
-            title={
+            // aria-disabled, not disabled: a disabled button drops out of the
+            // tab order, taking the reason it is unavailable with it.
+            aria-disabled={arrows == null}
+            aria-label={
               arrows == null
-                ? "This run has no explicit front (model.front_geometry), so it has no per-point interface velocity."
-                : "Normal velocity at points around the front (the tangential component is unobservable from masks)."
+                ? "velocity — unavailable: this run has no explicit front (model.front_geometry), so it has no per-point interface velocity"
+                : "velocity — normal component of the front's motion; the tangential component is unobservable from masks"
             }
-            onClick={() => setShowVelocity((on) => !on)}
+            onClick={() => arrows && setShowVelocity((on) => !on)}
           >
             velocity
           </button>
@@ -155,7 +157,7 @@ export function ReconstructionViewport({ data }: ViewportProps) {
             // Visible, not just a tooltip: an arrow that looks like a velocity
             // must say which velocity it is, and carry the scale that tells a
             // reader what its length is worth.
-            <span className="vp-arrowkey">
+            <span>
               normal component · longest {fastest.toPrecision(3)} µm/ms ·{" "}
             </span>
           )}

@@ -716,7 +716,9 @@ text.chart-axis-title {
 }
 .chart-band-label {
   fill: var(--ink3);
-  font-size: 9px;
+  /* The chart text scale, same as .chart-axis and .chart-legend — a band label
+     is an annotation, not a new size. */
+  font-size: 10px;
   letter-spacing: 0.04em;
 }
 

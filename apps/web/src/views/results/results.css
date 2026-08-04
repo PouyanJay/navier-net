@@ -1585,6 +1585,13 @@
   border: 1px solid var(--line);
 }
 
+/* A layer with nothing to show still takes focus (aria-disabled, not disabled),
+   so it needs the unavailable look a disabled button would have had. */
+.lbtn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Front-velocity arrows over the reconstruction. Thin and accent-coloured so
    they annotate the interface rather than compete with it — the contour is
    still the subject of the viewport. */
@@ -1596,9 +1603,4 @@
 
 .vp-arrowhead {
   fill: var(--acc2);
-}
-
-/* The arrow key sits in the viewport HUD, only while the layer is on. */
-.vp-arrowkey {
-  color: var(--acc2);
 }

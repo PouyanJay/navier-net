@@ -88,7 +88,7 @@ describe("ReconstructionViewport", () => {
     // Off by default: the arrows annotate the contour, they are not the subject.
     expect(container.querySelectorAll(".vp-velocity line")).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "velocity" }));
+    fireEvent.click(screen.getByRole("button", { name: /velocity/ }));
 
     // Two of the three: the near-stationary root is below the drawing floor,
     // where an arrow would read as noise on the contour rather than as data.
@@ -101,7 +101,7 @@ describe("ReconstructionViewport", () => {
 
   it("points an arrow the right way on the inverted y axis", () => {
     const { container } = render(<ReconstructionViewport data={DATA} />);
-    fireEvent.click(screen.getByRole("button", { name: "velocity" }));
+    fireEvent.click(screen.getByRole("button", { name: /velocity/ }));
     const lines = [...container.querySelectorAll(".vp-velocity line")];
 
     // The nose arrow points along +x, which the flip does not touch.
@@ -125,12 +125,16 @@ describe("ReconstructionViewport", () => {
       { target: { value: "1" } },
     );
 
-    const toggle = screen.getByRole("button", { name: "velocity" });
-    expect(toggle).toBeDisabled();
-    expect(toggle).toHaveAttribute(
-      "title",
+    // aria-disabled rather than disabled: the button keeps its place in the tab
+    // order, so a keyboard user can still reach the reason it is unavailable —
+    // and that reason is the accessible name, not a title only a pointer finds.
+    const toggle = screen.getByRole("button", { name: /^velocity/ });
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+    expect(toggle).toHaveAccessibleName(
       expect.stringContaining("front_geometry"),
     );
+    // And it does nothing when pressed, rather than toggling on an empty layer.
+    fireEvent.click(toggle);
     expect(container.querySelectorAll(".vp-velocity line")).toHaveLength(0);
   });
 
