@@ -165,6 +165,22 @@ def get_trajectory(
     return trajectory
 
 
+@router.get("/{run_id}/front-velocity")
+def get_front_velocity(
+    run_id: str,
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """How fast the interface moved, model against the masks (evaluate stage).
+    Joint runs record one report per spanned dataset; select it with `?dataset=`."""
+    report = runs_service.read_front_velocity(settings, run_id, dataset)
+    if report is None:
+        raise HTTPException(
+            status_code=404, detail=f"no front-velocity report for run {run_id!r}"
+        )
+    return report
+
+
 def _csv_response(body: str | None, filename: str, run_id: str) -> Response:
     if body is None:
         raise HTTPException(status_code=404, detail=f"nothing to export for run {run_id!r}")

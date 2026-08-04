@@ -31,6 +31,33 @@ def test_trajectory_is_written_and_served(client: TestClient, trained_run: str):
     assert measured_nose[-1] > measured_nose[0]
 
 
+def test_front_velocity_report_is_written_and_served(client: TestClient, trained_run: str):
+    """Evaluate persists the front's motion too, and the endpoint serves it.
+
+    The synthetic bubble grows, so its nose speed is positive somewhere -- a
+    report that came back all zeros would mean the derivative never reached the
+    trajectory it is supposed to be the slope of.
+    """
+    report = client.get(f"/api/runs/{trained_run}/front-velocity").json()
+
+    nose = report["nose_speed"]
+    assert len(nose["t_ms"]) == len(nose["v_um_per_ms"]) > 10
+    assert any(v is not None and v > 0 for v in nose["v_um_per_ms"])
+
+
+def test_front_velocity_missing_for_untrained_runs(client: TestClient):
+    assert client.get("/api/runs/scratch/front-velocity").status_code == 404
+    assert client.get("/api/runs/no-such/front-velocity").status_code == 404
+
+
+def test_front_velocity_rejects_a_traversing_dataset_name(client: TestClient, trained_run: str):
+    """The dataset name becomes part of a path (SECURITY.md §3)."""
+    response = client.get(
+        f"/api/runs/{trained_run}/front-velocity", params={"dataset": "../evil"}
+    )
+    assert response.status_code == 404
+
+
 def test_interface_frames_serve_contours(client: TestClient, trained_run: str):
     """The viewport endpoint returns per-timestep interface polylines."""
     payload = client.get(f"/api/runs/{trained_run}/interface?frames=8").json()

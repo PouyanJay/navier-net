@@ -142,6 +142,73 @@ def staged_run(tmp_path, overrides=None, write=None):
     return cfg, paths
 
 
+# --- Synthetic capsule fixture (shared by the front-velocity suites): a bubble
+# --- whose interface velocity is known ANALYTICALLY.
+#
+# A capsule of fixed radius growing along +x, written with a TRUE signed distance
+# field -- which `write_growing_bubble`'s placeholder is not. Its normal velocity
+# needs no reference implementation to check against: the nose advances at
+# ``ds/dt`` and the flanks, whose radius never changes, do not move at all.
+
+CAPSULE_H_PX, CAPSULE_W_PX = 48, 96
+CAPSULE_X_MAX, CAPSULE_Y_MAX = 2.0, 1.0
+CAPSULE_X_ROOT, CAPSULE_Y_CENTER, CAPSULE_RADIUS = 0.3, 0.5, 0.12
+CAPSULE_S0, CAPSULE_GROWTH_PER_FRAME, CAPSULE_DT = 0.6, 0.1, 0.1
+CAPSULE_FRAMES = 6
+CAPSULE_NOSE_SPEED = CAPSULE_GROWTH_PER_FRAME / CAPSULE_DT  # x* per t*
+CAPSULE_T_REF_MS = 1.0
+
+
+def capsule_sdf(xs, ys, nose: float):
+    """Signed distance to the capsule spanning ``CAPSULE_X_ROOT..nose``, negative
+    inside."""
+    import numpy as np
+
+    grid_x, grid_y = np.meshgrid(xs, ys)
+    nearest_x = np.clip(grid_x, CAPSULE_X_ROOT, nose)
+    return np.hypot(grid_x - nearest_x, grid_y - CAPSULE_Y_CENTER) - CAPSULE_RADIUS
+
+
+def write_capsule(path, n_frames: int = CAPSULE_FRAMES) -> None:
+    """A growing capsule, staged as preprocess would leave it."""
+    import json
+
+    import numpy as np
+
+    xs = np.linspace(0.0, CAPSULE_X_MAX, CAPSULE_W_PX, dtype=np.float32)
+    ys = np.linspace(0.0, CAPSULE_Y_MAX, CAPSULE_H_PX, dtype=np.float32)
+    sdf = np.stack(
+        [
+            capsule_sdf(xs, ys, CAPSULE_S0 + k * CAPSULE_GROWTH_PER_FRAME)
+            for k in range(n_frames)
+        ]
+    )
+    alpha = (sdf < 0).astype(np.float32)
+    meta = {
+        "x_pin_star": CAPSULE_X_ROOT - CAPSULE_RADIUS,
+        "t_ref_ms": CAPSULE_T_REF_MS,
+        "n_frames_usable": n_frames,
+        "n_frames_event": n_frames,
+        "frame_numbers": list(range(1, n_frames + 1)),
+    }
+    np.savez_compressed(
+        path,
+        alpha=alpha,
+        sdf=sdf.astype(np.float32),
+        valid=np.ones_like(alpha, dtype=np.uint8),
+        masks_camera=(alpha > 0.5).astype(np.uint8),
+        x_star=xs,
+        y_star=ys,
+        t_star=(np.arange(n_frames) * CAPSULE_DT).astype(np.float32),
+        meta=json.dumps(meta),
+    )
+
+
+def staged_capsule_run(tmp_path, overrides=None):
+    """The analytic capsule staged for a tiny run, as the CLI would compose it."""
+    return staged_run(tmp_path, overrides, write=write_capsule)
+
+
 def staged_joint_run(tmp_path, overrides=None):
     """Two synthetic datasets with distinct regimes, roots, AND growth rates,
     staged for a conditioned joint run, as preprocess would have left them."""

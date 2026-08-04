@@ -100,6 +100,15 @@ class RunPaths:
         unsuffixed name for backward compatibility)."""
         return self.output_dir / f"trajectory_{dataset}.json"
 
+    @property
+    def front_velocity_json(self) -> Path:
+        return self.output_dir / "front_velocity.json"
+
+    def front_velocity_json_for(self, dataset: str) -> Path:
+        """A joint run's per-dataset front-velocity report, named like its
+        trajectory so the two are read as one pair."""
+        return self.output_dir / f"front_velocity_{dataset}.json"
+
     def ensure(self) -> RunPaths:
         """Create every writable directory. Safe to call repeatedly."""
         for d in (

@@ -206,6 +206,7 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
 
     predicted = nose_trajectory(cfg, model, data)
     _write_trajectory(cfg, data, paths.trajectory_json, predicted)
+    _write_front_velocity(cfg, model, data, paths.front_velocity_json)
     speed = np.gradient(predicted.nose, predicted.times)
     # Trim the ends, where one-sided differences and the pinned start distort
     # the estimate, and average over the steady middle of the growth.
@@ -323,19 +324,35 @@ def _write_joint_trajectories(cfg, model, contexts, paths: RunPaths) -> None:
     """Per-dataset growth kinematics, held-out conditions included: transfer
     kinematics are evidence too."""
     for cx in contexts:
-        predicted = nose_trajectory(
-            cfg, model.bound(cx.c, pin=cx.pin, geometry=cx.geometry), cx.data
+        bound = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
+        _write_trajectory(
+            cfg,
+            cx.data,
+            paths.trajectory_json_for(cx.name),
+            nose_trajectory(cfg, bound, cx.data),
         )
-        _write_trajectory(cfg, cx.data, paths.trajectory_json_for(cx.name), predicted)
+        _write_front_velocity(cfg, bound, cx.data, paths.front_velocity_json_for(cx.name))
 
 
-def _scaled(values, factor: float, digits: int) -> list[float | None]:
+def _write_front_velocity(cfg, model, data, path: Path) -> None:
+    """The front's motion, beside its position.
+
+    Imported here rather than at module scope: the report is built ON this
+    module's trajectories and unit helpers, so a top-level import would close a
+    cycle. Same deferral :func:`_physics_block` makes for the diagnostics.
+    """
+    from naviernet import front_kinematics
+
+    front_kinematics.write_report(cfg, model, data, path)
+
+
+def physical_series(values, factor: float, digits: int) -> list[float | None]:
     """Scale an array into physical units; NaN becomes None (JSON has no NaN,
     and a bare ``NaN`` token would break every standards-compliant consumer)."""
     return [None if math.isnan(v) else round(float(v) * factor, digits) for v in values]
 
 
-def _reference_length_um(cfg, data) -> float:
+def reference_length_um(cfg, data) -> float:
     """The dataset's own reference length; the composed cfg is the fallback for
     tensors that predate the ``L_ref_um`` record (exact for the primary dataset,
     approximate otherwise — logged so a re-preprocess can fix it)."""
@@ -358,17 +375,17 @@ def _write_trajectory(cfg, data, path: Path, predicted: GrowthTrajectory) -> Non
     dataset scaled by its own reference length), so the platform can chart
     them interactively instead of reading a rendered PNG.
     """
-    l_ref_um = _reference_length_um(cfg, data)
+    l_ref_um = reference_length_um(cfg, data)
     t_ref_ms = float(data.meta["t_ref_ms"])
     measured = measured_trajectory(cfg, data)
     payload = {
-        "t_ms": _scaled(predicted.times, t_ref_ms, 4),
-        "nose_um": _scaled(predicted.nose, l_ref_um, 2),
-        "area_um2": _scaled(predicted.area, l_ref_um * l_ref_um, 1),
+        "t_ms": physical_series(predicted.times, t_ref_ms, 4),
+        "nose_um": physical_series(predicted.nose, l_ref_um, 2),
+        "area_um2": physical_series(predicted.area, l_ref_um * l_ref_um, 1),
         "measured": {
-            "t_ms": _scaled(measured.times, 1.0, 4),  # already in ms
-            "nose_um": _scaled(measured.nose, l_ref_um, 2),
-            "area_um2": _scaled(measured.area, l_ref_um * l_ref_um, 1),
+            "t_ms": physical_series(measured.times, 1.0, 4),  # already in ms
+            "nose_um": physical_series(measured.nose, l_ref_um, 2),
+            "area_um2": physical_series(measured.area, l_ref_um * l_ref_um, 1),
         },
     }
     path.write_text(json.dumps(payload, allow_nan=False))

@@ -26,61 +26,24 @@ import numpy as np
 import pytest
 import torch
 
-from tests.conftest import staged_run
+from tests import conftest
 
-# The synthetic capsule: a fixed root, a fixed radius, a nose advancing one
-# tenth of x* per frame on a time axis whose step is one tenth of t*.
-H_PX, W_PX = 48, 96
-X_MAX, Y_MAX = 2.0, 1.0
-X_ROOT, Y_CENTER, RADIUS = 0.3, 0.5, 0.12
-S0, GROWTH_PER_FRAME, DT = 0.6, 0.1, 0.1
-N_FRAMES = 6
-TRUE_NOSE_SPEED = GROWTH_PER_FRAME / DT  # x* per t*
+# This suite's short names for the shared analytic capsule (tests/conftest.py),
+# whose nose speed and zero-motion flanks are known without a reference
+# implementation. Bound here rather than imported one alias at a time.
+H_PX, W_PX = conftest.CAPSULE_H_PX, conftest.CAPSULE_W_PX
+X_MAX, Y_MAX = conftest.CAPSULE_X_MAX, conftest.CAPSULE_Y_MAX
+Y_CENTER, RADIUS = conftest.CAPSULE_Y_CENTER, conftest.CAPSULE_RADIUS
+S0, GROWTH_PER_FRAME, DT = (
+    conftest.CAPSULE_S0,
+    conftest.CAPSULE_GROWTH_PER_FRAME,
+    conftest.CAPSULE_DT,
+)
+N_FRAMES, TRUE_NOSE_SPEED = conftest.CAPSULE_FRAMES, conftest.CAPSULE_NOSE_SPEED
+_capsule_sdf, _staged = conftest.capsule_sdf, conftest.staged_capsule_run
 
 GEO = ["model.front_geometry=true"]
 FV = [*GEO, "training.front_velocity=true"]
-
-
-def _capsule_sdf(xs: np.ndarray, ys: np.ndarray, nose: float) -> np.ndarray:
-    """Signed distance to the capsule spanning ``X_ROOT..nose``, negative inside."""
-    grid_x, grid_y = np.meshgrid(xs, ys)
-    nearest_x = np.clip(grid_x, X_ROOT, nose)
-    return np.hypot(grid_x - nearest_x, grid_y - Y_CENTER) - RADIUS
-
-
-def _write_capsule(path) -> None:
-    """A growing capsule, staged as preprocess would leave it."""
-    xs = np.linspace(0.0, X_MAX, W_PX, dtype=np.float32)
-    ys = np.linspace(0.0, Y_MAX, H_PX, dtype=np.float32)
-    sdf = np.stack([_capsule_sdf(xs, ys, S0 + k * GROWTH_PER_FRAME) for k in range(N_FRAMES)])
-    alpha = (sdf < 0).astype(np.float32)
-    meta = {
-        "x_pin_star": X_ROOT - RADIUS,
-        "t_ref_ms": 1.0,
-        "n_frames_usable": N_FRAMES,
-        "n_frames_event": N_FRAMES,
-        "frame_numbers": list(range(1, N_FRAMES + 1)),
-    }
-    np.savez_compressed(
-        path,
-        alpha=alpha,
-        sdf=sdf.astype(np.float32),
-        valid=np.ones_like(alpha, dtype=np.uint8),
-        masks_camera=(alpha > 0.5).astype(np.uint8),
-        x_star=xs,
-        y_star=ys,
-        t_star=(np.arange(N_FRAMES) * DT).astype(np.float32),
-        meta=json.dumps(meta),
-    )
-
-
-def _staged(tmp_path, overrides=None):
-    """The capsule dataset staged for a tiny run, as the CLI would compose it.
-
-    The shared staging, with only the writer swapped: this suite needs a TRUE
-    signed distance field, which the standard fixture's placeholder is not.
-    """
-    return staged_run(tmp_path, overrides, write=_write_capsule)
 
 
 def _dataset(tmp_path, overrides=None):

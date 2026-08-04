@@ -22,6 +22,7 @@ import { AgreementTab } from "./AgreementTab";
 import { CompareTab } from "./CompareTab";
 import { ExportTab } from "./ExportTab";
 import { FieldsTab } from "./FieldsTab";
+import { FrontVelocityTab } from "./FrontVelocityTab";
 import { OverviewTab } from "./OverviewTab";
 import { PhysicsTab } from "./PhysicsTab";
 import { TrainingTab } from "./TrainingTab";
@@ -68,6 +69,7 @@ export const RESULT_TABS = [
   { id: "fields", label: "Fields" },
   { id: "agreement", label: "Agreement & transfer" },
   { id: "physics", label: "Physics" },
+  { id: "velocity", label: "Front velocity" },
   { id: "training", label: "Training" },
   { id: "compare", label: "Compare" },
   { id: "export", label: "Artifacts & export" },
@@ -350,6 +352,8 @@ export function ResultsPage({ project }: ResultsPageProps) {
                   }
                   validation={validation}
                 />
+              ) : activeTab === "velocity" ? (
+                <FrontVelocityTab runId={selected.id} dataset={viewDataset} />
               ) : activeTab === "training" ? (
                 <TrainingTab runId={selected.id} />
               ) : activeTab === "compare" ? (

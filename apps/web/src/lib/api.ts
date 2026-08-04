@@ -493,6 +493,25 @@ export interface Trajectory {
   };
 }
 
+/** The bubble nose's own speed over time, model against the camera frames. */
+export interface NoseSpeed {
+  t_ms: KinematicsSeries;
+  v_um_per_ms: KinematicsSeries;
+}
+
+/**
+ * How fast the interface moved, written by the evaluate stage (physical units).
+ *
+ * `front_geometry` is false for a run trained without an explicit front. Such a
+ * run still has a nose speed — the nose is read off the predicted mask — but no
+ * per-point normal speed and no apex, so those blocks are absent and the view
+ * says why rather than drawing an empty axis.
+ */
+export interface FrontVelocityReport {
+  front_geometry: boolean;
+  nose_speed: NoseSpeed;
+}
+
 /** One reconstructed instant: interface contour polylines in µm. */
 export interface InterfaceFrame {
   t_ms: number;
@@ -624,6 +643,11 @@ export const api = {
   getTrajectory: (id: string, dataset?: string) =>
     getJson<Trajectory>(
       `${runPath(id)}/trajectory` +
+        (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
+    ),
+  getFrontVelocity: (id: string, dataset?: string) =>
+    getJson<FrontVelocityReport>(
+      `${runPath(id)}/front-velocity` +
         (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
     ),
   getField: (id: string, name: string, t: number, dataset?: string) =>
