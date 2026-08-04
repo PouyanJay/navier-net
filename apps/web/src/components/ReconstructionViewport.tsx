@@ -11,8 +11,10 @@ const PLAYBACK_FPS = 14;
 const ARROW_SPAN = 0.06;
 
 /** Arrows shorter than this fraction of the longest are dropped rather than
- * drawn as specks that read like noise on the contour. */
-const ARROW_FLOOR = 0.06;
+ * drawn as specks that read like noise on the contour. Unrelated to
+ * `ARROW_SPAN` above -- that one is a fraction of the DOMAIN, this one a
+ * fraction of the frame's fastest ARROW -- so the two move independently. */
+const ARROW_FLOOR = 0.05;
 
 const toPath = (contour: number[][], flipY: (y: number) => number) =>
   contour

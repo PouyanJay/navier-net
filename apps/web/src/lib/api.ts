@@ -535,14 +535,6 @@ export interface ApexVelocity {
   };
 }
 
-/**
- * How fast the interface moved, written by the evaluate stage (physical units).
- *
- * `front_geometry` is false for a run trained without an explicit front. Such a
- * run still has a nose speed — the nose is read off the predicted mask — but no
- * per-point normal speed and no apex, so those blocks are absent and the view
- * says why rather than drawing an empty axis.
- */
 /** One segment of the closed front, and where it sits on the `s` axis. */
 export interface FrontSegment {
   name: "root_cap" | "upper_body" | "nose_cap" | "lower_body";
@@ -589,6 +581,14 @@ export interface FrontProfile {
   };
 }
 
+/**
+ * How fast the interface moved, written by the evaluate stage (physical units).
+ *
+ * `front_geometry` is false for a run trained without an explicit front. Such a
+ * run still has a nose speed — the nose is read off the predicted mask — but no
+ * per-point normal speed and no apex, so those blocks are absent and the view
+ * says why rather than drawing an empty axis.
+ */
 export interface FrontVelocityReport {
   front_geometry: boolean;
   nose_speed: NoseSpeed;
@@ -599,7 +599,6 @@ export interface FrontVelocityReport {
   profile: FrontProfile | null;
 }
 
-/** One reconstructed instant: interface contour polylines in µm. */
 /**
  * One front-velocity arrow: `[x_um, y_um, nx, ny, v_um_per_ms]`.
  *
@@ -617,6 +616,7 @@ export type FrontArrow = [
   v_um_per_ms: number,
 ];
 
+/** One reconstructed instant: interface contour polylines in µm. */
 export interface InterfaceFrame {
   t_ms: number;
   contours: number[][][];

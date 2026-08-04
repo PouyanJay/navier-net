@@ -3,14 +3,9 @@ import { useEffect, useState } from "react";
 import { Callout, Panel } from "../../components";
 import {
   CompareChart,
-  type ComparePoint,
+  toComparePoints,
 } from "../../components/charts/CompareChart";
-import {
-  api,
-  ApiError,
-  type KinematicsSeries,
-  type Trajectory,
-} from "../../lib/api";
+import { api, ApiError, type Trajectory } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import { ChartCard } from "./ChartCard";
 
@@ -19,19 +14,6 @@ type Load =
   | { status: "unavailable" }
   | { status: "error"; message: string }
   | { status: "ready"; trajectory: Trajectory };
-
-/** Pair times with values, skipping instants where either is null (a gap). */
-function toSeries(
-  t: KinematicsSeries,
-  values: KinematicsSeries,
-): ComparePoint[] {
-  const points: ComparePoint[] = [];
-  t.forEach((time, i) => {
-    const value = values[i];
-    if (time != null && value != null) points.push({ x: time, y: value });
-  });
-  return points;
-}
 
 interface KinematicsPanelProps {
   runId: string;
@@ -54,14 +36,15 @@ function QuantityChart({
   exportName: string;
 }) {
   const rows = [
-    ...toSeries(trajectory.t_ms, trajectory[field]).map((point) => ({
+    ...toComparePoints(trajectory.t_ms, trajectory[field]).map((point) => ({
       series: "pinn",
       t_ms: point.x,
       [field]: point.y,
     })),
-    ...toSeries(trajectory.measured.t_ms, trajectory.measured[field]).map(
-      (point) => ({ series: "measured", t_ms: point.x, [field]: point.y }),
-    ),
+    ...toComparePoints(
+      trajectory.measured.t_ms,
+      trajectory.measured[field],
+    ).map((point) => ({ series: "measured", t_ms: point.x, [field]: point.y })),
   ];
   return (
     <ChartCard
@@ -74,11 +57,11 @@ function QuantityChart({
           series={[
             {
               id: "PINN",
-              points: toSeries(trajectory.t_ms, trajectory[field]),
+              points: toComparePoints(trajectory.t_ms, trajectory[field]),
             },
             {
               id: "measured",
-              points: toSeries(
+              points: toComparePoints(
                 trajectory.measured.t_ms,
                 trajectory.measured[field],
               ),

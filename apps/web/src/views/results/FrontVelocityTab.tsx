@@ -2,6 +2,7 @@ import { Callout, Panel } from "../../components";
 import {
   CompareChart,
   SERIES_SLOT,
+  toComparePoints,
   type ComparePoint,
   type CompareSeries,
 } from "../../components/charts/CompareChart";
@@ -33,19 +34,6 @@ export function speedReadout(value: number): string {
   return `${sigFigs(value)} µm/ms (${si} m/s)`;
 }
 
-/** Pair times with values, skipping instants where either is null (a gap). */
-function toSeries(
-  t: KinematicsSeries,
-  values: KinematicsSeries,
-): ComparePoint[] {
-  const points: ComparePoint[] = [];
-  t.forEach((time, i) => {
-    const value = values[i];
-    if (time != null && value != null) points.push({ x: time, y: value });
-  });
-  return points;
-}
-
 /** One exported row: both units, so the CSV needs no unit conversion to read.
  * A null value stays null in both columns rather than becoming a zero. */
 function speedRow(series: string, point: ComparePoint) {
@@ -64,7 +52,7 @@ function speedRow(series: string, point: ComparePoint) {
  * fact -- so the distinction survives for a reader who cannot use colour.
  */
 function measuredSeries(measured: MeasuredSpeed): CompareSeries[] {
-  const points = toSeries(measured.t_ms, measured.v_um_per_ms);
+  const points = toComparePoints(measured.t_ms, measured.v_um_per_ms);
   const pick = (want: boolean) =>
     points.filter((_, i) => measured.heldout[i] === want);
   return [
@@ -105,7 +93,7 @@ function SpeedChart({
   model,
   measured,
 }: SpeedChartProps) {
-  const predicted = toSeries(model.t_ms, model.v_um_per_ms);
+  const predicted = toComparePoints(model.t_ms, model.v_um_per_ms);
   const camera = measuredSeries(measured);
   const rows = [
     ...predicted.map((point) => speedRow("pinn", point)),

@@ -69,6 +69,23 @@ interface CompareChartProps {
 
 type G = d3.Selection<SVGGElement, unknown, null, undefined>;
 
+/**
+ * Pair a time axis with a value series, skipping instants where either is null
+ * (a gap in the data, not a zero). What every artifact-backed chart needs to
+ * turn two parallel arrays into points.
+ */
+export function toComparePoints(
+  t: (number | null)[],
+  values: (number | null)[],
+): ComparePoint[] {
+  const points: ComparePoint[] = [];
+  t.forEach((time, i) => {
+    const value = values[i];
+    if (time != null && value != null) points.push({ x: time, y: value });
+  });
+  return points;
+}
+
 /** The points a scale, a marker or a readout can actually use. */
 function defined(points: ComparePoint[]) {
   return points.filter((p): p is { x: number; y: number } => p.y != null);

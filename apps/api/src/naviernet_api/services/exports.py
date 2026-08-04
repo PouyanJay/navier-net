@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import io
+from typing import NamedTuple
 
 from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings
@@ -118,34 +119,34 @@ def front_velocity_csv(settings: Settings, run_id: str, dataset: str | None) -> 
     return _csv(["series", "t_ms", "s", "v_um_per_ms", "v_m_per_s", "heldout"], rows)
 
 
+class _Series(NamedTuple):
+    """One speed series as the report stores it: parallel arrays of instants and
+    values, plus (for a measured series) whether each interval spanned a
+    held-out frame. Bundled because the three only mean anything together."""
+
+    times: list | None
+    values: list | None
+    heldout: list | None = None
+
+    @classmethod
+    def of(cls, block: dict | None, key: str = "v_um_per_ms") -> _Series:
+        block = block or {}
+        return cls(block.get("t_ms"), block.get(key), block.get("heldout"))
+
+
 def _append_speed_rows(rows: list[list], report: dict) -> None:
     """The whole-front speeds: the nose, and each apex component."""
     nose = report.get("nose_speed") or {}
-    _append_series(rows, "nose_speed", nose.get("t_ms"), nose.get("v_um_per_ms"), None)
-    measured = nose.get("measured") or {}
-    _append_series(
-        rows,
-        "nose_speed_measured",
-        measured.get("t_ms"),
-        measured.get("v_um_per_ms"),
-        measured.get("heldout"),
-    )
+    _append_series(rows, "nose_speed", _Series(nose.get("t_ms"), nose.get("v_um_per_ms")))
+    _append_series(rows, "nose_speed_measured", _Series.of(nose.get("measured")))
 
     apex = report.get("apex")
     if not apex:
         return
     for axis in ("vx", "vy"):
-        _append_series(
-            rows, f"apex_{axis}", apex.get("t_ms"), apex.get(f"{axis}_um_per_ms"), None
-        )
-        apex_measured = apex.get("measured") or {}
-        _append_series(
-            rows,
-            f"apex_{axis}_measured",
-            apex_measured.get("t_ms"),
-            apex_measured.get(f"{axis}_um_per_ms"),
-            apex_measured.get("heldout"),
-        )
+        key = f"{axis}_um_per_ms"
+        _append_series(rows, f"apex_{axis}", _Series(apex.get("t_ms"), apex.get(key)))
+        _append_series(rows, f"apex_{axis}_measured", _Series.of(apex.get("measured"), key))
 
 
 def _append_profile_rows(rows: list[list], profile: dict | None) -> None:
@@ -173,11 +174,12 @@ def _append_profile_rows(rows: list[list], profile: dict | None) -> None:
                 )
 
 
-def _append_series(rows: list[list], name: str, times, values, heldout) -> None:
+def _append_series(rows: list[list], name: str, series: _Series) -> None:
     """One (t, v) series as long-format rows, with no position."""
-    for i, t in enumerate(times or []):
-        value = (values or [])[i]
-        rows.append([name, t, None, value, _si(value), None if heldout is None else heldout[i]])
+    for i, t in enumerate(series.times or []):
+        value = (series.values or [])[i]
+        held = None if series.heldout is None else series.heldout[i]
+        rows.append([name, t, None, value, _si(value), held])
 
 
 def loss_csv(settings: Settings, run_id: str) -> str | None:
