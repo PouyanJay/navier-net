@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Button, Callout, Chip, DL, type KV, Panel } from "../../components";
+import { Button, Callout, Chip, DL, type KV } from "../../components";
 import type {
   ConditionsUpdate,
   DatasetDetail,
@@ -68,7 +68,11 @@ function seriesMeta(summary: DatasetSummary): string {
   return parts.join(" ");
 }
 
-/** The project's uploaded series; select one to edit it, or add another. */
+/** The project's uploaded series; select one to edit it, or add another.
+ *
+ * Rendered as the datasets stage's secondary rail (see `StageAside`), so it
+ * brings no frame of its own -- the shell owns the heading, the collapse control
+ * and the scrolling. */
 export function SeriesLibrary({
   project,
   series,
@@ -87,11 +91,7 @@ export function SeriesLibrary({
   const trained = detail != null && trainedIds.has(detail.id);
 
   return (
-    <Panel
-      title="Series library"
-      subtitle="per-series conditions"
-      className="lib-card"
-    >
+    <>
       {series.length === 0 && (
         <div className="dsempty">
           <b>No series yet</b>
@@ -186,11 +186,11 @@ export function SeriesLibrary({
           onSaveLabel={onSaveLabel}
         />
       )}
-      <p className="note">
+      <p className="note lib-note">
         <b>Transfer learning:</b> once two or more series are preprocessed,
         select them together in the Solver to train one model jointly across
         their operating conditions.
       </p>
-    </Panel>
+    </>
   );
 }

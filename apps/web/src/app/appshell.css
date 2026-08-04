@@ -1,9 +1,25 @@
-/* App chrome: one full-width top bar over the stage rail + paper workspace. */
+/* App chrome: one full-width top bar over the stage rail + paper workspace.
+   A stage may claim a secondary rail between the two (see .rail2), which adds
+   a third column; stages that do not stay at two. */
 .shell {
   display: grid;
   grid-template-columns: 248px 1fr;
   grid-template-rows: 56px 1fr;
   height: 100%;
+  --rail2-w: 320px;
+  --rail2-w-collapsed: 44px;
+}
+.shell[data-aside="open"] {
+  grid-template-columns: 248px var(--rail2-w) 1fr;
+}
+.shell[data-aside="collapsed"] {
+  grid-template-columns: 248px var(--rail2-w-collapsed) 1fr;
+}
+.shell[data-aside] .topbar {
+  grid-column: 1 / 4;
+}
+.shell[data-aside] .workspace {
+  grid-column: 3;
 }
 
 /* Brand, inside the top bar. Its width mirrors the rail below so the
@@ -341,6 +357,107 @@
   overflow-y: auto;
   padding: var(--s6) var(--s7);
 }
+
+/* Secondary rail: the stage's own selection and settings, in a fixed column
+   that scrolls independently of the canvas. Paper, not chrome — what it holds
+   is data and controls, so it belongs to the workspace's surface rather than
+   to the navy navigation. */
+.rail2 {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.rail2-hd {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s3) var(--s3) var(--s4);
+  border-bottom: 1px solid var(--line2);
+}
+.shell[data-aside="collapsed"] .rail2-hd {
+  justify-content: center;
+  padding: var(--s3) 0;
+}
+.rail2-title {
+  min-width: 0;
+  flex: 1;
+}
+.rail2-title h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.rail2-title .sub {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+}
+.rail2-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--rs);
+  background: var(--panel2);
+  color: var(--ink2);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.rail2-toggle:hover {
+  color: var(--acc);
+  border-color: var(--acc2);
+}
+.rail2-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+/* Folded, the rail names itself along its own length rather than sitting as an
+   anonymous strip. Decorative (aria-hidden): the toggle's own label already
+   carries the name for assistive tech. */
+.rail2-folded {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  margin: var(--s4) auto 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink3);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Collapsed: the body keeps its DOM (so nothing the stage has open is torn
+   down) but takes no space and no tab stops. */
+.shell[data-aside="collapsed"] .rail2-body {
+  display: none;
+}
+
+/* Two rails cost the canvas real width, so the secondary one narrows before
+   the canvas does. It is never hidden: everything a stage keeps here is the
+   only way to reach that stage's selection. */
+@media (max-width: 1180px) {
+  .shell {
+    --rail2-w: 272px;
+  }
+}
 .workspace .page {
   max-width: 1220px;
   margin: 0 auto;
@@ -558,6 +675,29 @@
   .workspace {
     grid-column: 1;
     grid-row: 3;
+  }
+  /* One column: the secondary rail becomes a band above the canvas rather than
+     a column beside it, capped so it cannot push the canvas off-screen. */
+  .shell[data-aside] {
+    grid-template-rows: 56px auto auto 1fr;
+  }
+  .shell[data-aside="open"],
+  .shell[data-aside="collapsed"] {
+    grid-template-columns: 1fr;
+  }
+  .shell[data-aside] .topbar {
+    grid-column: 1;
+  }
+  .rail2 {
+    grid-column: 1;
+    grid-row: 3;
+    max-height: 45vh;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .shell[data-aside] .workspace {
+    grid-column: 1;
+    grid-row: 4;
   }
   .sidebar .spacer {
     display: none;

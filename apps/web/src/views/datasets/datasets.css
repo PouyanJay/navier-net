@@ -1,32 +1,6 @@
-/* Two-column datasets stage: series library | selected-series detail */
-.dsx {
-  display: grid;
-  gap: var(--s4);
-  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
-  /* Stretch so the series-library side card matches the right column's height
-     and their bottoms line up. */
-  align-items: stretch;
-}
-/* Fill the stretched side card: body grows, the transfer-learning note sinks to
-   the bottom so the extra space reads as intentional spacing, not a gap. */
-.lib-card {
-  display: flex;
-  flex-direction: column;
-}
-.lib-card > .body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-.lib-card > .body > .note {
-  /* Sit at the card's bottom when the card is stretched, but never closer
-     than a real gap to whatever precedes it (an empty project's card is
-     content-height, where `auto` alone collapses to nothing). */
-  margin-top: auto;
-}
-.lib-card > .body > .addds {
-  margin-bottom: var(--s5);
-}
+/* The datasets stage: the series library is the shell's secondary rail (see
+   .rail2), so the canvas is a single stacked column of the selected series'
+   frames, QC and dimensionless groups. */
 .dsx-main {
   display: grid;
   gap: var(--s4);
@@ -35,14 +9,13 @@
 }
 /* Cards must be able to shrink below their content's intrinsic width
    (the frame strip scrolls instead); the mockup's `.grid > *` rule. */
-.dsx > *,
 .dsx-main > * {
   min-width: 0;
 }
-@media (max-width: 1080px) {
-  .dsx {
-    grid-template-columns: 1fr;
-  }
+/* In the rail the library's guidance note sinks to the bottom, so the space
+   above it reads as intentional rather than as a gap. */
+.lib-note {
+  margin-top: auto;
 }
 
 /* Series library rows */

@@ -5,11 +5,32 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AsideSlotProvider } from "../src/app/StageAside";
 import type { ProjectSummary } from "../src/lib/api";
 import { DatasetsView } from "../src/views/DatasetsView";
+
+/**
+ * Stands in for AppShell's secondary rail. The datasets stage renders its
+ * series library into that slot, so a test without one would mount no library
+ * at all — this provides a real node exactly as the shell does.
+ */
+function StageHarness({ children }: { children: ReactNode }) {
+  const [node, setNode] = useState<HTMLElement | null>(null);
+  const slot = useMemo(() => ({ node, claim: () => {} }), [node]);
+  return (
+    <AsideSlotProvider slot={slot}>
+      <div ref={setNode} />
+      {children}
+    </AsideSlotProvider>
+  );
+}
+
+function renderStage(ui: ReactNode) {
+  return render(<StageHarness>{ui}</StageHarness>);
+}
 
 /** Owns project state like App does, so attach flows re-render the view. */
 function Harness({
@@ -333,9 +354,13 @@ const noop = vi.fn();
 describe("DatasetsView", () => {
   it("shows the series library, frame strip, QC, and groups", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    expect(await screen.findByText("Series library")).toBeInTheDocument();
+    // The library lives in the shell's secondary rail now, so what marks it
+    // present is its own content, not the heading the shell draws.
+    expect(
+      await screen.findByRole("button", { name: /Upload new series/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sample/ })).toBeInTheDocument();
     expect(
       await screen.findByText(/Image sequence · sample/),
@@ -355,7 +380,7 @@ describe("DatasetsView", () => {
 
   it("shows the selected series' inputs read-only in the library card", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // The inputs set in the upload modal are surfaced for the selected series.
     const inputs = within(
@@ -371,7 +396,7 @@ describe("DatasetsView", () => {
 
   it("edits a cheap condition live, without requiring a re-preprocess", async () => {
     const calls = mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // Open the editor from the read-only conditions summary.
     fireEvent.click(
@@ -400,7 +425,7 @@ describe("DatasetsView", () => {
 
   it("renames a series; the label replaces the id everywhere visible", async () => {
     const calls = mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // The card starts labelled by its id.
     expect((await screen.findAllByText("sample")).length).toBeGreaterThan(0);
@@ -437,7 +462,7 @@ describe("DatasetsView", () => {
 
   it("clears the label, falling back to the id as the name", async () => {
     const calls = mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // Give it a label first.
     fireEvent.click(
@@ -474,7 +499,7 @@ describe("DatasetsView", () => {
 
   it("surfaces a failed label save and keeps the editor open", async () => {
     mockApi({ labelStatus: 400 });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     fireEvent.click(
       await screen.findByRole("button", { name: /Edit conditions/ }),
@@ -494,7 +519,7 @@ describe("DatasetsView", () => {
 
   it("warns and requires a re-preprocess after a baked-condition edit", async () => {
     const calls = mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     fireEvent.click(
       await screen.findByRole("button", { name: /Edit conditions/ }),
@@ -518,7 +543,7 @@ describe("DatasetsView", () => {
     // Regression: a RE-preprocess changes neither `selected` nor `processed`,
     // so the QC used to keep the pre-exclusion chart until a page reload.
     const calls = mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // First QC load for the processed series.
     await waitFor(() => expect(calls.qcFetches).toBeGreaterThan(0));
@@ -548,7 +573,7 @@ describe("DatasetsView", () => {
 
   it("keeps save disabled for an out-of-range condition", async () => {
     mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Edit conditions/ }),
     );
@@ -567,7 +592,7 @@ describe("DatasetsView", () => {
 
   it("flags a baked field inline while editing a processed series", async () => {
     mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Edit conditions/ }),
     );
@@ -584,7 +609,7 @@ describe("DatasetsView", () => {
 
   it("closes the editor on cancel without saving", async () => {
     const calls = mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Edit conditions/ }),
     );
@@ -620,7 +645,7 @@ describe("DatasetsView", () => {
         return original(url, opts);
       },
     );
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Edit conditions/ }),
     );
@@ -648,7 +673,7 @@ describe("DatasetsView", () => {
         return original(url, opts);
       },
     );
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Edit conditions/ }),
     );
@@ -666,7 +691,7 @@ describe("DatasetsView", () => {
 
   it("defines a dimensionless group and reads back its value on selection", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // Capillary number is the default selection: it explains the group and the
     // regime its value puts the run in.
@@ -692,7 +717,7 @@ describe("DatasetsView", () => {
   it("uploads a new series through the modal and preprocesses it", async () => {
     const calls = mockApi();
     const onProjectChanged = vi.fn();
-    render(<Harness onProjectChanged={onProjectChanged} />);
+    renderStage(<Harness onProjectChanged={onProjectChanged} />);
 
     fireEvent.click(
       await screen.findByRole("button", { name: /Upload new series/ }),
@@ -750,7 +775,7 @@ describe("DatasetsView", () => {
 
   it("starts preprocessing when the button is clicked", async () => {
     const calls = mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     const button = await screen.findByRole("button", {
       name: /Run preprocessing/,
     });
@@ -761,7 +786,7 @@ describe("DatasetsView", () => {
 
   it("shows the interactive QC checks once the series is preprocessed", async () => {
     mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // "Preprocessing QC" shows immediately; the tabs appear once tensors load.
     const kinematics = await screen.findByRole("tab", {
@@ -789,7 +814,7 @@ describe("DatasetsView", () => {
 
   it("marks the holdout frame in the strip", async () => {
     mockApi({ holdout: 2 });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // The tile is a toggle; its accessible name carries the state, so the
     // holdout is announced rather than only being amber.
@@ -848,7 +873,7 @@ describe("DatasetsView with several series", () => {
         return new Response("not found", { status: 404 });
       }),
     );
-    render(<DatasetsView project={twoSeries} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={twoSeries} onProjectChanged={noop} />);
 
     // Both project series are listed; the foreign dataset is not.
     expect(
@@ -913,8 +938,8 @@ describe("NewSeriesModal failure paths", () => {
         return real(url, opts);
       },
     );
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText("Series library");
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByRole("button", { name: /Upload new series/ });
     await openFormAndFill();
     fireEvent.click(
       screen.getByRole("button", { name: "Upload & preprocess" }),
@@ -941,10 +966,10 @@ describe("NewSeriesModal failure paths", () => {
       },
     );
     const onProjectChanged = vi.fn();
-    render(
+    renderStage(
       <DatasetsView project={PROJECT} onProjectChanged={onProjectChanged} />,
     );
-    await screen.findByText("Series library");
+    await screen.findByRole("button", { name: /Upload new series/ });
     await openFormAndFill();
     fireEvent.click(
       screen.getByRole("button", { name: "Upload & preprocess" }),
@@ -959,8 +984,8 @@ describe("NewSeriesModal failure paths", () => {
 
   it("rejects a duplicate series name before any request", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText("Series library");
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByRole("button", { name: /Upload new series/ });
     await openFormAndFill("sample"); // already in the project
 
     expect(
@@ -1014,7 +1039,7 @@ describe("DatasetsView preprocess polling", () => {
       }),
     );
 
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
       await screen.findByRole("button", { name: /Run preprocessing/ }),
     );
@@ -1040,10 +1065,10 @@ describe("DatasetsView failure paths", () => {
         throw new TypeError("Failed to fetch");
       }),
     );
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(/Could not load datasets/);
-    expect(screen.queryByText("Loading datasets…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading series…")).not.toBeInTheDocument();
   });
 });
 
@@ -1054,7 +1079,7 @@ describe("frame exclusion", () => {
 
   it("excludes a frame on click and sends the whole new set", async () => {
     const calls = mockApi({ excluded: [1] });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
 
     fireEvent.click(tile(3));
@@ -1069,7 +1094,7 @@ describe("frame exclusion", () => {
 
   it("includes an excluded frame again on a second click", async () => {
     const calls = mockApi({ excluded: [3] });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
     await waitFor(() =>
       expect(tile(3)).toHaveAttribute("aria-pressed", "true"),
@@ -1085,7 +1110,7 @@ describe("frame exclusion", () => {
 
   it("refuses to exclude the holdout frame without calling the API", async () => {
     const calls = mockApi({ holdout: 2 });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
 
     fireEvent.click(tile(2));
@@ -1099,7 +1124,7 @@ describe("frame exclusion", () => {
 
   it("reverts the tile and surfaces the reason when the API rejects the edit", async () => {
     mockApi({ exclusionStatus: 400 });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
 
     fireEvent.click(tile(3));
@@ -1115,7 +1140,7 @@ describe("frame exclusion", () => {
 
   it("warns that saved exclusions need a preprocessing re-run", async () => {
     mockApi({ processed: true, excluded: [3] });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // DETAIL carries exclusions_applied: false, so the tensors are out of date.
     expect(
@@ -1128,7 +1153,7 @@ describe("frame exclusion", () => {
 
   it("opens the frame full size on double-click without toggling it", async () => {
     const calls = mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
 
     fireEvent.doubleClick(tile(2));
@@ -1143,7 +1168,7 @@ describe("frame exclusion", () => {
 
   it("steps frames with the arrow keys and closes on Escape", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
     fireEvent.doubleClick(tile(2));
     await screen.findByRole("dialog", { name: /Frame 2 of sample/ });
@@ -1167,7 +1192,7 @@ describe("frame exclusion", () => {
 
   it("offers an enlarge control so the lightbox is reachable by keyboard", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
 
     fireEvent.click(screen.getByRole("button", { name: "Enlarge frame 2" }));
@@ -1197,7 +1222,7 @@ describe("frame strip scrolling", () => {
 
   it("shows a scrollbar only when the frames overflow", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
 
     // Nothing overflows by default in jsdom, so nothing to scroll.
@@ -1212,7 +1237,7 @@ describe("frame strip scrolling", () => {
 
   it("scrolls the strip horizontally from a plain vertical mouse wheel", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
     const strip = makeScrollable();
 
@@ -1225,7 +1250,7 @@ describe("frame strip scrolling", () => {
 
   it("hands the wheel back to the page at the end of the strip", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
     const strip = makeScrollable();
     strip.scrollLeft = 1000; // scrollWidth - clientWidth
@@ -1244,7 +1269,7 @@ describe("frame strip scrolling", () => {
 
   it("moves the strip with the arrow keys on the scrollbar", async () => {
     mockApi();
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText(/Image sequence · sample/);
     const strip = makeScrollable();
     strip.scrollBy = vi.fn(({ left }: ScrollToOptions = {}) => {
@@ -1288,7 +1313,7 @@ describe("new series conditions", () => {
 
   it("will not upload until the frame interval, channel width, and channel height are given", async () => {
     mockApi();
-    render(<Harness />);
+    renderStage(<Harness />);
     const form = await openModal();
 
     // Name and frames alone are not enough: preprocessing bakes these in.
@@ -1312,7 +1337,7 @@ describe("new series conditions", () => {
 
   it("rejects a frame interval outside the server's bounds", async () => {
     mockApi();
-    render(<Harness />);
+    renderStage(<Harness />);
     const form = await openModal();
     fireEvent.change(form.getByLabelText(/Channel width/), {
       target: { value: "400" },
@@ -1344,7 +1369,7 @@ describe("new series conditions", () => {
       },
     );
 
-    render(<Harness />);
+    renderStage(<Harness />);
     const form = await openModal();
     fireEvent.change(form.getByLabelText(/Frame interval/), {
       target: { value: "0.25" },
@@ -1377,7 +1402,7 @@ describe("new series conditions", () => {
 
   it("derives the saturation temperature from the fluid, read-only", async () => {
     mockApi();
-    render(<Harness />);
+    renderStage(<Harness />);
     const form = await openModal();
 
     // FC-72 is the default; its saturation temperature is shown, not typed.
@@ -1393,7 +1418,7 @@ describe("new series conditions", () => {
 
   it("sends the chosen fluid with the conditions", async () => {
     const calls = mockApi();
-    render(<Harness />);
+    renderStage(<Harness />);
     const form = await openModal();
     fireEvent.change(await form.findByLabelText("Working fluid"), {
       target: { value: "water" },
@@ -1433,7 +1458,7 @@ describe("new series conditions", () => {
       },
     );
 
-    render(<Harness />);
+    renderStage(<Harness />);
     const form = await openModal();
     fireEvent.change(form.getByLabelText(/Frame interval/), {
       target: { value: "0.25" },
@@ -1467,7 +1492,7 @@ describe("new series conditions", () => {
       },
     );
 
-    render(<Harness />);
+    renderStage(<Harness />);
     const form = await openModal();
     fireEvent.change(form.getByLabelText(/Frame interval/), {
       target: { value: "0.25" },
@@ -1497,7 +1522,7 @@ describe("new series conditions", () => {
       },
     );
 
-    render(<Harness />);
+    renderStage(<Harness />);
     const form = await openModal();
     fireEvent.change(form.getByLabelText(/Frame interval/), {
       target: { value: "0.25" },
@@ -1521,14 +1546,14 @@ describe("new series conditions", () => {
 describe("QC chart axes", () => {
   async function showCheck(name: RegExp) {
     mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     // The QC tabs appear once the tensors load (before that the section prompts).
     fireEvent.click(await screen.findByRole("tab", { name }));
   }
 
   it("names the quantity and unit on both axes of the kinematics chart", async () => {
     mockApi({ processed: true });
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     // Tick numbers alone do not say what is being measured.
     expect(await screen.findByText(/t \(ms\)/)).toBeInTheDocument();
@@ -1579,7 +1604,7 @@ describe("frame boundary overlay", () => {
   const calibrated = () => mockApi({ processed: true, umPerPx: 100 });
 
   async function enlarge(frame: number) {
-    render(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     await screen.findByText("Preprocessing QC");
     fireEvent.click(
       screen.getByRole("button", { name: `Enlarge frame ${frame}` }),

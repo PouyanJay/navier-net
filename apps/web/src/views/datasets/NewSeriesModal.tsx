@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Button, Callout } from "../../components";
 import { useToast } from "../../components/Toast";
@@ -159,7 +160,9 @@ export function NewSeriesModal({
 
   const busy = phase !== "form";
 
-  return (
+  // Portalled to the body, like ConfirmDeleteDialog: this dialog opens from the
+  // collapsible series rail, and a modal a layout change can hide is not a modal.
+  return createPortal(
     <div
       className="modal-ov"
       role="presentation"
@@ -299,6 +302,7 @@ export function NewSeriesModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

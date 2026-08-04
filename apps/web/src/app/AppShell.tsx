@@ -13,6 +13,8 @@ import {
 import { useToast } from "../components/Toast";
 import type { RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
+import { initialAsideCollapsed, storeAsideCollapsed } from "./asidePreference";
+import { AsideSlotProvider, type AsideHeading } from "./StageAside";
 import "./appshell.css";
 
 export interface NavItem {
@@ -256,6 +258,62 @@ function Sidebar({
   );
 }
 
+/**
+ * The stage's secondary rail: a paper column between the pipeline rail and the
+ * canvas, holding the stage's own selection and settings.
+ *
+ * The shell owns the frame -- heading, collapse control, scrolling -- and the
+ * stage portals only its body in, so every stage that adopts the rail gets the
+ * same behaviour without reimplementing it. Collapsed, it keeps a slim strip
+ * carrying the expand control: a toggle that hides itself is a toggle a
+ * researcher has to hunt for.
+ */
+function StageRail({
+  heading,
+  collapsed,
+  onToggle,
+  onBody,
+}: {
+  heading: AsideHeading;
+  collapsed: boolean;
+  onToggle: () => void;
+  onBody: (node: HTMLDivElement | null) => void;
+}) {
+  return (
+    <aside className="rail2" aria-label={heading.title}>
+      <div className="rail2-hd">
+        {!collapsed && (
+          <div className="rail2-title">
+            <h2>{heading.title}</h2>
+            {heading.subtitle && (
+              <span className="sub">{heading.subtitle}</span>
+            )}
+          </div>
+        )}
+        <button
+          type="button"
+          className="rail2-toggle"
+          onClick={onToggle}
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? "Expand" : "Collapse"} ${heading.title}`}
+        >
+          <span aria-hidden="true">{collapsed ? "»" : "«"}</span>
+        </button>
+      </div>
+      {collapsed && (
+        // A folded rail should still say what is in it; an anonymous strip
+        // makes the reader expand it just to find out.
+        <span className="rail2-folded" aria-hidden="true">
+          {heading.title}
+        </span>
+      )}
+      {/* Kept mounted while collapsed -- unmounting it would tear down whatever
+          the stage has open in it, including a half-filled dialog. */}
+      <div className="rail2-body" ref={onBody} />
+    </aside>
+  );
+}
+
 /** Fixed dark chrome (brand + rail) and top bar around the paper workspace. */
 export function AppShell({
   active,
@@ -268,7 +326,24 @@ export function AppShell({
 }: AppShellProps) {
   const [theme, setTheme] = useState<Theme>(() => initialTheme());
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [asideNode, setAsideNode] = useState<HTMLElement | null>(null);
+  const [asideHeading, setAsideHeading] = useState<AsideHeading | null>(null);
+  const [asideCollapsed, setAsideCollapsed] = useState(initialAsideCollapsed);
   const toast = useToast();
+
+  const toggleAside = useCallback(() => {
+    setAsideCollapsed((current) => {
+      storeAsideCollapsed(!current);
+      return !current;
+    });
+  }, []);
+
+  // `claim` is identity-stable so a stage's effect runs on its own heading
+  // changing, not on every shell render.
+  const asideSlot = useMemo(
+    () => ({ node: asideNode, claim: setAsideHeading }),
+    [asideNode],
+  );
 
   const toggleTheme = useCallback(() => {
     setTheme((current) => {
@@ -319,7 +394,12 @@ export function AppShell({
   );
 
   return (
-    <div className="shell">
+    <div
+      className="shell"
+      data-aside={
+        asideHeading ? (asideCollapsed ? "collapsed" : "open") : undefined
+      }
+    >
       <header className="topbar">
         <div className="brandblock">
           {/* One transparent mark; the brand blue reads on both the light and
@@ -425,8 +505,19 @@ export function AppShell({
         onHome={onHome}
       />
 
+      {asideHeading && (
+        <StageRail
+          heading={asideHeading}
+          collapsed={asideCollapsed}
+          onToggle={toggleAside}
+          onBody={setAsideNode}
+        />
+      )}
+
       <main className="workspace">
-        <div className="page">{children}</div>
+        <div className="page">
+          <AsideSlotProvider slot={asideSlot}>{children}</AsideSlotProvider>
+        </div>
       </main>
 
       <CommandPalette
