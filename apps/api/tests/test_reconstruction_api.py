@@ -72,6 +72,30 @@ def test_interface_frames_serve_contours(client: TestClient, trained_run: str):
     assert all(len(point) == 2 for point in first)
 
 
+def test_interface_frames_carry_the_front_s_own_velocity(client: TestClient, trained_run: str):
+    """Each reconstructed instant carries arrows for the viewport overlay:
+    position in µm, the outward unit normal, and the normal speed along it.
+
+    The speed is the NORMAL component only -- the tangential one is unobservable
+    from masks -- so the arrow is `v * n` and nothing here implies otherwise.
+    """
+    import math
+
+    payload = client.get(f"/api/runs/{trained_run}/interface?frames=8").json()
+    arrows = payload["frames"][0]["front"]
+
+    assert arrows, "the default recipe has an explicit front, so it has arrows"
+    assert all(len(arrow) == 5 for arrow in arrows)
+    # Sparse enough to read as an annotation rather than a band of ink.
+    assert 8 <= len(arrows) < 80
+    for x_um, y_um, nx, ny, _v in arrows:
+        assert payload["domain"]["x_um"][0] - 1 <= x_um
+        assert math.hypot(nx, ny) == pytest.approx(1.0, abs=1e-3), (
+            "the normal must be a unit vector; the viewport scales it by the speed"
+        )
+        assert y_um == y_um  # not NaN — JSON has no token for it
+
+
 def test_interface_missing_for_untrained_runs(client: TestClient):
     assert client.get("/api/runs/scratch/interface").status_code == 404
     assert client.get("/api/runs/scratch/trajectory").status_code == 404

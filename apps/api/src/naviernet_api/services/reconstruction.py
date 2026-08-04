@@ -35,6 +35,12 @@ MAX_STRIDE = 4
 # Contours with fewer points than this are speckle, not an interface.
 MIN_CONTOUR_POINTS = 8
 
+# How sparsely the front-velocity arrows sample the interface. An arrow per
+# front sample would be a band of ink over the contour it is annotating; these
+# counts give a readable ~40 arrows around the closed curve.
+ARROW_BODY_SAMPLES = 14
+ARROW_CAP_SAMPLES = 6
+
 _lock = threading.Lock()
 _cache: dict[tuple[str, int], tuple[float, dict]] = {}
 _CACHE_SIZE = 4
@@ -121,6 +127,50 @@ def _domain(scene: _Scene) -> dict:
     }
 
 
+def _front_arrows(scene: _Scene, t_star: float) -> list[list[float]] | None:
+    """The front's own velocity at points around it: ``[x_um, y_um, nx, ny, v]``.
+
+    ``None`` for a run with no explicit front -- there is no parameterised
+    interface to read a per-point speed from, and the viewport says so rather
+    than drawing nothing.
+
+    ``v`` is the NORMAL speed, and the arrow the caller draws from it is
+    ``v * n``. That is not a simplification: two masks cannot give a surface
+    point's material velocity, because a curve sliding along itself looks
+    identical between frames. The tangential component is unobservable -- and it
+    is also the component that does not move the interface, so what is drawn here
+    is complete for the shape's evolution. The viewport must label it as such.
+
+    Sampled sparsely on purpose: this is an overlay on a contour, and one arrow
+    per front sample would be a solid band of ink.
+    """
+    import numpy as np
+    import torch
+
+    if not getattr(scene.model, "front_geometry", False):
+        return None
+
+    l_ref = float(scene.cfg.scales.L_ref_um)
+    speed_scale = l_ref / float(scene.data.meta["t_ref_ms"])
+    t = torch.tensor([[float(t_star)]], device=scene.data.device)
+    front = scene.model.front(t, ARROW_BODY_SAMPLES, ARROW_CAP_SAMPLES)
+
+    points = front.points[:, :2].detach().cpu().numpy()
+    normals = front.normal.detach().cpu().numpy()
+    speeds = front.normal_speed.detach().cpu().numpy().reshape(-1)
+    return [
+        [
+            round(float(points[i, 0]) * l_ref, 1),
+            round(float(points[i, 1]) * l_ref, 1),
+            round(float(normals[i, 0]), 4),
+            round(float(normals[i, 1]), 4),
+            round(float(speeds[i]) * speed_scale, 4),
+        ]
+        for i in range(len(speeds))
+        if np.isfinite(speeds[i])
+    ]
+
+
 def _predicted_frames(scene: _Scene, n_frames: int) -> list[dict]:
     import numpy as np
 
@@ -144,6 +194,7 @@ def _predicted_frames(scene: _Scene, n_frames: int) -> list[dict]:
             "contours": _contours(
                 scene, predict_alpha(scene.model, scene.data, float(t), scene.stride)
             ),
+            "front": _front_arrows(scene, float(t)),
         }
         for t in times
     ]

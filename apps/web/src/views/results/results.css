@@ -1584,3 +1584,21 @@
   border-radius: var(--rs);
   border: 1px solid var(--line);
 }
+
+/* Front-velocity arrows over the reconstruction. Thin and accent-coloured so
+   they annotate the interface rather than compete with it — the contour is
+   still the subject of the viewport. */
+.vp-velocity line {
+  stroke: var(--acc2);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.vp-arrowhead {
+  fill: var(--acc2);
+}
+
+/* The arrow key sits in the viewport HUD, only while the layer is on. */
+.vp-arrowkey {
+  color: var(--acc2);
+}

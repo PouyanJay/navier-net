@@ -600,9 +600,29 @@ export interface FrontVelocityReport {
 }
 
 /** One reconstructed instant: interface contour polylines in µm. */
+/**
+ * One front-velocity arrow: `[x_um, y_um, nx, ny, v_um_per_ms]`.
+ *
+ * `(nx, ny)` is the outward unit normal and `v` the speed along it, so the
+ * arrow to draw is `v * n`. Only the normal component exists here — a curve
+ * sliding along itself looks identical between frames, so the tangential part
+ * is unobservable from masks. It is also the part that does not move the
+ * interface, which is why the normal component alone is complete for the shape.
+ */
+export type FrontArrow = [
+  x_um: number,
+  y_um: number,
+  nx: number,
+  ny: number,
+  v_um_per_ms: number,
+];
+
 export interface InterfaceFrame {
   t_ms: number;
   contours: number[][][];
+  /** Null for a run with no explicit front — nothing to read a per-point
+   * velocity from, which the viewport states rather than silently omitting. */
+  front: FrontArrow[] | null;
 }
 
 /** One predicted field evaluated on a grid at t* (the /field endpoint). */
