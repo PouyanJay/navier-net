@@ -78,7 +78,7 @@
 /* "+ Upload new series" tile and the no-series empty state */
 .addds {
   width: 100%;
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   background: var(--panel2);
   color: var(--ink3);
   border-radius: var(--rs);
@@ -98,7 +98,7 @@
   min-height: 0;
 }
 .dsempty {
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s5) var(--s4);
   text-align: center;
@@ -254,7 +254,7 @@
 }
 .lightbox-view {
   background: var(--view);
-  border-block: 1px solid var(--line2);
+  border-block: 1px solid var(--line);
   display: grid;
   place-items: center;
   padding: var(--s4);
@@ -329,7 +329,7 @@
 .frm .ug {
   display: flex;
   align-items: stretch;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   background: var(--panel);
   overflow: hidden;
@@ -362,7 +362,7 @@
   font-size: 10.5px;
   color: var(--ink3);
   background: var(--panel2);
-  border-left: 1px solid var(--line2);
+  border-left: 1px solid var(--line);
   white-space: nowrap;
 }
 
@@ -392,7 +392,7 @@
   margin: 0;
   padding: var(--s3);
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
 }
 .fluid-prop {
@@ -429,7 +429,7 @@
   font: inherit;
   color: inherit;
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
   padding: var(--s2) var(--s3);
   cursor: pointer;
@@ -472,7 +472,7 @@
 .gdetail {
   margin-top: var(--s3);
   padding: var(--s3);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--panel2);
   display: grid;
@@ -643,7 +643,7 @@
   text-align: left;
   padding: var(--s4);
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r);
   box-shadow: var(--sh);
   font: inherit;
@@ -697,8 +697,8 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 1.5px solid var(--line);
-  background: var(--line);
+  border: 1.5px solid var(--line-strong);
+  background: var(--line-strong);
 }
 .pcard .pd[data-done] {
   background: var(--green);
@@ -712,7 +712,7 @@
   flex: 1;
   max-width: 34px;
   height: 1.5px;
-  background: var(--line);
+  background: var(--line-strong);
 }
 .pcard .plbl {
   margin-left: var(--s3);
@@ -724,7 +724,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-top: 1px solid var(--line2);
+  border-top: 1px solid var(--line);
   padding-top: var(--s3);
   font-size: 11px;
   color: var(--ink3);
@@ -760,7 +760,7 @@
 }
 .pform-field input,
 .pform-field textarea {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s2);
   font: inherit;
@@ -782,7 +782,7 @@
   justify-content: center;
   gap: var(--s2);
   min-height: 196px;
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   border-radius: var(--r);
   background: var(--panel2);
   color: var(--ink3);
@@ -802,7 +802,7 @@
 /* Preprocessing QC as a sub-section of the image-sequence card, so the frames
    and the QC computed from them read as one continuous card. */
 .qc-sub {
-  border-top: 1px solid var(--line2);
+  border-top: 1px solid var(--line);
   margin-top: var(--s4);
   padding-top: var(--s4);
   display: grid;
@@ -888,7 +888,7 @@
   font-size: 13px;
   color: var(--ink);
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s2);
 }
@@ -902,7 +902,7 @@
 
 /* Selected-series inputs, read-only, in the datasets stage's aside. */
 .ds-conditions {
-  border-top: 1px solid var(--line2);
+  border-top: 1px solid var(--line);
   margin-top: var(--s3);
   padding-top: var(--s3);
   display: grid;

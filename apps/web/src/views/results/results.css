@@ -44,7 +44,7 @@
   gap: var(--s4);
   padding: var(--s3) var(--s4);
   background: var(--panel2);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
 }
 .deliverable .name {
@@ -64,7 +64,7 @@
 }
 .figure-grid a {
   display: block;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   overflow: hidden;
   background: var(--view);
@@ -88,7 +88,7 @@
   width: 100%;
   margin-top: var(--s4);
   border-radius: var(--rs);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--view);
 }
 .figure-grid figure {
@@ -108,7 +108,7 @@
   font-size: 12px;
   padding: var(--s1) var(--s3);
   border-radius: var(--rs);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--ink2);
   cursor: pointer;
@@ -352,7 +352,7 @@
 }
 
 .res-empty {
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s5) var(--s4);
   text-align: center;
@@ -454,7 +454,7 @@
 .tabbar {
   display: flex;
   gap: 2px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   overflow-x: auto;
   position: sticky;
   top: 0;
@@ -573,7 +573,7 @@
 }
 
 .cfgsnap {
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
   background: var(--panel2);
 }
@@ -619,7 +619,7 @@
   font-style: italic;
   font-size: 15px;
   color: var(--ink2);
-  border-top: 1px solid var(--line2);
+  border-top: 1px solid var(--line);
   margin: var(--s4) 0 0;
   padding-top: var(--s3);
   max-width: 72ch;
@@ -635,7 +635,7 @@
   font-family: var(--mono);
   font-size: 11.5px;
   font-weight: 600;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel2);
   color: var(--ink2);
   border-radius: var(--rs);
@@ -827,7 +827,7 @@
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 600;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--ink2);
   border-radius: var(--rs);
@@ -851,7 +851,7 @@
   font-size: 11px;
   color: var(--ink2);
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: 5px;
   padding: 7px 10px;
   margin: var(--s3) 0 0;
@@ -918,7 +918,7 @@
 .note {
   font-size: 11.5px;
   color: var(--ink3);
-  border-left: 3px solid var(--line);
+  border-left: 3px solid var(--line-strong);
   padding: 2px 0 2px 10px;
   margin: var(--s3) 0 0;
 }
@@ -1093,7 +1093,7 @@
   gap: var(--s3);
   align-items: center;
   padding: var(--s2) 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 
 .envrow:last-child {
@@ -1125,7 +1125,7 @@
   right: 0;
   top: 12px;
   height: 3px;
-  background: var(--line2);
+  background: var(--line);
   border-radius: 99px;
 }
 
@@ -1181,7 +1181,7 @@
   gap: var(--s4);
   padding: var(--s3) var(--s4);
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
   margin-bottom: var(--s4);
 }
@@ -1190,7 +1190,7 @@
   display: flex;
   gap: 10px;
   padding: 9px 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
   font-size: 12.5px;
 }
 
@@ -1235,7 +1235,7 @@
 
 .gtile {
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
   padding: 10px 12px;
 }
@@ -1304,7 +1304,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   padding: 5px 10px;
   font-family: var(--mono);
@@ -1324,7 +1324,7 @@
   width: 9px;
   height: 9px;
   border-radius: 2px;
-  background: var(--line);
+  background: var(--line-strong);
 }
 
 .cmp-swatch.series-0 {
@@ -1359,7 +1359,7 @@
   color: var(--ink3);
   text-align: left;
   padding: 7px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
 }
 
 .cmp-table tbody th {
@@ -1369,12 +1369,12 @@
   color: var(--ink);
   text-transform: none;
   letter-spacing: 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 
 .cmp-table td {
   padding: 7px 10px;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
@@ -1395,7 +1395,7 @@
   gap: var(--s3);
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 
 .dl-row:last-of-type {
@@ -1417,7 +1417,7 @@
 }
 
 .btn-link {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--ink);
   border-radius: var(--rs);
@@ -1582,7 +1582,7 @@
   flex: 1;
   height: 8px;
   border-radius: var(--rs);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
 }
 
 /* A layer with nothing to show still takes focus (aria-disabled, not disabled),
