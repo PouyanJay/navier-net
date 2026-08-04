@@ -1,20 +1,31 @@
 import { Callout, Panel } from "../../components";
 import {
   CompareChart,
+  SERIES_SLOT,
   type ComparePoint,
+  type CompareSeries,
 } from "../../components/charts/CompareChart";
 import type { KinematicsSeries, NoseSpeed } from "../../lib/api";
 import { ChartCard } from "./ChartCard";
 import { useFrontVelocity } from "./useFrontVelocity";
 
-/** µm/ms is the axis unit (it makes each speed chart the visible slope of the
- * position chart above it); this is the SI value the tooltip adds. */
+/** µm/ms is the axis unit -- it makes each speed chart the visible slope of the
+ * position chart above it. This is the SI value the tooltip and export add. */
 const M_PER_S_PER_UM_PER_MS = 1e-3;
 
-/** Both units on one readout: the axis' µm/ms, then the SI equivalent. */
+/** Three significant figures, the register the physics tiles already use. Zero
+ * is written as itself rather than as "0.00". */
+const sigFigs = (value: number) => (value === 0 ? "0" : value.toPrecision(3));
+
+/** Both units on one readout: the axis' µm/ms, then the SI equivalent.
+ *
+ * Significant figures rather than a fixed decimal count, because these charts
+ * span both the fast nose and the near-stationary flanks -- two decimals would
+ * render every flank reading as a flat "0.00" and hide the very contrast the
+ * profile chart exists to show. */
 export function speedReadout(value: number): string {
-  const si = value * M_PER_S_PER_UM_PER_MS;
-  return `${value.toFixed(2)} µm/ms (${si.toFixed(3)} m/s)`;
+  const si = sigFigs(value * M_PER_S_PER_UM_PER_MS);
+  return `${sigFigs(value)} µm/ms (${si} m/s)`;
 }
 
 /** Pair times with values, skipping instants where either is null (a gap). */
@@ -30,25 +41,68 @@ function toSeries(
   return points;
 }
 
+/** One exported row: both units, so the CSV needs no unit conversion to read. */
+function speedRow(series: string, point: ComparePoint) {
+  return {
+    series,
+    t_ms: point.x,
+    v_um_per_ms: point.y,
+    v_m_per_s: point.y * M_PER_S_PER_UM_PER_MS,
+  };
+}
+
+/**
+ * The measured pairs, split by whether the interval touched a held-out frame.
+ *
+ * Amber is this app's holdout tone, and the series' own name carries the same
+ * fact -- so the distinction survives for a reader who cannot use colour.
+ */
+function measuredSeries(nose: NoseSpeed): CompareSeries[] {
+  const points = toSeries(nose.measured.t_ms, nose.measured.v_um_per_ms);
+  const { heldout } = nose.measured;
+  const pick = (want: boolean) => points.filter((_, i) => heldout[i] === want);
+  return [
+    {
+      id: "measured",
+      points: pick(false),
+      markers: true,
+      slot: SERIES_SLOT.measured,
+    },
+    {
+      id: "measured · held out",
+      points: pick(true),
+      markers: true,
+      slot: SERIES_SLOT.heldout,
+    },
+  ];
+}
+
 function NoseSpeedChart({ nose, name }: { nose: NoseSpeed; name: string }) {
   const predicted = toSeries(nose.t_ms, nose.v_um_per_ms);
+  const measured = measuredSeries(nose);
+  const rows = [
+    ...predicted.map((point) => speedRow("pinn", point)),
+    ...measured.flatMap((s) => s.points.map((point) => speedRow(s.id, point))),
+  ];
   return (
     <ChartCard
       title="Nose speed"
       unit="µm/ms"
       name={name}
-      rows={predicted.map((point) => ({
-        series: "pinn",
-        t_ms: point.x,
-        v_um_per_ms: point.y,
-        v_m_per_s: point.y * M_PER_S_PER_UM_PER_MS,
-      }))}
+      rows={rows}
       render={() => (
         <CompareChart
-          series={[{ id: "PINN", points: predicted }]}
+          series={[
+            { id: "PINN", points: predicted, slot: SERIES_SLOT.primary },
+            ...measured,
+          ]}
           xLabel="t (ms)"
           yLabel="nose speed · µm/ms"
-          ariaLabel="Nose speed over time, from the continuous reconstruction."
+          ariaLabel={
+            "Nose speed over time: the continuous reconstruction as a line, " +
+            "and one circle per consecutive camera-frame pair. Pairs spanning " +
+            "a held-out frame are drawn separately."
+          }
           yFormat={speedReadout}
         />
       )}
@@ -111,6 +165,13 @@ export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
           name={`${exportStem}-nose-speed`}
         />
       </div>
+      <p className="figcap">
+        <b>Figure 1.</b> The reconstruction's nose speed is continuous; each
+        measured circle is one finite difference between consecutive camera
+        frames, plotted at the midpoint of the interval it measures. An interval
+        spanning a held-out frame is drawn apart and labelled — nothing trained
+        on it, so it is the model's rate where it was never shown the answer.
+      </p>
     </Panel>
   );
 }

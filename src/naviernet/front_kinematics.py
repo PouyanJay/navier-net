@@ -35,6 +35,7 @@ from pathlib import Path
 import numpy as np
 
 from naviernet.evaluation import (
+    measured_trajectory,
     nose_trajectory,
     physical_series,
     reference_length_um,
@@ -117,4 +118,37 @@ def _nose_speed(cfg, model, data, scale: _Scale) -> dict:
     return {
         "t_ms": scale.times(predicted.times),
         "v_um_per_ms": scale.speeds(np.gradient(predicted.nose, predicted.times)),
+        "measured": _measured_nose_speed(cfg, data, scale),
+    }
+
+
+def _measured_nose_speed(cfg, data, scale: _Scale) -> dict:
+    """The camera's own answer: one finite difference per consecutive frame pair.
+
+    Deliberately not ``np.gradient`` over the whole series. An excluded camera
+    frame leaves a real gap, and a central difference would quietly bridge it --
+    reporting a coarser estimate of a different interval as though it were the
+    same measurement. :attr:`BubbleDataset.report_pairs` is the set of intervals
+    that honestly exist.
+
+    Each value is plotted at the midpoint of the interval it measures, not at
+    either endpoint: a difference describes the span, and anchoring it to an end
+    would sit every measured point half a frame away from the continuous curve
+    it is read against.
+    """
+    measured = measured_trajectory(cfg, data)  # times already in ms
+    pairs = data.report_pairs
+
+    times, speeds, heldout = [], [], []
+    for row, nxt in pairs:
+        interval = measured.times[nxt] - measured.times[row]
+        times.append(0.5 * (measured.times[row] + measured.times[nxt]))
+        # x* per ms -> µm per ms: only the LENGTH needs referencing, the time
+        # axis is already physical here.
+        speeds.append((measured.nose[nxt] - measured.nose[row]) / interval)
+        heldout.append(data.spans_held_out((row, nxt)))
+    return {
+        "t_ms": physical_series(times, 1.0, 4),
+        "v_um_per_ms": physical_series(speeds, scale.l_ref_um, SPEED_DIGITS),
+        "heldout": heldout,
     }

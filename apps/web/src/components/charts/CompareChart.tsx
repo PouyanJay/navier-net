@@ -8,12 +8,28 @@ export interface ComparePoint {
   y: number;
 }
 
+/**
+ * Palette slots named by the meaning the design system gives each colour, so a
+ * caller whose colour carries meaning does not have to know that amber happens
+ * to be the fourth entry. Omitting `slot` keeps the positional palette, which is
+ * what comparing N runs against each other wants.
+ */
+export const SERIES_SLOT = {
+  primary: 0,
+  measured: 1,
+  alternate: 2,
+  heldout: 3,
+} as const;
+
 export interface CompareSeries {
   id: string;
   points: ComparePoint[];
   /** Draw discrete circles instead of a connected line (e.g. the measured
    * camera instants against a continuous reconstruction). */
   markers?: boolean;
+  /** Palette slot; defaults to the series' position. Set it from
+   * {@link SERIES_SLOT} when the colour means something. */
+  slot?: number;
 }
 
 const WIDTH = 640;
@@ -126,6 +142,9 @@ export function CompareChart({
         .attr("y", -4)
         .text(yLabel);
 
+    const paletteClass = (s: CompareSeries, i: number) =>
+      `series-${(s.slot ?? i) % 4}`;
+
     // Lines first, then every marker series on top of them, so discrete
     // samples always read as whole circles rather than notching the curves.
     drawable.forEach((s, i) => {
@@ -135,7 +154,7 @@ export function CompareChart({
         .x((p) => x(p.x))
         .y((p) => y(logY ? Math.max(p.y, FLOOR) : p.y));
       g.append("path")
-        .attr("class", `chart-line series-${i % 4}`)
+        .attr("class", `chart-line ${paletteClass(s, i)}`)
         .attr("d", line(s.points) ?? "");
     });
     drawable.forEach((s, i) => {
@@ -144,7 +163,7 @@ export function CompareChart({
         .selectAll("circle")
         .data(s.points)
         .join("circle")
-        .attr("class", `chart-sample series-${i % 4}`)
+        .attr("class", `chart-sample ${paletteClass(s, i)}`)
         .attr("cx", (p) => x(p.x))
         .attr("cy", (p) => y(logY ? Math.max(p.y, FLOOR) : p.y))
         .attr("r", 5)
@@ -178,7 +197,7 @@ export function CompareChart({
           title: `${xLabel} ${anchor.x}`,
           rows: nearest.map((entry, i) => ({
             text: `${entry.id}  ${yFormat(entry.point.y)}`,
-            swatchClass: `series-${i % 4}`,
+            swatchClass: paletteClass(drawable[i], i),
           })),
         };
       },

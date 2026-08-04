@@ -497,6 +497,15 @@ export interface Trajectory {
 export interface NoseSpeed {
   t_ms: KinematicsSeries;
   v_um_per_ms: KinematicsSeries;
+  /** One finite difference per consecutive camera-frame pair, each at the
+   * midpoint of the interval it measures. `heldout[i]` marks a pair spanning a
+   * frame held out of supervision — reported, never dropped, because nothing
+   * reading this trains. */
+  measured: {
+    t_ms: KinematicsSeries;
+    v_um_per_ms: KinematicsSeries;
+    heldout: boolean[];
+  };
 }
 
 /**

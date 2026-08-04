@@ -270,8 +270,9 @@ export function ResultsPage({ project }: ResultsPageProps) {
               setConfirmingDelete(false);
             }}
           >
-            Delete <b>{runDisplayName(selected, datasetLabels)}</b> and everything under{" "}
-            <code>outputs/{selected.id}</code> — checkpoint, figures, video and metrics.
+            Delete <b>{runDisplayName(selected, datasetLabels)}</b> and
+            everything under <code>outputs/{selected.id}</code> — checkpoint,
+            figures, video and metrics.
           </ConfirmDeleteDialog>
         )}
         <div className="tabbar" role="tablist" aria-label="Run outputs">
