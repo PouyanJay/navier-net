@@ -103,14 +103,19 @@ class FrontVelocityPlan:
         return 2 * (self.bins_body + self.bins_cap)
 
 
-def build_plan(data: BubbleDataset, cfg, device) -> FrontVelocityPlan:
+def build_plan(data: BubbleDataset, cfg, device, pairs=None) -> FrontVelocityPlan:
     """Measure this dataset's front velocity over every usable frame pair.
 
     Raises when no pair is usable: with the front-velocity term switched on and
     nothing to supervise it with, silently contributing zero would be a feature
     that reports success and does nothing.
+
+    ``pairs`` overrides which intervals to measure. Supervision must leave it
+    alone -- :attr:`~naviernet.data.dataset.BubbleDataset.supervised_pairs` is
+    the only honest answer there -- but a REPORT may pass ``report_pairs``, which
+    includes the held-out intervals precisely because nothing reading it trains.
     """
-    pairs = data.supervised_pairs
+    pairs = data.supervised_pairs if pairs is None else list(pairs)
     if not pairs:
         raise ValueError(
             f"training.front_velocity needs at least one pair of consecutive, "
@@ -180,14 +185,14 @@ def _assemble_plan(data: BubbleDataset, cfg, device, measured: _Measured) -> Fro
         apex_shift=tensor(measured.apex_shift),
         n_body=n_body,
         n_cap=n_cap,
-        bins_body=_bin_count(n_body, per_bin),
-        bins_cap=_bin_count(n_cap, per_bin),
+        bins_body=bin_count(n_body, per_bin),
+        bins_cap=bin_count(n_cap, per_bin),
         v_ref=max(float(data.nose_rate), RATE_FLOOR),
         pairs=tuple(measured.pairs),
     )
 
 
-def _bin_count(n_samples: int, per_bin: int) -> int:
+def bin_count(n_samples: int, per_bin: int) -> int:
     """Bins for a segment of ``n_samples``, at ``per_bin`` samples each. At least
     one: a segment too short to fill a bin is averaged whole rather than being
     given a bin count it cannot populate."""
@@ -213,12 +218,12 @@ def _normal_profile_loss(ctx: FrontVelocityContext, plan: FrontVelocityPlan) -> 
     The model side is an instantaneous ``dP/dt . n`` and the measured side a
     one-frame difference; they agree to first order in ``dt``, which is the same
     order the measurement itself is good to -- everywhere the front is not the
-    nose, which :func:`_off_nose_cap` explains and excludes.
+    nose, which :func:`off_nose_cap` explains and excludes.
     """
     front = ctx.model.front(plan.times, plan.n_body, plan.n_cap)
-    pair = _pair_index(plan, front.points[:, 2:3])
-    measured, usable = _sample_rasters(plan, front.points, pair)
-    usable = usable * _off_nose_cap(front)
+    pair = time_index(plan.times, front.points[:, 2:3])
+    measured, usable = sample_measured(plan, front.points, pair)
+    usable = usable * off_nose_cap(front)
 
     bins = _bin_index(plan, front, pair)
     n_bins = plan.times.shape[0] * plan.bins_per_time
@@ -241,7 +246,7 @@ def _normal_profile_loss(ctx: FrontVelocityContext, plan: FrontVelocityPlan) -> 
     return (difference**2).mean()
 
 
-def _off_nose_cap(front: FrontSamples) -> torch.Tensor:
+def off_nose_cap(front: FrontSamples) -> torch.Tensor:
     """1 where the level-set estimate is trustworthy, 0 on the nose cap.
 
     The estimate is a difference taken at a fixed point over a whole frame, so it
@@ -278,12 +283,12 @@ def _apex_loss(ctx: FrontVelocityContext, plan: FrontVelocityPlan) -> torch.Tens
     return (((shift - plan.apex_shift) / (dt * plan.v_ref)) ** 2).mean()
 
 
-def _pair_index(plan: FrontVelocityPlan, t: torch.Tensor) -> torch.Tensor:
-    """Which raster slice each front sample belongs to, ``(N,)``.
+def time_index(times: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    """Which of ``times`` each front sample belongs to, ``(N,)``.
 
-    The front was sampled AT ``plan.times``, and ``_sample_grid`` only reshapes
-    and repeats those values -- it does no arithmetic on them -- so an exact
-    search is exact and no tolerance is involved.
+    The front was sampled AT ``times``, and ``_sample_grid`` only reshapes and
+    repeats those values -- it does no arithmetic on them -- so an exact search
+    is exact and no tolerance is involved.
 
     That invariant is CHECKED rather than trusted. If a future front ever
     perturbed its times, ``searchsorted`` would quietly hand every sample to a
@@ -291,7 +296,7 @@ def _pair_index(plan: FrontVelocityPlan, t: torch.Tensor) -> torch.Tensor:
     a wrong answer with no symptom, which is the one failure mode this feature
     is built to refuse.
     """
-    times = plan.times.reshape(-1).contiguous()
+    times = times.reshape(-1).contiguous()
     index = torch.searchsorted(times, t.reshape(-1).contiguous()).clamp(max=times.numel() - 1)
     if not torch.equal(times[index], t.reshape(-1)):
         raise RuntimeError(
@@ -303,7 +308,7 @@ def _pair_index(plan: FrontVelocityPlan, t: torch.Tensor) -> torch.Tensor:
     return index
 
 
-def _sample_rasters(
+def sample_measured(
     plan: FrontVelocityPlan, points: torch.Tensor, pair: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Bilinearly sample the measured velocity at ``points``, and a 0/1 weight
@@ -350,39 +355,73 @@ def _sample_rasters(
         return interpolate(plan.v_n).unsqueeze(1), usable.unsqueeze(1)
 
 
-def _bin_index(
-    plan: FrontVelocityPlan, front: FrontSamples, pair: torch.Tensor
-) -> torch.Tensor:
-    """Which profile bin each front sample falls in, ``(N,)``.
+class FrontSegments(NamedTuple):
+    """Every front sample's segment and where it sits along it.
 
-    One set of bins per (frame pair, segment): each time is its own measurement,
-    and the four segments are kept apart because at the same ``u`` the upper and
-    lower profiles are different points, with different normals -- averaging them
-    together would confuse a widening bubble with a drifting one.
+    ``index`` selects into :data:`SEGMENT_NAMES`; ``position`` runs 0 to 1 along
+    that segment, and ``on_body`` distinguishes the two kinds because they carry
+    different sample counts.
+    """
+
+    index: torch.Tensor  # (N,) into SEGMENT_NAMES
+    position: torch.Tensor  # (N,) in [0, 1]
+    on_body: torch.Tensor  # (N,) bool
+
+
+# The four segments of the closed front, in the order the flat bin layout uses.
+SEGMENT_NAMES = ("upper_body", "lower_body", "root_cap", "nose_cap")
+
+
+def front_segments(front: FrontSamples) -> FrontSegments:
+    """Split front samples by segment, and locate each within its own.
+
+    The four segments are kept apart wherever this is used, because at the same
+    ``u`` the upper and lower profiles are different points with different
+    normals -- collapsing them would confuse a widening bubble with a drifting
+    one.
 
     Position within a segment is ``u`` along the body and the sweep angle on a
-    cap, where ``u`` is pinned at 0 or 1 and so cannot locate anything. The two
-    kinds of segment carry different sample counts, so they get their own bin
-    counts and their own offsets into the flat index.
+    cap, where ``u`` is pinned at 0 or 1 and so cannot locate anything. The angle
+    runs from the lower seam to the upper one, which is what lets a consumer walk
+    the closed contour in order.
+
+    Shared by the loss's binning and the report's profile so "which segment" and
+    "where along it" cannot come to mean two different things.
     """
     on_body = front.on_cap.reshape(-1) <= 0
     upper = front.side.reshape(-1) > 0
     at_root = front.u.reshape(-1) < 0.5
-
-    # Segment starts, laid out [upper body | lower body | root cap | nose cap].
-    body, cap = plan.bins_body, plan.bins_cap
-    offset = torch.where(
+    index = torch.where(
         on_body,
-        torch.where(upper, 0, body),
-        torch.where(at_root, 2 * body, 2 * body + cap),
+        torch.where(upper, 0, 1),
+        torch.where(at_root, 2, 3),
     )
     position = torch.where(
         on_body,
         front.u.reshape(-1),
         front.angle.reshape(-1) / math.pi + 0.5,
     ).detach()
-    span = torch.where(on_body, body, cap)
-    within = (position * span).long().clamp(torch.zeros_like(span), span - 1)
+    return FrontSegments(index, position, on_body)
+
+
+def _bin_index(
+    plan: FrontVelocityPlan, front: FrontSamples, pair: torch.Tensor
+) -> torch.Tensor:
+    """Which profile bin each front sample falls in, ``(N,)``.
+
+    One set of bins per (frame pair, segment): each time is its own measurement,
+    and the segments are binned separately for the reason
+    :func:`front_segments` gives. The two kinds of segment carry different sample
+    counts, so they get their own bin counts and their own offsets into the flat
+    index.
+    """
+    segments = front_segments(front)
+    body, cap = plan.bins_body, plan.bins_cap
+    # Segment starts, laid out [upper body | lower body | root cap | nose cap].
+    starts = torch.tensor([0, body, 2 * body, 2 * body + cap], device=front.u.device)
+    offset = starts[segments.index]
+    span = torch.where(segments.on_body, body, cap)
+    within = (segments.position * span).long().clamp(torch.zeros_like(span), span - 1)
     return pair * plan.bins_per_time + offset + within
 
 

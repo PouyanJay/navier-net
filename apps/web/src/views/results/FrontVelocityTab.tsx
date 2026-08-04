@@ -11,6 +11,7 @@ import type {
   MeasuredSpeed,
 } from "../../lib/api";
 import { ChartCard } from "./ChartCard";
+import { FrontProfilePanel } from "./FrontProfilePanel";
 import { useFrontVelocity } from "./useFrontVelocity";
 
 /** µm/ms is the axis unit -- it makes each speed chart the visible slope of the
@@ -45,13 +46,14 @@ function toSeries(
   return points;
 }
 
-/** One exported row: both units, so the CSV needs no unit conversion to read. */
+/** One exported row: both units, so the CSV needs no unit conversion to read.
+ * A null value stays null in both columns rather than becoming a zero. */
 function speedRow(series: string, point: ComparePoint) {
   return {
     series,
     t_ms: point.x,
     v_um_per_ms: point.y,
-    v_m_per_s: point.y * M_PER_S_PER_UM_PER_MS,
+    v_m_per_s: point.y == null ? null : point.y * M_PER_S_PER_UM_PER_MS,
   };
 }
 
@@ -238,13 +240,25 @@ export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
         </p>
       </Panel>
 
+      {report.profile && (
+        <FrontProfilePanel
+          profile={report.profile}
+          stem={stem}
+          readout={speedReadout}
+        />
+      )}
+
       {!report.apex && (
-        <Panel title="Apex velocity" subtitle="the one honest 2-D velocity">
+        <Panel
+          title="Along the front"
+          subtitle="the apex, the profile and the kymograph"
+        >
           <p className="state-note">
             This run was trained without an explicit front
-            (model.front_geometry), so there is no parameterised nose to
-            differentiate and no apex to track. Enable Front geometry in the
-            Solver to measure it.
+            (model.front_geometry), so there is no parameterised interface to
+            read a per-point speed from and no apex to track — only the nose,
+            above, which is measured off the predicted mask. Enable Front
+            geometry in the Solver to measure the rest.
           </p>
         </Panel>
       )}

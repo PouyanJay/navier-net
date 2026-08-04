@@ -40,6 +40,16 @@ from naviernet.evaluation import (
     physical_series,
     reference_length_um,
 )
+from naviernet.physics.front_velocity import (
+    SEGMENT_NAMES,
+    FrontSegments,
+    bin_count,
+    build_plan,
+    front_segments,
+    off_nose_cap,
+    sample_measured,
+    time_index,
+)
 from naviernet.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -80,6 +90,9 @@ def build_report(cfg, model, data) -> dict:
         "front_geometry": front_geometry,
         "nose_speed": _nose_speed(cfg, data, scale, predicted),
         "apex": _apex_velocity(model, data, scale, predicted.times) if front_geometry else None,
+        "profile": _profile(cfg, model, data, scale, predicted.times)
+        if front_geometry
+        else None,
     }
 
 
@@ -196,12 +209,214 @@ def _apex_path(model, data, times) -> tuple[np.ndarray, np.ndarray]:
     # separate function of t. Summing within a column is safe because sample i
     # depends only on t_i, so the sum's gradient is each sample's own.
     velocity = [
-        torch.autograd.grad(apex[:, axis].sum(), t, retain_graph=axis == 0)[0] for axis in (0, 1)
+        torch.autograd.grad(apex[:, axis].sum(), t, retain_graph=axis == 0)[0]
+        for axis in (0, 1)
     ]
     return (
         apex.detach().cpu().numpy(),
         torch.cat(velocity, dim=1).detach().cpu().numpy(),
     )
+
+
+def _profile(cfg, model, data, scale: _Scale, times) -> dict:
+    """The normal-speed profile along the front: one ``s`` axis, two views of it.
+
+    ``times`` holds one model-against-measured profile per reportable frame pair
+    -- the only instants a measurement exists at. ``kymograph`` is the model's own
+    profile over the continuous time axis, which needs no measurement and so can
+    be dense: the whole history of the front's motion as one image.
+    """
+    grid = _ProfileGrid.of(cfg)
+    return {
+        "s": [round(value, 5) for value in grid.centres],
+        "segments": grid.segment_records(),
+        "times": _measured_profiles(cfg, model, data, scale, grid),
+        "kymograph": _kymograph(model, data, scale, grid, times),
+    }
+
+
+def _measured_profiles(cfg, model, data, scale: _Scale, grid: _ProfileGrid) -> list[dict]:
+    """One model-against-measured profile per reportable frame pair.
+
+    Empty when the dataset offers no consecutive pair -- a single-frame series,
+    or one whose camera frames are all non-adjacent. There is nothing to compare
+    against then, and the kymograph beside it still carries the model's own
+    answer.
+
+    The model front is evaluated at each pair's FIRST frame, which is where the
+    level-set estimate lives (``v_n`` is the speed of the ``sdf_now`` interface).
+    The same convention the loss uses, so this chart shows the quantity the term
+    actually compared.
+    """
+    if not data.report_pairs:
+        log.info(
+            "no consecutive frame pairs in %s: reporting the model's own profile "
+            "with nothing measured to compare it against",
+            data.cfg.dataset,
+        )
+        return []
+
+    plan = build_plan(data, cfg, data.device, pairs=data.report_pairs)
+    model_speed, measured = _profile_rows(model, plan, grid, scale)
+    return [
+        {
+            "t_ms": round(float(plan.times[i]) * scale.t_ref_ms, 4),
+            "frames": [data.frame_numbers[row], data.frame_numbers[nxt]],
+            "heldout": data.spans_held_out((row, nxt)),
+            "model": model_speed[i],
+            "measured": measured[i],
+        }
+        for i, (row, nxt) in enumerate(plan.pairs)
+    ]
+
+
+def _kymograph(model, data, scale: _Scale, grid: _ProfileGrid, times) -> dict:
+    """The model's normal speed over (position, time) -- the whole history at once.
+
+    Model only, and necessarily so: the measurement exists at frame pairs alone,
+    while the parameterisation is continuous in time. Rendering nine measured
+    rows as an image beside a dense model one would invite a comparison that the
+    sampling does not support; the profile chart is where the two meet.
+    """
+    import torch
+
+    t = torch.tensor(np.asarray(times, dtype=np.float32).reshape(-1, 1), device=data.device)
+    front = model.front(t, grid.n_body, grid.n_cap)
+    row = time_index(t, front.points[:, 2:3]).cpu().numpy()
+    flat = row * grid.total + grid.bin_of(front_segments(front))
+    speed = front.normal_speed.detach().cpu().numpy().reshape(-1)
+    binned = _bin_mean(speed, flat, len(times) * grid.total).reshape(len(times), grid.total)
+    return {
+        "t_ms": scale.times(times),
+        "v_um_per_ms": [scale.speeds(values) for values in binned],
+    }
+
+
+class _ProfileGrid:
+    """The fixed ``s`` axis every profile is binned onto.
+
+    ``s`` is ONE traversal of the closed front: the root cap from its lower seam
+    to its upper one, up the upper body to the nose, around the nose cap, and
+    back down the lower body. That ordering is what makes the profile a curve
+    rather than four disconnected plots, and the kymograph an image rather than
+    four strips.
+
+    The segment boundaries are fixed fractions of the axis -- each segment's
+    share of the total bin count -- rather than true arclength. Arclength grows
+    with the bubble, which would move every boundary from frame to frame and
+    leave the kymograph with no stable vertical axis.
+    """
+
+    # The traversal, and how each segment's own parameter maps onto it. The caps
+    # sweep from the lower seam to the upper one, so the nose cap -- entered from
+    # the upper body -- runs backwards.
+    ORDER = (
+        ("root_cap", False),
+        ("upper_body", False),
+        ("nose_cap", True),
+        ("lower_body", True),
+    )
+
+    def __init__(self, n_body: int, n_cap: int, per_bin: int) -> None:
+        self.n_body, self.n_cap = n_body, n_cap
+        bins_body, bins_cap = bin_count(n_body, per_bin), bin_count(n_cap, per_bin)
+        self.bins = {"upper_body": bins_body, "lower_body": bins_body}
+        self.bins.update({"root_cap": bins_cap, "nose_cap": bins_cap})
+        self.total = sum(self.bins[name] for name, _ in self.ORDER)
+        self.starts: dict[str, int] = {}
+        offset = 0
+        for name, _ in self.ORDER:
+            self.starts[name] = offset
+            offset += self.bins[name]
+
+    @classmethod
+    def of(cls, cfg) -> _ProfileGrid:
+        """The front's own sample counts, binned by the rule the loss bins by --
+        so a reader of this chart is looking at the quantity the term compared,
+        not a differently-resolved cousin of it."""
+        return cls(
+            int(cfg.model.front_body_samples),
+            int(cfg.model.front_cap_samples),
+            int(cfg.training.fv_samples_per_bin),
+        )
+
+    @property
+    def centres(self) -> list[float]:
+        """Each bin's centre on the 0-1 traversal."""
+        return [(i + 0.5) / self.total for i in range(self.total)]
+
+    def segment_records(self) -> list[dict]:
+        """Where each segment sits on the axis, and whether the MEASUREMENT is
+        trustworthy there -- the nose cap is the one place it is not."""
+        return [
+            {
+                "name": name,
+                "bin_start": self.starts[name],
+                "bin_end": self.starts[name] + self.bins[name],
+                "s_start": self.starts[name] / self.total,
+                "s_end": (self.starts[name] + self.bins[name]) / self.total,
+                "measured": name != "nose_cap",
+            }
+            for name, _ in self.ORDER
+        ]
+
+    def bin_of(self, segments: FrontSegments) -> np.ndarray:
+        """Each front sample's bin on the traversal, ``(N,)``."""
+        index = segments.index.cpu().numpy()
+        position = segments.position.cpu().numpy()
+        bins = np.zeros(index.shape, dtype=np.int64)
+        for name, backwards in self.ORDER:
+            selected = index == SEGMENT_NAMES.index(name)
+            span = self.bins[name]
+            along = position[selected]
+            within = np.clip(
+                ((1.0 - along if backwards else along) * span).astype(int), 0, span - 1
+            )
+            bins[selected] = self.starts[name] + within
+        return bins
+
+
+def _profile_rows(model, plan, grid: _ProfileGrid, scale: _Scale):
+    """One binned model profile and one binned measured profile per frame pair.
+
+    The model's own speed is reported over the WHOLE front, including the nose
+    cap. Only the measurement is untrustworthy there; blanking the model too
+    would hide the very place the two estimators disagreed, which is the finding
+    that shaped this feature.
+    """
+    front = model.front(plan.times, plan.n_body, plan.n_cap)
+    pair = time_index(plan.times, front.points[:, 2:3])
+    measured, usable = sample_measured(plan, front.points, pair)
+    # The same validity rule the loss applies, from the same function.
+    usable = usable * off_nose_cap(front)
+
+    bins = grid.bin_of(front_segments(front))
+    flat = pair.cpu().numpy() * grid.total + bins
+    n_rows = len(plan.pairs)
+    cells = n_rows * grid.total
+
+    model_mean = _bin_mean(front.normal_speed.detach().cpu().numpy().reshape(-1), flat, cells)
+    usable_np = usable.detach().cpu().numpy().reshape(-1)
+    measured_mean = _bin_mean(
+        measured.detach().cpu().numpy().reshape(-1), flat, cells, weights=usable_np
+    )
+    return (
+        [scale.speeds(row) for row in model_mean.reshape(n_rows, grid.total)],
+        [scale.speeds(row) for row in measured_mean.reshape(n_rows, grid.total)],
+    )
+
+
+def _bin_mean(values, bins, n_bins: int, weights=None) -> np.ndarray:
+    """``values`` averaged into ``n_bins`` bins; NaN where a bin took none.
+
+    NaN rather than zero: a bin nothing landed in has no measurement, and zero
+    is a perfectly plausible speed that a reader would take at face value.
+    """
+    weights = np.ones_like(values) if weights is None else weights
+    counts = np.bincount(bins, weights=weights, minlength=n_bins)
+    totals = np.bincount(bins, weights=values * weights, minlength=n_bins)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(counts > 0, totals / counts, np.nan)
 
 
 def _measured_apex_velocity(data, scale: _Scale) -> dict:

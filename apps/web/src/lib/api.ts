@@ -543,12 +543,60 @@ export interface ApexVelocity {
  * per-point normal speed and no apex, so those blocks are absent and the view
  * says why rather than drawing an empty axis.
  */
+/** One segment of the closed front, and where it sits on the `s` axis. */
+export interface FrontSegment {
+  name: "root_cap" | "upper_body" | "nose_cap" | "lower_body";
+  bin_start: number;
+  bin_end: number;
+  s_start: number;
+  s_end: number;
+  /** False where the level-set measurement is not trustworthy — the nose cap,
+   * where the estimate is first-order in a distance that is not small. */
+  measured: boolean;
+}
+
+/** The model's and the camera's normal speed along the front at one instant. */
+export interface FrontProfileFrame {
+  t_ms: number;
+  /** The two camera frames the measurement was differenced between. */
+  frames: [number, number];
+  heldout: boolean;
+  /** The model's own speed, defined over the whole front. */
+  model: KinematicsSeries;
+  /** The measurement — null on the nose cap, and wherever no usable pixel
+   * backed the bin. */
+  measured: KinematicsSeries;
+}
+
+/**
+ * The normal-speed profile along the front.
+ *
+ * `s` runs once around the closed contour: root cap, up the upper body to the
+ * nose, around the nose cap, back down the lower body. Only the normal
+ * component appears here — the tangential one is unobservable from masks.
+ */
+export interface FrontProfile {
+  s: number[];
+  segments: FrontSegment[];
+  /** One model-against-measured profile per reportable frame pair; empty when
+   * the dataset has no consecutive pair to difference. */
+  times: FrontProfileFrame[];
+  /** The model's profile over the continuous time axis — dense, because it
+   * needs no measurement. */
+  kymograph: {
+    t_ms: KinematicsSeries;
+    v_um_per_ms: KinematicsSeries[];
+  };
+}
+
 export interface FrontVelocityReport {
   front_geometry: boolean;
   nose_speed: NoseSpeed;
   /** Null when the run has no explicit front — there is no parameterised nose
    * to differentiate, which the view states rather than drawing empty. */
   apex: ApexVelocity | null;
+  /** Null for the same reason: no explicit front, no per-point normal speed. */
+  profile: FrontProfile | null;
 }
 
 /** One reconstructed instant: interface contour polylines in µm. */

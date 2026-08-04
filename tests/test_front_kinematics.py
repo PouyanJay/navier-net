@@ -182,7 +182,8 @@ def test_a_measured_pair_is_reported_at_the_instant_it_spans(tmp_path):
 
     t_ref = conftest.CAPSULE_T_REF_MS
     expected = [
-        0.5 * (float(data.t[row]) + float(data.t[nxt])) * t_ref for row, nxt in data.report_pairs
+        0.5 * (float(data.t[row]) + float(data.t[nxt])) * t_ref
+        for row, nxt in data.report_pairs
     ]
     assert report["nose_speed"]["measured"]["t_ms"] == pytest.approx(expected, abs=1e-4)
 
@@ -255,6 +256,165 @@ def test_a_run_without_an_explicit_front_reports_no_apex(tmp_path):
     assert report["apex"] is None
     # The nose speed survives -- it is read off the predicted mask, not the front.
     assert report["nose_speed"]["v_um_per_ms"]
+
+
+# --- The profile along the front ---------------------------------------------
+
+
+def test_the_profile_walks_the_closed_front_once_in_order(tmp_path):
+    """``s`` is one traversal of the closed contour, so the profile chart has a
+    continuous axis and the kymograph a continuous one to stack against.
+
+    Root cap, up the upper body to the nose, around the nose cap, back down the
+    lower body -- four contiguous spans covering the whole curve exactly once.
+    """
+    import numpy as np
+
+    profile = _report(tmp_path)["profile"]
+
+    assert [s["name"] for s in profile["segments"]] == [
+        "root_cap",
+        "upper_body",
+        "nose_cap",
+        "lower_body",
+    ]
+    starts = [s["s_start"] for s in profile["segments"]]
+    ends = [s["s_end"] for s in profile["segments"]]
+    assert starts[0] == 0.0
+    assert ends[-1] == pytest.approx(1.0)
+    assert starts[1:] == pytest.approx(ends[:-1])  # contiguous, no overlap or gap
+    # Every bin centre falls inside the traversal, strictly increasing.
+    assert np.all(np.diff(profile["s"]) > 0)
+    assert profile["s"][0] > 0.0 and profile["s"][-1] < 1.0
+
+
+def test_the_measured_profile_is_suppressed_exactly_on_the_nose_cap(tmp_path):
+    """The level-set estimate is first-order in the distance the front travels,
+    and the nose is where that distance is largest against the smallest radius --
+    it read +0.489 there against a true +0.295 on Series-1. The chart shows a gap
+    rather than a curve known to be wrong, and the segment says why.
+
+    The same validity rule the loss follows, from the same function, so the two
+    cannot drift apart.
+    """
+    profile = _report(tmp_path)["profile"]
+
+    named = {s["name"]: s for s in profile["segments"]}
+    assert named["nose_cap"]["measured"] is False
+    assert all(named[name]["measured"] for name in ("root_cap", "upper_body", "lower_body"))
+
+    nose = range(named["nose_cap"]["bin_start"], named["nose_cap"]["bin_end"])
+    for frame in profile["times"]:
+        assert all(frame["measured"][b] is None for b in nose)
+        # And the suppression is confined to it: the body still measures.
+        body = range(named["upper_body"]["bin_start"], named["upper_body"]["bin_end"])
+        assert any(frame["measured"][b] is not None for b in body)
+
+
+def test_there_is_one_profile_per_reportable_frame_pair(tmp_path):
+    """Including the pairs supervision refused, marked as such."""
+    report = _report(tmp_path, ["training.holdout_frame=2"])
+
+    frames = report["profile"]["times"]
+    assert len(frames) == conftest.CAPSULE_FRAMES - 1
+    assert [f["heldout"] for f in frames] == [False, True, True, False, False]
+    # Each names the camera frames it was measured between.
+    assert [f["frames"] for f in frames] == [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6]]
+
+
+def test_every_profile_covers_the_whole_front_with_the_model_s_own_speed(tmp_path):
+    """The model side is defined everywhere on its own front -- including the
+    nose cap, where only the MEASUREMENT is untrustworthy. Blanking the model
+    there too would hide the very place the two estimators disagreed."""
+    profile = _report(tmp_path)["profile"]
+
+    for frame in profile["times"]:
+        assert len(frame["model"]) == len(profile["s"])
+        assert all(value is not None for value in frame["model"])
+
+
+def test_the_profile_is_ordered_along_the_front_root_to_nose(tmp_path):
+    """The analytic capsule again: its flanks have a fixed radius and do not
+    move, while the front races ahead at the nose. So the measured profile must
+    sit at zero over the body and climb only as the traversal approaches the
+    nose cap.
+
+    This is what catches a scrambled traversal. If ``s`` mapped the segments in
+    the wrong order or ran a cap backwards, nose-speed values would land in
+    body bins -- and every other assertion here would still pass.
+    """
+    import numpy as np
+
+    profile = _report(tmp_path)["profile"]
+    named = {s["name"]: s for s in profile["segments"]}
+    measured = np.array(
+        [np.nan if v is None else v for v in profile["times"][0]["measured"]], dtype=float
+    )
+
+    upper = named["upper_body"]
+    span = upper["bin_end"] - upper["bin_start"]
+    at_root = measured[upper["bin_start"] : upper["bin_start"] + span // 2]
+    at_nose = measured[upper["bin_end"] - 2 : upper["bin_end"]]
+
+    assert np.nanmax(np.abs(at_root)) < 1.0  # µm/ms: standing still
+    assert np.nanmax(at_nose) > 2 * np.nanmax(np.abs(at_root))
+
+
+def test_a_run_without_an_explicit_front_reports_no_profile(tmp_path):
+    report = _report_without_front_geometry(tmp_path)
+    assert report["profile"] is None
+
+
+# --- The kymograph: the whole history of the front's motion as one image ------
+
+
+def test_the_kymograph_covers_the_same_axes_the_other_charts_use(tmp_path):
+    """One row per continuous instant, one column per profile bin -- the same
+    ``s`` the profile chart plots along and the same time axis the speed charts
+    run on, so a reader can move between all three."""
+    report = _report(tmp_path)
+    profile = report["profile"]
+    kymograph = profile["kymograph"]
+
+    assert kymograph["t_ms"] == report["nose_speed"]["t_ms"]
+    assert len(kymograph["v_um_per_ms"]) == len(kymograph["t_ms"])
+    assert all(len(row) == len(profile["s"]) for row in kymograph["v_um_per_ms"])
+    assert all(value is not None for row in kymograph["v_um_per_ms"] for value in row)
+
+
+def test_the_kymograph_is_denser_in_time_than_the_measurement_can_be(tmp_path):
+    """The point of it: the parameterisation is continuous in time while the
+    measurement exists only at frame pairs. A kymograph limited to the pair times
+    would throw away exactly what the model knows and the camera does not."""
+    profile = _report(tmp_path)["profile"]
+
+    assert len(profile["kymograph"]["t_ms"]) > 4 * len(profile["times"])
+
+
+def test_the_model_profile_survives_a_dataset_with_no_measurable_interval(tmp_path):
+    """Every camera frame non-adjacent: nothing can be differenced, so there are
+    no measured profiles -- but the model's own answer is still well defined and
+    is still reported, rather than the whole block vanishing."""
+    import numpy as np
+
+    from naviernet.evaluation import evaluate
+    from naviernet.training import load_model, train
+
+    cfg, paths = conftest.staged_capsule_run(tmp_path, GEO)
+    archive = dict(np.load(paths.tensors, allow_pickle=False))
+    meta = json.loads(str(archive["meta"]))
+    meta["frame_numbers"] = [1, 3, 5, 7, 9, 11]  # every other camera frame
+    archive["meta"] = json.dumps(meta)
+    np.savez_compressed(paths.tensors, **archive)
+
+    train(cfg, paths)
+    model, data, _ = load_model(cfg, paths)
+    evaluate(cfg, model, data, paths)
+    profile = json.loads(paths.front_velocity_json.read_text())["profile"]
+
+    assert data.report_pairs == []
+    assert profile["times"] == []
+    assert len(profile["kymograph"]["v_um_per_ms"]) > 1
 
 
 def test_the_report_states_its_units_rather_than_leaving_them_to_the_reader(tmp_path):

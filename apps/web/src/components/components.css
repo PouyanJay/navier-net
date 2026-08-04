@@ -703,6 +703,23 @@ text.chart-axis-title {
   stroke-dasharray: 2 3;
 }
 
+/* Named regions of the x axis (the front's four segments), drawn behind the
+   series. Alternating fills would read as data; one faint fill plus a label
+   reads as a ruler. `muted` marks a span the data deliberately omits. */
+.chart-band {
+  fill: var(--viewline);
+  opacity: 0.25;
+}
+.chart-band.muted {
+  fill: var(--amber);
+  opacity: 0.12;
+}
+.chart-band-label {
+  fill: var(--ink3);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
 /* Comparison series colors (up to four runs side by side) */
 .chart-line.series-0 {
   stroke: var(--acc);

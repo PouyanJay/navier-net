@@ -1550,3 +1550,37 @@
 .field-view-ctl {
   margin-top: var(--s2);
 }
+
+/* Kymograph: the front's normal speed over (position, time). Painted as an
+   image because it is a dense field, not a series -- one pixel per bin per
+   instant, stretched to the panel width. */
+.kymo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.kymo-canvas {
+  width: 100%;
+  height: 220px;
+  display: block;
+  background: var(--view);
+  border: 1px solid var(--viewline);
+  border-radius: var(--r);
+  /* A kymograph's cells are data, not a photograph: keep the bin edges crisp
+     rather than letting the browser invent intermediate values. */
+  image-rendering: pixelated;
+}
+
+.kymo-scale {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.kymo-ramp {
+  flex: 1;
+  height: 8px;
+  border-radius: var(--rs);
+  border: 1px solid var(--line);
+}
