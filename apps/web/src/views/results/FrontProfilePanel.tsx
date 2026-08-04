@@ -23,6 +23,20 @@ const SEGMENT_LABEL: Record<FrontSegment["name"], string> = {
  * diverging ramp around a neutral zero, never a sequential one. */
 const KYMOGRAPH_CMAP = "div" as const;
 
+/** µm/ms is the reporting unit; this is the SI value every export carries too,
+ * so a downloaded file needs no conversion. Null stays null rather than
+ * becoming a zero. */
+const si = (value: number | null) => (value == null ? null : value * 1e-3);
+
+/** Which segment a bin belongs to, so an exported row says where on the front
+ * it sits rather than only how far along a unitless axis. */
+function segmentAt(segments: FrontSegment[], bin: number): string {
+  const found = segments.find(
+    (segment) => bin >= segment.bin_start && bin < segment.bin_end,
+  );
+  return found ? SEGMENT_LABEL[found.name] : "";
+}
+
 function bandsOf(segments: FrontSegment[]): CompareBand[] {
   return segments.map((segment) => ({
     start: segment.s_start,
@@ -167,8 +181,11 @@ export function FrontProfilePanel({
               name={`${stem}-profile-${frame.frames[0]}-${frame.frames[1]}`}
               rows={profile.s.map((s, i) => ({
                 s,
+                segment: segmentAt(profile.segments, i),
                 model_um_per_ms: frame.model[i],
+                model_m_per_s: si(frame.model[i]),
                 measured_um_per_ms: frame.measured[i],
+                measured_m_per_s: si(frame.measured[i]),
               }))}
               render={() => (
                 <CompareChart

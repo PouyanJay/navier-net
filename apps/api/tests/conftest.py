@@ -138,6 +138,73 @@ def repo_root(tmp_path: Path) -> Path:
             }
         )
     )
+    # The front-velocity report, in the shape the evaluate stage writes it: a
+    # whole-front speed, the apex's two components, and a profile whose nose-cap
+    # bin is suppressed (null) because the level-set estimate is untrustworthy
+    # there.
+    (run / "front_velocity.json").write_text(
+        json.dumps(
+            {
+                "front_geometry": True,
+                "nose_speed": {
+                    "t_ms": [0.0, 0.5],
+                    "v_um_per_ms": [120.5, 138.25],
+                    "measured": {
+                        "t_ms": [0.25],
+                        "v_um_per_ms": [131.0],
+                        "heldout": [True],
+                    },
+                },
+                "apex": {
+                    "t_ms": [0.0, 0.5],
+                    "x_um": [180.0, 210.0],
+                    "y_um": [64.0, 64.2],
+                    "vx_um_per_ms": [118.0, 137.0],
+                    "vy_um_per_ms": [0.4, -0.2],
+                    "measured": {
+                        "t_ms": [0.25],
+                        "vx_um_per_ms": [130.0],
+                        "vy_um_per_ms": [0.1],
+                        "heldout": [True],
+                    },
+                },
+                "profile": {
+                    "s": [0.25, 0.75],
+                    "segments": [
+                        {
+                            "name": "upper_body",
+                            "bin_start": 0,
+                            "bin_end": 1,
+                            "s_start": 0.0,
+                            "s_end": 0.5,
+                            "measured": True,
+                        },
+                        {
+                            "name": "nose_cap",
+                            "bin_start": 1,
+                            "bin_end": 2,
+                            "s_start": 0.5,
+                            "s_end": 1.0,
+                            "measured": False,
+                        },
+                    ],
+                    "times": [
+                        {
+                            "t_ms": 0.0,
+                            "frames": [1, 2],
+                            "heldout": False,
+                            "model": [3.2, 120.0],
+                            "measured": [3.0, None],
+                        }
+                    ],
+                    "kymograph": {
+                        "t_ms": [0.0, 0.5],
+                        "v_um_per_ms": [[3.2, 120.0], [3.6, 131.0]],
+                    },
+                },
+            }
+        )
+    )
     (run / "figures" / "trajectories.png").write_bytes(b"\x89PNG\r\n")
     (run / "video" / "growth.mp4").write_bytes(b"\x00")
 

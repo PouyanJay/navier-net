@@ -210,6 +210,18 @@ def export_trajectory(
     return _csv_response(body, f"{run_id}{suffix}_trajectory.csv", run_id)
 
 
+@router.get("/{run_id}/export/front-velocity.csv")
+def export_front_velocity(
+    run_id: str,
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+):
+    """The front's motion (nose, apex and profile) in long format, both units."""
+    body = exports_service.front_velocity_csv(settings, run_id, dataset)
+    suffix = f"_{dataset}" if dataset else ""
+    return _csv_response(body, f"{run_id}{suffix}_front_velocity.csv", run_id)
+
+
 @router.get("/{run_id}/export/loss.csv")
 def export_loss(run_id: str, settings: Settings = Depends(get_settings)):
     """The checkpoint's loss history, one row per logged step."""

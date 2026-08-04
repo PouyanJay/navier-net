@@ -8,6 +8,9 @@ const exportUrl = {
   trajectory: (id: string, dataset?: string | null) =>
     `/api/runs/${encodeURIComponent(id)}/export/trajectory.csv` +
     (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
+  frontVelocity: (id: string, dataset?: string | null) =>
+    `/api/runs/${encodeURIComponent(id)}/export/front-velocity.csv` +
+    (dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""),
   loss: (id: string) => `/api/runs/${encodeURIComponent(id)}/export/loss.csv`,
 };
 
@@ -139,6 +142,11 @@ export function ExportTab({
           name="Growth kinematics"
           detail={`series, t_ms, nose_um, area_um2${joint && viewDataset ? ` — ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
           href={exportUrl.trajectory(run.id, joint ? viewDataset : null)}
+        />
+        <Row
+          name="Front velocity"
+          detail={`series, t_ms, s, v_um_per_ms, v_m_per_s, heldout${joint && viewDataset ? ` — ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
+          href={exportUrl.frontVelocity(run.id, joint ? viewDataset : null)}
         />
         <Row
           name="Loss history"

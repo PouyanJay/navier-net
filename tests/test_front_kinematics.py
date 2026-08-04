@@ -417,6 +417,32 @@ def test_the_model_profile_survives_a_dataset_with_no_measurable_interval(tmp_pa
     assert len(profile["kymograph"]["v_um_per_ms"]) > 1
 
 
+# --- Variants ----------------------------------------------------------------
+
+
+def test_a_joint_run_reports_each_condition_separately(tmp_path):
+    """Every dataset a joint run spans gets its own report, scoped by name --
+    the same layout the trajectories use. The two conditions grow at different
+    rates in the fixture, so identical files would mean one condition's answer
+    was written for both."""
+    from naviernet import training
+    from naviernet.evaluation import evaluate_joint
+
+    cfg, paths = conftest.staged_joint_run(tmp_path, GEO)
+    training.train(cfg, paths)
+    model, contexts, heldout = training.load_joint(cfg, paths)
+    evaluate_joint(cfg, model, contexts, paths, heldout_datasets=heldout)
+
+    reports = {}
+    for name, _, _, _ in conftest.JOINT_SPECS:
+        path = paths.front_velocity_json_for(name)
+        assert path.is_file(), f"no front-velocity report for {name}"
+        reports[name] = json.loads(path.read_text())
+
+    speeds = [tuple(r["nose_speed"]["measured"]["v_um_per_ms"]) for r in reports.values()]
+    assert speeds[0] != speeds[1], "both conditions reported the same measured speed"
+
+
 def test_the_report_states_its_units_rather_than_leaving_them_to_the_reader(tmp_path):
     """A bare number is not a measurement. Every consumer -- chart axis, CSV
     column, tooltip -- reads the unit from the key, so the key carries it."""
