@@ -984,3 +984,54 @@
   gap: var(--s2);
   justify-items: start;
 }
+
+/* ── Growth-kinematics residual strip ─────────────────────────────────
+   The fit's evidence, sharing the x axis above it. Measured is solid and the
+   residual is a separate mark, so neither is read off the other's colour. */
+.qc-resid-zero {
+  stroke: var(--canvas-rule);
+  stroke-width: 1;
+}
+.qc-resid-band {
+  fill: var(--series-measured);
+  opacity: 0.1;
+}
+.qc-resid-dot {
+  fill: var(--series-measured);
+}
+.qc-resid-label {
+  fill: var(--canvas-quiet);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+/* The kinematics finding, ahead of the plot that evidences it. */
+.qc-finding {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: 0;
+  flex-wrap: wrap;
+}
+.qc-finding-v {
+  font-size: 22px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.qc-finding-u {
+  font-size: 11px;
+  color: var(--ink3);
+}
+.qc-finding-r {
+  font-size: 10px;
+  color: var(--green);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* The second QC header, above the field views' switch. */
+.qc-sub-hd-second {
+  margin-top: var(--s5);
+}

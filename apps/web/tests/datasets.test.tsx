@@ -841,20 +841,24 @@ describe("DatasetsView", () => {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // "Preprocessing QC" shows immediately; the tabs appear once tensors load.
-    const kinematics = await screen.findByRole("tab", {
-      name: /Growth kinematics/,
-    });
-    expect(screen.getByText("Preprocessing QC")).toBeInTheDocument();
-    // Three checks behind one switch; kinematics is the default tab.
-    expect(kinematics).toHaveAttribute("aria-selected", "true");
+    // Growth kinematics is never behind a switch: it is the check read first
+    // and the only one that produces a number, so it is always on screen with
+    // its finding above it.
     expect(
-      screen.getByRole("img", {
+      await screen.findByRole("img", {
         name: /Bubble length in micrometres against time/,
       }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /Growth kinematics/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/nose speed/)).toBeInTheDocument();
+    expect(screen.getByText(/R²/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: /Interface evolution/ }));
+    // The two spatial checks do share a switch: each draws the whole channel,
+    // so each needs the card's full width.
+    const evolution = screen.getByRole("tab", { name: /Interface evolution/ });
+    expect(evolution).toHaveAttribute("aria-selected", "true");
     expect(
       screen.getByRole("img", { name: /Bubble outline for \d+ frames/ }),
     ).toBeInTheDocument();
@@ -862,6 +866,12 @@ describe("DatasetsView", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Signed distance/ }));
     expect(
       screen.getByRole("img", { name: /Signed distance field/ }),
+    ).toBeInTheDocument();
+    // Switching the field view leaves the kinematics chart in place.
+    expect(
+      screen.getByRole("img", {
+        name: /Bubble length in micrometres against time/,
+      }),
     ).toBeInTheDocument();
   });
 
@@ -1098,11 +1108,13 @@ describe("DatasetsView preprocess polling", () => {
     );
 
     // Real timers: the hook polls every 1s until done, then refreshes; proven by
-    // the QC charts (their tabs) appearing once the series reports processed.
+    // the kinematics chart appearing once the series reports processed.
     await waitFor(
       () =>
         expect(
-          screen.getByRole("tab", { name: /Growth kinematics/ }),
+          screen.getByRole("img", {
+            name: /Bubble length in micrometres against time/,
+          }),
         ).toBeInTheDocument(),
       { timeout: 5000 },
     );

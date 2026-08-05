@@ -15,8 +15,17 @@ type Linear = d3.ScaleLinear<number, number>;
 
 type Check = "kinematics" | "interface" | "sdf";
 
-const CHECKS: { id: Check; label: string; sub: string }[] = [
-  { id: "kinematics", label: "Growth kinematics", sub: "L(t) + fit" },
+/**
+ * The two spatial checks, which do share a switch.
+ *
+ * Both draw the channel across its full 1700µm, so both need the card's width;
+ * side by side they would be about 300px wide and unreadable. Growth kinematics
+ * is not among them — it is a time series with a headline number, so it is
+ * always on screen above these.
+ */
+type FieldCheck = Extract<Check, "interface" | "sdf">;
+
+const FIELD_CHECKS: { id: FieldCheck; label: string; sub: string }[] = [
   { id: "interface", label: "Interface evolution", sub: "bubble silhouettes" },
   { id: "sdf", label: "Signed distance", sub: "mid frame" },
 ];
@@ -61,52 +70,95 @@ function qcRows(qc: QcData, check: Check): Record<string, unknown>[] {
 }
 
 export function QcChecks({ qc, processed }: QcChecksProps) {
-  const [check, setCheck] = useState<Check>("kinematics");
-  return (
-    <section className="qc-sub" aria-label="Preprocessing QC">
-      <div className="qc-sub-hd">
-        <div className="qc-sub-title">
-          <h3>Preprocessing QC</h3>
-          <span className="sub">computed from the training tensors</span>
-        </div>
-        {qc && (
-          <div className="seg compact" role="tablist" aria-label="QC check">
-            {CHECKS.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                role="tab"
-                aria-selected={check === c.id}
-                className={check === c.id ? "segb on" : "segb"}
-                title={c.sub}
-                onClick={() => setCheck(c.id)}
-              >
-                {c.label}
-              </button>
-            ))}
+  const [field, setField] = useState<FieldCheck>("interface");
+  const fieldCheck = FIELD_CHECKS.find((c) => c.id === field)!;
+
+  if (!qc) {
+    return (
+      <section className="qc-sub" aria-label="Preprocessing QC">
+        <div className="qc-sub-hd">
+          <div className="qc-sub-title">
+            <h3>Preprocessing QC</h3>
+            <span className="sub">computed from the training tensors</span>
           </div>
-        )}
-      </div>
-      {qc ? (
-        <ChartFrame
-          name={`${qc.dataset}-qc-${check}`}
-          title={CHECKS.find((c) => c.id === check)?.label ?? "QC"}
-          rows={qcRows(qc, check)}
-          render={() => (
-            <ViewCanvas>
-              {check === "kinematics" && <KinematicsChart qc={qc} />}
-              {check === "interface" && <InterfaceChart qc={qc} />}
-              {check === "sdf" && <SdfChart qc={qc} />}
-            </ViewCanvas>
-          )}
-        />
-      ) : (
+        </div>
         <p className="state-note" role="status">
           {processed
             ? "Building the QC checks from the tensors…"
             : "Run preprocessing to compute the QC checks."}
         </p>
-      )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="qc-sub" aria-label="Preprocessing QC">
+      {/* Growth kinematics is never hidden. It is the check a reader looks at
+          first, it is the one that produces a number, and unlike the two field
+          views it is a time series — so it reads fine at any width, while they
+          are spatial plots of a 1700µm channel that need theirs. */}
+      <div className="qc-sub-hd">
+        <div className="qc-sub-title">
+          <h3>Growth kinematics</h3>
+          <span className="sub">
+            L(t) with the linear fit, and its residual
+          </span>
+        </div>
+        {qc.kinematics.t_ms.length > 1 && (
+          <p className="qc-finding">
+            <span className="qc-finding-v mono">
+              {qc.kinematics.fit_slope_mm_s.toFixed(0)}
+            </span>
+            <span className="qc-finding-u mono">mm·s⁻¹ nose speed</span>
+            <span className="qc-finding-r mono">
+              R² {fitR2(qc.kinematics).toFixed(3)}
+            </span>
+          </p>
+        )}
+      </div>
+      <ChartFrame
+        name={`${qc.dataset}-qc-kinematics`}
+        title="Growth kinematics"
+        rows={qcRows(qc, "kinematics")}
+        render={() => (
+          <ViewCanvas>
+            <KinematicsChart qc={qc} />
+          </ViewCanvas>
+        )}
+      />
+
+      <div className="qc-sub-hd qc-sub-hd-second">
+        <div className="qc-sub-title">
+          <h3>{fieldCheck.label}</h3>
+          <span className="sub">{fieldCheck.sub}</span>
+        </div>
+        <div className="seg compact" role="tablist" aria-label="Field check">
+          {FIELD_CHECKS.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              role="tab"
+              aria-selected={field === c.id}
+              className={field === c.id ? "segb on" : "segb"}
+              title={c.sub}
+              onClick={() => setField(c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <ChartFrame
+        name={`${qc.dataset}-qc-${field}`}
+        title={fieldCheck.label}
+        rows={qcRows(qc, field)}
+        render={() => (
+          <ViewCanvas>
+            {field === "interface" && <InterfaceChart qc={qc} />}
+            {field === "sdf" && <SdfChart qc={qc} />}
+          </ViewCanvas>
+        )}
+      />
     </section>
   );
 }
@@ -192,8 +244,71 @@ function drawAxes(
 
 // ── Growth kinematics ────────────────────────────────────────────────────────
 
+/* The fit gets a residual strip beneath it, sharing its x axis. A line that
+   looks straight is not evidence that it IS straight; the residual is. */
+const KIN_RESID_H = 56;
+const KIN_GAP = 18;
 const KIN_HEIGHT = 320;
-const KIN_INNER_H = KIN_HEIGHT - MARGIN.top - MARGIN.bottom;
+const KIN_INNER_H =
+  KIN_HEIGHT - MARGIN.top - MARGIN.bottom - KIN_RESID_H - KIN_GAP;
+
+/** measured − fit, per frame, in µm. */
+function residuals(kin: QcKinematics): number[] {
+  return kin.length_um.map(
+    (L, i) => L - (kin.fit_slope_mm_s * kin.t_ms[i] + kin.fit_intercept_um),
+  );
+}
+
+/** Coefficient of determination for the straight-line fit. */
+function fitR2(kin: QcKinematics): number {
+  const mean = d3.mean(kin.length_um) ?? 0;
+  const ssTot = d3.sum(kin.length_um, (L) => (L - mean) ** 2);
+  const ssRes = d3.sum(residuals(kin), (r) => r ** 2);
+  return ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+}
+
+/** The residual strip: a zero line, a +/-1 sigma band, and the scatter. */
+function drawResiduals(g: G, x: Linear, kin: QcKinematics): void {
+  const res = residuals(kin);
+  const spread = Math.max(d3.max(res, Math.abs) ?? 1, 1e-6);
+  const top = KIN_INNER_H + KIN_GAP;
+  const y = d3
+    .scaleLinear()
+    .domain([-spread, spread])
+    .range([top + KIN_RESID_H, top]);
+  const sigma = Math.sqrt(d3.mean(res, (r) => r ** 2) ?? 0);
+
+  g.append("rect")
+    .attr("class", "qc-resid-band")
+    .attr("x", 0)
+    .attr("y", y(sigma))
+    .attr("width", INNER_W)
+    .attr("height", Math.max(1, y(-sigma) - y(sigma)));
+  g.append("line")
+    .attr("class", "qc-resid-zero")
+    .attr("x1", 0)
+    .attr("x2", INNER_W)
+    .attr("y1", y(0))
+    .attr("y2", y(0));
+  g.append("text")
+    .attr("class", "qc-resid-label")
+    .attr("x", 0)
+    .attr("y", top - 5)
+    .text(`residual (µm) · measured − fit · ±${sigma.toFixed(1)} rms`);
+  g.append("g")
+    .selectAll("circle")
+    .data(res)
+    .join("circle")
+    .attr("class", "qc-resid-dot")
+    .attr("cx", (_, i) => x(kin.t_ms[i]))
+    .attr("cy", (d) => y(d))
+    .attr("r", 2.6)
+    .append("title")
+    .text(
+      (d, i) =>
+        `t = ${kin.t_ms[i]} ms · ${d >= 0 ? "+" : ""}${d.toFixed(1)} µm`,
+    );
+}
 
 function kinScales(kin: QcKinematics): { x: Linear; y: Linear } {
   const x = d3
@@ -268,12 +383,15 @@ function KinematicsChart({ qc }: { qc: QcData }) {
       g,
       x,
       y,
-      KIN_INNER_H,
+      // Below the residual strip: the two panels share one x axis, which is
+      // what lets a reader carry a frame's position from the fit to its error.
+      KIN_INNER_H + KIN_GAP + KIN_RESID_H,
       { title: "t (ms), from the first frame", format: (d) => `${d}` },
       { title: "L (µm), streamwise bubble length" },
     );
     drawFitLine(g, x, y, kin);
     drawMeasuredSeries(g, x, y, kin);
+    drawResiduals(g, x, kin);
   }, [kin]);
 
   return (
