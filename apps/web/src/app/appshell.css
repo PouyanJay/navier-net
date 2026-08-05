@@ -246,22 +246,36 @@
   text-align: left;
   padding: var(--s2) var(--s3);
   border: 0;
-  border-left: 2px solid transparent;
-  border-radius: var(--rs);
+  border-radius: 6px;
   background: transparent;
   color: var(--sidetxt);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    color 150ms var(--ease);
 }
+/* No rule and no accent bar: hover is a neutral wash, and the active stage is a
+   tinted plate with accent ink. The shape carries the state, not a border. */
 .nav button:hover {
-  background: var(--side2);
-  color: var(--sidehl);
+  background: var(--hover);
+  color: var(--ink2);
 }
 .nav button[aria-current="page"] {
-  background: var(--side2);
-  color: var(--sidehl);
-  border-left-color: var(--acc2);
+  background: var(--accsoft);
+  color: var(--acc);
+}
+/* The sub-label and the step number follow the row's ink rather than holding
+   their resting grey against it. */
+.nav button[aria-current="page"] .txt span {
+  color: inherit;
+  opacity: 0.78;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav button {
+    transition: none;
+  }
 }
 .nav .txt b {
   display: block;
@@ -283,9 +297,9 @@
   width: 100%;
   padding: var(--s2) var(--s3);
   margin-bottom: var(--s3);
-  background: var(--side2);
-  border: 1px solid var(--sideline);
-  border-radius: var(--rs);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
   color: var(--sidetxt);
   font: inherit;
   font-size: 12px;
@@ -294,8 +308,8 @@
   cursor: pointer;
 }
 .backhome:hover {
-  color: var(--sidehl);
-  border-color: var(--acc2);
+  background: var(--hover);
+  color: var(--ink2);
 }
 
 /* Section labels in the rail (mono uppercase, mockup's .lbl) */
@@ -316,27 +330,24 @@
 }
 .stage .node {
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   border: 1.5px solid var(--sideline);
   background: var(--side);
   color: var(--sidetxt);
-  font-family: var(--mono);
-  font-size: 11px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   z-index: 1;
 }
 .stage[aria-current="page"] .node {
-  border-color: var(--acc2);
-  color: var(--acc2);
+  border-color: currentColor;
+  color: inherit;
 }
 .stage + .stage::before {
   content: "";
   position: absolute;
-  left: calc(var(--s3) + 11px);
+  left: calc(var(--s3) + 13px);
   top: -14px;
   height: 14px;
   width: 1.5px;

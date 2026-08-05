@@ -19,3 +19,11 @@ export { Share08Icon as ShareIcon } from "@hugeicons/core-free-icons";
 export { FileExportIcon as ExportReportIcon } from "@hugeicons/core-free-icons";
 /** The workspace's own settings and account, at the foot of the pipeline rail. */
 export { Settings02Icon as SystemIcon } from "@hugeicons/core-free-icons";
+
+/* The four pipeline stages. Each glyph names what the stage holds, not its
+   position: a strip of camera frames, the function the network approximates,
+   the compute that trains it, and the curves it is judged on. */
+export { FilmRoll01Icon as StageDatasetsIcon } from "@hugeicons/core-free-icons";
+export { FunctionIcon as StagePhysicsIcon } from "@hugeicons/core-free-icons";
+export { CpuChargeIcon as StageSolverIcon } from "@hugeicons/core-free-icons";
+export { ChartLineData01Icon as StageResultsIcon } from "@hugeicons/core-free-icons";

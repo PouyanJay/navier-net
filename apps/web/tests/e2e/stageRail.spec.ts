@@ -135,3 +135,41 @@ test("an equation popover stays inside the rail that scrolls it", async ({
   expect(box.x).toBeGreaterThanOrEqual(body.x - 1);
   expect(box.x + box.width).toBeLessThanOrEqual(body.x + body.width + 1);
 });
+
+test("the pipeline rail marks its active stage without a border", async ({
+  page,
+}) => {
+  // The active stage used to carry a 2px accent bar down its left edge. State
+  // is a tinted plate and accent ink now, so this asserts on the real computed
+  // border, which only a layout engine resolves.
+  await openStage(page, null);
+
+  const active = page.locator('.nav button[aria-current="page"]');
+  const style = await active.evaluate((el) => {
+    const c = getComputedStyle(el);
+    return {
+      widths: [
+        c.borderTopWidth,
+        c.borderRightWidth,
+        c.borderBottomWidth,
+        c.borderLeftWidth,
+      ],
+      background: c.backgroundColor,
+      color: c.color,
+    };
+  });
+
+  expect(style.widths, "the active stage draws a border").toEqual([
+    "0px",
+    "0px",
+    "0px",
+    "0px",
+  ]);
+  // Tinted, not transparent, and its ink differs from a resting sibling's.
+  expect(style.background).not.toBe("rgba(0, 0, 0, 0)");
+  const resting = await page
+    .locator('.nav button:not([aria-current="page"])')
+    .first()
+    .evaluate((el) => getComputedStyle(el).color);
+  expect(style.color).not.toBe(resting);
+});

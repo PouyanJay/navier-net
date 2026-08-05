@@ -18,6 +18,10 @@ import {
   HugeiconsIcon,
   ShareIcon,
   SourceIcon,
+  StageDatasetsIcon,
+  StagePhysicsIcon,
+  StageResultsIcon,
+  StageSolverIcon,
   SystemIcon,
   ThemeDarkIcon,
   ThemeLightIcon,
@@ -38,6 +42,9 @@ export interface NavItem {
   sub: string;
   /** Pipeline stage number; Projects is the workspace home, not a stage. */
   stage?: number;
+  /** The stage's glyph in the rail. Sequence is carried by the connector line
+   * and the reading order, so the marker is free to say what the stage IS. */
+  icon?: typeof StageDatasetsIcon;
 }
 
 /** The platform's top-level navigation, in the mockup's order. */
@@ -48,19 +55,28 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Datasets & conditions",
     sub: "frames · calibration",
     stage: 1,
+    icon: StageDatasetsIcon,
   },
   {
     id: "physics",
     label: "Physics & model",
     sub: "equations · architecture",
     stage: 2,
+    icon: StagePhysicsIcon,
   },
-  { id: "solver", label: "Solver", sub: "configure & run", stage: 3 },
+  {
+    id: "solver",
+    label: "Solver",
+    sub: "configure & run",
+    stage: 3,
+    icon: StageSolverIcon,
+  },
   {
     id: "results",
     label: "Results & validation",
     sub: "fields · figures · video",
     stage: 4,
+    icon: StageResultsIcon,
   },
 ];
 
@@ -240,7 +256,9 @@ function Sidebar({
                 aria-current={item.id === active ? "page" : undefined}
                 onClick={() => onNavigate(item.id)}
               >
-                <span className="node">{item.stage}</span>
+                <span className="node">
+                  {item.icon && <HugeiconsIcon icon={item.icon} size={15} />}
+                </span>
                 <span className="txt">
                   <b>{item.label}</b>
                   <span>{item.sub}</span>
