@@ -31,20 +31,52 @@ interface SeriesLibraryProps {
   preprocessing: boolean;
 }
 
-/** The series' conditions as read-only summary rows (edited via the
+/**
+ * The series' conditions as read-only summary rows (edited via the
  * Edit-conditions modal). The unit is carried in the label (e.g. "Frame interval
- * (ms)") so the values stay a clean column of numbers. */
+ * (ms)") so the values stay a clean column of numbers.
+ *
+ * Banded by what each condition FEEDS rather than listed flat: geometry drives
+ * Bond and the Hele-Shaw number, thermal drives Jakob and Péclet, flow and
+ * capture set the reference velocity every other group is scaled by. Grouping
+ * the inputs the way the dimensionless outputs derive from them makes the panel
+ * explain the model instead of just collecting values.
+ */
 function conditionItems(detail: DatasetDetail): KV[] {
   const c = detail.conditions;
   return [
-    { label: "Working fluid", value: c.fluid },
-    { label: "Frame interval (ms)", value: c.dt_frame_ms },
-    { label: "Channel width (µm)", value: c.channel_width_um },
-    { label: "Channel height (µm)", value: c.channel_height_um },
-    { label: "Saturation temp (°C)", value: c.T_sat_C },
-    { label: "Wall heat flux (W·cm⁻²)", value: c.q_wall_W_cm2 },
-    { label: "Flow rate (mL·hr⁻¹)", value: c.flow_rate_mL_hr },
-    { label: "Reference velocity (m·s⁻¹)", value: c.U_ref_m_s ?? "—" },
+    { group: "Fluid", label: "Working fluid", value: c.fluid },
+    { group: "Fluid", label: "Saturation temp (°C)", value: c.T_sat_C },
+    {
+      group: "Geometry",
+      label: "Channel width (µm)",
+      value: c.channel_width_um,
+    },
+    {
+      group: "Geometry",
+      label: "Channel height (µm)",
+      value: c.channel_height_um,
+    },
+    {
+      group: "Thermal",
+      label: "Wall heat flux (W·cm⁻²)",
+      value: c.q_wall_W_cm2,
+    },
+    {
+      group: "Flow & capture",
+      label: "Flow rate (mL·hr⁻¹)",
+      value: c.flow_rate_mL_hr,
+    },
+    {
+      group: "Flow & capture",
+      label: "Reference velocity (m·s⁻¹)",
+      value: c.U_ref_m_s ?? "—",
+    },
+    {
+      group: "Flow & capture",
+      label: "Frame interval (ms)",
+      value: c.dt_frame_ms,
+    },
   ];
 }
 

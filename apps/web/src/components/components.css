@@ -346,8 +346,26 @@
   grid-template-columns: 1fr auto;
   gap: var(--s2) var(--s5);
 }
-.dl .dl-row {
+.dl .dl-row,
+.dl .dl-band {
+  /* Both dissolve into the list's own two-column grid, so a label and its value
+     stay on one row however the rows are banded. */
   display: contents;
+}
+/* The band heading, in the rail's own section-label spec. */
+.dl-bandlbl {
+  grid-column: 1 / -1;
+  margin: var(--s3) 0 2px;
+  padding-bottom: var(--s1);
+  border-bottom: 1px solid var(--line);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.dl .dl-band:first-child .dl-bandlbl {
+  margin-top: 0;
 }
 .dl dt {
   color: var(--ink2);
