@@ -57,7 +57,7 @@ export const NAV_ITEMS: NavItem[] = [
 
 /** What the shell knows about the platform's real state (drives chrome). */
 export interface PlatformStatus {
-  /** Latest trained run, for the sidebar's run metadata. `name` is the
+  /** Latest trained run, for the breadcrumb's trailing segment. `name` is the
    * display name (dataset-named legacy runs follow their series' label). */
   latestRun: { id: string; name: string; steps: number | null } | null;
   /** Number of projects in the workspace (home-mode chip). */
@@ -193,13 +193,11 @@ function StatusChips({
 function Sidebar({
   project,
   active,
-  status,
   onNavigate,
   onHome,
 }: {
   project: string | null;
   active: string;
-  status: PlatformStatus;
   onNavigate: (id: string) => void;
   onHome: () => void;
 }) {
@@ -235,24 +233,14 @@ function Sidebar({
               </button>
             ))}
           </div>
+          {/* A "Run metadata" block sat here: Checkpoint, Run, Backend. Every
+              row was hollow. Checkpoint was the literal "ckpt.pt", the same for
+              every run ever trained. Backend was the literal "PyTorch CPU",
+              which is false the moment anyone runs training.device=cuda. Run
+              was real, but the breadcrumb renders that same value already. And
+              all three described the LATEST trained run, so opening an older
+              one in Results left the rail describing a different run. */}
           <div className="spacer" />
-          <div className="railfoot">
-            <div className="raillbl">Run metadata</div>
-            <div className="kv">
-              <span>Checkpoint</span>
-              <span className="mono">
-                {status.latestRun ? "ckpt.pt" : "n/a"}
-              </span>
-            </div>
-            <div className="kv">
-              <span>Run</span>
-              <span className="mono">{status.latestRun?.name ?? "n/a"}</span>
-            </div>
-            <div className="kv">
-              <span>Backend</span>
-              <span className="mono">PyTorch CPU</span>
-            </div>
-          </div>
         </>
       ) : (
         <div className="raillbl">Workspace</div>
@@ -501,7 +489,6 @@ export function AppShell({
       <Sidebar
         project={project}
         active={active}
-        status={status}
         onNavigate={onNavigate}
         onHome={onHome}
       />

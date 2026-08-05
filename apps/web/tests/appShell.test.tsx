@@ -55,3 +55,28 @@ describe("topbar status chips", () => {
     expect(screen.getByText("1 project")).toBeInTheDocument();
   });
 });
+
+describe("the pipeline rail", () => {
+  it("carries the stages and no run metadata", () => {
+    // A "Run metadata" block sat at the foot of the rail with three rows.
+    // Checkpoint was the literal "ckpt.pt", identical for every run ever
+    // trained; Backend was the literal "PyTorch CPU", false under
+    // training.device=cuda; Run duplicated the breadcrumb. All three described
+    // the latest run rather than the one being viewed.
+    shell(TRAINED);
+
+    expect(
+      screen.getByRole("button", { name: "Results & validation" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Run metadata")).not.toBeInTheDocument();
+    expect(screen.queryByText("ckpt.pt")).not.toBeInTheDocument();
+    expect(screen.queryByText(/PyTorch/)).not.toBeInTheDocument();
+  });
+
+  it("still names the run once, in the breadcrumb", () => {
+    // Removing the duplicate must not remove the original.
+    shell(TRAINED);
+    const crumb = document.querySelector(".crumb")!;
+    expect(crumb.textContent).toContain(TRAINED.latestRun!.name);
+  });
+});
