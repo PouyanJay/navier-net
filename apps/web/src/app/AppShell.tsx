@@ -13,6 +13,15 @@ import {
   type PaletteAction,
 } from "../components/CommandPalette";
 import { BrandMark } from "../components";
+import {
+  ExportReportIcon,
+  HugeiconsIcon,
+  ShareIcon,
+  SourceIcon,
+  SystemIcon,
+  ThemeDarkIcon,
+  ThemeLightIcon,
+} from "../components/icons";
 import { useToast } from "../components/Toast";
 import type { RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
@@ -75,44 +84,59 @@ interface AppShellProps {
   children: ReactNode;
 }
 
-function ThemeIcon({ theme }: { theme: Theme }) {
-  return theme === "dark" ? (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M13 9.5A5.5 5.5 0 0 1 6.5 3 5.5 5.5 0 1 0 13 9.5Z"
-        fill="currentColor"
-      />
-    </svg>
-  ) : (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="8" cy="8" r="3.2" fill="currentColor" />
-      {Array.from({ length: 8 }, (_, i) => {
-        const a = (i * Math.PI) / 4;
-        return (
-          <line
-            key={i}
-            x1={8 + Math.cos(a) * 5}
-            y1={8 + Math.sin(a) * 5}
-            x2={8 + Math.cos(a) * 6.6}
-            y2={8 + Math.sin(a) * 6.6}
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-          />
-        );
-      })}
-    </svg>
+/**
+ * A topbar action: the glyph alone, no border and no fill.
+ *
+ * The label lives on the button for assistive tech and in a native tooltip for
+ * pointer users, so the chrome stays quiet without the action becoming a guess.
+ */
+function IconAction({
+  icon,
+  label,
+  onClick,
+  href,
+}: {
+  icon: typeof ShareIcon;
+  label: string;
+  onClick?: () => void;
+  href?: string;
+}) {
+  const glyph = <HugeiconsIcon icon={icon} size={16} />;
+  if (href) {
+    return (
+      <a
+        className="iconaction"
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={label}
+        title={label}
+      >
+        {glyph}
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="iconaction"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      {glyph}
+    </button>
   );
 }
 
-/** Avatar trigger + dismissible account panel (outside click / Escape). */
-function AccountMenu() {
+/** The rail's System entry: workspace identity, dismissed by outside click or Escape. */
+function SystemMenu() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     const onClick = (event: MouseEvent) => {
-      if (!(event.target as Element).closest(".uwrap")) setOpen(false);
+      if (!(event.target as Element).closest(".sysmenu-wrap")) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -126,34 +150,25 @@ function AccountMenu() {
   }, [open]);
 
   return (
-    <div className="uwrap">
-      <button
-        type="button"
-        className="avatar"
-        aria-label="Account menu"
-        aria-expanded={open}
-        aria-controls="account-menu"
-        onClick={() => setOpen((current) => !current)}
-      >
-        PJ
-      </button>
+    <div className="sysmenu-wrap">
       {open && (
-        <div className="umenu" id="account-menu">
+        <div className="umenu" id="system-menu">
           <div className="uh">
             <b>Pouyan Jahangiri</b>
             <span>local workspace</span>
           </div>
-          <a
-            className="uitem"
-            href="https://github.com/PouyanJay/naviernet"
-            target="_blank"
-            rel="noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            Documentation
-          </a>
         </div>
       )}
+      <button
+        type="button"
+        className="railsystem"
+        aria-expanded={open}
+        aria-controls="system-menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <HugeiconsIcon icon={SystemIcon} size={16} />
+        <span>System</span>
+      </button>
     </div>
   );
 }
@@ -245,6 +260,8 @@ function Sidebar({
       ) : (
         <div className="raillbl">Workspace</div>
       )}
+      {!project && <div className="spacer" />}
+      <SystemMenu />
     </nav>
   );
 }
@@ -425,17 +442,6 @@ export function AppShell({
           )}
         </nav>
         <div className="topbar-spacer" />
-        <button
-          type="button"
-          className="search"
-          onClick={() => setPaletteOpen(true)}
-        >
-          <span>Search or run a command…</span>
-          <span className="kbds" aria-hidden="true">
-            <kbd>⌘</kbd>
-            <kbd>K</kbd>
-          </span>
-        </button>
         {activeRun?.state === "running" && (
           <button
             type="button"
@@ -451,39 +457,38 @@ export function AppShell({
           projectCount={status.projects}
           running={activeRun?.state === "running"}
         />
-        <button
-          type="button"
-          className="thbtn"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-        >
-          <ThemeIcon theme={theme} />
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() =>
-            toast(
-              "Sharing is not available yet",
-              "this workspace is local to your machine",
-            )
-          }
-        >
-          Share
-        </button>
-        <button
-          type="button"
-          className="btn primary"
-          onClick={() =>
-            toast(
-              "Report export is not available yet",
-              "planned: PDF with config + figures",
-            )
-          }
-        >
-          Export report
-        </button>
-        <AccountMenu />
+        <div className="topbar-actions">
+          <IconAction
+            icon={SourceIcon}
+            label="Source on GitHub"
+            href="https://github.com/PouyanJay/naviernet"
+          />
+          <IconAction
+            icon={theme === "dark" ? ThemeDarkIcon : ThemeLightIcon}
+            label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            onClick={toggleTheme}
+          />
+          <IconAction
+            icon={ShareIcon}
+            label="Share"
+            onClick={() =>
+              toast(
+                "Sharing is not available yet",
+                "this workspace is local to your machine",
+              )
+            }
+          />
+          <IconAction
+            icon={ExportReportIcon}
+            label="Export report"
+            onClick={() =>
+              toast(
+                "Report export is not available yet",
+                "planned: PDF with config + figures",
+              )
+            }
+          />
+        </div>
       </header>
 
       <Sidebar

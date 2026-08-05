@@ -1,6 +1,6 @@
 /** The shell's topbar chrome: the status chips it claims about a workspace. */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppShell, type PlatformStatus } from "../src/app/AppShell";
@@ -56,7 +56,61 @@ describe("topbar status chips", () => {
   });
 });
 
+describe("topbar actions", () => {
+  const ACTIONS = ["Source on GitHub", "Share", "Export report"];
+
+  it("carries each action as a glyph with an accessible name", () => {
+    shell(TRAINED);
+
+    for (const label of ACTIONS) {
+      const action = screen.getByLabelText(label);
+      // Icon-only: the name is on the control, never rendered as a caption.
+      expect(action.textContent).toBe("");
+      expect(action.querySelector("svg")).not.toBeNull();
+    }
+    expect(screen.getByLabelText(/Switch to .* theme/)).toBeInTheDocument();
+  });
+
+  it("points the source action at the repository", () => {
+    shell(TRAINED);
+    expect(screen.getByLabelText("Source on GitHub")).toHaveAttribute(
+      "href",
+      "https://github.com/PouyanJay/naviernet",
+    );
+  });
+
+  it("has no search box, since the palette answers on its own key", () => {
+    // ⌘K is bound globally, so the box was chrome advertising a shortcut
+    // rather than a control anyone needed to click.
+    shell(TRAINED);
+    expect(
+      screen.queryByText(/Search or run a command/),
+    ).not.toBeInTheDocument();
+    expect(document.querySelector(".topbar .search")).toBeNull();
+  });
+});
+
 describe("the pipeline rail", () => {
+  it("puts System at its foot rather than an avatar in the topbar", () => {
+    shell(TRAINED);
+
+    const system = screen.getByRole("button", { name: /System/ });
+    expect(system.closest(".sidebar")).not.toBeNull();
+    expect(system.closest(".topbar")).toBeNull();
+    expect(screen.queryByText("PJ")).not.toBeInTheDocument();
+  });
+
+  it("opens the System menu on click and names the workspace", async () => {
+    shell(TRAINED);
+    const system = screen.getByRole("button", { name: /System/ });
+    expect(system).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(system);
+
+    expect(system).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("local workspace")).toBeInTheDocument();
+  });
+
   it("carries the stages and no run metadata", () => {
     // A "Run metadata" block sat at the foot of the rail with three rows.
     // Checkpoint was the literal "ckpt.pt", identical for every run ever

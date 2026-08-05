@@ -86,86 +86,84 @@
 .crumb-sep {
   color: var(--line-strong);
 }
-.search {
+/* Topbar actions and the rail's System menu */
+/* Topbar actions, following voicebook's command bar: a 16px glyph centred in a
+   40px target with only 2px between them. The generous target is what separates
+   the glyphs; the hover plate, not a border, is what marks them interactive. */
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: var(--s4);
-  min-width: 230px;
-  padding: var(--s1) var(--s2) var(--s1) var(--s3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--rs);
-  background: var(--panel2);
-  color: var(--ink3);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.search:hover {
-  border-color: var(--acc2);
-}
-.search .kbds {
-  margin-left: auto;
-  display: flex;
+  justify-content: flex-end;
   gap: 2px;
-}
-.search kbd,
-.pal-foot kbd,
-.pal-item kbd {
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 1px var(--s1);
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  background: var(--panel);
-  color: var(--ink2);
-}
-.topbar .chip {
-  white-space: nowrap;
-}
-
-.thbtn {
-  width: 32px;
-  height: 32px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--rs);
-  background: var(--panel);
-  color: var(--ink2);
-  cursor: pointer;
-}
-.thbtn:hover {
-  color: var(--ink);
-  border-color: var(--acc2);
-}
-.thbtn svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Avatar + account menu */
-.uwrap {
-  position: relative;
   flex: none;
 }
-.avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
+.iconaction {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
   border: 0;
-  background: var(--side);
-  color: var(--sidehl);
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink3);
+  cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.iconaction:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .iconaction {
+    transition: none;
+  }
+}
+
+/* The rail's System entry, pinned to its foot. */
+.sysmenu-wrap {
+  position: relative;
+  margin-top: auto;
+  padding: var(--s2) var(--s2) var(--s3);
+}
+.railsystem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  height: 36px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--rs);
+  background: none;
+  color: var(--sidetxt);
   font: inherit;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    color 150ms var(--ease),
+    background 150ms var(--ease);
 }
+.railsystem:hover,
+.railsystem[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--sidehl);
+}
+@media (prefers-reduced-motion: reduce) {
+  .railsystem {
+    transition: none;
+  }
+}
+
 .umenu {
   position: absolute;
-  top: calc(100% + var(--s2));
-  right: 0;
+  bottom: calc(100% - var(--s1));
+  left: var(--s2);
+  right: var(--s2);
   width: 230px;
   background: var(--panel);
   border: 1px solid var(--line-strong);
@@ -683,14 +681,14 @@
   }
   .brandblock div,
   .nav .txt,
-  .railfoot,
   .raillbl,
-  .search,
   .crumb,
+  .railsystem span,
   .backhome-label {
     display: none;
   }
-  .backhome {
+  .backhome,
+  .railsystem {
     justify-content: center;
   }
 }
