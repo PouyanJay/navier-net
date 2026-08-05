@@ -137,7 +137,7 @@ export function RunHeader({
       {detail?.config && (
         <details className="cfgsnap">
           <summary>
-            Config snapshot — .hydra/config.yaml{" "}
+            Config snapshot · .hydra/config.yaml{" "}
             <span className="cfgsnap-hint">reproduces this run exactly</span>
           </summary>
           <pre>{toYamlish(detail.config)}</pre>

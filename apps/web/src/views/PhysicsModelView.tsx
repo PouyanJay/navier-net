@@ -53,7 +53,7 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
   if (datasets.length === 0) {
     return (
       <Callout tone="info">
-        No datasets yet — upload a sequence in Datasets to configure its physics
+        No datasets yet. Upload a sequence in Datasets to configure its physics
         and model.
       </Callout>
     );

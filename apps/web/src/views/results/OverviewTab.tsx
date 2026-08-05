@@ -26,7 +26,7 @@ function narrative(
     return (
       `Trained on ${trained.length} condition${trained.length === 1 ? "" : "s"}, ` +
       `this run reconstructs unseen instants of those conditions to IoU ${fmtIou(axisA)}, ` +
-      `and an entirely unseen condition — ${held}, supplied only as dimensionless groups — ` +
+      `and an entirely unseen condition (${held}, supplied only as dimensionless groups) ` +
       `to IoU ${fmtIou(transfer)}. The transfer number is the evidence that the model ` +
       `learned physics, not footage.`
     );
@@ -35,7 +35,7 @@ function narrative(
     return (
       `Trained jointly on all ${all.length} conditions, this run reconstructs unseen ` +
       `instants to IoU ${fmtIou(axisA)}. No condition was held out, so transfer ` +
-      `(axis B) is untested — hold one out in the Solver to claim it.`
+      `(axis B) is untested. Hold one out in the Solver to claim it.`
     );
   }
   return (
@@ -44,7 +44,7 @@ function narrative(
     (validation?.nose_speed_error_pct != null
       ? `, and the inferred nose speed lands within ${validation.nose_speed_error_pct.toFixed(1)} % of the measured value`
       : "") +
-    ` — generalization in time, on one condition.`
+    `, generalization in time, on one condition.`
   );
 }
 

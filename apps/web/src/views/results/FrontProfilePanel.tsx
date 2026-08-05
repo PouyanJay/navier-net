@@ -234,7 +234,7 @@ export function FrontProfilePanel({
         <p className="figcap">
           <b>Figure 2.</b> <i>s</i> walks once around the closed interface: root
           cap, up the upper body to the nose, around the nose cap, back down the
-          lower body. These are <b>normal</b> speeds — a curve sliding along
+          lower body. These are <b>normal</b> speeds: a curve sliding along
           itself looks identical between frames, so the tangential component is
           unobservable from masks, and it is also the one component that does
           not change the shape.
@@ -245,7 +245,7 @@ export function FrontProfilePanel({
               <b>{SEGMENT_LABEL[noseCap.name]}</b>: the level-set estimate is
               first-order in the distance the front travels, and there that
               distance is largest against the smallest radius of curvature. The
-              model's own curve continues through it — that disagreement is a
+              model's own curve continues through it, and that disagreement is a
               real finding, not a rendering gap.
             </>
           )}

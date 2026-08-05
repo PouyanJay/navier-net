@@ -89,7 +89,7 @@ export function EditConditionsModal({
     const spec = ALL_CONDITIONS.find((s) => s.key === key)!;
     const current = parseCondition(conditions[key], spec.min, spec.max);
     if (current === null || current === originalValue(spec)) return undefined;
-    return "Baked into the tensors — saving requires a re-preprocess.";
+    return "Baked into the tensors. Saving requires a re-preprocess.";
   }
 
   /** Only the fields the user actually changed, so an edit to one condition

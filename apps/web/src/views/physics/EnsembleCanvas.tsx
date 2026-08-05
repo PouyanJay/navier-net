@@ -391,7 +391,7 @@ function recommendations(model: PhysicsModel): Reco[] {
     },
     {
       value: `α network ${pf.phi.width} × ${pf.phi.depth}`,
-      why: "The steepest field — it carries the sigmoid(φ/ε) interface.",
+      why: "The steepest field: it carries the sigmoid(φ/ε) interface.",
       modified: model.fieldOverridden("phi"),
     },
     {
@@ -405,7 +405,7 @@ function recommendations(model: PhysicsModel): Reco[] {
     {
       value: pOn
         ? `p, T networks ${pf.p.width} × ${pf.p.depth}`
-        : "p, T — locked",
+        : "p, T · locked",
       why: pOn
         ? "Stage-B fields sized +33% width, +2 depth for stiffer residuals."
         : "Enable Momentum or Energy to unlock pressure and temperature.",
@@ -474,7 +474,7 @@ export function EnsembleCanvas({ model }: { model: PhysicsModel }) {
     <section className="viewport" aria-labelledby="ens-h">
       <div className="vhd">
         <span className="t" id="ens-h">
-          Network ensemble — live
+          Network ensemble · live
         </span>
         <span className="hudright">
           {active.length} networks · {fmtCount(model.totalParams)} params

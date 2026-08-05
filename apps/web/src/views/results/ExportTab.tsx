@@ -112,7 +112,7 @@ export function ExportTab({
                 name="Figures & video"
                 detail={
                   joint
-                    ? "not generated for joint runs yet — planned"
+                    ? "not generated for joint runs yet · planned"
                     : "render this run (render=true) to produce them"
                 }
                 action={<Chip>planned</Chip>}
@@ -135,17 +135,17 @@ export function ExportTab({
       >
         <Row
           name="Per-frame IoU"
-          detail="dataset, camera_frame, iou, role — every scored frame"
+          detail="dataset, camera_frame, iou, role · every scored frame"
           href={exportUrl.iou(run.id)}
         />
         <Row
           name="Growth kinematics"
-          detail={`series, t_ms, nose_um, area_um2${joint && viewDataset ? ` — ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
+          detail={`series, t_ms, nose_um, area_um2${joint && viewDataset ? ` · ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
           href={exportUrl.trajectory(run.id, joint ? viewDataset : null)}
         />
         <Row
           name="Front velocity"
-          detail={`series, t_ms, s, v_um_per_ms, v_m_per_s, heldout${joint && viewDataset ? ` — ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
+          detail={`series, t_ms, s, v_um_per_ms, v_m_per_s, heldout${joint && viewDataset ? ` · ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
           href={exportUrl.frontVelocity(run.id, joint ? viewDataset : null)}
         />
         <Row
@@ -164,7 +164,7 @@ export function ExportTab({
         />
         <Row
           name="Validation report"
-          detail="bundled HTML/PDF of this page — planned (follow-up feature)"
+          detail="bundled HTML/PDF of this page · planned (follow-up feature)"
           action={<Chip>planned</Chip>}
         />
         <p className="note">

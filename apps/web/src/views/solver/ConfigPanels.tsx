@@ -164,8 +164,8 @@ function DatasetMultiSelect({
           {heldout ? (
             <>
               {trainingCount} train · 1 held out. The held-out series is never
-              supervised — scored on every frame as a transfer test (can the
-              model predict a condition it never trained on?).
+              supervised, and is scored on every frame as a transfer test (can
+              the model predict a condition it never trained on?).
             </>
           ) : (
             <>

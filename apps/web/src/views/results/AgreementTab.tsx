@@ -245,7 +245,7 @@ export function AgreementTab({
                   </div>
                   <ChartFrame
                     name={`${run.id}-${block.name}-iou`}
-                    title={`Per-frame IoU — ${labelOf(block.name)}`}
+                    title={`Per-frame IoU · ${labelOf(block.name)}`}
                     rows={block.frames.map((frame) => ({
                       dataset: block.name,
                       camera_frame: frame.frame,
@@ -282,7 +282,7 @@ export function AgreementTab({
             </div>
             <p className="figcap">
               <b>Figure 6.</b> Validation frames are each condition's held-out
-              tail — extrapolation in time, the honest split. A held-out
+              tail: extrapolation in time, the honest split. A held-out
               condition's frames were never trained at all.
             </p>
           </>
@@ -291,7 +291,7 @@ export function AgreementTab({
 
       {heldout.size > 0 ? (
         <Panel
-          title="Transfer to unseen conditions — axis B"
+          title="Transfer to unseen conditions · axis B"
           subtitle={`${[...heldout].map(labelOf).join(", ")} · predicted from dimensionless groups alone`}
         >
           <div className="transfer-grid">
@@ -333,7 +333,7 @@ export function AgreementTab({
         </Panel>
       ) : (
         <Panel
-          title="Transfer to unseen conditions — axis B"
+          title="Transfer to unseen conditions · axis B"
           subtitle="conditioning generalization"
         >
           <div className="res-empty">

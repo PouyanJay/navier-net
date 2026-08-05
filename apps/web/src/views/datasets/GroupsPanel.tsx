@@ -101,7 +101,7 @@ const TILES: Tile[] = [
     about:
       "Depth-averaged wall-drag coefficient for the thin channel, 12·(L_ref/H)² / Re.",
     reading: () =>
-      "How much the close top and bottom walls retard the confined flow — the gap makes it act like a Hele-Shaw cell.",
+      "How much the close top and bottom walls retard the confined flow. The gap makes it act like a Hele-Shaw cell.",
   },
   {
     key: "U_in_m_s",
@@ -121,7 +121,7 @@ const TILES: Tile[] = [
     unit: "µm",
     name: "Hydraulic diameter",
     about:
-      "4·area ÷ wetted perimeter of the rectangular channel — the length scale for Re and the film.",
+      "4·area ÷ wetted perimeter of the rectangular channel, the length scale for Re and the film.",
     reading: () => "The channel's effective diameter.",
   },
   {
@@ -133,7 +133,7 @@ const TILES: Tile[] = [
     about:
       "Lubricating liquid film the advancing meniscus leaves on the wall, δ ≈ 1.34·(H/2)·Ca^⅔.",
     reading: () =>
-      "How much liquid stays between the bubble and the heated wall — a thicker film means weaker wall contact.",
+      "How much liquid stays between the bubble and the heated wall. A thicker film means weaker wall contact.",
   },
   {
     key: "t_ref_ms",
@@ -176,7 +176,7 @@ export function GroupsPanel({
       <div
         className="groups"
         role="group"
-        aria-label="Dimensionless groups — select one for its definition"
+        aria-label="Dimensionless groups, select one for its definition"
       >
         {present.map((tile) => {
           const isSel = selected?.key === tile.key;

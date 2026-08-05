@@ -280,7 +280,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
             }}
           >
             Delete <b>{runDisplayName(selected, datasetLabels)}</b> and
-            everything under <code>outputs/{selected.id}</code> — checkpoint,
+            everything under <code>outputs/{selected.id}</code>: checkpoint,
             figures, video and metrics.
           </ConfirmDeleteDialog>
         )}

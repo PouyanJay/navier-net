@@ -639,7 +639,7 @@ describe("results routing", () => {
     expect(
       await screen.findByText(/nose-speed agreement/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/mass closure — open/i)).toBeInTheDocument();
+    expect(screen.getByText(/mass closure · open/i)).toBeInTheDocument();
     // Group tiles from the condition's own groups endpoint.
     expect(await screen.findByText("320")).toBeInTheDocument();
 
