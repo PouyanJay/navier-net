@@ -789,6 +789,12 @@ export const api = {
     ),
   deleteProject: (id: string) =>
     send<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`, "DELETE"),
+  /** Remove one series from a project; unshared data cascades away with it. */
+  removeSeries: (projectId: string, datasetId: string) =>
+    send<ProjectSummary>(
+      `/api/projects/${encodeURIComponent(projectId)}/datasets/${encodeURIComponent(datasetId)}`,
+      "DELETE",
+    ),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),

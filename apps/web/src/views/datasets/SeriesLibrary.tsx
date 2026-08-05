@@ -1,16 +1,18 @@
 import { useState, type ReactNode } from "react";
 
-import { Button, Callout, Chip } from "../../components";
+import { Button, Callout, ConfirmDeleteDialog } from "../../components";
 import {
-  ConditionsIcon,
+  DeleteIcon,
+  EditIcon,
   FluidIcon,
   FlowIcon,
   GeometryIcon,
   HugeiconsIcon,
-  MenuOpenIcon,
   SeriesIcon,
   ThermalIcon,
+  UploadIcon,
 } from "../../components/icons";
+import { api } from "../../lib/api";
 import type {
   ConditionsUpdate,
   DatasetDetail,
@@ -118,29 +120,6 @@ const DOMAINS: Domain[] = [
   },
 ];
 
-/**
- * What the rail can honestly say about the saved conditions.
- *
- * The mockup reads "saved · 2 min ago", but nothing in the API records when a
- * series was last written, so a relative time here would be invented. What is
- * real, and more useful at this spot, is whether the values on screen are the
- * ones the tensors were actually built from.
- */
-function savedState(detail: DatasetDetail): string {
-  if (!detail.conditions_set) return "not set";
-  if (detail.processed && !detail.conditions_applied)
-    return "saved · not built";
-  return "saved";
-}
-
-function seriesChip(summary: DatasetSummary, trained: boolean) {
-  if (trained) return <Chip tone="green">trained</Chip>;
-  if (!summary.conditions_set)
-    return <Chip tone="amber">needs conditions</Chip>;
-  if (summary.processed) return <Chip tone="green">tensors ready</Chip>;
-  return <Chip>uploaded</Chip>;
-}
-
 function seriesMeta(summary: DatasetSummary): string {
   const parts = [`${summary.n_frames}`];
   if (summary.frame_px) {
@@ -213,6 +192,7 @@ export function SeriesLibrary({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
   const [conditionsShown, setConditionsShown] = useState(true);
+  const [removing, setRemoving] = useState<DatasetSummary | null>(null);
   const trained = detail != null && trainedIds.has(detail.id);
   const unset = detail != null && !detail.conditions_set;
 
@@ -238,35 +218,61 @@ export function SeriesLibrary({
               className={isSelected ? "scard sel" : "scard"}
               aria-label={`${seriesName(summary)} series`}
             >
-              <button
-                type="button"
-                className="scard-hd"
-                aria-current={isSelected || undefined}
-                aria-expanded={showsConditions}
-                title={summary.label ? `series id: ${summary.id}` : undefined}
-                onClick={() => {
-                  // Selecting a series opens it; re-clicking the selected one
-                  // folds its conditions without deselecting — the canvas
-                  // beside the rail always has exactly one series in view.
-                  if (isSelected) setConditionsShown(!conditionsShown);
-                  else {
-                    setConditionsShown(true);
-                    onSelect(summary.id);
-                  }
-                }}
-              >
-                <span className="scard-ic" aria-hidden="true">
-                  <HugeiconsIcon icon={SeriesIcon} size={16} />
-                </span>
-                <span className="scard-m">
-                  <b>{seriesName(summary)}</b>
-                  <span className="mono">{seriesMeta(summary)}</span>
-                </span>
-                {seriesChip(summary, trainedIds.has(summary.id))}
-                <span className="dcard-chev" aria-hidden="true">
-                  <HugeiconsIcon icon={MenuOpenIcon} size={13} />
-                </span>
-              </button>
+              <div className="scard-hd">
+                <button
+                  type="button"
+                  className="scard-sel"
+                  aria-current={isSelected || undefined}
+                  aria-expanded={showsConditions}
+                  title={summary.label ? `series id: ${summary.id}` : undefined}
+                  onClick={() => {
+                    // Selecting a series opens it; re-clicking the selected
+                    // one folds its conditions without deselecting — the
+                    // canvas always has exactly one series in view.
+                    if (isSelected) setConditionsShown(!conditionsShown);
+                    else {
+                      setConditionsShown(true);
+                      onSelect(summary.id);
+                    }
+                  }}
+                >
+                  <span className="scard-ic" aria-hidden="true">
+                    <HugeiconsIcon icon={SeriesIcon} size={18} />
+                  </span>
+                  <span className="scard-m">
+                    <b>{seriesName(summary)}</b>
+                    <span className="mono">{seriesMeta(summary)}</span>
+                  </span>
+                </button>
+                {/* Per-series actions, not a state chip: trained/ready already
+                    reads on the canvas header, so the card carries what you
+                    can DO with the series instead of repeating it. */}
+                <button
+                  type="button"
+                  className="scard-act"
+                  aria-label={`Edit ${seriesName(summary)} conditions`}
+                  title={`Edit ${seriesName(summary)} conditions`}
+                  onClick={() => {
+                    if (!isSelected) onSelect(summary.id);
+                    setEditing(true);
+                  }}
+                >
+                  <HugeiconsIcon icon={EditIcon} size={14} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="scard-act danger"
+                  aria-label={`Delete ${seriesName(summary)}`}
+                  title={`Delete ${seriesName(summary)}`}
+                  onClick={() => setRemoving(summary)}
+                >
+                  <HugeiconsIcon
+                    icon={DeleteIcon}
+                    size={14}
+                    aria-hidden="true"
+                  />
+                </button>
+              </div>
 
               {showsConditions && detail && detail.id === summary.id && (
                 <div className="scard-body">
@@ -328,6 +334,25 @@ export function SeriesLibrary({
           }}
         />
       )}
+      {removing && (
+        <ConfirmDeleteDialog
+          title="Delete series"
+          confirmLabel="Delete series"
+          onClose={() => setRemoving(null)}
+          onConfirm={async () => {
+            const updated = await api.removeSeries(project.id, removing.id);
+            onProjectChanged(updated);
+            if (removing.id === selected) {
+              const rest = series.filter((s) => s.id !== removing.id);
+              if (rest[0]) onSelect(rest[0].id);
+            }
+            setRemoving(null);
+          }}
+        >
+          Delete <b>{seriesName(removing)}</b> from this project? If no other
+          project uses it, its frames, tensors and runs are deleted with it.
+        </ConfirmDeleteDialog>
+      )}
       {editing && detail && detail.id === selected && (
         <EditConditionsModal
           detail={detail}
@@ -337,29 +362,26 @@ export function SeriesLibrary({
         />
       )}
 
-      {/* Upload sinks to the foot of the rail, just above the action bar:
-          growing the library is the last thing in reading order, after the
-          series that exist and the conditions of the one selected. */}
-      <button
-        type="button"
-        className="addds addds-foot"
-        onClick={() => setAdding(true)}
-      >
-        + Upload new series · TIFF frames
-      </button>
-
-      {/* The shell's own action bar (see .aside-actions): the way out is in
-          the same place whatever series is selected and whatever cards are
-          open. Missing conditions rename the edit to what it actually is. */}
-      {detail && detail.id === selected && (
-        <div className="aside-actions ds-ft">
-          <span className="ds-ft-state mono">{savedState(detail)}</span>
-          <Button variant="primary" onClick={() => setEditing(true)}>
-            <HugeiconsIcon icon={ConditionsIcon} size={14} aria-hidden="true" />
-            {unset ? "Set conditions" : "Edit conditions"}
-          </Button>
-        </div>
-      )}
+      {/* The shell's own action bar (see .aside-actions): one primary action,
+          in a place that never moves. Editing lives on each series card's own
+          pencil, so the bar carries the action that grows the library — and
+          the state beside it counts what that action changes. The old "saved"
+          readout described the edit button this bar no longer holds; its
+          useful states moved next to their objects (the re-preprocess callout,
+          the amber "not set" bands). */}
+      <div className="aside-actions ds-ft">
+        <span className="ds-ft-state mono">
+          {series.length === 0
+            ? "no series yet"
+            : series.length === 1
+              ? "1 series"
+              : `${series.length} series`}
+        </span>
+        <Button variant="primary" onClick={() => setAdding(true)}>
+          <HugeiconsIcon icon={UploadIcon} size={14} aria-hidden="true" />
+          Upload new series
+        </Button>
+      </div>
     </>
   );
 }

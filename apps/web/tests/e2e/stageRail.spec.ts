@@ -36,7 +36,7 @@ const IN_THE_RAIL: ReadonlyArray<{
   {
     stage: null,
     name: "Datasets & conditions",
-    controls: ["Edit conditions"],
+    controls: ["Upload new series"],
   },
   {
     stage: "Physics & model",

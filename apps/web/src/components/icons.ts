@@ -35,6 +35,8 @@ export { InformationCircleIcon as InfoIcon } from "@hugeicons/core-free-icons";
 export { Alert02Icon as WarningIcon } from "@hugeicons/core-free-icons";
 export { AlertCircleIcon as ErrorIcon } from "@hugeicons/core-free-icons";
 export { Delete02Icon as DeleteIcon } from "@hugeicons/core-free-icons";
+export { PencilEdit02Icon as EditIcon } from "@hugeicons/core-free-icons";
+export { Upload04Icon as UploadIcon } from "@hugeicons/core-free-icons";
 export { Refresh01Icon as RerunIcon } from "@hugeicons/core-free-icons";
 export { FloppyDiskIcon as SaveIcon } from "@hugeicons/core-free-icons";
 /** The recorded sheet of values behind a series, opened for editing. */
@@ -56,6 +58,6 @@ export { DropletIcon as FluidIcon } from "@hugeicons/core-free-icons";
 export { RulerIcon as GeometryIcon } from "@hugeicons/core-free-icons";
 export { ThermometerWarmIcon as ThermalIcon } from "@hugeicons/core-free-icons";
 export { FastWindIcon as FlowIcon } from "@hugeicons/core-free-icons";
-/** One acquisition's stack of frames, on its row in the series library: a
-   photo, since the frames ARE images, not developed film. */
-export { Image02Icon as SeriesIcon } from "@hugeicons/core-free-icons";
+/** One acquisition on its card in the series library: a dataset, so the
+   glyph says "data", not "picture". */
+export { Database01Icon as SeriesIcon } from "@hugeicons/core-free-icons";

@@ -377,7 +377,7 @@ describe("DatasetsView inside the real shell", () => {
       within(rail).getByRole("button", { name: /Upload new series/ }),
     ).toBeInTheDocument();
     expect(
-      within(rail).getByRole("button", { name: /sample/ }),
+      within(rail).getByRole("button", { name: /sample 3 ×/ }),
     ).toBeInTheDocument();
   });
 
@@ -388,7 +388,7 @@ describe("DatasetsView inside the real shell", () => {
     renderInShell();
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = await screen.findByRole("dialog", {
       name: /Edit .*conditions/,
@@ -420,7 +420,9 @@ describe("DatasetsView", () => {
     expect(
       await screen.findByRole("button", { name: /Upload new series/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /sample/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /sample 3 ×/ }),
+    ).toBeInTheDocument();
     expect(
       await screen.findByText(/Image sequence · sample/),
     ).toBeInTheDocument();
@@ -498,7 +500,7 @@ describe("DatasetsView", () => {
 
     // Open the editor from the read-only conditions summary.
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -529,7 +531,7 @@ describe("DatasetsView", () => {
     expect((await screen.findAllByText("sample")).length).toBeGreaterThan(0);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -564,7 +566,7 @@ describe("DatasetsView", () => {
 
     // Give it a label first.
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     fireEvent.change(
       within(await screen.findByRole("dialog")).getByLabelText("Display name"),
@@ -577,7 +579,7 @@ describe("DatasetsView", () => {
 
     // Re-open and blank the field to clear it.
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     fireEvent.change(
       within(await screen.findByRole("dialog")).getByLabelText("Display name"),
@@ -600,7 +602,7 @@ describe("DatasetsView", () => {
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(await screen.findByRole("dialog"));
     fireEvent.change(dialog.getByLabelText("Display name"), {
@@ -620,7 +622,7 @@ describe("DatasetsView", () => {
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -649,7 +651,7 @@ describe("DatasetsView", () => {
 
     // A baked edit → stale banner → re-preprocess; polling settles at once.
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -673,7 +675,7 @@ describe("DatasetsView", () => {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -692,7 +694,7 @@ describe("DatasetsView", () => {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -709,7 +711,7 @@ describe("DatasetsView", () => {
     const calls = mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = await screen.findByRole("dialog", {
       name: /Edit .*conditions/,
@@ -745,7 +747,7 @@ describe("DatasetsView", () => {
     );
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -773,7 +775,7 @@ describe("DatasetsView", () => {
     );
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -899,7 +901,7 @@ describe("DatasetsView", () => {
     );
     // The refreshed library shows the new series without a reload.
     expect(
-      await screen.findByRole("button", { name: /mid_T/ }),
+      await screen.findByRole("button", { name: /mid_T 5 ×/ }),
     ).toBeInTheDocument();
   });
 
@@ -1017,15 +1019,22 @@ describe("DatasetsView with several series", () => {
 
     // Both project series are listed; the foreign dataset is not.
     expect(
-      await screen.findByRole("button", { name: /sample/ }),
+      await screen.findByRole("button", { name: /sample 3 ×/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /mid_T/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /mid_T 2 ×/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("foreign")).not.toBeInTheDocument();
-    // Per-series chips are independent: processed+conditions vs bare upload.
-    expect(screen.getByText("tensors ready")).toBeInTheDocument();
-    expect(screen.getByText("needs conditions")).toBeInTheDocument();
+    // State chips left the cards — the canvas header carries trained/ready —
+    // and every series carries its own actions instead.
+    expect(
+      screen.getByRole("button", { name: "Edit mid_T conditions" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete sample" }),
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /mid_T/ }));
+    fireEvent.click(screen.getByRole("button", { name: /mid_T 2 ×/ }));
     expect(
       await screen.findByText(/Image sequence · mid_T/),
     ).toBeInTheDocument();

@@ -250,7 +250,7 @@ test("the default button is a wash, not an outline (DESIGN_SYSTEM §8.1)", async
   await page.getByRole("button", { name: /^Open/ }).first().click();
   await page.getByLabel("Preprocessing check").waitFor();
 
-  const edit = page.getByRole("button", { name: /Edit conditions/ });
+  const edit = page.getByRole("button", { name: "Upload new series" });
   const css = await edit.evaluate((el) => {
     const s = getComputedStyle(el);
     return {

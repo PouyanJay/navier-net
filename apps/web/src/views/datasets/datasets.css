@@ -33,11 +33,23 @@
 .scard.sel {
   border-color: color-mix(in srgb, var(--acc) 40%, transparent);
 }
+/* Selection is the wide button; the per-series actions sit beside it as
+   siblings, since a button cannot hold buttons. */
 .scard-hd {
   display: flex;
   align-items: center;
+  gap: var(--s1);
+  padding-right: var(--s2);
+}
+.scard.sel .scard-hd {
+  background: var(--accsoft);
+}
+.scard-sel {
+  display: flex;
+  align-items: center;
   gap: var(--s3);
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: var(--s3);
   border: 0;
   background: transparent;
@@ -46,8 +58,26 @@
   text-align: left;
   cursor: pointer;
 }
-.scard.sel .scard-hd {
-  background: var(--accsoft);
+.scard-act {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink3);
+  cursor: pointer;
+}
+.scard-act:hover {
+  background: var(--panel2);
+  color: var(--ink);
+}
+.scard-act.danger:hover {
+  background: var(--redsoft);
+  color: var(--redtext);
 }
 /* Bare glyph — no plate, no border; the card's border is the only box. */
 .scard-ic {
@@ -59,14 +89,8 @@
   color: var(--ink3);
 }
 .scard.sel .scard-ic,
-.scard.sel .scard-hd > .scard-m b,
-.scard.sel > .scard-hd .dcard-chev {
+.scard.sel .scard-m b {
   color: var(--acc);
-}
-/* Only the series card's own chevron: the nested condition cards manage
-   theirs, and this selector reaching them flipped every closed one. */
-.scard.sel > .scard-hd .dcard-chev {
-  transform: rotate(180deg);
 }
 .scard-m {
   flex: 1;
@@ -97,30 +121,7 @@
   border-top: 1px solid var(--line);
 }
 
-/* "+ Upload new series" tile and the no-series empty state */
-/* Full-width and twice the height of a control row: it stands in for the drop
-   target it opens, and a thin strip read as a label rather than a place to
-   put something. */
-.addds {
-  width: 100%;
-  border: 1.5px dashed var(--line-strong);
-  background: var(--panel2);
-  color: var(--ink3);
-  border-radius: var(--rs);
-  padding: var(--s6) var(--s3);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  margin-top: var(--s2);
-  cursor: pointer;
-}
-.addds.addds-foot {
-  margin-top: auto;
-}
-.addds:hover {
-  color: var(--acc);
-  border-color: var(--acc2);
-}
+/* The no-series empty state */
 .addds-form {
   margin-top: var(--s2);
   min-height: 0;
@@ -992,10 +993,6 @@
   grid-auto-flow: column;
   justify-content: space-between;
   gap: var(--s3);
-  /* The upload tile above carries the auto margin that sinks this stack, so
-     the bar keeping its own (from .aside-actions) would split the free space
-     between them and open a gap right here. */
-  margin-top: 0;
 }
 .ds-ft .btn {
   width: auto;

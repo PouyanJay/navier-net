@@ -53,6 +53,26 @@ def update_project(
     return updated
 
 
+@router.delete("/{project_id}/datasets/{dataset}", response_model=ProjectSummary)
+def remove_series(
+    project_id: str, dataset: str, settings: Settings = Depends(get_settings)
+) -> ProjectSummary:
+    """Remove one series from a project. When no other project references it,
+    its runs and its raw and processed data are deleted with it — the same
+    ownership rule as deleting the whole project. Returns the updated project.
+    409 if a training run is live on the series."""
+    try:
+        updated = projects_service.remove_series(settings, project_id, dataset)
+    except ProjectInUseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"series {dataset!r} not found in project {project_id!r}",
+        )
+    return updated
+
+
 @router.delete("/{project_id}", response_model=ProjectSummary)
 def delete_project(
     project_id: str, settings: Settings = Depends(get_settings)

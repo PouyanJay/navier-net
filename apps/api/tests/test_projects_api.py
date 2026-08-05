@@ -261,6 +261,72 @@ def test_delete_is_blocked_while_a_run_is_live_on_owned_data(client, repo_root: 
     assert (repo_root / "data" / "raw" / "sample").is_dir()
 
 
+def test_remove_series_deletes_owned_data_and_updates_the_project(
+    client, sample_processed, repo_root: Path
+):
+    project_id = _materialized_sample_id(client)
+    run = _stage_run(repo_root, "sample_run", "sample")
+    raw = repo_root / "data" / "raw" / "sample"
+    processed = repo_root / "data" / "processed" / "sample"
+    assert raw.is_dir() and processed.is_dir() and run.is_dir()
+
+    r = client.delete(f"/api/projects/{project_id}/datasets/sample")
+    assert r.status_code == 200
+    assert r.json()["datasets"] == []
+
+    # Owned by this project alone, so the series' runs and data cascade away —
+    # but the project itself survives, unlike a whole-project delete.
+    assert not raw.exists()
+    assert not processed.exists()
+    assert not run.exists()
+    assert (repo_root / "projects" / f"{project_id}.json").is_file()
+    # Removing it again finds no membership to remove.
+    assert client.delete(f"/api/projects/{project_id}/datasets/sample").status_code == 404
+
+
+def test_remove_series_keeps_data_shared_with_another_project(client, repo_root: Path):
+    first = client.post("/api/projects", json={"name": "keeper"}).json()
+    second = client.post("/api/projects", json={"name": "leaver"}).json()
+    for project in (first, second):
+        client.patch(f"/api/projects/{project['id']}", json={"datasets": ["sample"]})
+    shared_run = _stage_run(repo_root, "shared_run", "sample")
+
+    r = client.delete(f"/api/projects/{second['id']}/datasets/sample")
+    assert r.status_code == 200
+    assert r.json()["datasets"] == []
+
+    # Membership went; the series, its data, and its run stay for the project
+    # still using them.
+    assert (repo_root / "data" / "raw" / "sample").is_dir()
+    assert shared_run.is_dir()
+    kept = client.get(f"/api/projects/{first['id']}").json()
+    assert kept["datasets"] == ["sample"]
+
+
+def test_remove_series_is_blocked_while_a_run_is_live_on_it(client, repo_root: Path):
+    from naviernet_api.services import run_manager
+
+    project_id = _materialized_sample_id(client)
+    run = _stage_run(repo_root, "sample_run", "sample")
+    run_manager._jobs["live_sample"] = run_manager._RunJob(dataset="sample")
+
+    r = client.delete(f"/api/projects/{project_id}/datasets/sample")
+    assert r.status_code == 409
+    assert "sample" in r.json()["detail"]
+    # Nothing was removed, membership included: the guard fires first.
+    assert run.is_dir()
+    assert (repo_root / "data" / "raw" / "sample").is_dir()
+    assert client.get(f"/api/projects/{project_id}").json()["datasets"] == ["sample"]
+
+
+def test_remove_series_unknown_membership_is_404(client):
+    project_id = _materialized_sample_id(client)
+    assert (
+        client.delete(f"/api/projects/{project_id}/datasets/never_uploaded").status_code == 404
+    )
+    assert client.delete(f"/api/projects/{'0' * 32}/datasets/sample").status_code == 404
+
+
 def test_delete_unknown_or_malformed_id_is_404(client):
     assert client.delete(f"/api/projects/{'0' * 32}").status_code == 404
     # Not uuid4().hex-shaped: rejected before it can touch the filesystem.
