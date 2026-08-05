@@ -1266,3 +1266,88 @@ text.chart-axis-title {
     animation: none;
   }
 }
+
+/* ── Aside band ─────────────────────────────────────────────────────────
+   One labelled section of a stage's rail: a bare icon-and-label separator over
+   its rows, no plate and no fold. The label takes the chrome accent so the
+   sections read apart without a box around each one. Shared by the Physics and
+   Solver asides, which is why it lives here and not in a view's stylesheet. */
+.band + .band {
+  margin-top: var(--s5);
+}
+.band-hd {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s2);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.band-hd svg {
+  flex: none;
+}
+.band-hint {
+  margin-left: auto;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  font-size: 9.5px;
+  color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A band whose values depart from what a preset derived says so in its hint. */
+.band-hint .over {
+  color: var(--holdout);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.band-hint .over button {
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* Collapsible: the whole header is the disclosure control, so the hit area is
+   the full width of the rail rather than a 13px chevron. */
+.band-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  min-height: 26px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.band-toggle:hover .band-hint {
+  color: var(--text-soft);
+}
+.band-chev {
+  flex: none;
+  color: var(--faint);
+  transition: transform 150ms var(--ease);
+}
+.band.folded .band-chev {
+  transform: rotate(-90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .band-chev {
+    transition: none;
+  }
+}

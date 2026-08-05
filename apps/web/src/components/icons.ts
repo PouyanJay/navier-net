@@ -62,6 +62,14 @@ export { FastWindIcon as FlowIcon } from "@hugeicons/core-free-icons";
    glyph says "data", not "picture". */
 export { Database01Icon as SeriesIcon } from "@hugeicons/core-free-icons";
 
+/* The Solver stage's four config bands: what the run trains on, how the two
+   phases meet, the objective that scores it, and the optimizer that walks it.
+   The interface glyph is two shapes overlapping — the thing the treatment
+   chooses is what happens where they meet. */
+export { BlendIcon as InterfaceIcon } from "@hugeicons/core-free-icons";
+export { BalanceScaleIcon as ObjectiveIcon } from "@hugeicons/core-free-icons";
+export { PreferenceHorizontalIcon as TuningIcon } from "@hugeicons/core-free-icons";
+
 /* The Physics stage's three config bands: the conservation laws that always
    train, the physics you may add on top, and the capacity that carries it. */
 export { LockIcon as LockedIcon } from "@hugeicons/core-free-icons";
