@@ -1,5 +1,6 @@
 import "./components.css";
 
+export { BrandMark, vorticityPoints, MARK_VIEWBOX } from "./BrandMark";
 export { Button } from "./Button";
 export { Callout, type CalloutTone } from "./Callout";
 export { Chip } from "./Chip";

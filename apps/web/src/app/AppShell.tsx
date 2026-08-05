@@ -12,6 +12,7 @@ import {
   CommandPalette,
   type PaletteAction,
 } from "../components/CommandPalette";
+import { BrandMark } from "../components";
 import { useToast } from "../components/Toast";
 import type { RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
@@ -404,9 +405,11 @@ export function AppShell({
     >
       <header className="topbar">
         <div className="brandblock">
-          {/* One transparent mark; the brand blue reads on both the light and
-              dark top bar, so it doesn't need a per-theme swap. */}
-          <img className="mark" src="/brand/navnet-mark.svg" alt="" />
+          {/* The mark takes its ink from the chrome, so there is no per-theme
+              swap; it spins only while the platform is actually working. */}
+          <span className="mark">
+            <BrandMark working={activeRun?.state === "running"} />
+          </span>
           <div>
             NavierNet
             <small>PINN Solver Platform</small>

@@ -979,3 +979,33 @@ text.chart-axis-title {
   font-weight: 600;
   padding: 3px 10px;
 }
+
+/* ── Brand mark ─────────────────────────────────────────────────────────
+   The vortex. It inherits its ink from whatever it sits in, so the chrome,
+   a favicon and a disabled state all get the right colour for free. */
+.brandmark {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.brandmark-spiral {
+  transform-origin: 50% 50%;
+}
+
+/* The working state, reserved for real work: a run training, a job preprocessing.
+   One rotation is the whole animation -- the mark reads as a vortex standing
+   still, so the spin adds motion rather than supplying the meaning. */
+.brandmark.working .brandmark-spiral {
+  animation: brandmark-spin 9s linear infinite;
+}
+@keyframes brandmark-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brandmark.working .brandmark-spiral {
+    animation: none;
+  }
+}

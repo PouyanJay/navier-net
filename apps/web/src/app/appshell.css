@@ -38,12 +38,14 @@
   font-size: 15px;
   letter-spacing: -0.01em;
 }
-/* 40px is the logo kit's minimum size for the full mark (mesh legibility). */
+/* The mark is generated geometry, so it stays legible well below the old
+   traced kit's 40px floor; 30px sits it correctly against the 15px wordmark. */
 .brandblock .mark {
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
   flex: none;
-  object-fit: contain;
+  display: block;
+  color: var(--acc);
 }
 .brandblock small {
   display: block;
