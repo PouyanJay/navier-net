@@ -48,3 +48,14 @@ export { Tick02Icon as ChosenIcon } from "@hugeicons/core-free-icons";
 /* Chart actions: take a copy of what is on screen, and open it larger. */
 export { Download04Icon as DownloadIcon } from "@hugeicons/core-free-icons";
 export { Maximize01Icon as ExpandIcon } from "@hugeicons/core-free-icons";
+
+/* The four condition domains on the datasets rail, each named for the physics
+   it feeds: the working fluid, the channel's shape, the heat driving boiling,
+   and the flow that carries it past the camera. */
+export { DropletIcon as FluidIcon } from "@hugeicons/core-free-icons";
+export { RulerIcon as GeometryIcon } from "@hugeicons/core-free-icons";
+export { ThermometerWarmIcon as ThermalIcon } from "@hugeicons/core-free-icons";
+export { FastWindIcon as FlowIcon } from "@hugeicons/core-free-icons";
+/** One acquisition's stack of frames, on its row in the series library: a
+   photo, since the frames ARE images, not developed film. */
+export { Image02Icon as SeriesIcon } from "@hugeicons/core-free-icons";

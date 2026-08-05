@@ -1,11 +1,21 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
-import { Button, Callout, Chip, DL, type KV } from "../../components";
-import { ConditionsIcon, HugeiconsIcon } from "../../components/icons";
+import { Button, Callout, Chip } from "../../components";
+import {
+  ConditionsIcon,
+  FluidIcon,
+  FlowIcon,
+  GeometryIcon,
+  HugeiconsIcon,
+  MenuOpenIcon,
+  SeriesIcon,
+  ThermalIcon,
+} from "../../components/icons";
 import type {
   ConditionsUpdate,
   DatasetDetail,
   DatasetSummary,
+  OperatingConditions,
   ProjectSummary,
 } from "../../lib/api";
 import { seriesName } from "../../lib/series";
@@ -17,7 +27,7 @@ interface SeriesLibraryProps {
   series: DatasetSummary[];
   trainedIds: Set<string>;
   selected: string | null;
-  /** The selected series' detail, for the read-only conditions summary. */
+  /** The selected series' detail, for the conditions the cards summarise. */
   detail: DatasetDetail | null;
   onSelect: (id: string) => void;
   /** Called with the updated project after a new series is uploaded+attached. */
@@ -32,54 +42,97 @@ interface SeriesLibraryProps {
   preprocessing: boolean;
 }
 
-/**
- * The series' conditions as read-only summary rows (edited via the
- * Edit-conditions modal). The unit is carried in the label (e.g. "Frame interval
- * (ms)") so the values stay a clean column of numbers.
- *
- * Banded by what each condition FEEDS rather than listed flat: geometry drives
- * Bond and the Hele-Shaw number, thermal drives Jakob and Péclet, flow and
- * capture set the reference velocity every other group is scaled by. Grouping
- * the inputs the way the dimensionless outputs derive from them makes the panel
- * explain the model instead of just collecting values.
- */
-function conditionItems(detail: DatasetDetail): KV[] {
-  const c = detail.conditions;
-  return [
-    { group: "Fluid", label: "Working fluid", value: c.fluid },
-    { group: "Fluid", label: "Saturation temp (°C)", value: c.T_sat_C },
-    {
-      group: "Geometry",
-      label: "Channel width (µm)",
-      value: c.channel_width_um,
-    },
-    {
-      group: "Geometry",
-      label: "Channel height (µm)",
-      value: c.channel_height_um,
-    },
-    {
-      group: "Thermal",
-      label: "Wall heat flux (W·cm⁻²)",
-      value: c.q_wall_W_cm2,
-    },
-    {
-      group: "Flow & capture",
-      label: "Flow rate (mL·hr⁻¹)",
-      value: c.flow_rate_mL_hr,
-    },
-    {
-      group: "Flow & capture",
-      label: "Reference velocity (m·s⁻¹)",
-      value: c.U_ref_m_s ?? "—",
-    },
-    {
-      group: "Flow & capture",
-      label: "Frame interval (ms)",
-      value: c.dt_frame_ms,
-    },
-  ];
+/** One value with its quiet unit suffix, for a card's rows. */
+interface Row {
+  label: string;
+  value: ReactNode;
+  unit?: string;
+  /** Computed from the rows above it, so it is read, never edited. */
+  derived?: boolean;
 }
+
+interface Domain {
+  id: string;
+  title: string;
+  icon: typeof FluidIcon;
+  /** One line honest enough to stand in for the rows when the card is shut. */
+  summary: (c: OperatingConditions) => string;
+  rows: (c: OperatingConditions) => Row[];
+}
+
+/** 4·area over wetted perimeter of the rectangular channel, in µm. */
+function hydraulicDiameter(c: OperatingConditions): number {
+  return Math.round(
+    (2 * c.channel_width_um * c.channel_height_um) /
+      (c.channel_width_um + c.channel_height_um),
+  );
+}
+
+/**
+ * The conditions banded by what each one FEEDS rather than listed flat:
+ * geometry drives Bond and the Hele-Shaw number, thermal drives Jakob and
+ * Péclet, flow and capture set the reference velocity every other group is
+ * scaled by. Each band is one card, its summary carrying the values so the
+ * closed rail still reads.
+ */
+const DOMAINS: Domain[] = [
+  {
+    id: "fluid",
+    title: "Fluid",
+    icon: FluidIcon,
+    summary: (c) => `${c.fluid} · T_sat ${c.T_sat_C} °C`,
+    rows: (c) => [
+      { label: "Working fluid", value: c.fluid },
+      { label: "Saturation temp", value: c.T_sat_C, unit: "°C" },
+    ],
+  },
+  {
+    id: "geometry",
+    title: "Geometry",
+    icon: GeometryIcon,
+    summary: (c) =>
+      `${c.channel_width_um} × ${c.channel_height_um} µm · D_h ${hydraulicDiameter(c)} µm`,
+    rows: (c) => [
+      { label: "Channel width", value: c.channel_width_um, unit: "µm" },
+      { label: "Channel height", value: c.channel_height_um, unit: "µm" },
+      {
+        label: "Hydraulic diameter",
+        value: hydraulicDiameter(c),
+        unit: "µm",
+        derived: true,
+      },
+    ],
+  },
+  {
+    id: "thermal",
+    title: "Thermal",
+    icon: ThermalIcon,
+    summary: (c) => `q_wall ${c.q_wall_W_cm2} W·cm⁻²`,
+    rows: (c) => [
+      { label: "Wall heat flux", value: c.q_wall_W_cm2, unit: "W·cm⁻²" },
+    ],
+  },
+  {
+    id: "flow",
+    title: "Flow & capture",
+    icon: FlowIcon,
+    summary: (c) => `${c.flow_rate_mL_hr} mL·hr⁻¹ · Δt ${c.dt_frame_ms} ms`,
+    rows: (c) => [
+      { label: "Flow rate", value: c.flow_rate_mL_hr, unit: "mL·hr⁻¹" },
+      {
+        label: "Reference velocity",
+        value: c.U_ref_m_s ?? "—",
+        unit: c.U_ref_m_s != null ? "m·s⁻¹" : undefined,
+      },
+      { label: "Frame interval", value: c.dt_frame_ms, unit: "ms" },
+    ],
+  },
+];
+
+/* Fluid and Geometry open by default: they are the identity of the rig, the
+   first things checked against a lab notebook, and together they still leave
+   the other two cards' summaries on screen. */
+const OPEN_BY_DEFAULT = ["fluid", "geometry"];
 
 /**
  * What the rail can honestly say about the saved conditions.
@@ -116,11 +169,79 @@ function seriesMeta(summary: DatasetSummary): string {
   return parts.join(" ");
 }
 
-/** The project's uploaded series; select one to edit it, or add another.
+/** One condition domain: closed it is a summary, open it is the rows. */
+function DomainCard({
+  domain,
+  conditions,
+  unset,
+  open,
+  onToggle,
+}: {
+  domain: Domain;
+  conditions: OperatingConditions;
+  unset: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <section
+      className={open ? "dcard open" : "dcard"}
+      aria-label={`${domain.title} conditions`}
+    >
+      <button
+        type="button"
+        className="dcard-hd"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="dcard-ic" aria-hidden="true">
+          <HugeiconsIcon icon={domain.icon} size={15} />
+        </span>
+        <span className="dcard-m">
+          <b>{domain.title}</b>
+          {/* Closed, the summary stands in for the rows, so it goes amber and
+              says so when there is nothing behind it to stand in for. */}
+          <span className={unset ? "mono miss" : "mono"}>
+            {unset ? "not set" : domain.summary(conditions)}
+          </span>
+        </span>
+        <span className="dcard-chev" aria-hidden="true">
+          <HugeiconsIcon icon={MenuOpenIcon} size={13} />
+        </span>
+      </button>
+      {open && !unset && (
+        <dl className="dcard-rows">
+          {domain.rows(conditions).map((row) => (
+            <div
+              key={row.label}
+              className={row.derived ? "drow derived" : "drow"}
+            >
+              <dt>{row.label}</dt>
+              <dd className="mono">
+                {row.value}
+                {row.unit && <em>{row.unit}</em>}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {open && unset && (
+        <p className="dcard-none">
+          Set in the conditions form; nothing is recorded for this series yet.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** The project's uploaded series; select one to read and edit its conditions,
+ * or add another.
  *
  * Rendered as the datasets stage's secondary rail (see `StageAside`), so it
- * brings no frame of its own -- the shell owns the heading, the collapse control
- * and the scrolling. */
+ * brings no frame of its own — the shell owns the heading, the collapse
+ * control and the scrolling. Below the list, the selected series' conditions
+ * read as one card per domain; the cards expand independently, so two bands
+ * can be compared side by side. */
 export function SeriesLibrary({
   project,
   series,
@@ -136,7 +257,19 @@ export function SeriesLibrary({
 }: SeriesLibraryProps) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [openCards, setOpenCards] = useState<ReadonlySet<string>>(
+    () => new Set(OPEN_BY_DEFAULT),
+  );
   const trained = detail != null && trainedIds.has(detail.id);
+  const unset = detail != null && !detail.conditions_set;
+
+  const toggleCard = (id: string) =>
+    setOpenCards((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   return (
     <>
@@ -156,8 +289,10 @@ export function SeriesLibrary({
             aria-current={summary.id === selected || undefined}
             onClick={() => onSelect(summary.id)}
           >
-            <span className="ic mono" aria-hidden="true">
-              TIF
+            {/* A film strip, bare: the tile behind the old "TIF" text badge
+                boxed a glyph that already reads on its own. */}
+            <span className="ic" aria-hidden="true">
+              <HugeiconsIcon icon={SeriesIcon} size={17} />
             </span>
             <span
               className="m"
@@ -175,31 +310,20 @@ export function SeriesLibrary({
       <button type="button" className="addds" onClick={() => setAdding(true)}>
         + Upload new series · TIFF frames
       </button>
-      {adding && (
-        <NewSeriesModal
-          project={project}
-          onClose={() => setAdding(false)}
-          onAttached={(updated, seriesId) => {
-            onProjectChanged(updated);
-            onSelect(seriesId);
-          }}
-        />
-      )}
+
       {detail && detail.id === selected && (
-        <section
-          className="ds-conditions"
-          aria-label={`${detail.id} conditions`}
-        >
-          <div className="ds-conditions-hd">
-            <h3
-              className={detail.label ? undefined : "mono"}
-              title={detail.label ? `series id: ${detail.id}` : undefined}
-            >
-              {seriesName(detail)}
-            </h3>
-            <span className="sub">inputs</span>
-          </div>
-          <DL items={conditionItems(detail)} />
+        <div className="dcards" aria-label={`${detail.id} conditions`}>
+          {DOMAINS.map((domain) => (
+            <DomainCard
+              key={domain.id}
+              domain={domain}
+              conditions={detail.conditions}
+              unset={unset}
+              open={openCards.has(domain.id)}
+              onToggle={() => toggleCard(domain.id)}
+            />
+          ))}
+
           {detail.processed && !detail.conditions_applied && (
             <div className="ds-reprocess">
               <Callout tone="caution" title="Re-preprocess required">
@@ -218,9 +342,19 @@ export function SeriesLibrary({
               </Button>
             </div>
           )}
-        </section>
+        </div>
       )}
 
+      {adding && (
+        <NewSeriesModal
+          project={project}
+          onClose={() => setAdding(false)}
+          onAttached={(updated, seriesId) => {
+            onProjectChanged(updated);
+            onSelect(seriesId);
+          }}
+        />
+      )}
       {editing && detail && detail.id === selected && (
         <EditConditionsModal
           detail={detail}
@@ -229,23 +363,22 @@ export function SeriesLibrary({
           onSaveLabel={onSaveLabel}
         />
       )}
+
       <p className="note lib-note">
         <b>Transfer learning:</b> once two or more series are preprocessed,
         select them together in the Solver to train one model jointly across
         their operating conditions.
       </p>
 
-      {/* The shell's own action bar (see .aside-actions): sticky, frosted, and
-          ruled across the rail, so it stays put however long the list grows and
-          the fields sliding under it do not read through. The state beside the
-          button says whether what is saved is what the tensors were built
-          from. */}
+      {/* The shell's own action bar (see .aside-actions): the way out is in
+          the same place whatever series is selected and whatever cards are
+          open. Missing conditions rename the edit to what it actually is. */}
       {detail && detail.id === selected && (
         <div className="aside-actions ds-ft">
           <span className="ds-ft-state mono">{savedState(detail)}</span>
           <Button variant="primary" onClick={() => setEditing(true)}>
             <HugeiconsIcon icon={ConditionsIcon} size={14} aria-hidden="true" />
-            Edit conditions
+            {unset ? "Set conditions" : "Edit conditions"}
           </Button>
         </div>
       )}

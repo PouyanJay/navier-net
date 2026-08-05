@@ -44,7 +44,7 @@ const DETAIL = {
   id: "sample",
   n_frames: 3,
   processed: false,
-  conditions_set: false,
+  conditions_set: true,
   frame_px: [16, 12] as [number, number],
   has_qc: false,
   holdout_frame: 6,
@@ -206,7 +206,7 @@ function mockApi({
             n_frames: 3,
             processed,
             label,
-            conditions_set: false,
+            conditions_set: true,
             frame_px: [16, 12],
             dt_frame_ms: 0.5,
           },
@@ -436,20 +436,73 @@ describe("DatasetsView", () => {
     expect(await screen.findByText("215.5")).toBeInTheDocument();
   });
 
-  it("shows the selected series' inputs read-only in the library card", async () => {
+  it("reads the selected series' conditions as one card per domain", async () => {
     mockApi();
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // The inputs set in the upload modal are surfaced for the selected series.
-    const inputs = within(
-      await screen.findByRole("region", { name: /sample conditions/ }),
+    // Fluid and Geometry open by default: the identity of the rig, the first
+    // things checked against a lab notebook.
+    const fluid = within(
+      await screen.findByRole("region", { name: "Fluid conditions" }),
     );
-    expect(inputs.getByText("Working fluid")).toBeInTheDocument();
-    expect(inputs.getByText("FC-72")).toBeInTheDocument();
-    // The unit rides in the label, so the value column stays clean numbers.
-    expect(inputs.getByText("Channel height (µm)")).toBeInTheDocument();
-    expect(inputs.getByText("150")).toBeInTheDocument();
-    expect(inputs.getByText("Reference velocity (m·s⁻¹)")).toBeInTheDocument();
+    expect(fluid.getByRole("button")).toHaveAttribute("aria-expanded", "true");
+    expect(fluid.getByText("Working fluid")).toBeInTheDocument();
+    expect(fluid.getByText("FC-72")).toBeInTheDocument();
+
+    const geometry = within(
+      screen.getByRole("region", { name: "Geometry conditions" }),
+    );
+    expect(geometry.getByText("Channel height")).toBeInTheDocument();
+    expect(geometry.getByText("150")).toBeInTheDocument();
+    // Computed from the rows above it: shown, but marked as read-only derived.
+    expect(geometry.getByText("Hydraulic diameter")).toBeInTheDocument();
+    expect(
+      geometry.getByText("Hydraulic diameter").closest(".drow"),
+    ).toHaveClass("derived");
+
+    // Closed cards still read: the summary stands in for the rows.
+    const thermal = within(
+      screen.getByRole("region", { name: "Thermal conditions" }),
+    );
+    expect(thermal.getByRole("button")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(thermal.getByText(/q_wall 2 W·cm⁻²/)).toBeInTheDocument();
+    expect(thermal.queryByText("Wall heat flux")).not.toBeInTheDocument();
+  });
+
+  it("expands cards independently, so two bands compare side by side", async () => {
+    mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    const card = (name: string) => within(screen.getByRole("region", { name }));
+    await screen.findByRole("region", { name: "Fluid conditions" });
+
+    // Opening Thermal leaves the two defaults open — no accordion.
+    fireEvent.click(card("Thermal conditions").getByRole("button"));
+
+    expect(
+      card("Thermal conditions").getByText("Wall heat flux"),
+    ).toBeInTheDocument();
+    expect(card("Fluid conditions").getByRole("button")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(card("Geometry conditions").getByRole("button")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+
+    // And each closes on its own.
+    fireEvent.click(card("Fluid conditions").getByRole("button"));
+    expect(card("Fluid conditions").getByRole("button")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(card("Geometry conditions").getByRole("button")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("edits a cheap condition live, without requiring a re-preprocess", async () => {
@@ -1113,7 +1166,7 @@ describe("DatasetsView preprocess polling", () => {
               id: "sample",
               n_frames: 3,
               processed: done,
-              conditions_set: false,
+              conditions_set: true,
               frame_px: [16, 12],
               dt_frame_ms: 0.5,
             },
