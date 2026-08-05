@@ -76,11 +76,12 @@ export interface Preset {
 
 /** Medium is the exact midpoint of Small and Large on every axis. */
 /** Display metadata for the capacity presets, in the order they are offered. */
-export const PRESET_META: { name: PresetName; label: string; note: string }[] = [
-  { name: "small", label: "Small", note: "fast sanity" },
-  { name: "medium", label: "Medium", note: "balanced" },
-  { name: "large", label: "Large", note: "paper-class" },
-];
+export const PRESET_META: { name: PresetName; label: string; note: string }[] =
+  [
+    { name: "small", label: "Small", note: "fast sanity" },
+    { name: "medium", label: "Medium", note: "balanced" },
+    { name: "large", label: "Large", note: "paper-class" },
+  ];
 
 export const PRESETS: Record<PresetName, Preset> = {
   small: { width: 64, depth: 3, ff: 32, ffScale: 2.0 },

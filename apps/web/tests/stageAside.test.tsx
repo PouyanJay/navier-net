@@ -14,7 +14,8 @@ function shell(children: React.ReactNode) {
         active="datasets"
         onNavigate={vi.fn()}
         activeRun={null}
-        status={{ latestRun: null, projects: 1 }}
+        status={{ projects: 1 }}
+        runCrumb={null}
         project="demo"
         onHome={vi.fn()}
       >
@@ -24,7 +25,7 @@ function shell(children: React.ReactNode) {
   );
 }
 
-const SHELL = () => document.querySelector(".shell")!;
+const SHELL = () => document.querySelector<HTMLElement>(".shell")!;
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
@@ -54,6 +55,31 @@ describe("StageAside", () => {
       "+ Upload new series",
     );
     expect(SHELL()).toHaveAttribute("data-aside", "open");
+  });
+
+  it("sizes the rail to the width the stage asks for", async () => {
+    // A stage whose rows are denser than the default (Physics, Solver) states
+    // its own width. Dropping it silently is invisible until the stage's own
+    // content starts wrapping or overflowing.
+    shell(
+      <StageAside title="Physics & model" width={384}>
+        <p>equations</p>
+      </StageAside>,
+    );
+
+    await screen.findByRole("complementary", { name: "Physics & model" });
+    expect(SHELL().style.getPropertyValue("--stage-aside-w")).toBe("384px");
+  });
+
+  it("leaves the width to the shell when a stage does not ask", async () => {
+    shell(
+      <StageAside title="Series library">
+        <p>series</p>
+      </StageAside>,
+    );
+
+    await screen.findByRole("complementary", { name: "Series library" });
+    expect(SHELL().style.getPropertyValue("--stage-aside-w")).toBe("");
   });
 
   it("folds away and back, and says which it will do", async () => {
@@ -132,7 +158,8 @@ describe("StageAside", () => {
           active="physics"
           onNavigate={vi.fn()}
           activeRun={null}
-          status={{ latestRun: null, projects: 1 }}
+          status={{ projects: 1 }}
+          runCrumb={null}
           project="demo"
           onHome={vi.fn()}
         >

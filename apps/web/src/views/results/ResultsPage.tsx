@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { StageAside } from "../../app/StageAside";
 import { Callout, ConfirmDeleteDialog, Panel } from "../../components";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { useToast } from "../../components/Toast";
@@ -31,6 +32,14 @@ import { RunHeader } from "./RunHeader";
 import { useRunDetail } from "./useRunDetail";
 import { useValidation } from "./useValidation";
 import "./results.css";
+
+/** The run rows carry a name, meta line and a headline metric, so this stage's
+ * aside takes a little more than the shell's default. */
+const ASIDE = {
+  title: "Results & validation",
+  subtitle: "runs · outputs",
+  width: 403,
+};
 
 /** How many further optimisation steps a header "Resume training" asks for. */
 const RESUME_EXTRA_STEPS = 1500;
@@ -191,8 +200,8 @@ export function ResultsPage({ project }: ResultsPageProps) {
     );
 
   return (
-    <div className="resx">
-      <div className="res-left">
+    <>
+      <StageAside {...ASIDE}>
         <Panel title="Runs" subtitle="this project · outputs/">
           {runs === null ? (
             <p className="res-quiet">Loading runs…</p>
@@ -241,7 +250,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
             </div>
           )}
         </Panel>
-      </div>
+      </StageAside>
 
       <div className="res-main">
         {selected && (
@@ -271,7 +280,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
             }}
           >
             Delete <b>{runDisplayName(selected, datasetLabels)}</b> and
-            everything under <code>outputs/{selected.id}</code> — checkpoint,
+            everything under <code>outputs/{selected.id}</code>: checkpoint,
             figures, video and metrics.
           </ConfirmDeleteDialog>
         )}
@@ -380,6 +389,6 @@ export function ResultsPage({ project }: ResultsPageProps) {
           </ErrorBoundary>
         </section>
       </div>
-    </div>
+    </>
   );
 }

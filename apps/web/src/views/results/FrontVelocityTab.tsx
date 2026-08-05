@@ -196,7 +196,7 @@ export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
     return (
       <Panel title="Front velocity" subtitle="how fast the interface moved">
         <p className="state-note">
-          No front kinematics recorded for this run — re-run the evaluate stage
+          No front kinematics recorded for this run. Re-run the evaluate stage
           to measure them.
         </p>
       </Panel>
@@ -222,7 +222,7 @@ export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
           <b>Figure 1.</b> The reconstruction's speed is continuous; each
           measured circle is one finite difference between consecutive camera
           frames, plotted at the midpoint of the interval it measures. An
-          interval spanning a held-out frame is drawn apart and labelled —
+          interval spanning a held-out frame is drawn apart and labelled:
           nothing trained on it, so it is the model's rate where it was never
           shown the answer.
         </p>
@@ -244,7 +244,7 @@ export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
           <p className="state-note">
             This run was trained without an explicit front
             (model.front_geometry), so there is no parameterised interface to
-            read a per-point speed from and no apex to track — only the nose,
+            read a per-point speed from and no apex to track, only the nose,
             above, which is measured off the predicted mask. Enable Front
             geometry in the Solver to measure the rest.
           </p>

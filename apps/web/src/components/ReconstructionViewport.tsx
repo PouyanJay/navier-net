@@ -146,8 +146,8 @@ export function ReconstructionViewport({ data }: ViewportProps) {
             aria-disabled={arrows == null}
             aria-label={
               arrows == null
-                ? "velocity — unavailable: this run has no explicit front (model.front_geometry), so it has no per-point interface velocity"
-                : "velocity — normal component of the front's motion; the tangential component is unobservable from masks"
+                ? "velocity unavailable: this run has no explicit front (model.front_geometry), so it has no per-point interface velocity"
+                : "velocity: the normal component of the front's motion; the tangential component is unobservable from masks"
             }
             onClick={() => arrows && setShowVelocity((on) => !on)}
           >

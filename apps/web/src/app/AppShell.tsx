@@ -12,8 +12,22 @@ import {
   CommandPalette,
   type PaletteAction,
 } from "../components/CommandPalette";
+import { BrandMark } from "../components";
+import {
+  ExportReportIcon,
+  HugeiconsIcon,
+  ShareIcon,
+  SourceIcon,
+  StageDatasetsIcon,
+  StagePhysicsIcon,
+  StageResultsIcon,
+  StageSolverIcon,
+  SystemIcon,
+  ThemeDarkIcon,
+  ThemeLightIcon,
+} from "../components/icons";
 import { useToast } from "../components/Toast";
-import type { RunJobStatus } from "../lib/api";
+import { api, type RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
 import {
   AsideSlotProvider,
@@ -28,6 +42,9 @@ export interface NavItem {
   sub: string;
   /** Pipeline stage number; Projects is the workspace home, not a stage. */
   stage?: number;
+  /** The stage's glyph in the rail. Sequence is carried by the connector line
+   * and the reading order, so the marker is free to say what the stage IS. */
+  icon?: typeof StageDatasetsIcon;
 }
 
 /** The platform's top-level navigation, in the mockup's order. */
@@ -38,27 +55,33 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Datasets & conditions",
     sub: "frames · calibration",
     stage: 1,
+    icon: StageDatasetsIcon,
   },
   {
     id: "physics",
     label: "Physics & model",
     sub: "equations · architecture",
     stage: 2,
+    icon: StagePhysicsIcon,
   },
-  { id: "solver", label: "Solver", sub: "configure & run", stage: 3 },
+  {
+    id: "solver",
+    label: "Solver",
+    sub: "configure & run",
+    stage: 3,
+    icon: StageSolverIcon,
+  },
   {
     id: "results",
     label: "Results & validation",
     sub: "fields · figures · video",
     stage: 4,
+    icon: StageResultsIcon,
   },
 ];
 
 /** What the shell knows about the platform's real state (drives chrome). */
 export interface PlatformStatus {
-  /** Latest trained run, for the sidebar's run metadata. `name` is the
-   * display name (dataset-named legacy runs follow their series' label). */
-  latestRun: { id: string; name: string; steps: number | null } | null;
   /** Number of projects in the workspace (home-mode chip). */
   projects: number;
 }
@@ -68,50 +91,118 @@ interface AppShellProps {
   onNavigate: (id: string) => void;
   activeRun: RunJobStatus | null;
   status: PlatformStatus;
+  /**
+   * The run currently open, or null on every stage that is not looking at one.
+   * Read from the URL by the caller, so the breadcrumb names the run in view
+   * rather than whichever run happens to be newest.
+   */
+  runCrumb: { id: string; name: string } | null;
   /** Open project id, or null on the workspace home. Drives the rail mode. */
   project: string | null;
   onHome: () => void;
   children: ReactNode;
 }
 
-function ThemeIcon({ theme }: { theme: Theme }) {
-  return theme === "dark" ? (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M13 9.5A5.5 5.5 0 0 1 6.5 3 5.5 5.5 0 1 0 13 9.5Z"
-        fill="currentColor"
-      />
-    </svg>
-  ) : (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="8" cy="8" r="3.2" fill="currentColor" />
-      {Array.from({ length: 8 }, (_, i) => {
-        const a = (i * Math.PI) / 4;
-        return (
-          <line
-            key={i}
-            x1={8 + Math.cos(a) * 5}
-            y1={8 + Math.sin(a) * 5}
-            x2={8 + Math.cos(a) * 6.6}
-            y2={8 + Math.sin(a) * 6.6}
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-          />
-        );
-      })}
-    </svg>
+/**
+ * A topbar action: the glyph alone, no border and no fill.
+ *
+ * The label lives on the button for assistive tech and in a native tooltip for
+ * pointer users, so the chrome stays quiet without the action becoming a guess.
+ */
+function IconAction({
+  icon,
+  label,
+  onClick,
+  href,
+  unavailable,
+}: {
+  icon: typeof ShareIcon;
+  label: string;
+  onClick?: () => void;
+  href?: string;
+  /**
+   * Why this action cannot be taken. An unlabelled glyph that looks live and
+   * then apologises is worse than one that says up front it is not ready, so
+   * the reason rides on the control itself.
+   *
+   * aria-disabled rather than disabled: a disabled button leaves the tab order
+   * and takes its own explanation with it, which is exactly the explanation
+   * someone reaching it by keyboard needs.
+   */
+  unavailable?: string;
+}) {
+  const glyph = <HugeiconsIcon icon={icon} size={16} />;
+  if (unavailable) {
+    return (
+      <button
+        type="button"
+        className="iconaction"
+        aria-disabled="true"
+        aria-label={`${label} — ${unavailable}`}
+        title={`${label} — ${unavailable}`}
+        onClick={(event) => event.preventDefault()}
+      >
+        {glyph}
+      </button>
+    );
+  }
+  if (href) {
+    return (
+      <a
+        className="iconaction"
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={label}
+        title={label}
+      >
+        {glyph}
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="iconaction"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      {glyph}
+    </button>
   );
 }
 
-/** Avatar trigger + dismissible account panel (outside click / Escape). */
-function AccountMenu() {
+/**
+ * The rail's utility entry.
+ *
+ * Voicebook's sidebar foot is a nav of links into real settings sections, and
+ * it shows no account identity anywhere. NavierNet has no settings route to
+ * link to, so System reports what it can actually verify about the running
+ * platform instead: where the workspace lives and whether the API answering
+ * this page is up. The panel it opens is checked on open, not remembered.
+ */
+function SystemMenu() {
   const [open, setOpen] = useState(false);
+  const [api_up, setApiUp] = useState<"checking" | "up" | "down">("checking");
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setApiUp("checking");
+    api
+      .health()
+      .then(() => live && setApiUp("up"))
+      .catch(() => live && setApiUp("down"));
+    return () => {
+      live = false;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onClick = (event: MouseEvent) => {
-      if (!(event.target as Element).closest(".uwrap")) setOpen(false);
+      if (!(event.target as Element).closest(".sysmenu-wrap")) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -124,63 +215,63 @@ function AccountMenu() {
     };
   }, [open]);
 
+  const API_LABEL = {
+    checking: "checking…",
+    up: "reachable",
+    down: "unreachable",
+  };
+
   return (
-    <div className="uwrap">
-      <button
-        type="button"
-        className="avatar"
-        aria-label="Account menu"
-        aria-expanded={open}
-        aria-controls="account-menu"
-        onClick={() => setOpen((current) => !current)}
-      >
-        PJ
-      </button>
+    <nav className="utility-nav sysmenu-wrap" aria-label="System">
       {open && (
-        <div className="umenu" id="account-menu">
-          <div className="uh">
-            <b>Pouyan Jahangiri</b>
-            <span>local workspace</span>
+        <div className="umenu" id="system-menu">
+          <div className="kvrow">
+            <span>Workspace</span>
+            <b className="mono">local filesystem</b>
           </div>
-          <a
-            className="uitem"
-            href="https://github.com/PouyanJay/naviernet"
-            target="_blank"
-            rel="noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            Documentation
-          </a>
+          <div className="kvrow">
+            <span>API</span>
+            <b className="mono" data-state={api_up}>
+              {API_LABEL[api_up]}
+            </b>
+          </div>
         </div>
       )}
-    </div>
+      <button
+        type="button"
+        className="nav-link"
+        aria-expanded={open}
+        aria-controls="system-menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <HugeiconsIcon icon={SystemIcon} size={17} />
+        <span>System</span>
+      </button>
+    </nav>
   );
 }
 
-/** Topbar status chips: workspace counts at home, stage status in a project. */
+/**
+ * Topbar status chips: the workspace's counts, and only on the projects home.
+ *
+ * Inside a project the topbar says nothing about stage state. A pair of chips
+ * lived here once, "Stage A · trained" beside a "Stage B · not configured" that
+ * was a hardcoded string. The Stage B one was simply wrong for any project that
+ * had configured it; the Stage A one was accurate but redundant, since a
+ * series carries its own trained badge in the library and every run carries its
+ * status in the Results rail. Chrome recedes: it does not repeat what the
+ * content already says.
+ */
 function StatusChips({
   project,
-  trained,
   projectCount,
   running,
 }: {
   project: string | null;
-  trained: boolean;
   projectCount: number;
   running: boolean;
 }) {
-  if (project) {
-    return (
-      <>
-        <span className="chip" data-tone={trained ? "green" : undefined}>
-          Stage A · {trained ? "trained" : "untrained"}
-        </span>
-        <span className="chip" data-tone="amber">
-          Stage B · not configured
-        </span>
-      </>
-    );
-  }
+  if (project) return null;
   return (
     <>
       <span className="chip">
@@ -195,13 +286,11 @@ function StatusChips({
 function Sidebar({
   project,
   active,
-  status,
   onNavigate,
   onHome,
 }: {
   project: string | null;
   active: string;
-  status: PlatformStatus;
   onNavigate: (id: string) => void;
   onHome: () => void;
 }) {
@@ -229,7 +318,9 @@ function Sidebar({
                 aria-current={item.id === active ? "page" : undefined}
                 onClick={() => onNavigate(item.id)}
               >
-                <span className="node">{item.stage}</span>
+                <span className="node">
+                  {item.icon && <HugeiconsIcon icon={item.icon} size={15} />}
+                </span>
                 <span className="txt">
                   <b>{item.label}</b>
                   <span>{item.sub}</span>
@@ -237,28 +328,20 @@ function Sidebar({
               </button>
             ))}
           </div>
+          {/* A "Run metadata" block sat here: Checkpoint, Run, Backend. Every
+              row was hollow. Checkpoint was the literal "ckpt.pt", the same for
+              every run ever trained. Backend was the literal "PyTorch CPU",
+              which is false the moment anyone runs training.device=cuda. Run
+              was real, but the breadcrumb renders that same value already. And
+              all three described the LATEST trained run, so opening an older
+              one in Results left the rail describing a different run. */}
           <div className="spacer" />
-          <div className="railfoot">
-            <div className="raillbl">Run metadata</div>
-            <div className="kv">
-              <span>Checkpoint</span>
-              <span className="mono">
-                {status.latestRun ? "ckpt.pt" : "n/a"}
-              </span>
-            </div>
-            <div className="kv">
-              <span>Run</span>
-              <span className="mono">{status.latestRun?.name ?? "n/a"}</span>
-            </div>
-            <div className="kv">
-              <span>Backend</span>
-              <span className="mono">PyTorch CPU</span>
-            </div>
-          </div>
         </>
       ) : (
         <div className="raillbl">Workspace</div>
       )}
+      {!project && <div className="spacer" />}
+      <SystemMenu />
     </nav>
   );
 }
@@ -333,6 +416,7 @@ export function AppShell({
   onNavigate,
   activeRun,
   status,
+  runCrumb,
   project,
   onHome,
   children,
@@ -404,9 +488,11 @@ export function AppShell({
     >
       <header className="topbar">
         <div className="brandblock">
-          {/* One transparent mark; the brand blue reads on both the light and
-              dark top bar, so it doesn't need a per-theme swap. */}
-          <img className="mark" src="/brand/navnet-mark.svg" alt="" />
+          {/* The mark takes its ink from the chrome, so there is no per-theme
+              swap; it spins only while the platform is actually working. */}
+          <span className="mark">
+            <BrandMark working={activeRun?.state === "running"} />
+          </span>
           <div>
             NavierNet
             <small>PINN Solver Platform</small>
@@ -418,7 +504,7 @@ export function AppShell({
             /
           </span>
           <b>{project ?? "Projects"}</b>
-          {project && status.latestRun && status.latestRun.id !== project && (
+          {runCrumb && (
             <>
               <span className="crumb-sep" aria-hidden="true">
                 /
@@ -426,28 +512,17 @@ export function AppShell({
               <span
                 className="mono"
                 title={
-                  status.latestRun.name !== status.latestRun.id
-                    ? `outputs/${status.latestRun.id}`
+                  runCrumb.name !== runCrumb.id
+                    ? `outputs/${runCrumb.id}`
                     : undefined
                 }
               >
-                {status.latestRun.name}
+                {runCrumb.name}
               </span>
             </>
           )}
         </nav>
         <div className="topbar-spacer" />
-        <button
-          type="button"
-          className="search"
-          onClick={() => setPaletteOpen(true)}
-        >
-          <span>Search or run a command…</span>
-          <span className="kbds" aria-hidden="true">
-            <kbd>⌘</kbd>
-            <kbd>K</kbd>
-          </span>
-        </button>
         {activeRun?.state === "running" && (
           <button
             type="button"
@@ -460,49 +535,36 @@ export function AppShell({
         )}
         <StatusChips
           project={project}
-          trained={status.latestRun != null}
           projectCount={status.projects}
           running={activeRun?.state === "running"}
         />
-        <button
-          type="button"
-          className="thbtn"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-        >
-          <ThemeIcon theme={theme} />
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() =>
-            toast(
-              "Sharing is not available yet",
-              "this workspace is local to your machine",
-            )
-          }
-        >
-          Share
-        </button>
-        <button
-          type="button"
-          className="btn primary"
-          onClick={() =>
-            toast(
-              "Report export is not available yet",
-              "planned: PDF with config + figures",
-            )
-          }
-        >
-          Export report
-        </button>
-        <AccountMenu />
+        <div className="topbar-actions">
+          <IconAction
+            icon={SourceIcon}
+            label="Source on GitHub"
+            href="https://github.com/PouyanJay/naviernet"
+          />
+          <IconAction
+            icon={theme === "dark" ? ThemeDarkIcon : ThemeLightIcon}
+            label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            onClick={toggleTheme}
+          />
+          <IconAction
+            icon={ShareIcon}
+            label="Share"
+            unavailable="not available: this workspace is local to your machine"
+          />
+          <IconAction
+            icon={ExportReportIcon}
+            label="Export report"
+            unavailable="not available yet: planned as a PDF of the config and figures"
+          />
+        </div>
       </header>
 
       <Sidebar
         project={project}
         active={active}
-        status={status}
         onNavigate={onNavigate}
         onHome={onHome}
       />

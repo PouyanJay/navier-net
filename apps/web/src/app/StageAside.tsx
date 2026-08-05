@@ -87,15 +87,16 @@ export function AsideSlotProvider({
 export function StageAside({
   title,
   subtitle,
+  width,
   children,
 }: AsideHeading & { children: ReactNode }) {
   const slot = useContext(AsideSlotContext);
   const { claim } = slot;
 
   useEffect(() => {
-    claim({ title, subtitle });
+    claim({ title, subtitle, width });
     return () => claim(null);
-  }, [claim, title, subtitle]);
+  }, [claim, title, subtitle, width]);
 
   return slot.node ? createPortal(children, slot.node) : null;
 }

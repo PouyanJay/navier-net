@@ -3,7 +3,7 @@
 /* Panel / card */
 .card {
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r);
   box-shadow: var(--sh);
 }
@@ -13,7 +13,7 @@
   align-items: center;
   gap: var(--s1) var(--s3);
   padding: var(--s3) var(--s4);
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 .card > .hd h2 {
   margin: 0;
@@ -38,33 +38,40 @@
   padding: var(--s5);
 }
 
-/* Horizontal scrollbar for a scroller whose native bar is hidden. Slim enough
-   to sit under content without competing, but a real control: the thumb drags,
-   the track pages, and it takes focus for the arrow keys. */
+/* Horizontal scrollbar for a scroller whose native bar is hidden — on macOS the
+   native one is an overlay that vanishes at rest, so an overflowing strip would
+   give no sign that more exists. This one is always visible.
+
+   It is a real control: the thumb drags, the track pages, and it takes focus
+   for the arrow keys. So the 10px hit area stays while the ink shrinks to 2px,
+   which is what `padding` plus `background-clip: content-box` buys. */
 .hbar {
   position: relative;
-  height: 8px;
+  height: 10px;
   margin-top: var(--s2);
-  padding: 2px 0;
+  padding: 4px 0;
   border-radius: 999px;
-  background: var(--line2);
+  background: var(--line);
   background-clip: content-box;
   cursor: pointer;
   touch-action: none;
 }
 .hbar-thumb {
   position: absolute;
-  inset-block: 2px;
+  inset-block: 4px;
   min-width: var(--s5);
   border-radius: 999px;
-  /* Muted, but far enough from the track to read as a separate object; at
-     --line the two were indistinguishable and the bar looked full width. */
-  background: color-mix(in srgb, var(--ink3) 55%, transparent);
-  transition: background 0.12s ease;
+  background: var(--scroll-thumb);
+  transition: background 150ms var(--ease);
 }
 .hbar:hover .hbar-thumb,
 .hbar:focus-visible .hbar-thumb {
-  background: var(--ink3);
+  background: var(--scroll-thumb-hover);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hbar-thumb {
+    transition: none;
+  }
 }
 .hbar-thumb:active {
   background: var(--acc);
@@ -127,7 +134,7 @@
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--ink3);
-  border-left: 2px solid var(--line);
+  border-left: 2px solid var(--line-strong);
   padding: 2px 0 2px var(--s3);
   margin: var(--s3) 0 0;
 }
@@ -187,7 +194,7 @@
   font-weight: 600;
   background: var(--panel2);
   color: var(--ink2);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
 }
 .chip::before {
   content: "";
@@ -216,6 +223,26 @@
   background: var(--redsoft);
   color: var(--redtext);
   border-color: transparent;
+}
+/* A chip reporting a state that is actively wrong pulses its lamp. Only the
+   dot moves — never the label under it — so nothing being read is animated,
+   and the words say it too for anyone who cannot see the motion. */
+.chip.pulse::before {
+  animation: chip-lamp 1.6s var(--ease) infinite;
+}
+@keyframes chip-lamp {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip.pulse::before {
+    animation: none;
+  }
 }
 
 /* Status dot + label */
@@ -246,72 +273,84 @@
   background: var(--acc);
 }
 
-/* Button */
+/* Button (DESIGN_SYSTEM §8.1)
+
+   The default is NOT an outlined button — it is a neutral wash. That single
+   decision is why the interface carries so few visible borders, and an outlined
+   default was quietly putting one around every action on the page. Danger is a
+   tinted wash for the same reason: never a filled red block. */
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-height: 34px;
   font-family: var(--sans);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 640;
   padding: var(--s2) var(--s4);
   border-radius: var(--rs);
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--ink);
+  border: 0;
+  background: var(--hover);
+  color: var(--text-soft);
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+    background 150ms var(--ease),
+    color 150ms var(--ease);
 }
-.btn:hover {
-  background: var(--panel2);
+.btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  color: var(--text);
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 .btn.ghost {
   box-shadow: none;
-  border-color: transparent;
   background: transparent;
-  color: var(--acc);
+  color: var(--muted);
+  min-height: 0;
   padding: 2px var(--s2);
 }
-.btn.ghost:hover {
-  background: var(--accsoft);
+.btn.ghost:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
 }
 .btn.primary {
-  background: var(--acc);
-  border-color: var(--acc);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-ink);
 }
-.btn.primary:hover {
-  background: var(--acc2);
-  border-color: var(--acc2);
+.btn.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  color: var(--primary-ink);
 }
-/* Destructive action (delete a project and its data). Red text + border filling
-   with a soft red tint on hover — accessible in both themes, unlike white-on-red
-   which the light dark-mode red cannot carry. */
 .btn.danger {
-  color: var(--redtext);
-  border-color: var(--red);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
-.btn.danger:hover {
+.btn.danger:hover:not(:disabled) {
   background: var(--redsoft);
+  color: var(--redtext);
 }
-/* Ghost variant of the destructive action (e.g. the card's delete icon): red
-   like a ghost button, so it must stay borderless — .btn.danger's border would
-   otherwise win over .btn.ghost's transparent one (equal specificity, later). */
 .btn.ghost.danger {
+  background: transparent;
   color: var(--redtext);
-  border-color: transparent;
 }
-.btn.ghost.danger:hover {
+.btn.ghost.danger:hover:not(:disabled) {
   background: var(--redsoft);
+}
+.btn svg {
+  flex: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none;
+  }
 }
 /* Icon-only button: a square hit area sized to the 16-grid glyph inside it. */
 .btn.icon-only {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  min-height: 0;
   padding: 4px;
 }
 .btn.icon-only svg {
@@ -321,9 +360,8 @@
 /* Compact form for a secondary action in a panel header, where a full-size
    button would outweigh the panel's own title. */
 .btn.sm {
-  display: inline-flex;
-  align-items: center;
   gap: var(--s1);
+  min-height: 0;
   font-size: 11.5px;
   padding: var(--s1) var(--s2);
 }
@@ -339,8 +377,26 @@
   grid-template-columns: 1fr auto;
   gap: var(--s2) var(--s5);
 }
-.dl .dl-row {
+.dl .dl-row,
+.dl .dl-band {
+  /* Both dissolve into the list's own two-column grid, so a label and its value
+     stay on one row however the rows are banded. */
   display: contents;
+}
+/* The band heading, in the rail's own section-label spec. */
+.dl-bandlbl {
+  grid-column: 1 / -1;
+  margin: var(--s3) 0 2px;
+  padding-bottom: var(--s1);
+  border-bottom: 1px solid var(--line);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.dl .dl-band:first-child .dl-bandlbl {
+  margin-top: 0;
 }
 .dl dt {
   color: var(--ink2);
@@ -367,7 +423,7 @@
 .tbl th,
 .tbl td {
   padding: var(--s2) var(--s3);
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
   text-align: left;
 }
 .tbl th {
@@ -396,7 +452,7 @@
   display: flex;
   gap: var(--s1);
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--r);
   padding: var(--s1);
 }
@@ -420,7 +476,7 @@
 }
 .segb.on {
   background: var(--panel);
-  border-color: var(--line);
+  border-color: var(--line-strong);
   color: var(--ink);
   box-shadow: var(--sh);
 }
@@ -540,7 +596,7 @@ text.chart-axis-title {
   font-size: 12px;
   color: var(--ink);
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s2);
   width: 100%;
@@ -556,7 +612,7 @@ text.chart-axis-title {
 .ug {
   display: flex;
   align-items: center;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   background: var(--panel);
 }
@@ -590,7 +646,7 @@ text.chart-axis-title {
   height: 18px;
   flex: none;
   border-radius: 9px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel2);
   padding: 1px;
   cursor: pointer;
@@ -660,7 +716,7 @@ text.chart-axis-title {
 .meter {
   height: 7px;
   border-radius: 4px;
-  background: var(--line2);
+  background: var(--line);
   overflow: hidden;
 }
 .meter i {
@@ -747,8 +803,12 @@ text.chart-axis-title {
   fill: transparent;
   cursor: crosshair;
 }
+/* Canvas ink, not chrome ink. The cursor and its readout are drawn ON the view
+   canvas, which is dark in both themes, so a theme-varying token here inverts
+   underneath itself: --sidehl resolves to --text, which in the light theme is
+   near-black on near-black. */
 .chart-cursor {
-  stroke: var(--sidetxt);
+  stroke: var(--canvas-quiet);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   pointer-events: none;
@@ -756,19 +816,28 @@ text.chart-axis-title {
 .chart-tip {
   position: absolute;
   pointer-events: none;
-  background: var(--view2);
-  border: 1px solid var(--viewline);
+  background: var(--canvas-raised);
+  border: 1px solid var(--canvas-rule);
   border-radius: var(--rs);
   padding: var(--s2) var(--s3);
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--sidetxt);
-  white-space: nowrap;
+  color: var(--canvas-ink);
+  white-space: pre;
   z-index: 2;
 }
 .chart-tip .tip-x {
-  color: var(--sidehl);
+  color: var(--canvas-ink-strong);
   margin-bottom: 2px;
+}
+
+/* A chart that can be stepped from the keyboard has to say where focus is, and
+   the ring is on the canvas too: --focus follows the theme, --canvas-accent
+   does not. */
+.chart-wrap svg:focus-visible {
+  outline: 2px solid var(--canvas-accent);
+  outline-offset: 2px;
+  border-radius: var(--rs);
 }
 .chart-tip .tip-row {
   display: flex;
@@ -807,11 +876,19 @@ text.chart-axis-title {
   background: var(--purple);
 }
 
+/* Preprocessing-QC readout: the measured series and the line fitted to it. */
+.chart-tip .tip-swatch.measured {
+  background: var(--series-1);
+}
+.chart-tip .tip-swatch.fit {
+  background: var(--series-4);
+}
+
 /* Failed-artifact placeholder (replaces a broken <img>) */
 .img-fallback {
   display: block;
   padding: var(--s4);
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   border-radius: var(--rs);
   background: var(--panel2);
   color: var(--ink2);
@@ -838,7 +915,7 @@ text.chart-axis-title {
 .modal {
   width: min(480px, 92vw);
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r);
   box-shadow: var(--sh);
 }
@@ -847,7 +924,7 @@ text.chart-axis-title {
   align-items: center;
   gap: var(--s3);
   padding: var(--s3) var(--s4);
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 .modal > .hd h2 {
   margin: 0;
@@ -869,7 +946,7 @@ text.chart-axis-title {
 /* File drop target (mockup .drop); wraps a hidden file input */
 .drop {
   display: block;
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   border-radius: var(--r);
   padding: var(--s5) var(--s4);
   text-align: center;
@@ -933,18 +1010,180 @@ text.chart-axis-title {
   min-width: 0;
 }
 
+/* ── Menu / popover (DESIGN_SYSTEM §8.5) ──────────────────────────────
+   The app draws its own menus. A native <select> renders the operating
+   system's, which arrives in the system font and the system colours, on
+   neither of our surfaces and in neither of our themes. */
+.menu {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  gap: 1px;
+  padding: var(--s1);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-menu);
+  max-height: min(336px, calc(100dvh - 96px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--s2);
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 560;
+  text-align: left;
+  cursor: pointer;
+}
+/* One highlight for hover and for the keyboard's position: they are the same
+   state, and two different ones would disagree about what Enter takes. */
+.menu-item:hover,
+.menu-item.active {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* The chooser itself: a trigger that states the current choice, and the menu
+   anchored under it. */
+.pick {
+  position: relative;
+  min-width: 0;
+}
+.pick-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  height: 30px;
+  padding: 0 var(--s2) 0 var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--rs);
+  background: var(--control);
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  cursor: pointer;
+  transition:
+    border-color 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.pick-btn:hover {
+  color: var(--text);
+  border-color: var(--control-border);
+}
+.pick-btn[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--primary);
+}
+.pick-val {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pick-menu {
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: 320px;
+}
+/* A trigger sitting at the right edge of its row hangs its menu inward, so it
+   never opens off the side of the card. */
+.pick-menu-end {
+  left: auto;
+  right: 0;
+}
+/* A reserved column, hidden rather than removed, so the labels do not shift
+   sideways as the choice moves down the list. */
+.pick-tick {
+  flex: none;
+  color: var(--primary);
+}
+.pick-item-main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.pick-item-main em {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  font-style: normal;
+  color: var(--faint);
+}
+
+/* One control strip per chart: the chart's own controls lead it, the export
+   actions close it. Both ends are anchored, so nothing floats in between. */
 .cf-bar {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: var(--s1);
+  gap: var(--s3);
   margin-bottom: var(--s1);
+}
+/* The controls cluster at the left: what is plotted, then a copy of it. The
+   chart's reading closes the row at the right. */
+.cf-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-right: auto;
+  min-width: 0;
+}
+
+/* Expand acts on the picture, so it lives on the picture. It rests hidden and
+   appears on hover or focus, the same way a frame tile reveals its enlarge
+   control, rather than parking a permanent glyph over the plot. */
+.cf-plot {
+  position: relative;
+}
+.cf-expand {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--canvas-rule);
+  border-radius: var(--rs);
+  background: color-mix(in srgb, var(--canvas-raised) 88%, transparent);
+  color: var(--canvas-quiet);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.cf-plot:hover .cf-expand,
+.cf-expand:focus-visible {
+  opacity: 1;
+}
+.cf-expand:hover {
+  color: var(--canvas-ink-strong);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cf-expand {
+    transition: none;
+  }
 }
 
 .cf-btn {
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 600;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--ink3);
   border-radius: var(--rs);
@@ -957,8 +1196,26 @@ text.chart-axis-title {
   border-color: var(--acc2);
 }
 
+/* An expanded chart fills the screen rather than opening a slightly larger
+   copy of itself. It is centred, not dropped 14vh from the top like a task
+   modal: there is no form underneath it to keep in view. */
+.modal-ov.centred {
+  align-items: center;
+  padding-top: 0;
+  padding: var(--s5);
+}
 .chart-modal {
-  width: min(1100px, 94vw);
+  width: min(1600px, 96vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+.chart-modal .chart-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: center;
 }
 
 .chart-modal .hd {
@@ -978,4 +1235,34 @@ text.chart-axis-title {
   font-size: 11.5px;
   font-weight: 600;
   padding: 3px 10px;
+}
+
+/* ── Brand mark ─────────────────────────────────────────────────────────
+   The vortex. It inherits its ink from whatever it sits in, so the chrome,
+   a favicon and a disabled state all get the right colour for free. */
+.brandmark {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.brandmark-spiral {
+  transform-origin: 50% 50%;
+}
+
+/* The working state, reserved for real work: a run training, a job preprocessing.
+   One rotation is the whole animation -- the mark reads as a vortex standing
+   still, so the spin adds motion rather than supplying the meaning. */
+.brandmark.working .brandmark-spiral {
+  animation: brandmark-spin 9s linear infinite;
+}
+@keyframes brandmark-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brandmark.working .brandmark-spiral {
+    animation: none;
+  }
 }

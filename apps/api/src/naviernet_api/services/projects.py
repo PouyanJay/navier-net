@@ -229,6 +229,58 @@ def _try_remove(
         log.error("could not remove %s while deleting project: %s", label, exc)
 
 
+def remove_series(
+    settings: Settings, project_id: str, dataset_id: str
+) -> ProjectSummary | None:
+    """Remove one series from a project, deleting its data if unshared.
+
+    Membership goes first; then, when no other project references the series,
+    its runs and its raw and processed directories go with it — the same
+    ownership rule `delete_project` applies to the whole set. Returns the
+    updated project, or None if the project or its membership is unknown (the
+    route turns both into a 404 naming the missing thing).
+
+    Raises `ProjectInUseError` while a training run is live on the series:
+    deleting tensors mid-run would corrupt the run, and the worker would
+    recreate the "deleted" output directory anyway.
+
+    The lock spans the ownership check and the cascade for the same reason as
+    in `delete_project`: a concurrent `update_project` must not attach the
+    series to another project between the check and the delete.
+    """
+    with _lock:
+        project = get_project(settings, project_id)
+        if project is None or dataset_id not in project.datasets:
+            return None
+
+        if dataset_id in run_manager.active_datasets():
+            raise ProjectInUseError(
+                f"a training run is in progress on {dataset_id!r}; "
+                "cancel it before deleting this series"
+            )
+
+        updated = project.model_copy(
+            update={"datasets": [d for d in project.datasets if d != dataset_id]}
+        )
+        _write(settings, updated)
+
+        shared = _datasets_of_other_projects(settings, project_id)
+        if dataset_id not in shared:
+            for run in runs_service.list_runs(settings):
+                if run.dataset == dataset_id:
+                    _try_remove(
+                        runs_service.delete_run, settings, run.id, label=f"run {run.id}"
+                    )
+            _try_remove(
+                datasets_service.delete_dataset,
+                settings,
+                dataset_id,
+                label=f"dataset {dataset_id}",
+            )
+    log.info("removed series %s from project %s", dataset_id, project_id)
+    return updated
+
+
 def delete_project(settings: Settings, project_id: str) -> ProjectSummary | None:
     """Delete a project and the data and outputs it exclusively owns.
 

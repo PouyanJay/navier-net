@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import {
   canvasToPng,
@@ -8,6 +9,8 @@ import {
   serializeSvg,
   svgTextToPng,
 } from "../lib/chartExport";
+import { DownloadIcon, ExpandIcon, HugeiconsIcon } from "./icons";
+import { MenuButton, type MenuAction } from "./MenuButton";
 import { useToast } from "./Toast";
 
 interface ChartFrameProps {
@@ -21,6 +24,19 @@ interface ChartFrameProps {
   json?: unknown;
   /** Raster charts (canvas) have no meaningful SVG export. */
   raster?: boolean;
+  /**
+   * The chart's own controls, led into the toolbar row ahead of the export
+   * actions. A control that changes what is plotted belongs beside the chart
+   * it changes, and sharing this row keeps a card to one strip of controls
+   * rather than two stacked ones.
+   */
+  controls?: ReactNode;
+  /**
+   * What the chart found, taken to the far end of the toolbar row. The
+   * controls cluster on the left and the reading closes the row, so the number
+   * lands directly above the plot that evidences it.
+   */
+  trailing?: ReactNode;
   /** Renders the chart — called for the inline view AND the expanded modal,
    * so the modal gets a live instance, not a stale copy. */
   render: (expanded: boolean) => ReactNode;
@@ -38,6 +54,8 @@ export function ChartFrame({
   rows,
   json,
   raster = false,
+  controls,
+  trailing,
   render,
 }: ChartFrameProps) {
   const host = useRef<HTMLDivElement>(null);
@@ -97,94 +115,117 @@ export function ChartFrame({
       );
   };
 
+  /* One menu rather than four naked buttons. The exports are a single idea —
+     "take a copy of this" — and spelling each format out in the toolbar gave
+     that idea more width than the control that changes what is plotted. */
+  const downloads: MenuAction[] = [
+    {
+      id: "png",
+      label: "PNG image",
+      hint: "high resolution",
+      onSelect: () => void exportImage("png"),
+    },
+    ...(raster
+      ? []
+      : [
+          {
+            id: "svg",
+            label: "SVG image",
+            hint: "vector, standalone",
+            onSelect: () => void exportImage("svg"),
+          },
+        ]),
+    ...(rows
+      ? [
+          {
+            id: "csv",
+            label: "CSV data",
+            hint: "the plotted values",
+            onSelect: () => exportData("csv"),
+          },
+          {
+            id: "json",
+            label: "JSON data",
+            hint: "the plotted values",
+            onSelect: () => exportData("json"),
+          },
+        ]
+      : []),
+  ];
+
   const toolbar = (
-    <div className="cf-bar" role="group" aria-label={`${title} chart actions`}>
-      <button
-        type="button"
-        className="cf-btn"
-        onClick={() => setExpanded(true)}
-        title="Expand the chart"
-      >
-        Expand
-      </button>
-      <button
-        type="button"
-        className="cf-btn"
-        onClick={() => void exportImage("png")}
-        title="Download as high-resolution PNG"
-      >
-        PNG
-      </button>
-      {!raster && (
-        <button
-          type="button"
-          className="cf-btn"
-          onClick={() => void exportImage("svg")}
-          title="Download as standalone SVG"
-        >
-          SVG
-        </button>
-      )}
-      {rows && (
-        <>
-          <button
-            type="button"
-            className="cf-btn"
-            onClick={() => exportData("csv")}
-            title="Download the charted data as CSV"
-          >
-            CSV
-          </button>
-          <button
-            type="button"
-            className="cf-btn"
-            onClick={() => exportData("json")}
-            title="Download the charted data as JSON"
-          >
-            JSON
-          </button>
-        </>
-      )}
+    <div className="cf-bar">
+      <div className="cf-lead">
+        {controls}
+        <MenuButton
+          label={`Download ${title}`}
+          text="Download"
+          icon={
+            <HugeiconsIcon icon={DownloadIcon} size={14} aria-hidden="true" />
+          }
+          actions={downloads}
+        />
+      </div>
+      {trailing}
     </div>
   );
 
   return (
     <div className="chart-frame">
       {toolbar}
-      <div ref={host}>{render(false)}</div>
-      {expanded && (
-        <div
-          className="modal-ov"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setExpanded(false);
-          }}
+      <div className="cf-plot" ref={host}>
+        {render(false)}
+        {/* On the plot, not in the toolbar: it acts on the picture, and the
+            picture is what you are pointing at when you want it bigger. */}
+        <button
+          type="button"
+          className="cf-expand"
+          aria-label={`Expand ${title}`}
+          title={`Expand ${title}`}
+          onClick={() => setExpanded(true)}
         >
+          <HugeiconsIcon icon={ExpandIcon} size={15} aria-hidden="true" />
+        </button>
+      </div>
+      {/* Portalled to the body: inside the stage the overlay is a fixed
+          element under ancestors that establish containing blocks, so it was
+          being sized and positioned against the content column rather than
+          the viewport, and opened off-centre. */}
+      {expanded &&
+        createPortal(
           <div
-            ref={dialog}
-            tabIndex={-1}
-            className="modal chart-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={title}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setExpanded(false);
+            className="modal-ov centred"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setExpanded(false);
             }}
           >
-            <div className="hd">
-              <h2>{title}</h2>
-              <button
-                type="button"
-                className="cf-btn"
-                onClick={() => setExpanded(false)}
-              >
-                Close
-              </button>
+            <div
+              ref={dialog}
+              tabIndex={-1}
+              className="modal chart-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label={title}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setExpanded(false);
+              }}
+            >
+              <div className="hd">
+                <h2>{title}</h2>
+                <button
+                  type="button"
+                  className="cf-btn"
+                  onClick={() => setExpanded(false)}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="chart-modal-body">{render(true)}</div>
             </div>
-            <div className="chart-modal-body">{render(true)}</div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

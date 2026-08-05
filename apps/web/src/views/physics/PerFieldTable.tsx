@@ -25,7 +25,7 @@ function validate(model: PhysicsModel): string[] {
     model.activeFields.some((f) => model.perField[f].width > MAX_STABLE_WIDTH)
   ) {
     warns.push(
-      `Width > ${MAX_STABLE_WIDTH} — CPU step cost grows quadratically; plan for a GPU device in Solver.`,
+      `Width > ${MAX_STABLE_WIDTH}: CPU step cost grows quadratically; plan for a GPU device in Solver.`,
     );
   }
   return warns;
@@ -158,7 +158,7 @@ export function PerFieldTable({ model }: { model: PhysicsModel }) {
           </div>
         ))
       ) : (
-        <p className="valok">✓ configuration valid — no warnings</p>
+        <p className="valok">✓ configuration valid · no warnings</p>
       )}
     </Panel>
   );

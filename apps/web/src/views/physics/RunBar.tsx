@@ -23,7 +23,7 @@ export function RunBar({ model }: { model: PhysicsModel }) {
         <div>
           <span className="runlead">This configuration trains</span>
           <div className="runfacts">
-            {facts} <span className="dim">—</span> {base.width}×{base.depth}{" "}
+            {facts} <span className="dim">·</span> {base.width}×{base.depth}{" "}
             <span className="dim">·</span> Fourier {model.globals.ff}{" "}
             <span className="dim">·</span> {fmtCount(model.totalParams)} params
             {model.overrideCount > 0 && (

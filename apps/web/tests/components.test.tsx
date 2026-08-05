@@ -6,6 +6,7 @@ import {
   type Column,
   ConfirmDeleteDialog,
   DL,
+  Select,
   Stat,
   StatusDot,
   Table,
@@ -200,5 +201,93 @@ describe("IouDotChart", () => {
     expect(container.querySelectorAll(".iou-dot.hold")).toHaveLength(1);
     expect(container.textContent).toContain("HOLDOUT");
     expect(container.textContent).toContain("mean 0.965");
+  });
+});
+
+describe("Select", () => {
+  const OPTIONS = [
+    { value: "a", label: "Growth kinematics", hint: "L(t) and its fit" },
+    { value: "b", label: "Interface evolution", hint: "silhouettes" },
+  ];
+
+  function open(onChange = vi.fn()) {
+    render(
+      <Select
+        label="Preprocessing check"
+        value="a"
+        options={OPTIONS}
+        onChange={onChange}
+      />,
+    );
+    const trigger = screen.getByLabelText("Preprocessing check");
+    fireEvent.click(trigger);
+    return { trigger, onChange };
+  }
+
+  it("is the app's own control, not the platform's", () => {
+    // A native <select> renders the operating system's menu, which arrives in
+    // neither our font, our surfaces, nor our themes.
+    const { trigger } = open();
+    expect(trigger.tagName).toBe("BUTTON");
+    expect(document.querySelector("select")).toBeNull();
+    expect(trigger).toHaveAttribute("aria-haspopup", "listbox");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("states the current choice and what each option draws", () => {
+    const { trigger } = open();
+    expect(trigger).toHaveTextContent("Growth kinematics");
+    expect(
+      screen.getByRole("option", { name: /Growth kinematics/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("silhouettes")).toBeInTheDocument();
+  });
+
+  it("reserves the check column so labels do not shift with the choice", () => {
+    // visibility, not display: hiding the glyph outright would slide every
+    // label sideways as the selection moves down the list.
+    open();
+    const ticks = document.querySelectorAll(".pick-tick");
+    expect(ticks).toHaveLength(2);
+    expect((ticks[0] as HTMLElement).style.visibility).toBe("visible");
+    expect((ticks[1] as HTMLElement).style.visibility).toBe("hidden");
+  });
+
+  it("opens, moves and commits from the keyboard", () => {
+    const onChange = vi.fn();
+    render(
+      <Select
+        label="Preprocessing check"
+        value="a"
+        options={OPTIONS}
+        onChange={onChange}
+      />,
+    );
+    const trigger = screen.getByLabelText("Preprocessing check");
+
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    // The active option is named on the trigger, since focus never leaves it.
+    expect(trigger.getAttribute("aria-activedescendant")).toMatch(/-b$/);
+
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith("b");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes on Escape without choosing, and returns focus", () => {
+    const { trigger, onChange } = open();
+    fireEvent.keyDown(trigger, { key: "Escape" });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("closes when a press lands outside it", () => {
+    open();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 });

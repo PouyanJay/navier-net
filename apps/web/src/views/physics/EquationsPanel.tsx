@@ -80,7 +80,7 @@ function EquationRow({
         disabled={!eq.toggleable}
         title={
           eq.core
-            ? "Core equation — always on"
+            ? "Core equation · always on"
             : !eq.toggleable
               ? "Unlocked with Energy + evaporation"
               : undefined

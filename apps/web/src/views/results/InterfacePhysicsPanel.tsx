@@ -111,7 +111,7 @@ export function InterfacePhysicsPanel({
       <Panel title="Interface physics" subtitle="the conditions at the front">
         <p className="state-note">
           {frontGeometry
-            ? "No physics diagnostics recorded for this run — re-run the evaluate stage to measure them."
+            ? "No physics diagnostics recorded for this run. Re-run the evaluate stage to measure them."
             : "This run was trained without an explicit front (model.front_geometry), so there is no interface to impose the conditions on and nothing to measure. Enable Front geometry in the Solver to score them."}
         </p>
       </Panel>
@@ -177,7 +177,7 @@ export function InterfacePhysicsPanel({
         {frames.length > 0 && (
           <ChartFrame
             name="neck-depth"
-            title="Neck depth per frame — model vs measured masks"
+            title="Neck depth per frame · model vs measured masks"
             rows={frames.map((f) => ({
               frame: f.frame,
               neck_depth_model: f.neck_depth_model,
@@ -211,7 +211,7 @@ export function InterfacePhysicsPanel({
       >
         {convergence.length === 0 ? (
           <p className="state-note">
-            No physics residuals were active in this run — the Stage-B equations
+            No physics residuals were active in this run. The Stage-B equations
             are off, so there is nothing to converge.
           </p>
         ) : (

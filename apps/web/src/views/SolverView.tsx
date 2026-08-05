@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 
+import { StageAside } from "../app/StageAside";
 import { ChartFrame } from "../components/ChartFrame";
 import {
   Button,
@@ -24,6 +25,14 @@ import { SweepPanel } from "./solver/SweepPanel";
 import { useRunTargets } from "./solver/useRunTargets";
 import { useSolverRun } from "./solver/useSolverRun";
 import "./solver/solver.css";
+
+/** The config grid pairs its fields two-up, so this stage's aside needs the same
+ * room as Physics rather than the shell's default. */
+const ASIDE = {
+  title: "Solver",
+  subtitle: "configure & run",
+  width: 461,
+};
 
 interface SolverViewProps {
   /** Reports run-state changes so the app shell can show the training pill. */
@@ -101,13 +110,34 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
 
   return (
     <>
-      <div className="solver-head">
-        <StatusDot tone={dot.tone} label={dot.label} />
-        {run.status && <span className="id">{run.status.run_id}</span>}
-        {run.status?.state === "running" && run.status.stage && (
-          <Chip tone="accent">{run.status.stage}</Chip>
-        )}
-        <div className="actions">
+      <StageAside {...ASIDE}>
+        <RunConfigPanel
+          form={form}
+          onForm={patchForm}
+          availableDatasets={targets.available ?? []}
+          selectedDatasets={targets.selected}
+          onToggleDataset={targets.toggleDataset}
+          onSelectAllDatasets={targets.selectAll}
+          heldout={targets.heldout}
+          onToggleHeldout={targets.toggleHeldout}
+          resume={targets.resume}
+          onResume={targets.setResume}
+          resumableRuns={targets.resumableRuns}
+          resumeRunId={targets.resumeRunId}
+          onResumeRunId={targets.setResumeRunId}
+          sweepMode={sweepMode}
+          onSweepMode={(on) => {
+            setSweepMode(on);
+            if (on) targets.setResume(false);
+          }}
+          seedsText={seedsText}
+          onSeedsText={setSeedsText}
+          seedsValid={seeds !== null}
+          locked={run.running}
+        />
+        {/* Launching is this stage's primary action, so it stays reachable
+            without scrolling back up past a long form. */}
+        <div className="aside-actions solver-actions">
           <Button onClick={run.reset} disabled={run.running}>
             Reset
           </Button>
@@ -115,6 +145,14 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
             Run
           </Button>
         </div>
+      </StageAside>
+
+      <div className="solver-head">
+        <StatusDot tone={dot.tone} label={dot.label} />
+        {run.status && <span className="id">{run.status.run_id}</span>}
+        {run.status?.state === "running" && run.status.stage && (
+          <Chip tone="accent">{run.status.stage}</Chip>
+        )}
       </div>
       {run.error && <Callout tone="error">{run.error}</Callout>}
       {run.status?.state === "error" && run.status.message && (
@@ -129,73 +167,47 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
           &amp; conditions to enable the solver.
         </p>
       )}
-      <div className="solx">
-        <div className="solver-col">
-          <RunConfigPanel
-            form={form}
-            onForm={patchForm}
-            availableDatasets={targets.available ?? []}
-            selectedDatasets={targets.selected}
-            onToggleDataset={targets.toggleDataset}
-            onSelectAllDatasets={targets.selectAll}
-            heldout={targets.heldout}
-            onToggleHeldout={targets.toggleHeldout}
-            resume={targets.resume}
-            onResume={targets.setResume}
-            resumableRuns={targets.resumableRuns}
-            resumeRunId={targets.resumeRunId}
-            onResumeRunId={targets.setResumeRunId}
-            sweepMode={sweepMode}
-            onSweepMode={(on) => {
-              setSweepMode(on);
-              if (on) targets.setResume(false);
-            }}
-            seedsText={seedsText}
-            onSeedsText={setSeedsText}
-            seedsValid={seeds !== null}
-            locked={run.running}
-          />
-        </div>
-        <div className="solver-col">
-          {run.sweep && <SweepPanel sweep={run.sweep} />}
-          <MonitorPanel
-            status={run.status}
-            latest={latest}
-            // Show a stat once it's configured (so a running run is labelled
-            // right) or once its value arrives from the finished run's metrics.
-            showVal={form.val_fraction > 0 || run.valIou != null}
-            showTransfer={targets.heldout !== "" || run.transferIou != null}
-            holdoutIou={run.holdoutIou}
-            valIou={run.valIou}
-            transferIou={run.transferIou}
-          />
-          <Panel title="Loss history" subtitle="log₁₀ · rebalance markers">
-            {run.hist.length >= 2 ? (
-              <ChartFrame
-                name={`${run.status?.run_id ?? "run"}-live-loss`}
-                title="Live loss history"
-                rows={run.hist as unknown as Record<string, unknown>[]}
-                render={() => (
-                  <ViewCanvas>
-                    <LossChart
-                      records={run.hist}
-                      rebalanceSteps={rebalanceSteps}
-                    />
-                  </ViewCanvas>
-                )}
-              />
-            ) : (
-              <ViewCanvas>
-                <p className="canvas-note">
-                  Loss history appears once the run logs its first records.
-                </p>
-              </ViewCanvas>
-            )}
-          </Panel>
-          <Panel title="Solver console" subtitle="pipeline log · live">
-            <Console lines={run.lines} label="Solver console" />
-          </Panel>
-        </div>
+      {/* Canvas: what the run produces, once the configuration in the rail has
+          launched it. */}
+      <div className="solver-col">
+        {run.sweep && <SweepPanel sweep={run.sweep} />}
+        <MonitorPanel
+          status={run.status}
+          latest={latest}
+          // Show a stat once it's configured (so a running run is labelled
+          // right) or once its value arrives from the finished run's metrics.
+          showVal={form.val_fraction > 0 || run.valIou != null}
+          showTransfer={targets.heldout !== "" || run.transferIou != null}
+          holdoutIou={run.holdoutIou}
+          valIou={run.valIou}
+          transferIou={run.transferIou}
+        />
+        <Panel title="Loss history" subtitle="log₁₀ · rebalance markers">
+          {run.hist.length >= 2 ? (
+            <ChartFrame
+              name={`${run.status?.run_id ?? "run"}-live-loss`}
+              title="Live loss history"
+              rows={run.hist as unknown as Record<string, unknown>[]}
+              render={() => (
+                <ViewCanvas>
+                  <LossChart
+                    records={run.hist}
+                    rebalanceSteps={rebalanceSteps}
+                  />
+                </ViewCanvas>
+              )}
+            />
+          ) : (
+            <ViewCanvas>
+              <p className="canvas-note">
+                Loss history appears once the run logs its first records.
+              </p>
+            </ViewCanvas>
+          )}
+        </Panel>
+        <Panel title="Solver console" subtitle="pipeline log · live">
+          <Console lines={run.lines} label="Solver console" />
+        </Panel>
       </div>
     </>
   );

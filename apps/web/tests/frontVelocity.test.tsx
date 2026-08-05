@@ -133,7 +133,7 @@ describe("FrontVelocityTab", () => {
     render(<FrontVelocityTab runId="run-a" />);
 
     expect(
-      await screen.findByText(/re-run the evaluate stage/),
+      await screen.findByText(/re-run the evaluate stage/i),
     ).toBeInTheDocument();
   });
 

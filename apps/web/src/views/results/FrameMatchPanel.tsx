@@ -195,7 +195,7 @@ export function FrameMatchPanel({
   return (
     <Panel
       title="Frame matching"
-      subtitle={`camera · detected · PINN — ${datasetName ?? dataset}`}
+      subtitle={`camera · detected · PINN · ${datasetName ?? dataset}`}
     >
       {frames.length === 0 ? (
         <p className="state-note">

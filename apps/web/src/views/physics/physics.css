@@ -1,25 +1,16 @@
 /* Physics & Model view. Every colour/space is a token (tokens.css). */
 
+/* The stage's lede. Its action row moved to the rail, so this is a single
+   paragraph now rather than a two-item flex row. */
 .pm-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  flex-wrap: wrap;
   margin-bottom: 16px;
 }
 .pm-head p {
   color: var(--ink2);
   font-size: 12.5px;
   max-width: 64ch;
-  margin-top: 4px;
+  margin: 4px 0 0;
   line-height: 1.55;
-}
-.pm-headacts {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
 }
 .pm-statechip {
   display: inline-flex;
@@ -27,7 +18,7 @@
   gap: 7px;
   font-family: var(--mono);
   font-size: 10.5px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 99px;
   padding: 4px 11px;
   color: var(--ink3);
@@ -46,44 +37,20 @@
   background: var(--amber);
 }
 
-/* Compact save action: an icon button whose label appears on hover/focus, so
-   the header stays quiet next to the page's "Continue to solver" CTA. Accent
-   when there are changes to save; the disabled (already-saved) state mutes it. */
-.pm-save {
-  position: relative;
+/* Save sits beside its state chip: the chip explains, the button acts. */
+.pm-actions {
+  grid-template-columns: 1fr auto;
 }
-.pm-save::after {
-  content: attr(data-tip);
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  white-space: nowrap;
-  background: var(--ink);
-  color: var(--shell);
-  font-family: var(--sans);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 4px 8px;
-  border-radius: var(--rs);
-  box-shadow: var(--sh);
-  opacity: 0;
-  transform: translateY(-2px);
-  pointer-events: none;
-  transition:
-    opacity 0.12s ease,
-    transform 0.12s ease;
-  z-index: 30;
+/* The chip hugs its label rather than stretching across the free track. */
+.pm-actions .pm-statechip {
+  justify-self: start;
 }
-.pm-save:hover::after,
-.pm-save:focus-visible::after {
-  opacity: 1;
-  transform: translateY(0);
+.pm-actions .btn {
+  width: auto;
 }
-@media (prefers-reduced-motion: reduce) {
-  .pm-save::after {
-    transition: none;
-    transform: none;
-  }
+.pm-actions .btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .pm-dataset {
@@ -93,7 +60,7 @@
   margin-bottom: 8px;
 }
 .pm-dataset select {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   padding: 5px 9px;
   font-family: var(--mono);
@@ -124,11 +91,13 @@
 
 /* The derived shapes read out under the ensemble they describe, on the
    always-dark view canvas -- so the paper ink family is re-pointed onto the
-   chrome one, the same move the aside makes. */
+   CANVAS one. It used to point at --sidehl/--sidetxt, which resolve to --text
+   and --muted: theme-varying ink on a surface that does not vary, and 1.06:1
+   and 3.2:1 respectively against the canvas in the light theme. */
 .viewport .derived {
-  --ink: var(--sidehl);
-  --ink2: var(--sidetxt);
-  --ink3: var(--sidetxt);
+  --ink: var(--canvas-ink-strong);
+  --ink2: var(--canvas-ink);
+  --ink3: var(--canvas-quiet);
   --line: var(--viewline);
   --line2: var(--viewline);
   /* The inset surfaces too, or the info buttons read as white discs on the
@@ -148,7 +117,7 @@
   align-items: center;
   gap: 11px;
   padding: 9px 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 .eqrow:last-child {
   border-bottom: none;
@@ -203,7 +172,7 @@
 }
 .wlab input {
   width: 52px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 4px;
   padding: 3px 6px;
   font-size: 11px;
@@ -225,7 +194,7 @@
   width: 17px;
   height: 17px;
   border-radius: 50%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel2);
   color: var(--ink3);
   font-size: 10px;
@@ -244,12 +213,15 @@
 .infopop {
   position: absolute;
   z-index: 30;
+  /* Spans its anchor rather than taking a fixed width. The rail scrolls, so a
+     popover wider than the rail is clipped by that scroll container rather than
+     overhanging the canvas — it would simply disappear under the pipeline rail. */
+  left: 0;
   right: 0;
   top: calc(100% + 8px);
-  width: min(400px, 78vw);
   text-align: left;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
   padding: 12px 14px;
@@ -270,7 +242,7 @@
 }
 .eqmath {
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: 5px;
   padding: 8px 11px;
   overflow-x: auto;
@@ -291,7 +263,7 @@
 .fchip {
   font-family: var(--mono);
   font-size: 10px;
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   background: var(--panel2);
   border-radius: 4px;
   padding: 1.5px 7px;
@@ -320,7 +292,7 @@
   display: flex;
   gap: 6px;
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 4px;
 }
@@ -346,7 +318,7 @@
 }
 .segb.on {
   background: var(--panel);
-  border-color: var(--line);
+  border-color: var(--line-strong);
   color: var(--ink);
   box-shadow: var(--sh);
 }
@@ -359,7 +331,7 @@
 }
 .bud {
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: 6px;
   padding: 8px 11px;
 }
@@ -385,7 +357,7 @@
 .reco-note {
   font-size: 11.5px;
   color: var(--ink3);
-  border-left: 3px solid var(--line);
+  border-left: 3px solid var(--line-strong);
   padding: 2px 0 2px 10px;
   margin-top: 12px;
   line-height: 1.55;
@@ -398,7 +370,7 @@
   gap: 8px;
   align-items: center;
   padding: 7px 0 7px 9px;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
   font-size: 12px;
   position: relative;
 }
@@ -569,11 +541,11 @@
   color: var(--ink3);
   text-align: left;
   padding: 7px 8px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
 }
 .tblc td {
   padding: 6px 8px;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   vertical-align: middle;
   color: var(--ink);
@@ -586,7 +558,7 @@
 }
 .tblc input {
   width: 64px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 5px;
   padding: 4px 7px;
   font-size: 11.5px;

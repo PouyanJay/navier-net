@@ -12,93 +12,122 @@
 .dsx-main > * {
   min-width: 0;
 }
-/* In the rail the library's guidance note sinks to the bottom, so the space
-   above it reads as intentional rather than as a gap. */
-.lib-note {
-  margin-top: auto;
-}
-
-/* Series library rows */
-.dsrows {
+/* ── Series cards ─────────────────────────────────────────────────────
+   Each series shares the condition cards' idiom, and the selected one holds
+   them INSIDE its body: containment is what says the conditions are this
+   series', not a neighbouring list. */
+.scards {
   display: flex;
   flex-direction: column;
-  gap: var(--s1);
+  gap: var(--s2);
 }
-.dsrow {
+.scard {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel2);
+  overflow: hidden;
+}
+.scard:hover {
+  border-color: var(--line-strong);
+}
+.scard.sel {
+  border-color: color-mix(in srgb, var(--acc) 40%, transparent);
+}
+/* Selection is the wide button; the per-series actions sit beside it as
+   siblings, since a button cannot hold buttons. */
+.scard-hd {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  padding-right: var(--s2);
+}
+.scard.sel .scard-hd {
+  background: var(--accsoft);
+}
+.scard-sel {
   display: flex;
   align-items: center;
   gap: var(--s3);
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--rs);
-  padding: var(--s2) var(--s3);
-  color: var(--ink2);
+  flex: 1;
+  min-width: 0;
+  padding: var(--s3);
+  border: 0;
+  background: transparent;
+  color: inherit;
   font: inherit;
+  text-align: left;
   cursor: pointer;
 }
-.dsrow:hover {
-  background: var(--panel2);
+.scard-act {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink3);
+  cursor: pointer;
 }
-.dsrow.sel {
-  border-color: var(--acc);
-  background: var(--accsoft);
+.scard-act:hover {
+  background: var(--panel2);
   color: var(--ink);
 }
-.dsrow .ic {
+.scard-act.danger:hover {
+  background: var(--redsoft);
+  color: var(--redtext);
+}
+/* Bare glyph — no plate, no border; the card's border is the only box. */
+.scard-ic {
   flex: none;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--rs);
-  background: var(--view);
-  color: var(--acc2);
-  font-size: 9px;
+  width: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  color: var(--ink3);
 }
-.dsrow .m {
+.scard.sel .scard-ic,
+.scard.sel .scard-m b {
+  color: var(--acc);
+}
+.scard-m {
+  flex: 1;
   min-width: 0;
 }
-.dsrow .m b {
+.scard-m b {
   display: block;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 640;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.dsrow .m span {
-  font-size: 11px;
+.scard-m > span {
+  display: block;
+  font-size: 10px;
   color: var(--ink3);
 }
-.dsrow .st {
-  margin-left: auto;
+.scard .chip {
   flex: none;
+  font-size: 10px;
+}
+/* The nested condition cards, inset on the panel ground so the series card
+   visibly contains them. */
+.scard-body {
+  padding: var(--s2) var(--s2) var(--s1);
+  border-top: 1px solid var(--line);
 }
 
-/* "+ Upload new series" tile and the no-series empty state */
-.addds {
-  width: 100%;
-  border: 1.5px dashed var(--line);
-  background: var(--panel2);
-  color: var(--ink3);
-  border-radius: var(--rs);
-  padding: var(--s3);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  margin-top: var(--s2);
-  cursor: pointer;
-}
-.addds:hover {
-  color: var(--acc);
-  border-color: var(--acc2);
-}
+/* The no-series empty state */
 .addds-form {
   margin-top: var(--s2);
   min-height: 0;
 }
 .dsempty {
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s5) var(--s4);
   text-align: center;
@@ -112,12 +141,64 @@
   margin-bottom: var(--s1);
 }
 
+/* Every frame as one tick, in a bar that never scrolls whatever n_frames is.
+   The strip below can only ever show a window of a long acquisition; this keeps
+   the shape of the whole sequence on screen while that window moves. */
+.ribbon {
+  display: flex;
+  gap: 1.5px;
+  height: 18px;
+  align-items: stretch;
+  margin-bottom: var(--s3);
+}
+.ribbon-tick {
+  flex: 1 1 0;
+  min-width: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+  background: var(--phase-interface);
+  opacity: 0.32;
+  transition: opacity 150ms var(--ease);
+}
+.ribbon-tick.held {
+  background: var(--phase-film);
+  opacity: 1;
+}
+.ribbon-tick.excl {
+  background: var(--line-strong);
+  opacity: 1;
+}
+/* Hovering the bar recedes every tick but the current one, which is what makes
+   a single frame findable in two hundred. The mark is shared with the strip
+   below, so pointing at a thumbnail lights its tick here too. */
+.ribbon:hover .ribbon-tick {
+  opacity: 0.2;
+}
+.ribbon .ribbon-tick:hover,
+.ribbon .ribbon-tick.cur {
+  opacity: 1;
+}
+.ribbon-tick.cur {
+  outline: 1px solid var(--acc);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ribbon-tick {
+    transition: none;
+  }
+}
+
 /* Frame strip: inline thumbnails, aspect preserved, with a thin scrollbar so
-   the overflow is discoverable without competing with the frames. */
+   the overflow is discoverable without competing with the frames. Snapping
+   lands a frame flush rather than cut in half. */
 .strip {
   display: flex;
   gap: var(--s2);
   overflow-x: auto;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
   scroll-padding-inline: var(--s2);
   /* The native bar is hidden in favour of `.strip-bar` below: on macOS it is an
      overlay that vanishes at rest, so the strip would give no sign that more
@@ -131,6 +212,7 @@
 .fr {
   flex: none;
   width: 96px;
+  scroll-snap-align: start;
   margin: 0;
   border: 1px solid var(--viewline);
   border-radius: var(--rs);
@@ -151,8 +233,14 @@
   color: inherit;
   transition: box-shadow 150ms ease;
 }
-.fr:hover {
+.fr:hover,
+.fr.cur {
   border-color: var(--ink3);
+}
+/* Taken from the ribbon above: the same mark, drawn on the detail. */
+.fr.cur {
+  box-shadow: 0 0 0 1px var(--acc);
+  border-color: var(--acc);
 }
 .fr img {
   display: block;
@@ -240,6 +328,11 @@
   color: var(--acc);
   font-weight: 500;
 }
+/* The excluded set no longer matches the tensors that were built from it. */
+.fr-stale {
+  color: var(--redtext);
+  font-weight: 600;
+}
 
 /* Frame lightbox: one frame at full size, wider than the task modals. */
 .lightbox-ov {
@@ -254,7 +347,7 @@
 }
 .lightbox-view {
   background: var(--view);
-  border-block: 1px solid var(--line2);
+  border-block: 1px solid var(--line);
   display: grid;
   place-items: center;
   padding: var(--s4);
@@ -281,9 +374,11 @@
   height: 100%;
   pointer-events: none;
 }
+/* The segmented contour traced over a camera frame: the same interface the
+   viewport draws, so it takes the same token and cannot drift from it. */
 .frame-overlay path {
   fill: none;
-  stroke: var(--acc2);
+  stroke: var(--phase-interface);
   stroke-width: 1.5px;
   vector-effect: non-scaling-stroke;
 }
@@ -329,7 +424,7 @@
 .frm .ug {
   display: flex;
   align-items: stretch;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   background: var(--panel);
   overflow: hidden;
@@ -362,7 +457,7 @@
   font-size: 10.5px;
   color: var(--ink3);
   background: var(--panel2);
-  border-left: 1px solid var(--line2);
+  border-left: 1px solid var(--line);
   white-space: nowrap;
 }
 
@@ -392,7 +487,7 @@
   margin: 0;
   padding: var(--s3);
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
 }
 .fluid-prop {
@@ -415,110 +510,34 @@
   color: var(--ink);
 }
 
-/* Dimensionless group tiles (mockup .groups/.gtile) */
-.groups {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-  gap: var(--s2);
-}
-/* Each tile is a button: select it to define the group below. */
-.gtile {
-  display: block;
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  background: var(--panel2);
-  border: 1px solid var(--line2);
-  border-radius: var(--rs);
-  padding: var(--s2) var(--s3);
-  cursor: pointer;
-  transition:
-    border-color 150ms ease,
-    background 150ms ease;
-}
-.gtile:hover {
-  border-color: var(--ink3);
-}
-.gtile .k {
-  display: block;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--ink3);
-  text-transform: uppercase;
-}
-.gtile .v {
-  display: block;
-  font-size: 16px;
-  font-weight: 600;
-  margin-top: 2px;
-}
-.gtile .v em {
-  font-style: normal;
-  font-size: 10px;
-  color: var(--ink3);
-  margin-left: var(--s1);
-}
-/* Selected: the accent highlight now means "this is the one being explained". */
-.gtile.sel {
-  border-color: var(--acc);
-  background: var(--accsoft);
-}
-.gtile.sel .v {
-  color: var(--acc);
-}
-
-/* Definition of the selected group + what its value means for this run. */
-.gdetail {
-  margin-top: var(--s3);
-  padding: var(--s3);
-  border: 1px solid var(--line2);
-  border-radius: var(--r);
-  background: var(--panel2);
-  display: grid;
-  gap: var(--s1);
-}
-.gdetail-hd {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s2);
-}
-.gdetail-hd b {
-  font-size: 13px;
-  color: var(--ink);
-}
-.gdetail-val {
-  margin-left: auto;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--acc);
-}
-.gdetail-val em {
-  font-style: normal;
-  font-size: 10px;
-  color: var(--ink3);
-  margin-left: var(--s1);
-}
-.gdetail p {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--ink2);
-}
-.gdetail-read {
-  color: var(--ink) !important;
-}
-
 /* QC chart styling (on the dark view canvas) */
+/* The measured series is blue and its fit is amber. Named by position on the
+   series ramp rather than by --series-measured/--series-model, whose names
+   would be backwards here: the ramp is categorical, and these two are picked
+   as a pair that separates in greyscale as well as in hue. Both are canvas
+   tokens, so they hold their value in either theme on a canvas that does not
+   follow the theme. */
 .qc-fit {
   stroke-dasharray: 6 4;
-  stroke: var(--amber);
+  stroke: var(--series-4);
 }
 .qc-measured {
-  stroke: var(--acc2);
+  stroke: var(--series-1);
 }
 .qc-dot {
-  fill: var(--acc2);
+  fill: var(--series-1);
+}
+/* The frame under the crosshair, in the fit and in its residual at once: the
+   pair is the whole point of stacking the two panels on one x axis. */
+.qc-dot.hot {
+  r: 7;
+  stroke: var(--canvas-ink-strong);
+  stroke-width: 1.5;
+}
+.qc-resid-dot.hot {
+  r: 5;
+  stroke: var(--canvas-ink-strong);
+  stroke-width: 1.5;
 }
 /* One frame's bubble outline. Translucent so the stack of frames reads as
    growth; even-odd so a ring inside a ring stays a hole. */
@@ -528,8 +547,33 @@
   stroke-width: 1.3;
   stroke-linejoin: round;
 }
-.qc-silhouette:hover {
-  fill-opacity: 0.24;
+/* The frame readout runs along the top of the plot as one line. A stacked box
+   is taller than the clear band above a bubble in a shallow channel, so it
+   would sit on the outline it is describing. */
+.qc-frame-tip {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+}
+.qc-frame-tip .tip-x {
+  margin-bottom: 0;
+}
+.qc-frame-tip .tip-row {
+  gap: var(--s1);
+}
+.qc-frame-tip .tip-swatch {
+  display: none;
+}
+
+/* Probing one frame pushes the rest back rather than hiding them: the stack is
+   the context that makes a single outline mean anything. */
+.qc-silhouette.cool {
+  opacity: 0.28;
+}
+.qc-silhouette.hot {
+  opacity: 1;
+  fill-opacity: 0.26;
+  stroke-width: 2;
 }
 .qc-pin {
   stroke: var(--console-dim);
@@ -539,11 +583,6 @@
   fill: var(--console-dim);
   font-family: var(--mono);
   font-size: 10px;
-}
-.qc-fit-label {
-  fill: var(--amber);
-  font-family: var(--mono);
-  font-size: 11px;
 }
 
 /* SDF heatmap with its axis labels pinned around the canvas. */
@@ -643,7 +682,7 @@
   text-align: left;
   padding: var(--s4);
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r);
   box-shadow: var(--sh);
   font: inherit;
@@ -697,8 +736,8 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 1.5px solid var(--line);
-  background: var(--line);
+  border: 1.5px solid var(--line-strong);
+  background: var(--line-strong);
 }
 .pcard .pd[data-done] {
   background: var(--green);
@@ -712,7 +751,7 @@
   flex: 1;
   max-width: 34px;
   height: 1.5px;
-  background: var(--line);
+  background: var(--line-strong);
 }
 .pcard .plbl {
   margin-left: var(--s3);
@@ -724,7 +763,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-top: 1px solid var(--line2);
+  border-top: 1px solid var(--line);
   padding-top: var(--s3);
   font-size: 11px;
   color: var(--ink3);
@@ -760,7 +799,7 @@
 }
 .pform-field input,
 .pform-field textarea {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s2);
   font: inherit;
@@ -782,7 +821,7 @@
   justify-content: center;
   gap: var(--s2);
   min-height: 196px;
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   border-radius: var(--r);
   background: var(--panel2);
   color: var(--ink3);
@@ -802,35 +841,14 @@
 /* Preprocessing QC as a sub-section of the image-sequence card, so the frames
    and the QC computed from them read as one continuous card. */
 .qc-sub {
-  border-top: 1px solid var(--line2);
+  border-top: 1px solid var(--line);
   margin-top: var(--s4);
   padding-top: var(--s4);
   display: grid;
   gap: var(--s3);
 }
-.qc-sub-hd {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--s3);
-  flex-wrap: wrap;
-}
-.qc-sub-title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s2);
-  margin-right: auto;
-}
-.qc-sub-title h3 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink);
-}
-.qc-sub-title .sub {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink3);
-}
+/* The finding closes the toolbar row the export buttons used to fill, so the
+   number the check produces sits directly above the plot that evidences it. */
 
 /* Upload-new-series modal: wider than a task modal and scrollable, since it now
    carries the full series setup (measurements + operating conditions). */
@@ -888,7 +906,7 @@
   font-size: 13px;
   color: var(--ink);
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s2);
 }
@@ -900,38 +918,360 @@
   flex: none;
 }
 
-/* Selected-series inputs, read-only, in the datasets stage's aside. */
-.ds-conditions {
-  border-top: 1px solid var(--line2);
-  margin-top: var(--s3);
-  padding-top: var(--s3);
-  display: grid;
-  gap: var(--s3);
+/* ── Condition bands: the selected series' values, grouped by domain ──
+   A bare icon-and-label line separates the bands — no plate, no border, no
+   fold. Inside the series card, boxes-within-a-box read as chrome, and the
+   rows are few enough to simply show. */
+.dbands {
+  display: flex;
+  flex-direction: column;
+  /* Between-band air one step up from the within-band rhythm, so the bands
+     read as sections rather than as one continuous list. */
+  gap: var(--s5);
+  padding: var(--s2) var(--s2) var(--s3);
 }
-.ds-conditions-hd {
+/* The band label takes the chrome accent — the UI's own slate blue, never a
+   series blue: chrome and data must stay different colours. Ink-grey made the
+   separators vanish into the rows they separate. */
+.dband-hd {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--acc);
+}
+.dband-hd svg {
+  flex: none;
+}
+.dband-rows {
+  margin: var(--s1) 0 0;
+}
+.dband-rows .drow {
   display: flex;
   align-items: baseline;
-  gap: var(--s2);
+  gap: var(--s3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
 }
-.ds-conditions-hd h3 {
+.dband-rows .drow:last-child {
+  border-bottom: 0;
+}
+.dband-rows dt {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink2);
+}
+.dband-rows dd {
   margin: 0;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 620;
   color: var(--ink);
+  white-space: nowrap;
 }
-.ds-conditions-hd .sub {
-  font-family: var(--mono);
-  font-size: 10.5px;
+/* Computed from the rows above it: read, never edited, so it recedes. */
+.dband-rows .drow.derived dt,
+.dband-rows .drow.derived dd {
   color: var(--ink3);
+  font-weight: 400;
 }
-/* Push the edit control to the right of the conditions header. */
-.ds-conditions-edit {
-  margin-left: auto;
-  align-self: center;
+.dband-none {
+  margin: 0;
+  padding: var(--s2);
+  font-size: 11.5px;
+  color: var(--amber);
+  text-wrap: pretty;
+}
+
+/* Datasets' action bar carries state as well as its action, so it lays out as
+   a row rather than the stacked full-width buttons Physics and Solver use. */
+.ds-ft {
+  grid-auto-flow: column;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.ds-ft .btn {
+  width: auto;
+}
+.ds-ft-state {
+  font-size: 11px;
+  color: var(--faint);
 }
 /* The staleness callout plus its re-preprocess action, stacked. */
 .ds-reprocess {
   display: grid;
   gap: var(--s2);
   justify-items: start;
+}
+
+/* ── Growth-kinematics residual strip ─────────────────────────────────
+   The fit's evidence, sharing the x axis above it. Measured is solid and the
+   residual is a separate mark, so neither is read off the other's colour. */
+.qc-resid-zero {
+  stroke: var(--canvas-rule);
+  stroke-width: 1;
+}
+.qc-resid-band {
+  fill: var(--series-1);
+  opacity: 0.1;
+}
+.qc-resid-dot {
+  fill: var(--series-1);
+}
+.qc-resid-label {
+  fill: var(--canvas-quiet);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+/* The open check's finding, ahead of the plot that evidences it. Anchored to
+   the header's right edge rather than left to float between the title and the
+   controls, which is where it read as misplaced. */
+.qc-finding {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: 0;
+  min-width: 0;
+}
+.qc-finding-v {
+  font-size: 19px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.qc-finding-u {
+  font-size: 11px;
+  color: var(--ink3);
+}
+.qc-finding-r {
+  font-size: 10px;
+  color: var(--green);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* The check chooser rides the chart's own toolbar, beside the export actions:
+   it changes what is plotted, so it belongs against the plot, and one strip of
+   controls beats two stacked ones. It carries no caption of its own — each
+   option states what it draws, in the menu, where that helps you choose. */
+.qc-pick select {
+  height: 30px;
+  padding: 0 var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel2);
+  color: var(--ink2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.qc-pick select:hover {
+  color: var(--ink);
+  border-color: var(--acc);
+}
+
+/* ── Regime cards ─────────────────────────────────────────────────────
+   A value against the threshold that decides its verdict. The number alone
+   says nothing: Ca = 0.0107 only means "surface tension wins" if you already
+   know where the flip is, so the flip is drawn. */
+.regimes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  gap: var(--s3);
+}
+/* Subgrid, so the four bands of every card in a row share the row's tracks:
+   a definition that wraps to two lines in one card lifts the rail in every
+   card beside it, and rails at four different heights across a row read as
+   four unrelated pictures rather than one comparison. */
+.regime {
+  grid-row: span 4;
+  display: grid;
+  grid-template-rows: subgrid;
+  row-gap: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: var(--s4) var(--s5);
+  background: var(--panel2);
+}
+.regime-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.regime-name {
+  font-size: 12px;
+  font-weight: 620;
+  color: var(--ink);
+}
+.regime-sym {
+  font-size: 9.5px;
+  color: var(--ink3);
+  letter-spacing: 0.08em;
+  /* The symbol is one token; "HELE-SHAW" broken over two lines is not one. */
+  white-space: nowrap;
+}
+.regime-val {
+  font-size: 18px;
+  color: var(--acc);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The unit is a quieter suffix, not part of the digits it follows. */
+.regime-val em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--ink3);
+  margin-left: var(--s1);
+}
+.regime-about {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink3);
+  text-wrap: balance;
+}
+.regime-scale {
+  position: relative;
+  height: 30px;
+  margin: var(--s2) 0 0;
+  align-self: center;
+}
+.regime-rail {
+  position: absolute;
+  inset-inline: 0;
+  top: 10px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--teal), var(--amber));
+  opacity: 0.45;
+}
+.regime-th {
+  position: absolute;
+  top: 3px;
+  width: 1.5px;
+  height: 17px;
+  background: var(--ink2);
+  opacity: 0.75;
+}
+.regime-th em {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-style: normal;
+  font-size: 8.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+/* The span, when there is no threshold to read the marker against. Below the
+   rail on the same line as a threshold's own label, never across it. */
+.regime-end {
+  position: absolute;
+  top: 18px;
+  left: 0;
+  font-style: normal;
+  font-size: 8.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+.regime-end.end {
+  left: auto;
+  right: 0;
+}
+.regime-mk {
+  position: absolute;
+  top: 5px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 999px;
+  background: var(--acc);
+  box-shadow:
+    0 0 0 3px var(--panel2),
+    0 0 0 4.5px var(--acc);
+}
+.regime-verdict {
+  margin: 0;
+  align-self: end;
+  font-size: 12px;
+  color: var(--ink2);
+  text-wrap: balance;
+}
+
+/* ── Derived scales ───────────────────────────────────────────────────
+   Magnitudes with units, so there is no ratio to plot. One row each: the
+   symbol, the value, and what it is computed from — stacked, the three took
+   three lines to say what reads across in one. */
+.scales {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(182px, 1fr));
+  /* The separators are the tiles' own borders, not gaps showing the container
+     through: a row that does not divide evenly would otherwise leave the
+     remainder painted as a grey hole beside the last tile. */
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+/* The symbol names the row; the value and what it is computed from share the
+   line under it, so the formula does not cost a line of its own. */
+.scale {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "k k"
+    "v f";
+  align-items: baseline;
+  column-gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.scale .k {
+  grid-area: k;
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  color: var(--faint);
+}
+.scale .v {
+  grid-area: v;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.scale .v em {
+  font-style: normal;
+  font-size: 9.5px;
+  color: var(--ink3);
+  margin-left: var(--s1);
+}
+/* The formula closes the line, so the values stay a scannable column. */
+.scale .f {
+  grid-area: f;
+  justify-self: end;
+  min-width: 0;
+  font-size: 9px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The remaining groups are scales, not switches. */
+.groups-lbl {
+  margin: var(--s5) 0 var(--s2);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
 }

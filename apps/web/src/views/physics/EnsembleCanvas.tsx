@@ -123,7 +123,7 @@ function FourierBlock({
         height={68}
         rx={8}
         fill="var(--view2)"
-        stroke="var(--acc2)"
+        stroke="var(--canvas-accent)"
       />
       <text
         x={X.ff}
@@ -131,7 +131,7 @@ function FourierBlock({
         textAnchor="middle"
         fontFamily="var(--mono)"
         fontSize="10.5"
-        fill="var(--acc2)"
+        fill="var(--canvas-accent)"
       >
         γ(x,y,t)
       </text>
@@ -237,7 +237,7 @@ function FieldLane({
         height={LANE_H - 8}
         rx={8}
         fill={selected ? "var(--view2)" : "transparent"}
-        stroke={selected ? "var(--acc2)" : "transparent"}
+        stroke={selected ? "var(--canvas-accent)" : "transparent"}
       />
       <path
         className="ribbon"
@@ -344,7 +344,7 @@ function Inspector({
               width: "9px",
               height: `${Math.max(3, (b.p / maxP) * 26)}px`,
               borderRadius: "2px 2px 0 0",
-              background: "var(--acc2)",
+              background: "var(--canvas-accent)",
               opacity: 0.75,
             }}
           />
@@ -391,7 +391,7 @@ function recommendations(model: PhysicsModel): Reco[] {
     },
     {
       value: `α network ${pf.phi.width} × ${pf.phi.depth}`,
-      why: "The steepest field — it carries the sigmoid(φ/ε) interface.",
+      why: "The steepest field: it carries the sigmoid(φ/ε) interface.",
       modified: model.fieldOverridden("phi"),
     },
     {
@@ -405,7 +405,7 @@ function recommendations(model: PhysicsModel): Reco[] {
     {
       value: pOn
         ? `p, T networks ${pf.p.width} × ${pf.p.depth}`
-        : "p, T — locked",
+        : "p, T · locked",
       why: pOn
         ? "Stage-B fields sized +33% width, +2 depth for stiffer residuals."
         : "Enable Momentum or Energy to unlock pressure and temperature.",
@@ -474,7 +474,7 @@ export function EnsembleCanvas({ model }: { model: PhysicsModel }) {
     <section className="viewport" aria-labelledby="ens-h">
       <div className="vhd">
         <span className="t" id="ens-h">
-          Network ensemble — live
+          Network ensemble · live
         </span>
         <span className="hudright">
           {active.length} networks · {fmtCount(model.totalParams)} params

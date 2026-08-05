@@ -44,7 +44,7 @@
   gap: var(--s4);
   padding: var(--s3) var(--s4);
   background: var(--panel2);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
 }
 .deliverable .name {
@@ -64,7 +64,7 @@
 }
 .figure-grid a {
   display: block;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   overflow: hidden;
   background: var(--view);
@@ -88,7 +88,7 @@
   width: 100%;
   margin-top: var(--s4);
   border-radius: var(--rs);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--view);
 }
 .figure-grid figure {
@@ -108,7 +108,7 @@
   font-size: 12px;
   padding: var(--s1) var(--s3);
   border-radius: var(--rs);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--ink2);
   cursor: pointer;
@@ -155,7 +155,7 @@
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--sidetxt);
+  color: var(--canvas-quiet);
 }
 .viewport .layerbtns {
   display: flex;
@@ -169,18 +169,18 @@
   border-radius: var(--rs);
   border: 1px solid var(--viewline);
   background: transparent;
-  color: var(--sidetxt);
+  color: var(--canvas-quiet);
   cursor: pointer;
 }
 .viewport .lbtn[aria-pressed="true"] {
-  border-color: var(--acc);
-  color: var(--acc2);
+  border-color: var(--canvas-accent);
+  color: var(--canvas-accent);
 }
 .viewport .hudright {
   margin-left: auto;
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--acc2);
+  color: var(--canvas-accent);
 }
 .viewport svg {
   display: block;
@@ -192,31 +192,37 @@
   vector-effect: non-scaling-stroke;
   opacity: 0.5;
 }
+/* The channel walls: structure, not a phase, so they take the canvas's quiet
+   ink rather than --sidetxt, which followed the theme off the canvas. */
 .vp-wall {
-  stroke: var(--sidetxt);
+  stroke: var(--canvas-quiet);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
   opacity: 0.55;
 }
+/* The model's own front, and the vapour it encloses. */
 .vp-interface {
-  fill: rgb(62 76 104 / 55%);
-  stroke: var(--acc2);
+  fill: var(--phase-vapour);
+  stroke: var(--phase-interface);
   stroke-width: 1.6;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 6px var(--acc));
+  filter: drop-shadow(0 0 6px var(--phase-interface));
 }
+/* The measured mask, dashed so the pair survives grayscale: the model's front
+   is solid, the measurement is broken, and they are never told apart by hue
+   alone. */
 .vp-measured {
   fill: none;
-  stroke: var(--sidehl);
+  stroke: var(--phase-measured);
   stroke-width: 1.2;
   stroke-dasharray: 4 4;
   vector-effect: non-scaling-stroke;
 }
 .vp-cavity {
-  fill: var(--acc);
+  fill: var(--phase-interface);
 }
 .vp-label {
-  fill: var(--sidetxt);
+  fill: var(--canvas-quiet);
   font-family: var(--mono);
   font-size: 10px;
 }
@@ -236,8 +242,8 @@
   flex: none;
   border-radius: 50%;
   border: none;
-  background: var(--acc);
-  color: #fff;
+  background: var(--canvas-accent);
+  color: var(--canvas);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -250,12 +256,12 @@
 }
 .viewport .vctl input[type="range"] {
   flex: 1;
-  accent-color: var(--acc);
+  accent-color: var(--canvas-accent);
 }
 .viewport .tval {
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--sidetxt);
+  color: var(--canvas-quiet);
   white-space: nowrap;
 }
 
@@ -325,20 +331,6 @@
 
 /* ---------- redesigned results page (run browser + tabbed outputs) ---------- */
 
-.resx {
-  display: grid;
-  grid-template-columns: minmax(272px, 300px) minmax(0, 1fr);
-  gap: var(--s4);
-  align-items: start;
-}
-
-.res-left {
-  position: sticky;
-  top: 0;
-  display: grid;
-  gap: var(--s4);
-}
-
 .res-main {
   display: grid;
   gap: var(--s4);
@@ -352,7 +344,7 @@
 }
 
 .res-empty {
-  border: 1.5px dashed var(--line);
+  border: 1.5px dashed var(--line-strong);
   border-radius: var(--rs);
   padding: var(--s5) var(--s4);
   text-align: center;
@@ -454,7 +446,7 @@
 .tabbar {
   display: flex;
   gap: 2px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   overflow-x: auto;
   position: sticky;
   top: 0;
@@ -491,16 +483,6 @@
 .tab:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-@media (max-width: 1080px) {
-  .resx {
-    grid-template-columns: 1fr;
-  }
-
-  .res-left {
-    position: static;
-  }
 }
 
 .runrow-dot.live {
@@ -573,7 +555,7 @@
 }
 
 .cfgsnap {
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
   background: var(--panel2);
 }
@@ -619,7 +601,7 @@
   font-style: italic;
   font-size: 15px;
   color: var(--ink2);
-  border-top: 1px solid var(--line2);
+  border-top: 1px solid var(--line);
   margin: var(--s4) 0 0;
   padding-top: var(--s3);
   max-width: 72ch;
@@ -635,7 +617,7 @@
   font-family: var(--mono);
   font-size: 11.5px;
   font-weight: 600;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel2);
   color: var(--ink2);
   border-radius: var(--rs);
@@ -827,7 +809,7 @@
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 600;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--ink2);
   border-radius: var(--rs);
@@ -851,7 +833,7 @@
   font-size: 11px;
   color: var(--ink2);
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: 5px;
   padding: 7px 10px;
   margin: var(--s3) 0 0;
@@ -918,7 +900,7 @@
 .note {
   font-size: 11.5px;
   color: var(--ink3);
-  border-left: 3px solid var(--line);
+  border-left: 3px solid var(--line-strong);
   padding: 2px 0 2px 10px;
   margin: var(--s3) 0 0;
 }
@@ -1093,7 +1075,7 @@
   gap: var(--s3);
   align-items: center;
   padding: var(--s2) 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 
 .envrow:last-child {
@@ -1125,7 +1107,7 @@
   right: 0;
   top: 12px;
   height: 3px;
-  background: var(--line2);
+  background: var(--line);
   border-radius: 99px;
 }
 
@@ -1181,7 +1163,7 @@
   gap: var(--s4);
   padding: var(--s3) var(--s4);
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
   margin-bottom: var(--s4);
 }
@@ -1190,7 +1172,7 @@
   display: flex;
   gap: 10px;
   padding: 9px 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
   font-size: 12.5px;
 }
 
@@ -1235,7 +1217,7 @@
 
 .gtile {
   background: var(--panel2);
-  border: 1px solid var(--line2);
+  border: 1px solid var(--line);
   border-radius: var(--rs);
   padding: 10px 12px;
 }
@@ -1304,7 +1286,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   padding: 5px 10px;
   font-family: var(--mono);
@@ -1324,7 +1306,7 @@
   width: 9px;
   height: 9px;
   border-radius: 2px;
-  background: var(--line);
+  background: var(--line-strong);
 }
 
 .cmp-swatch.series-0 {
@@ -1359,7 +1341,7 @@
   color: var(--ink3);
   text-align: left;
   padding: 7px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
 }
 
 .cmp-table tbody th {
@@ -1369,12 +1351,12 @@
   color: var(--ink);
   text-transform: none;
   letter-spacing: 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 
 .cmp-table td {
   padding: 7px 10px;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
@@ -1395,7 +1377,7 @@
   gap: var(--s3);
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 
 .dl-row:last-of-type {
@@ -1417,7 +1399,7 @@
 }
 
 .btn-link {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel);
   color: var(--ink);
   border-radius: var(--rs);
@@ -1582,7 +1564,7 @@
   flex: 1;
   height: 8px;
   border-radius: var(--rs);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
 }
 
 /* A layer with nothing to show still takes focus (aria-disabled, not disabled),
@@ -1592,15 +1574,16 @@
   cursor: not-allowed;
 }
 
-/* Front-velocity arrows over the reconstruction. Thin and accent-coloured so
-   they annotate the interface rather than compete with it — the contour is
-   still the subject of the viewport. */
+/* Front-velocity arrows over the reconstruction. A measurement drawn on the
+   canvas, so it takes a canvas colour: --acc would have flipped with the theme
+   while the canvas beneath it stayed dark. Thin, so it annotates the interface
+   rather than competing with it. */
 .vp-velocity line {
-  stroke: var(--acc2);
+  stroke: var(--series-5);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
 }
 
 .vp-arrowhead {
-  fill: var(--acc2);
+  fill: var(--series-5);
 }

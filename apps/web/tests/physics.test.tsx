@@ -70,15 +70,21 @@ function json(body: unknown) {
 }
 
 function mockApi(model = MODEL, physics = PHYSICS) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string | URL) => {
-      const u = String(url);
-      if (u.includes("/api/model/")) return json(model);
-      if (u.includes("/api/physics/")) return json(physics);
-      return new Response("not found", { status: 404 });
-    }),
-  );
+  // Writes echo the request back merged onto the stored shape, so a save
+  // settles the same way the real API does.
+  const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+    const u = String(url);
+    const sent = init?.body ? JSON.parse(String(init.body)) : {};
+    if (u.includes("/api/model/")) {
+      return json(init?.method ? { ...model, ...sent } : model);
+    }
+    if (u.includes("/api/physics/")) {
+      return json(init?.method ? { ...physics, ...sent } : physics);
+    }
+    return new Response("not found", { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -136,6 +142,56 @@ describe("PhysicsModelView", () => {
     );
     // And the config is dirty, so it reports unsaved changes.
     expect(screen.getByText("unsaved changes")).toBeInTheDocument();
+  });
+
+  it("holds Save until there is an edit to commit", async () => {
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+
+    const save = await screen.findByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Momentum" }));
+
+    await waitFor(() => expect(save).toBeEnabled());
+  });
+
+  it("Save writes the physics and the architecture, then goes clean", async () => {
+    // Both write the same model.json, so the order is load-bearing: physics
+    // first, then the architecture merged onto it.
+    const fetchMock = mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Momentum" }));
+    expect(screen.getByText("unsaved changes")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.getByText("saved")).toBeInTheDocument());
+
+    const writes = fetchMock.mock.calls
+      .map(([url, init]) => ({
+        url: String(url),
+        method: (init as RequestInit | undefined)?.method,
+      }))
+      .filter((call) => call.method && call.method !== "GET");
+    expect(writes.map((w) => w.url.replace(/^.*\/api\//, "api/"))).toEqual([
+      "api/physics/sample",
+      "api/model/sample",
+    ]);
+    // The saved config is the edited one, not the loaded one: Momentum ("mom"
+    // in the schema) is off in the fixture and on in what we just wrote.
+    const body = JSON.parse(
+      String(
+        (fetchMock.mock.calls.find(
+          ([url, init]) =>
+            String(url).includes("/api/physics/") &&
+            (init as RequestInit | undefined)?.method,
+        )?.[1] as RequestInit)!.body,
+      ),
+    ) as { enabled: string[] };
+    expect(PHYSICS.equations.find((e) => e.id === "mom")!.enabled).toBe(false);
+    expect(body.enabled).toContain("mom");
   });
 
   it("enabling Energy lights up the coupled evaporation closure", async () => {

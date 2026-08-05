@@ -13,6 +13,10 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": `http://127.0.0.1:${apiPort}`,
+      // /healthz sits outside /api, so without its own entry the SPA fallback
+      // answers it with index.html and the System panel reports a live API as
+      // unreachable.
+      "/healthz": `http://127.0.0.1:${apiPort}`,
     },
   },
   test: {

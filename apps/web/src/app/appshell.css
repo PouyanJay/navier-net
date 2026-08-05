@@ -6,7 +6,7 @@
   grid-template-columns: 248px 1fr;
   grid-template-rows: 56px 1fr;
   height: 100%;
-  --stage-aside-w: 320px;
+  --stage-aside-w: 384px;
   --stage-aside-w-collapsed: 44px;
 }
 .shell[data-aside="open"] {
@@ -38,12 +38,14 @@
   font-size: 15px;
   letter-spacing: -0.01em;
 }
-/* 40px is the logo kit's minimum size for the full mark (mesh legibility). */
+/* The mark is generated geometry, so it stays legible well below the old
+   traced kit's 40px floor; 30px sits it correctly against the 15px wordmark. */
 .brandblock .mark {
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
   flex: none;
-  object-fit: contain;
+  display: block;
+  color: var(--acc);
 }
 .brandblock small {
   display: block;
@@ -64,7 +66,7 @@
   gap: var(--s4);
   padding: 0 var(--s5);
   background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
 }
 .topbar-spacer {
   flex: 1;
@@ -82,155 +84,148 @@
   font-weight: 600;
 }
 .crumb-sep {
-  color: var(--line);
+  color: var(--line-strong);
 }
-.search {
+/* Topbar actions and the rail's System menu */
+/* Topbar actions, following voicebook's command bar: a 16px glyph centred in a
+   40px target with only 2px between them. The generous target is what separates
+   the glyphs; the hover plate, not a border, is what marks them interactive. */
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: var(--s4);
-  min-width: 230px;
-  padding: var(--s1) var(--s2) var(--s1) var(--s3);
-  border: 1px solid var(--line);
-  border-radius: var(--rs);
-  background: var(--panel2);
-  color: var(--ink3);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.search:hover {
-  border-color: var(--acc2);
-}
-.search .kbds {
-  margin-left: auto;
-  display: flex;
+  justify-content: flex-end;
   gap: 2px;
-}
-.search kbd,
-.pal-foot kbd,
-.pal-item kbd {
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 1px var(--s1);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--panel);
-  color: var(--ink2);
-}
-.topbar .chip {
-  white-space: nowrap;
-}
-
-.thbtn {
-  width: 32px;
-  height: 32px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line);
-  border-radius: var(--rs);
-  background: var(--panel);
-  color: var(--ink2);
-  cursor: pointer;
-}
-.thbtn:hover {
-  color: var(--ink);
-  border-color: var(--acc2);
-}
-.thbtn svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Avatar + account menu */
-.uwrap {
-  position: relative;
   flex: none;
 }
-.avatar {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
+.iconaction {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
   border: 0;
-  background: var(--side);
-  color: var(--sidehl);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink3);
   cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    color 150ms var(--ease);
 }
-.umenu {
-  position: absolute;
-  top: calc(100% + var(--s2));
-  right: 0;
-  width: 230px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  box-shadow: var(--sh);
-  padding: var(--s1);
-  z-index: 40;
+.iconaction:hover {
+  background: var(--hover);
+  color: var(--ink);
 }
-.umenu .uh {
-  padding: var(--s2) var(--s2) var(--s2);
-  border-bottom: 1px solid var(--line2);
-  margin-bottom: var(--s1);
+/* Unavailable, and saying so. It keeps its place in the tab order, because the
+   reason lives on the control and a disabled button cannot be reached to read
+   it. The hover plate does not appear: there is nothing to press. */
+.iconaction[aria-disabled="true"] {
+  opacity: 0.38;
+  cursor: not-allowed;
 }
-.umenu .uh b {
-  display: block;
-  font-size: 13px;
-}
-.umenu .uh span {
-  font-family: var(--mono);
-  font-size: 10.5px;
+.iconaction[aria-disabled="true"]:hover {
+  background: transparent;
   color: var(--ink3);
 }
-.uitem {
+@media (prefers-reduced-motion: reduce) {
+  .iconaction {
+    transition: none;
+  }
+}
+
+/* The rail's utility nav, shaped like voicebook's: a group of nav rows pinned
+   to the foot, in exactly the language the pipeline rows above it use. */
+.utility-nav {
+  display: grid;
+  gap: 2px;
+  margin-top: auto;
+  position: relative;
+}
+.utility-nav .nav-link {
   display: flex;
   align-items: center;
-  gap: var(--s2);
+  gap: 10px;
   width: 100%;
-  padding: var(--s2);
+  height: 40px;
+  padding: 0 9px;
   border: 0;
-  border-radius: var(--rs);
-  background: none;
-  color: var(--ink2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink3);
   font: inherit;
   font-size: 12.5px;
+  font-weight: 530;
   text-align: left;
-  text-decoration: none;
   cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    color 150ms var(--ease);
 }
-.uitem:hover {
-  background: var(--panel2);
-  color: var(--ink);
+.utility-nav .nav-link:hover,
+.utility-nav .nav-link[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .utility-nav .nav-link {
+    transition: none;
+  }
 }
 
-/* Sidebar rail; dark navy chrome */
-/* The two rails' surfaces are swapped: the pipeline rail carries the panel
-   surface and the stage aside carries the chrome one. Each rail re-points the
-   token family its own descendants already use, so the swap re-tones their
-   text, borders and insets too -- a bare background swap would have left the
-   pipeline rail's chrome-tuned text on a paper surface, unreadable in light. */
+/* What System reports: facts the platform can actually check. */
+.umenu .kvrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+.umenu .kvrow b {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink2);
+}
+.umenu .kvrow b[data-state="up"] {
+  color: var(--green);
+}
+.umenu .kvrow b[data-state="down"] {
+  color: var(--red);
+}
+
+.umenu {
+  position: absolute;
+  bottom: calc(100% + var(--s1));
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 7px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-menu);
+  padding: var(--s3);
+  z-index: 40;
+}
+/* The pipeline rail, organised as voicebook organises its sidebar: frosted
+   chrome over the ground, separated from the canvas by a hairline rather than a
+   structural border, and padded tight so the rows do the spacing. It no longer
+   re-points the ink family -- the rail stopped being a navy island when it
+   became chrome, so its contents use the app's ordinary tokens. */
 .sidebar {
   grid-column: 1;
   grid-row: 2;
-  color: var(--ink);
-  --sidetxt: var(--ink2);
-  --sidehl: var(--ink);
-  --sideline: var(--line);
-  /* The stage markers and the back button fill with --side/--side2, so those
-     have to follow the surface too -- left raw, a navy marker would carry the
-     now-dark numeral on top of it. */
-  --side: var(--panel2);
-  --side2: var(--panel2);
-  background: var(--panel);
-  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  padding: var(--s4) var(--s3);
-  gap: var(--s4);
+  gap: var(--s3);
+  padding: var(--s2) var(--s2) var(--s3);
+  background: var(--chrome-surface);
+  backdrop-filter: var(--chrome-backdrop);
+  -webkit-backdrop-filter: var(--chrome-backdrop);
+  isolation: isolate;
+  border-right: 1px solid var(--line);
+  color: var(--ink2);
   overflow-y: auto;
 }
 .nav {
@@ -246,22 +241,37 @@
   text-align: left;
   padding: var(--s2) var(--s3);
   border: 0;
-  border-left: 2px solid transparent;
-  border-radius: var(--rs);
+  border-radius: 6px;
   background: transparent;
-  color: var(--sidetxt);
+  color: var(--ink3);
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 530;
   cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    color 150ms var(--ease);
 }
+/* No rule and no accent bar: hover is a neutral wash, and the active stage is a
+   tinted plate with accent ink. The shape carries the state, not a border. */
 .nav button:hover {
-  background: var(--side2);
-  color: var(--sidehl);
+  background: var(--hover);
+  color: var(--ink2);
 }
 .nav button[aria-current="page"] {
-  background: var(--side2);
-  color: var(--sidehl);
-  border-left-color: var(--acc2);
+  background: var(--accsoft);
+  color: var(--acc);
+}
+/* The sub-label and the step number follow the row's ink rather than holding
+   their resting grey against it. */
+.nav button[aria-current="page"] .txt span {
+  color: inherit;
+  opacity: 0.78;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav button {
+    transition: none;
+  }
 }
 .nav .txt b {
   display: block;
@@ -271,8 +281,7 @@
 .nav .txt span {
   display: block;
   font-size: 11px;
-  color: var(--sidetxt);
-  opacity: 0.75;
+  color: var(--faint);
 }
 
 /* "← All projects": the way back to the workspace home */
@@ -281,33 +290,39 @@
   align-items: center;
   gap: var(--s2);
   width: 100%;
-  padding: var(--s2) var(--s3);
-  margin-bottom: var(--s3);
-  background: var(--side2);
-  border: 1px solid var(--sideline);
-  border-radius: var(--rs);
-  color: var(--sidetxt);
+  height: 40px;
+  padding: 0 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink3);
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 530;
   text-align: left;
   cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    color 150ms var(--ease);
 }
 .backhome:hover {
-  color: var(--sidehl);
-  border-color: var(--acc2);
+  background: var(--hover);
+  color: var(--ink2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .backhome {
+    transition: none;
+  }
 }
 
 /* Section labels in the rail (mono uppercase, mockup's .lbl) */
 .raillbl {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
+  padding: 0 9px 7px;
+  color: var(--faint);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
-  color: var(--sidetxt);
-  opacity: 0.75;
-  padding: 0 var(--s2);
-  margin-bottom: var(--s2);
 }
 
 /* Numbered pipeline nodes with a connector line between stages */
@@ -316,54 +331,33 @@
 }
 .stage .node {
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  border: 1.5px solid var(--sideline);
-  background: var(--side);
-  color: var(--sidetxt);
-  font-family: var(--mono);
-  font-size: 11px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  border: 1.5px solid var(--line-strong);
+  background: var(--panel2);
+  color: var(--ink3);
+  display: grid;
+  place-items: center;
   z-index: 1;
 }
 .stage[aria-current="page"] .node {
-  border-color: var(--acc2);
-  color: var(--acc2);
+  border-color: currentColor;
+  color: inherit;
 }
 .stage + .stage::before {
   content: "";
   position: absolute;
-  left: calc(var(--s3) + 11px);
+  left: calc(var(--s3) + 13px);
   top: -14px;
   height: 14px;
   width: 1.5px;
-  background: var(--sideline);
+  background: var(--line-strong);
 }
 
 .sidebar .spacer {
   flex: 1;
 }
-.railfoot {
-  border-top: 1px solid var(--sideline);
-  padding: var(--s3) var(--s2) 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
-}
-.railfoot .kv {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--sidetxt);
-}
-.railfoot .kv .mono {
-  color: var(--sidehl);
-  font-size: 11px;
-}
-
 /* Workspace; paper. Content is capped so wide monitors don't stretch it. */
 .workspace {
   grid-column: 2;
@@ -383,13 +377,16 @@
   flex-direction: column;
   min-height: 0;
   /* The chrome surface, with the paper token family re-pointed onto it so the
-     stage's own content (rows, values, chips, callouts) stays legible. */
+     stage's own content (rows, values, chips, callouts) stays legible.
+     --panel must stay OPAQUE: it backs the popovers and cards that sit on this
+     rail, and the chrome fill behind it is translucent by design, so borrowing
+     that fill would let the rows underneath read straight through them. */
   --ink: var(--sidehl);
   --ink2: var(--sidetxt);
   --ink3: var(--sidetxt);
   --line: var(--sideline);
   --line2: var(--sideline);
-  --panel: var(--side);
+  --panel: var(--surface);
   --panel2: var(--side2);
   background: var(--side);
   border-right: 1px solid var(--sideline);
@@ -404,7 +401,7 @@
   align-items: center;
   gap: var(--s2);
   padding: var(--s3) var(--s3) var(--s3) var(--s4);
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
 }
 .shell[data-aside="collapsed"] .stage-aside-hd {
   justify-content: center;
@@ -434,7 +431,7 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--rs);
   background: var(--panel2);
   color: var(--ink2);
@@ -457,6 +454,31 @@
   flex-direction: column;
   gap: var(--s4);
 }
+/* A stage's action bar, pinned to the foot of its rail.
+   The stage's primary action (Run, Save) belongs with the configuration that
+   feeds it, but a long form would scroll it out of reach — so it stays put. The
+   negative margins cancel the body's padding so the bar spans the full rail,
+   and the frosted recipe (§5.5) is what stops the fields sliding underneath
+   from reading straight through it: the rail's own fill is translucent. */
+.aside-actions {
+  position: sticky;
+  bottom: calc(var(--s4) * -1);
+  z-index: 2;
+  display: grid;
+  gap: var(--s2);
+  align-items: center;
+  margin: auto calc(var(--s4) * -1) calc(var(--s4) * -1);
+  padding: var(--s3) var(--s4);
+  background: var(--side);
+  backdrop-filter: var(--chrome-backdrop);
+  -webkit-backdrop-filter: var(--chrome-backdrop);
+  isolation: isolate;
+  border-top: 1px solid var(--line);
+}
+.aside-actions .btn {
+  width: 100%;
+}
+
 /* Folded, the rail names itself along its own length rather than sitting as an
    anonymous strip. Decorative (aria-hidden): the toggle's own label already
    carries the name for assistive tech. */
@@ -483,7 +505,7 @@
    only way to reach that stage's selection. */
 @media (max-width: 1180px) {
   .shell {
-    --stage-aside-w: 272px;
+    --stage-aside-w: 326px;
   }
 }
 .workspace .page {
@@ -509,6 +531,63 @@
   margin: 0;
   color: var(--ink2);
   max-width: 70ch;
+}
+
+/* Inside a project the header names the stage's OBJECT, not the stage: the rail
+   has already said which stage this is, and said it a moment ago. One row, a
+   rule under it, and the stage's forward action on the right. */
+.stagehead {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  padding-bottom: var(--s3);
+  margin-bottom: var(--s4);
+  border-bottom: 1px solid var(--line);
+}
+.stagehead-slot {
+  display: contents;
+}
+/* The forward action sits at the far end whether or not the stage filled the
+   slot beside it. */
+.stagehead > .btn {
+  margin-left: auto;
+}
+/* A stage that claims neither an identity nor a forward action draws no header
+   at all, rather than a 13px rule across an empty row. */
+.stagehead:not(:has(.ident, .btn)) {
+  display: none;
+}
+.ident {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.ident-name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.ident-fact {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+.ident-sep {
+  color: var(--faint);
+  font-size: 11px;
+}
+.ident-state {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: var(--s2);
+  flex-wrap: wrap;
 }
 .stack {
   display: flex;
@@ -563,7 +642,7 @@
 .pal {
   width: min(580px, 92vw);
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r);
   box-shadow: var(--sh);
   overflow: hidden;
@@ -571,7 +650,7 @@
 .pal input {
   width: 100%;
   border: 0;
-  border-bottom: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line);
   padding: var(--s3) var(--s4);
   font: inherit;
   font-size: 14px;
@@ -618,7 +697,7 @@
   color: var(--ink3);
 }
 .pal-foot {
-  border-top: 1px solid var(--line2);
+  border-top: 1px solid var(--line);
   padding: var(--s2) var(--s4);
   font-size: 11px;
   color: var(--ink3);
@@ -636,7 +715,7 @@
 }
 .toast {
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-left: 3px solid var(--ink3);
   border-radius: var(--rs);
   box-shadow: var(--sh);
@@ -671,14 +750,14 @@
   }
   .brandblock div,
   .nav .txt,
-  .railfoot,
   .raillbl,
-  .search,
   .crumb,
+  .railsystem span,
   .backhome-label {
     display: none;
   }
-  .backhome {
+  .backhome,
+  .railsystem {
     justify-content: center;
   }
 }
@@ -721,7 +800,7 @@
     grid-row: 3;
     max-height: 45vh;
     border-right: none;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--line-strong);
   }
   .shell[data-aside] .workspace {
     grid-column: 1;

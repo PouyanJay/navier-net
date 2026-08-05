@@ -22,21 +22,21 @@ const FIELD_DEFS: FieldDef[] = [
     k: "alpha",
     chip: "α",
     label: "volume fraction α",
-    eq: "∂α/∂t + u·∇α = 0 — VOF interface transport",
+    eq: "∂α/∂t + u·∇α = 0 · VOF interface transport",
     cm: "blue",
   },
   {
     k: "umag",
     chip: "|u|",
     label: "speed |u|",
-    eq: "|u| = √(u² + v²) — speed of the reconstructed flow",
+    eq: "|u| = √(u² + v²) · speed of the reconstructed flow",
     cm: "blue",
   },
   {
     k: "u",
     chip: "u",
     label: "streamwise velocity u",
-    eq: "∂u/∂x + ∂v/∂y = s — continuity constrains the reconstructed flow",
+    eq: "∂u/∂x + ∂v/∂y = s · continuity constrains the reconstructed flow",
     cm: "div",
     signed: true,
   },
@@ -44,7 +44,7 @@ const FIELD_DEFS: FieldDef[] = [
     k: "v",
     chip: "v",
     label: "transverse velocity v",
-    eq: "∂u/∂x + ∂v/∂y = s — continuity constrains the reconstructed flow",
+    eq: "∂u/∂x + ∂v/∂y = s · continuity constrains the reconstructed flow",
     cm: "div",
     signed: true,
   },
@@ -52,21 +52,21 @@ const FIELD_DEFS: FieldDef[] = [
     k: "s",
     chip: "s",
     label: "dilatation source s",
-    eq: "s = (ρℓ/ρᵥ − 1)·St·j·δ_int — evaporation mass closure",
+    eq: "s = (ρℓ/ρᵥ − 1)·St·j·δ_int · evaporation mass closure",
     cm: "amber",
   },
   {
     k: "p",
     chip: "p",
     label: "pressure p*",
-    eq: "Du/Dt = −∇p + Re⁻¹∇²u − c_HS·u + We⁻¹·κ·n·δ_int — momentum · Stage B",
+    eq: "Du/Dt = −∇p + Re⁻¹∇²u − c_HS·u + We⁻¹·κ·n·δ_int · momentum · Stage B",
     cm: "blue",
   },
   {
     k: "T",
     chip: "T",
     label: "superheat θ",
-    eq: "DT/Dt = Pe⁻¹∇²T + q̇_wall − St·j·δ_int — energy · Stage B",
+    eq: "DT/Dt = Pe⁻¹∇²T + q̇_wall − St·j·δ_int · energy · Stage B",
     cm: "thermal",
   },
 ];
@@ -258,14 +258,14 @@ function ResidualMap({
     return (
       <div className="res-map res-map-off">
         <span>{label}</span>
-        <p>Stage B off — enable momentum &amp; energy and retrain.</p>
+        <p>Stage B off. Enable momentum &amp; energy and retrain.</p>
       </div>
     );
 
   return (
     <ChartFrame
       name={`${runId}-${name}`}
-      title={`${label} — |residual|`}
+      title={`${label} · |residual|`}
       raster
       rows={rows ?? undefined}
       json={map}
@@ -409,7 +409,7 @@ export function FieldsTab({
                 disabled={disabled}
                 title={
                   disabled
-                    ? `${def.label} — needs a Stage-B checkpoint`
+                    ? `${def.label} · needs a Stage-B checkpoint`
                     : def.label
                 }
                 onClick={() => setField(def)}
@@ -421,7 +421,7 @@ export function FieldsTab({
         </div>
         {stageBOff && (
           <p className="note">
-            <b>p and θ unavailable on this run.</b> It trained Stage A only —
+            <b>p and θ unavailable on this run.</b> It trained Stage A only;
             enable momentum &amp; energy in Physics &amp; model and retrain to
             infer pressure and temperature.
           </p>
@@ -524,7 +524,7 @@ export function FieldsTab({
         </div>
         <p className="figcap">
           <b>Figure 5.</b> Residuals concentrate in a thin band at the interface
-          — the hardest region for the physics to satisfy. A residual that grows
+          , the hardest region for the physics to satisfy. A residual that grows
           or spreads flags an under-resolved region, not a converged one.
           Evaluated by differentiating the checkpoint on the grid at the instant
           above.

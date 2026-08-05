@@ -2,23 +2,76 @@ import * as d3 from "d3";
 import { useEffect, useRef, useState } from "react";
 
 import { ChartFrame } from "../../components/ChartFrame";
-import { ViewCanvas } from "../../components";
+import { Select, ViewCanvas } from "../../components";
+import {
+  attachCrosshair,
+  makeTip,
+  type Readout,
+} from "../../components/charts/crosshair";
 import type { QcData, QcKinematics } from "../../lib/api";
 
+/**
+ * One chart at a time, at the card's full width.
+ *
+ * Two-up was tried and does not work here: the checks have very different
+ * natural heights, so one panel ends up a tall column beside a short box with
+ * dead space under it, and a spatial plot of a 1700µm channel loses too much
+ * at half width. A viewBox scales its type along with everything else, so the
+ * system has to be sized for where it is actually drawn.
+ */
 const WIDTH = 920;
 // Room on the left and bottom for tick labels *and* an axis title under them.
 const MARGIN = { top: 18, right: 20, bottom: 54, left: 74 };
 const INNER_W = WIDTH - MARGIN.left - MARGIN.right;
 
 type G = d3.Selection<SVGGElement, unknown, null, undefined>;
+type Dots = d3.Selection<SVGCircleElement, number, SVGGElement, unknown>;
 type Linear = d3.ScaleLinear<number, number>;
 
-type Check = "kinematics" | "interface" | "sdf";
+type Check = "kinematics" | "interface";
 
-const CHECKS: { id: Check; label: string; sub: string }[] = [
-  { id: "kinematics", label: "Growth kinematics", sub: "L(t) + fit" },
-  { id: "interface", label: "Interface evolution", sub: "bubble silhouettes" },
-  { id: "sdf", label: "Signed distance", sub: "mid frame" },
+/** The headline number a check produces, and what says whether to trust it. */
+interface Finding {
+  value: string;
+  unit: string;
+  note: string;
+}
+
+interface CheckSpec {
+  id: Check;
+  label: string;
+  sub: string;
+  finding: (qc: QcData) => Finding | null;
+}
+
+const CHECKS: CheckSpec[] = [
+  {
+    id: "kinematics",
+    label: "Growth kinematics",
+    sub: "L(t), its fit, and the residual",
+    finding: (qc) =>
+      qc.kinematics.t_ms.length > 1
+        ? {
+            value: qc.kinematics.fit_slope_mm_s.toFixed(0),
+            unit: "mm·s⁻¹ nose speed",
+            note: `R² ${fitR2(qc.kinematics).toFixed(3)}`,
+          }
+        : null,
+  },
+  {
+    id: "interface",
+    label: "Interface evolution",
+    sub: "bubble silhouettes, first frame to last",
+    finding: (qc) => {
+      const frames = qc.interface.frames;
+      if (frames.length === 0) return null;
+      return {
+        value: `${frames.length}`,
+        unit: "frames overlaid",
+        note: `${ms(frames[0].t_ms)} → ${ms(frames[frames.length - 1].t_ms)} ms`,
+      };
+    },
+  },
 ];
 
 interface QcChecksProps {
@@ -28,9 +81,16 @@ interface QcChecksProps {
   processed: boolean;
 }
 
-/** The three preprocessing checks as interactive charts behind one switch,
- * rendered as a sub-section within the image-sequence card so the frames and
- * the QC computed from them read as one thing. */
+/** Milliseconds without trailing zeros: 1.5 stays 1.5, 2.0 becomes 2. */
+function ms(value: number): string {
+  return `${Number(value.toFixed(2))}`;
+}
+
+/** A signed micrometre residual, so a positive one is unambiguous. */
+function signedUm(value: number): string {
+  return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(1)} µm`;
+}
+
 /** The active check's data in export-friendly long format. */
 function qcRows(qc: QcData, check: Check): Record<string, unknown>[] {
   if (check === "kinematics")
@@ -39,74 +99,88 @@ function qcRows(qc: QcData, check: Check): Record<string, unknown>[] {
       length_um: qc.kinematics.length_um[i],
       fit_slope_mm_s: qc.kinematics.fit_slope_mm_s,
     }));
-  if (check === "interface")
-    return qc.interface.frames.flatMap((frame) =>
-      frame.rings.flatMap((ring, ringIndex) =>
-        ring.map(([xStar, yStar]) => ({
-          camera_frame: frame.camera_frame,
-          t_ms: frame.t_ms,
-          ring: ringIndex,
-          x_star: xStar,
-          y_star: yStar,
-        })),
-      ),
-    );
-  return qc.sdf.values.flatMap((row, rowIndex) =>
-    row.map((value, colIndex) => ({
-      row: rowIndex,
-      col: colIndex,
-      sdf: value,
-    })),
+  return qc.interface.frames.flatMap((frame) =>
+    frame.rings.flatMap((ring, ringIndex) =>
+      ring.map(([xStar, yStar]) => ({
+        camera_frame: frame.camera_frame,
+        t_ms: frame.t_ms,
+        ring: ringIndex,
+        x_star: xStar,
+        y_star: yStar,
+      })),
+    ),
+  );
+}
+
+/**
+ * What the open check found, beside the control that chose it.
+ *
+ * There is no section heading above this. "Preprocessing QC · computed from
+ * the training tensors" named the card twice over — the rail, the chooser and
+ * the axes all already say what is being looked at — and it pushed the one
+ * number the card exists to produce further from the plot that evidences it.
+ */
+function QcFinding({ finding }: { finding: Finding }) {
+  return (
+    <p className="qc-finding">
+      <span className="qc-finding-v mono">{finding.value}</span>
+      <span className="qc-finding-u mono">{finding.unit}</span>
+      <span className="qc-finding-r mono">{finding.note}</span>
+    </p>
   );
 }
 
 export function QcChecks({ qc, processed }: QcChecksProps) {
   const [check, setCheck] = useState<Check>("kinematics");
-  return (
-    <section className="qc-sub" aria-label="Preprocessing QC">
-      <div className="qc-sub-hd">
-        <div className="qc-sub-title">
-          <h3>Preprocessing QC</h3>
-          <span className="sub">computed from the training tensors</span>
-        </div>
-        {qc && (
-          <div className="seg compact" role="tablist" aria-label="QC check">
-            {CHECKS.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                role="tab"
-                aria-selected={check === c.id}
-                className={check === c.id ? "segb on" : "segb"}
-                title={c.sub}
-                onClick={() => setCheck(c.id)}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      {qc ? (
-        <ChartFrame
-          name={`${qc.dataset}-qc-${check}`}
-          title={CHECKS.find((c) => c.id === check)?.label ?? "QC"}
-          rows={qcRows(qc, check)}
-          render={() => (
-            <ViewCanvas>
-              {check === "kinematics" && <KinematicsChart qc={qc} />}
-              {check === "interface" && <InterfaceChart qc={qc} />}
-              {check === "sdf" && <SdfChart qc={qc} />}
-            </ViewCanvas>
-          )}
-        />
-      ) : (
+
+  if (!qc) {
+    return (
+      <section className="qc-sub" aria-label="Preprocessing QC">
         <p className="state-note" role="status">
           {processed
             ? "Building the QC checks from the tensors…"
             : "Run preprocessing to compute the QC checks."}
         </p>
-      )}
+      </section>
+    );
+  }
+
+  const active = CHECKS.find((c) => c.id === check)!;
+
+  /* A chooser rather than a segmented control: it takes one slot however many
+     checks there are. It rides in the chart's own toolbar because it changes
+     what is plotted, and because a card with two stacked control strips reads
+     as an accident. Each option carries what it draws, so the choice is made
+     on what the chart shows rather than on its name alone. */
+  const finding = active.finding(qc);
+  const picker = (
+    <Select
+      label="Preprocessing check"
+      value={check}
+      options={CHECKS.map((c) => ({
+        value: c.id,
+        label: c.label,
+        hint: c.sub,
+      }))}
+      onChange={setCheck}
+    />
+  );
+
+  return (
+    <section className="qc-sub" aria-label="Preprocessing QC">
+      <ChartFrame
+        name={`${qc.dataset}-qc-${check}`}
+        title={active.label}
+        rows={qcRows(qc, check)}
+        controls={picker}
+        trailing={finding && <QcFinding finding={finding} />}
+        render={() => (
+          <ViewCanvas>
+            {check === "kinematics" && <KinematicsChart qc={qc} />}
+            {check === "interface" && <InterfaceChart qc={qc} />}
+          </ViewCanvas>
+        )}
+      />
     </section>
   );
 }
@@ -118,19 +192,6 @@ interface AxisSpec {
   title: string;
   ticks?: number;
   format?: (value: number) => string;
-}
-
-/** Recessive gridlines across the plot, on the y ticks only. */
-function drawGrid(g: G, y: Linear, ticks: number): void {
-  g.append("g")
-    .attr("class", "chart-grid")
-    .selectAll("line")
-    .data(y.ticks(ticks))
-    .join("line")
-    .attr("x1", 0)
-    .attr("x2", INNER_W)
-    .attr("y1", (d) => y(d))
-    .attr("y2", (d) => y(d));
 }
 
 /**
@@ -192,8 +253,68 @@ function drawAxes(
 
 // ── Growth kinematics ────────────────────────────────────────────────────────
 
+/* The fit gets a residual strip beneath it, sharing its x axis. A line that
+   looks straight is not evidence that it IS straight; the residual is. */
+const KIN_RESID_H = 56;
+const KIN_GAP = 18;
 const KIN_HEIGHT = 320;
-const KIN_INNER_H = KIN_HEIGHT - MARGIN.top - MARGIN.bottom;
+const KIN_INNER_H =
+  KIN_HEIGHT - MARGIN.top - MARGIN.bottom - KIN_RESID_H - KIN_GAP;
+const KIN_PLOT_H = KIN_INNER_H + KIN_GAP + KIN_RESID_H;
+
+/** measured − fit, per frame, in µm. */
+function residuals(kin: QcKinematics): number[] {
+  return kin.length_um.map(
+    (L, i) => L - (kin.fit_slope_mm_s * kin.t_ms[i] + kin.fit_intercept_um),
+  );
+}
+
+/** Coefficient of determination for the straight-line fit. */
+function fitR2(kin: QcKinematics): number {
+  const mean = d3.mean(kin.length_um) ?? 0;
+  const ssTot = d3.sum(kin.length_um, (L) => (L - mean) ** 2);
+  const ssRes = d3.sum(residuals(kin), (r) => r ** 2);
+  return ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+}
+
+/** The residual strip: a zero line, a +/-1 sigma band, and the scatter. */
+function drawResiduals(g: G, x: Linear, kin: QcKinematics): Dots {
+  const res = residuals(kin);
+  const spread = Math.max(d3.max(res, Math.abs) ?? 1, 1e-6);
+  const top = KIN_INNER_H + KIN_GAP;
+  const y = d3
+    .scaleLinear()
+    .domain([-spread, spread])
+    .range([top + KIN_RESID_H, top]);
+  const sigma = Math.sqrt(d3.mean(res, (r) => r ** 2) ?? 0);
+
+  g.append("rect")
+    .attr("class", "qc-resid-band")
+    .attr("x", 0)
+    .attr("y", y(sigma))
+    .attr("width", INNER_W)
+    .attr("height", Math.max(1, y(-sigma) - y(sigma)));
+  g.append("line")
+    .attr("class", "qc-resid-zero")
+    .attr("x1", 0)
+    .attr("x2", INNER_W)
+    .attr("y1", y(0))
+    .attr("y2", y(0));
+  g.append("text")
+    .attr("class", "qc-resid-label")
+    .attr("x", 0)
+    .attr("y", top - 5)
+    .text(`residual (µm) · measured − fit · ±${sigma.toFixed(1)} rms`);
+  return g
+    .append("g")
+    .selectAll<SVGCircleElement, number>("circle")
+    .data(res)
+    .join("circle")
+    .attr("class", "qc-resid-dot")
+    .attr("cx", (_, i) => x(kin.t_ms[i]))
+    .attr("cy", (d) => y(d))
+    .attr("r", 3.4);
+}
 
 function kinScales(kin: QcKinematics): { x: Linear; y: Linear } {
   const x = d3
@@ -217,12 +338,6 @@ function drawFitLine(g: G, x: Linear, y: Linear, kin: QcKinematics): void {
     .attr("y1", y(fitY(t0)))
     .attr("x2", x(t1))
     .attr("y2", y(fitY(t1)));
-  g.append("text")
-    .attr("class", "qc-fit-label")
-    .attr("x", INNER_W - 4)
-    .attr("y", 12)
-    .attr("text-anchor", "end")
-    .text(`fit dL/dt = ${kin.fit_slope_mm_s.toFixed(0)} mm/s`);
 }
 
 function drawMeasuredSeries(
@@ -230,7 +345,7 @@ function drawMeasuredSeries(
   x: Linear,
   y: Linear,
   kin: QcKinematics,
-): void {
+): Dots {
   const line = d3
     .line<number>()
     .x((_, i) => x(kin.t_ms[i]))
@@ -238,21 +353,22 @@ function drawMeasuredSeries(
   g.append("path")
     .attr("class", "chart-line qc-measured")
     .attr("d", line(kin.length_um));
-  g.append("g")
-    .selectAll("circle")
+  return g
+    .append("g")
+    .selectAll<SVGCircleElement, number>("circle")
     .data(kin.length_um)
     .join("circle")
     .attr("class", "qc-dot")
     .attr("cx", (_, i) => x(kin.t_ms[i]))
     .attr("cy", (d) => y(d))
-    .attr("r", 4)
-    .append("title")
-    .text((d, i) => `t = ${kin.t_ms[i]} ms · L = ${d.toFixed(0)} µm`);
+    .attr("r", 5);
 }
 
 /** Measured bubble length per frame with the linear growth fit. */
 function KinematicsChart({ qc }: { qc: QcData }) {
   const ref = useRef<SVGSVGElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const liveRef = useRef<HTMLParagraphElement>(null);
   const kin = qc.kinematics;
 
   useEffect(() => {
@@ -263,37 +379,86 @@ function KinematicsChart({ qc }: { qc: QcData }) {
       .append("g")
       .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     const { x, y } = kinScales(kin);
-    drawGrid(g, y, 5);
     drawAxes(
       g,
       x,
       y,
-      KIN_INNER_H,
+      // Below the residual strip: the two panels share one x axis, which is
+      // what lets a reader carry a frame's position from the fit to its error.
+      KIN_PLOT_H,
       { title: "t (ms), from the first frame", format: (d) => `${d}` },
       { title: "L (µm), streamwise bubble length" },
     );
     drawFitLine(g, x, y, kin);
-    drawMeasuredSeries(g, x, y, kin);
+    const dots = drawMeasuredSeries(g, x, y, kin);
+    const residDots = drawResiduals(g, x, kin);
+
+    // The readout carries measured, fit and residual together: the whole point
+    // of the check is the gap between the first two, which is the third.
+    const res = residuals(kin);
+    const at = (i: number): Readout | null => {
+      if (i < 0 || i >= kin.t_ms.length) return null;
+      const fitted = kin.fit_slope_mm_s * kin.t_ms[i] + kin.fit_intercept_um;
+      return {
+        xPix: x(kin.t_ms[i]),
+        index: i,
+        title: `frame ${i + 1} · t = ${ms(kin.t_ms[i])} ms`,
+        rows: [
+          {
+            text: `measured  ${kin.length_um[i].toFixed(0)} µm`,
+            swatchClass: "measured",
+          },
+          { text: `fit       ${fitted.toFixed(0)} µm`, swatchClass: "fit" },
+          { text: `residual  ${signedUm(res[i])}` },
+        ],
+      };
+    };
+    const bisect = d3.bisector((t: number) => t).center;
+
+    return attachCrosshair({
+      svg,
+      g,
+      tipEl: tipRef.current,
+      width: WIDTH,
+      margin: MARGIN,
+      innerWidth: INNER_W,
+      innerHeight: KIN_PLOT_H,
+      readout: (px) => at(bisect(kin.t_ms, x.invert(px))),
+      keyboard: { count: kin.t_ms.length, at, live: liveRef.current },
+      onActive: (active) => {
+        dots.classed("hot", (_, i) => i === active?.index);
+        residDots.classed("hot", (_, i) => i === active?.index);
+      },
+    });
   }, [kin]);
 
   return (
-    <svg
-      ref={ref}
-      viewBox={`0 0 ${WIDTH} ${KIN_HEIGHT}`}
-      preserveAspectRatio="xMidYMid meet"
-      role="img"
-      aria-label={`Bubble length in micrometres against time in milliseconds, with a linear fit of ${kin.fit_slope_mm_s.toFixed(0)} millimetres per second.`}
-    />
+    <div className="chart-wrap">
+      <svg
+        ref={ref}
+        viewBox={`0 0 ${WIDTH} ${KIN_HEIGHT}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label={`Bubble length in micrometres against time in milliseconds, with a linear fit of ${kin.fit_slope_mm_s.toFixed(0)} millimetres per second. Focus the chart and use the arrow keys to read each frame.`}
+      />
+      <div ref={tipRef} className="chart-tip" style={{ display: "none" }} />
+      <p ref={liveRef} className="sr-only" role="status" aria-live="polite" />
+    </div>
   );
 }
 
 // ── Interface evolution ──────────────────────────────────────────────────────
 
-/** Time ramp: one hue, dim to bright, so ordering reads without a key. */
+/* Time ramp: one hue, dim to bright, so ordering reads without a key. Both
+   ends are canvas tokens — the canvas is dark in both themes, so a chrome
+   accent here washes the newest frames out to near-white in the light one. */
 const RAMP_FROM = "--console-dim";
-const RAMP_TO = "--acc2";
+const RAMP_TO = "--canvas-accent";
 const LEGEND_W = 132;
 const LEGEND_STOPS = 24;
+
+type Frames = QcData["interface"]["frames"];
+type Paths = d3.Selection<SVGPathElement, Frames[number], SVGGElement, unknown>;
 
 function tokenColor(node: Element, name: string, fallback: string): string {
   const value = getComputedStyle(node).getPropertyValue(name).trim();
@@ -304,33 +469,35 @@ function drawSilhouettes(
   g: G,
   x: Linear,
   y: Linear,
-  qc: QcData,
+  frames: Frames,
   ramp: (t: number) => string,
-): void {
-  const frames = qc.interface.frames;
+): Paths {
   const path = d3
     .line<number[]>()
     .x((p) => x(p[0]))
     .y((p) => y(p[1]));
-  frames.forEach((frame, order) => {
-    const shade = ramp(frames.length > 1 ? order / (frames.length - 1) : 1);
-    // One path per frame, every ring in it, so an even-odd fill keeps holes.
-    const d = frame.rings.map((ring) => `${path(ring) ?? ""}Z`).join(" ");
-    g.append("path")
+  return (
+    g
+      .append("g")
+      .attr("class", "qc-frames")
+      .selectAll<SVGPathElement, Frames[number]>("path")
+      .data(frames)
+      .join("path")
       .attr("class", "qc-silhouette")
-      .attr("d", d)
-      .attr("fill", shade)
-      .attr("stroke", shade)
-      .append("title")
-      .text(`t = ${frame.t_ms} ms (frame ${frame.index + 1})`);
-  });
+      // One path per frame, every ring in it, so an even-odd fill keeps holes.
+      .attr("d", (frame) =>
+        frame.rings.map((ring) => `${path(ring) ?? ""}Z`).join(" "),
+      )
+      .attr("fill", (_, order) =>
+        ramp(frames.length > 1 ? order / (frames.length - 1) : 1),
+      )
+      .attr("stroke", (_, order) =>
+        ramp(frames.length > 1 ? order / (frames.length - 1) : 1),
+      )
+  );
 }
 
-function drawTimeLegend(
-  g: G,
-  ramp: (t: number) => string,
-  frames: QcData["interface"]["frames"],
-): void {
+function drawTimeLegend(g: G, ramp: (t: number) => string, frames: Frames) {
   if (frames.length < 2) return;
   const legend = g
     .append("g")
@@ -349,19 +516,26 @@ function drawTimeLegend(
     .attr("class", "chart-axis-title")
     .attr("x", 0)
     .attr("y", -4)
-    .text(`${frames[0].t_ms} ms`);
+    .text(`${ms(frames[0].t_ms)} ms`);
   legend
     .append("text")
     .attr("class", "chart-axis-title")
     .attr("x", LEGEND_W)
     .attr("y", -4)
     .attr("text-anchor", "end")
-    .text(`${frames[frames.length - 1].t_ms} ms`);
+    .text(`${ms(frames[frames.length - 1].t_ms)} ms`);
+}
+
+/** Every point of every ring in a frame, so its extent can be measured. */
+function framePoints(frame: Frames[number]): number[][] {
+  return frame.rings.flat();
 }
 
 /** Bubble silhouettes frame by frame, oldest dim to newest bright. */
 function InterfaceChart({ qc }: { qc: QcData }) {
   const ref = useRef<SVGSVGElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const liveRef = useRef<HTMLParagraphElement>(null);
   const { x_range, y_range, x_pin_star, l_ref_um, frames } = qc.interface;
   // Equal x/y aspect: the channel's shape is part of what is being checked.
   const innerH = Math.max(
@@ -384,19 +558,14 @@ function InterfaceChart({ qc }: { qc: QcData }) {
     const toUm = (v: number) => v * l_ref_um;
     const x = d3.scaleLinear().domain(x_range.map(toUm)).range([0, INNER_W]);
     const y = d3.scaleLinear().domain(y_range.map(toUm)).range([innerH, 0]);
+    const xStar = d3.scaleLinear().domain(x_range).range([0, INNER_W]);
+    const yStar = d3.scaleLinear().domain(y_range).range([innerH, 0]);
     const ramp = d3.interpolateRgb(
       tokenColor(node, RAMP_FROM, "#586a8a"),
       tokenColor(node, RAMP_TO, "#93c5fd"),
     );
 
-    drawGrid(g, y, 4);
-    drawSilhouettes(
-      g,
-      d3.scaleLinear().domain(x_range).range([0, INNER_W]),
-      d3.scaleLinear().domain(y_range).range([innerH, 0]),
-      qc,
-      ramp,
-    );
+    const paths = drawSilhouettes(g, xStar, yStar, frames, ramp);
     g.append("line")
       .attr("class", "qc-pin")
       .attr("x1", x(toUm(x_pin_star)))
@@ -419,72 +588,90 @@ function InterfaceChart({ qc }: { qc: QcData }) {
       { title: "y (µm), across channel", ticks: 4, format: (d) => `${d}` },
     );
     drawTimeLegend(g, ramp, frames);
+
+    /* This plot has no x to scan: the frames are stacked outlines, so the
+       probe picks a whole frame and the others recede behind it. */
+    const tip = makeTip(tipRef.current, node, { width: WIDTH, margin: MARGIN });
+    const at = (i: number): Readout | null => {
+      const frame = frames[i];
+      if (!frame) return null;
+      const points = framePoints(frame);
+      const noseStar = d3.max(points, (p) => p[0]) ?? 0;
+      const span =
+        (d3.max(points, (p) => p[1]) ?? 0) - (d3.min(points, (p) => p[1]) ?? 0);
+      return {
+        /* Parked at the plot's top-left corner as one line, not floated over
+           the outline. This plot is wide and shallow and the bubble grows
+           left to right, so a box anywhere near the pointer covers the nose,
+           which is the part being read. */
+        xPix: 0,
+        yPix: 0,
+        index: i,
+        title: `frame ${frame.index + 1} · t = ${ms(frame.t_ms)} ms`,
+        rows: [
+          { text: `nose x   ${toUm(noseStar).toFixed(0)} µm` },
+          { text: `spanwise ${toUm(span).toFixed(0)} µm` },
+        ],
+      };
+    };
+    const focus = (i: number | null) => {
+      const active = i === null ? null : at(i);
+      paths
+        .classed("hot", (_, k) => k === active?.index)
+        .classed("cool", () => active !== null);
+      if (!active) {
+        tip.hide();
+        if (liveRef.current) liveRef.current.textContent = "";
+        return;
+      }
+      tip.show(active);
+      if (liveRef.current)
+        liveRef.current.textContent = `${active.title}. ${active.rows
+          .map((row) => row.text)
+          .join(". ")}`;
+    };
+
+    paths
+      .on("pointerenter", (_, frame) => focus(frames.indexOf(frame)))
+      .on("pointerleave", () => focus(null));
+
+    let index = 0;
+    svg
+      .attr("tabindex", 0)
+      .on("focus", () => focus(index))
+      .on("blur", () => focus(null))
+      .on("keydown", (event: KeyboardEvent) => {
+        if (event.key === "Escape") return focus(null);
+        const step =
+          event.key === "ArrowRight" || event.key === "ArrowUp"
+            ? 1
+            : event.key === "ArrowLeft" || event.key === "ArrowDown"
+              ? -1
+              : 0;
+        if (step === 0) return;
+        event.preventDefault();
+        index = Math.max(0, Math.min(frames.length - 1, index + step));
+        focus(index);
+      });
+
+    return () => focus(null);
   }, [qc, x_range, y_range, x_pin_star, l_ref_um, frames, innerH]);
 
   return (
-    <svg
-      ref={ref}
-      viewBox={`0 0 ${WIDTH} ${height}`}
-      preserveAspectRatio="xMidYMid meet"
-      role="img"
-      aria-label={`Bubble outline for ${frames.length} frames from ${frames[0]?.t_ms ?? 0} to ${frames[frames.length - 1]?.t_ms ?? 0} milliseconds, later frames drawn brighter, on axes in micrometres.`}
-    />
-  );
-}
-
-// ── Signed distance field ────────────────────────────────────────────────────
-
-/** Diverging heatmap of the mid-frame signed distance field. */
-function SdfChart({ qc }: { qc: QcData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { values, t_ms, x_range, y_range } = qc.sdf;
-  const l_ref_um = qc.interface.l_ref_um;
-  const rows = values.length;
-  const cols = rows > 0 ? values[0].length : 0;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || rows === 0) return;
-    canvas.width = cols;
-    canvas.height = rows;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const image = ctx.createImageData(cols, rows);
-    // Matplotlib's RdBu, the colormap the pipeline's own QC figure uses.
-    for (let r = 0; r < rows; r += 1) {
-      for (let c = 0; c < cols; c += 1) {
-        const v = Math.max(-1, Math.min(1, values[r][c]));
-        const { r: red, g, b } = d3.rgb(d3.interpolateRdBu((v + 1) / 2));
-        const at = (r * cols + c) * 4;
-        image.data[at] = red;
-        image.data[at + 1] = g;
-        image.data[at + 2] = b;
-        image.data[at + 3] = 255;
-      }
-    }
-    ctx.putImageData(image, 0, 0);
-  }, [values, rows, cols]);
-
-  const um = (v: number) => Math.round(v * l_ref_um);
-
-  return (
-    <figure className="qc-sdf">
-      <span className="qc-sdf-ytitle mono">y (µm)</span>
-      <span className="qc-sdf-ymax mono">{um(y_range[1])}</span>
-      <span className="qc-sdf-ymin mono">{um(y_range[0])}</span>
-      <canvas
-        ref={canvasRef}
+    <div className="chart-wrap">
+      <svg
+        ref={ref}
+        viewBox={`0 0 ${WIDTH} ${height}`}
+        preserveAspectRatio="xMidYMid meet"
         role="img"
-        aria-label={`Signed distance field at t = ${t_ms} ms across ${um(x_range[0])} to ${um(x_range[1])} µm downstream; red inside the vapour, blue outside.`}
+        aria-label={`Bubble outline for ${frames.length} frames from ${ms(frames[0]?.t_ms ?? 0)} to ${ms(frames[frames.length - 1]?.t_ms ?? 0)} milliseconds, later frames drawn brighter, on axes in micrometres. Focus the chart and use the arrow keys to read each frame.`}
       />
-      <span className="qc-sdf-xmin mono">{um(x_range[0])}</span>
-      <span className="qc-sdf-xmax mono">{um(x_range[1])}</span>
-      <figcaption className="qc-sdf-xtitle mono">x (µm), downstream</figcaption>
-      <div className="qc-sdf-legend mono" aria-hidden="true">
-        <span>−1 vapour</span>
-        <span className="qc-sdf-bar" />
-        <span>+1 liquid</span>
-      </div>
-    </figure>
+      <div
+        ref={tipRef}
+        className="chart-tip qc-frame-tip"
+        style={{ display: "none" }}
+      />
+      <p ref={liveRef} className="sr-only" role="status" aria-live="polite" />
+    </div>
   );
 }

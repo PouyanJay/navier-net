@@ -123,12 +123,12 @@ export function PhysicsTab({
               <CheckRow
                 ok={noseSpeedTone(noseErr) === "green"}
                 title="Nose-speed agreement"
-                detail={`inferred vs measured within ${noseErr.toFixed(1)} % — neither quantity was ever given to the model`}
+                detail={`inferred vs measured within ${noseErr.toFixed(1)} %, and neither quantity was ever given to the model`}
               />
             ) : (
               <CheckRow
                 ok={false}
-                title="Nose-speed agreement — no reference"
+                title="Nose-speed agreement · no reference"
                 detail="record a measured nose speed for this condition to close the check"
               />
             )}
@@ -141,7 +141,7 @@ export function PhysicsTab({
             )}
             <CheckRow
               ok={false}
-              title="Global mass closure — open"
+              title="Global mass closure · open"
               detail="the free dilatation source is not yet quantitative; closes with the Stage-B evaporation coupling"
             />
             <CheckRow
@@ -150,7 +150,7 @@ export function PhysicsTab({
                 validation?.val_iou_mean != null
               }
               title="Unsupervised agreement exists"
-              detail={`holdout/validation IoU ${fmtIou(validation?.iou_holdout ?? validation?.val_iou_mean)} — the generalization evidence`}
+              detail={`holdout/validation IoU ${fmtIou(validation?.iou_holdout ?? validation?.val_iou_mean)} · the generalization evidence`}
             />
           </div>
           <div>

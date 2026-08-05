@@ -44,7 +44,7 @@ const DETAIL = {
   id: "sample",
   n_frames: 3,
   processed: false,
-  conditions_set: false,
+  conditions_set: true,
   frame_px: [16, 12] as [number, number],
   has_qc: false,
   holdout_frame: 6,
@@ -206,7 +206,7 @@ function mockApi({
             n_frames: 3,
             processed,
             label,
-            conditions_set: false,
+            conditions_set: true,
             frame_px: [16, 12],
             dt_frame_ms: 0.5,
           },
@@ -331,6 +331,12 @@ function mockApi({
 
 afterEach(() => vi.unstubAllGlobals());
 
+/** Open the QC chooser and take an option, the way a user does. */
+function pickCheck(label: string) {
+  fireEvent.click(screen.getByLabelText("Preprocessing check"));
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(label) }));
+}
+
 const noop = vi.fn();
 
 /**
@@ -347,7 +353,8 @@ describe("DatasetsView inside the real shell", () => {
           active="datasets"
           onNavigate={vi.fn()}
           activeRun={null}
-          status={{ latestRun: null, projects: 1 }}
+          status={{ projects: 1 }}
+          runCrumb={null}
           project={PROJECT.id}
           onHome={vi.fn()}
         >
@@ -370,7 +377,7 @@ describe("DatasetsView inside the real shell", () => {
       within(rail).getByRole("button", { name: /Upload new series/ }),
     ).toBeInTheDocument();
     expect(
-      within(rail).getByRole("button", { name: /sample/ }),
+      within(rail).getByRole("button", { name: /sample 3 ×/ }),
     ).toBeInTheDocument();
   });
 
@@ -381,7 +388,7 @@ describe("DatasetsView inside the real shell", () => {
     renderInShell();
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = await screen.findByRole("dialog", {
       name: /Edit .*conditions/,
@@ -413,13 +420,14 @@ describe("DatasetsView", () => {
     expect(
       await screen.findByRole("button", { name: /Upload new series/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /sample/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /sample 3 ×/ }),
+    ).toBeInTheDocument();
     expect(
       await screen.findByText(/Image sequence · sample/),
     ).toBeInTheDocument();
     expect(screen.getAllByAltText(/Frame \d+ preview/).length).toBe(3);
     // QC is a sub-section of the same card; before preprocessing it prompts.
-    expect(screen.getByText("Preprocessing QC")).toBeInTheDocument();
     expect(
       screen.getByText(/Run preprocessing to compute the QC checks/),
     ).toBeInTheDocument();
@@ -430,20 +438,60 @@ describe("DatasetsView", () => {
     expect(await screen.findByText("215.5")).toBeInTheDocument();
   });
 
-  it("shows the selected series' inputs read-only in the library card", async () => {
+  it("reads the selected series' conditions as labelled bands", async () => {
     mockApi();
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // The inputs set in the upload modal are surfaced for the selected series.
-    const inputs = within(
-      await screen.findByRole("region", { name: /sample conditions/ }),
+    // Every band's rows are simply visible — no folds inside the series card.
+    const fluid = within(
+      await screen.findByRole("region", { name: "Fluid conditions" }),
     );
-    expect(inputs.getByText("Working fluid")).toBeInTheDocument();
-    expect(inputs.getByText("FC-72")).toBeInTheDocument();
-    // The unit rides in the label, so the value column stays clean numbers.
-    expect(inputs.getByText("Channel height (µm)")).toBeInTheDocument();
-    expect(inputs.getByText("150")).toBeInTheDocument();
-    expect(inputs.getByText("Reference velocity (m·s⁻¹)")).toBeInTheDocument();
+    expect(fluid.getByText("Working fluid")).toBeInTheDocument();
+    expect(fluid.getByText("FC-72")).toBeInTheDocument();
+    expect(fluid.queryByRole("button")).not.toBeInTheDocument();
+
+    const geometry = within(
+      screen.getByRole("region", { name: "Geometry conditions" }),
+    );
+    expect(geometry.getByText("Channel height (µm)")).toBeInTheDocument();
+    expect(geometry.getByText("150")).toBeInTheDocument();
+    // Computed from the rows above it: shown, but marked as read-only derived.
+    expect(
+      geometry.getByText("Hydraulic diameter (µm)").closest(".drow"),
+    ).toHaveClass("derived");
+
+    const thermal = within(
+      screen.getByRole("region", { name: "Thermal conditions" }),
+    );
+    expect(thermal.getByText("Wall heat flux (W·cm⁻²)")).toBeInTheDocument();
+  });
+
+  it("nests the conditions inside the selected series' own card", async () => {
+    mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // Containment, not a heading, is what says the conditions belong to this
+    // series: the domain cards live inside the series card's region.
+    const card = await screen.findByRole("region", { name: "sample series" });
+    expect(
+      within(card).getByRole("region", { name: "Fluid conditions" }),
+    ).toBeInTheDocument();
+
+    // Re-clicking the selected series folds its conditions without
+    // deselecting — the canvas keeps exactly one series in view.
+    const header = within(card).getAllByRole("button")[0];
+    expect(header).toHaveAttribute("aria-current", "true");
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(header).toHaveAttribute("aria-current", "true");
+    expect(
+      within(card).queryByRole("region", { name: "Fluid conditions" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(header);
+    expect(
+      within(card).getByRole("region", { name: "Fluid conditions" }),
+    ).toBeInTheDocument();
   });
 
   it("edits a cheap condition live, without requiring a re-preprocess", async () => {
@@ -452,7 +500,7 @@ describe("DatasetsView", () => {
 
     // Open the editor from the read-only conditions summary.
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -483,7 +531,7 @@ describe("DatasetsView", () => {
     expect((await screen.findAllByText("sample")).length).toBeGreaterThan(0);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -518,7 +566,7 @@ describe("DatasetsView", () => {
 
     // Give it a label first.
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     fireEvent.change(
       within(await screen.findByRole("dialog")).getByLabelText("Display name"),
@@ -531,7 +579,7 @@ describe("DatasetsView", () => {
 
     // Re-open and blank the field to clear it.
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     fireEvent.change(
       within(await screen.findByRole("dialog")).getByLabelText("Display name"),
@@ -554,7 +602,7 @@ describe("DatasetsView", () => {
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(await screen.findByRole("dialog"));
     fireEvent.change(dialog.getByLabelText("Display name"), {
@@ -574,7 +622,7 @@ describe("DatasetsView", () => {
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -603,7 +651,7 @@ describe("DatasetsView", () => {
 
     // A baked edit → stale banner → re-preprocess; polling settles at once.
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -627,7 +675,7 @@ describe("DatasetsView", () => {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -646,7 +694,7 @@ describe("DatasetsView", () => {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -663,7 +711,7 @@ describe("DatasetsView", () => {
     const calls = mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = await screen.findByRole("dialog", {
       name: /Edit .*conditions/,
@@ -699,7 +747,7 @@ describe("DatasetsView", () => {
     );
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -727,7 +775,7 @@ describe("DatasetsView", () => {
     );
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: /Edit conditions/ }),
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
     );
     const dialog = within(
       await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
@@ -741,29 +789,61 @@ describe("DatasetsView", () => {
     ).toBeInTheDocument();
   });
 
-  it("defines a dimensionless group and reads back its value on selection", async () => {
+  it("reads every dimensionless group on the same card", async () => {
     mockApi();
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // Capillary number is the default selection: it explains the group and the
-    // regime its value puts the run in.
+    // A bare 0.0107 says nothing. It only means "surface tension wins" read
+    // against the flip, so the flip is drawn and the distance to it is the
+    // whole point of the bar.
     const ca = within(
-      await screen.findByRole("region", {
+      await screen.findByRole("group", {
         name: /Capillary number definition/,
       }),
     );
     expect(ca.getByText(/Viscous drag ÷ surface tension/)).toBeInTheDocument();
+    expect(ca.getByText("Ca ≈ 1")).toBeInTheDocument();
     expect(ca.getByText(/Bretherton film/)).toBeInTheDocument();
 
-    // Selecting the Reynolds tile switches the definition and read-back.
-    fireEvent.click(screen.getByRole("button", { name: /RE 215\.5/ }));
-    const re = within(
-      await screen.findByRole("region", { name: /Reynolds number definition/ }),
+    // One card shape for one kind of thing: a group with no published flip is
+    // still a ratio, so it keeps the bar and labels the span instead. It used
+    // to be drawn as a dial, which said "different kind of quantity" about
+    // something that is not.
+    const pr = within(
+      screen.getByRole("group", { name: /Prandtl number definition/ }),
     );
-    expect(
-      re.getByText(/Inertial forces ÷ viscous forces/),
-    ).toBeInTheDocument();
-    expect(re.getByText(/Laminar/)).toBeInTheDocument();
+    expect(pr.getByText(/Momentum diffusivity/)).toBeInTheDocument();
+    expect(pr.getByText(/Momentum spreads/)).toBeInTheDocument();
+    expect(pr.getByText("10⁻²")).toBeInTheDocument();
+    expect(pr.getByText("10³")).toBeInTheDocument();
+    expect(document.querySelector(".dial-face")).toBeNull();
+  });
+
+  it("draws a scale on every group, and a tick only where one flips", async () => {
+    mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByRole("group", { name: /Reynolds number definition/ });
+
+    // The fixture carries Re, We, Ca, Bond, Pr and hele_shaw. All six get a
+    // scale; only the four with a published threshold get its marker.
+    expect(document.querySelectorAll(".regime-scale")).toHaveLength(6);
+    expect(document.querySelectorAll(".regime-th")).toHaveLength(4);
+  });
+
+  it("keeps the dimensional scales as values, not cards", () => {
+    // Micrometres and milliseconds are magnitudes, not a contest between two
+    // effects, so there is no ratio to plot.
+    mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    return waitFor(() => {
+      const scales = document.querySelector(".scales")!;
+      expect(scales).not.toBeNull();
+      expect(scales.querySelector(".regime-scale")).toBeNull();
+      expect(
+        within(scales as HTMLElement).getByText("D_H"),
+      ).toBeInTheDocument();
+    });
   });
 
   it("uploads a new series through the modal and preprocesses it", async () => {
@@ -821,7 +901,7 @@ describe("DatasetsView", () => {
     );
     // The refreshed library shows the new series without a reload.
     expect(
-      await screen.findByRole("button", { name: /mid_T/ }),
+      await screen.findByRole("button", { name: /mid_T 5 ×/ }),
     ).toBeInTheDocument();
   });
 
@@ -840,28 +920,38 @@ describe("DatasetsView", () => {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // "Preprocessing QC" shows immediately; the tabs appear once tensors load.
-    const kinematics = await screen.findByRole("tab", {
-      name: /Growth kinematics/,
-    });
-    expect(screen.getByText("Preprocessing QC")).toBeInTheDocument();
-    // Three checks behind one switch; kinematics is the default tab.
-    expect(kinematics).toHaveAttribute("aria-selected", "true");
+    // Growth kinematics is never behind a switch: it is the check read first
+    // and the only one that produces a number, so it is always on screen with
+    // its finding above it.
     expect(
-      screen.getByRole("img", {
+      await screen.findByRole("img", {
         name: /Bubble length in micrometres against time/,
       }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /Growth kinematics/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/nose speed/)).toBeInTheDocument();
+    expect(screen.getByText(/R²/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: /Interface evolution/ }));
+    // The other check is one select away, and the picker replaced the tabs:
+    // one slot in the header however many checks there are.
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    pickCheck("Interface evolution");
+
     expect(
       screen.getByRole("img", { name: /Bubble outline for \d+ frames/ }),
     ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("tab", { name: /Signed distance/ }));
     expect(
-      screen.getByRole("img", { name: /Signed distance field/ }),
-    ).toBeInTheDocument();
+      screen.queryByRole("img", {
+        name: /Bubble length in micrometres against time/,
+      }),
+    ).not.toBeInTheDocument();
+    // Signed distance is gone entirely, not merely unselected.
+    fireEvent.click(screen.getByLabelText("Preprocessing check"));
+    expect(
+      screen.queryByRole("option", { name: /Signed distance/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("marks the holdout frame in the strip", async () => {
@@ -929,15 +1019,22 @@ describe("DatasetsView with several series", () => {
 
     // Both project series are listed; the foreign dataset is not.
     expect(
-      await screen.findByRole("button", { name: /sample/ }),
+      await screen.findByRole("button", { name: /sample 3 ×/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /mid_T/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /mid_T 2 ×/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("foreign")).not.toBeInTheDocument();
-    // Per-series chips are independent: processed+conditions vs bare upload.
-    expect(screen.getByText("tensors ready")).toBeInTheDocument();
-    expect(screen.getByText("needs conditions")).toBeInTheDocument();
+    // State chips left the cards — the canvas header carries trained/ready —
+    // and every series carries its own actions instead.
+    expect(
+      screen.getByRole("button", { name: "Edit mid_T conditions" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete sample" }),
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /mid_T/ }));
+    fireEvent.click(screen.getByRole("button", { name: /mid_T 2 ×/ }));
     expect(
       await screen.findByText(/Image sequence · mid_T/),
     ).toBeInTheDocument();
@@ -1065,7 +1162,7 @@ describe("DatasetsView preprocess polling", () => {
               id: "sample",
               n_frames: 3,
               processed: done,
-              conditions_set: false,
+              conditions_set: true,
               frame_px: [16, 12],
               dt_frame_ms: 0.5,
             },
@@ -1097,11 +1194,13 @@ describe("DatasetsView preprocess polling", () => {
     );
 
     // Real timers: the hook polls every 1s until done, then refreshes; proven by
-    // the QC charts (their tabs) appearing once the series reports processed.
+    // the kinematics chart appearing once the series reports processed.
     await waitFor(
       () =>
         expect(
-          screen.getByRole("tab", { name: /Growth kinematics/ }),
+          screen.getByRole("img", {
+            name: /Bubble length in micrometres against time/,
+          }),
         ).toBeInTheDocument(),
       { timeout: 5000 },
     );
@@ -1190,17 +1289,39 @@ describe("frame exclusion", () => {
     );
   });
 
-  it("warns that saved exclusions need a preprocessing re-run", async () => {
+  it("says saved exclusions need a re-run on the count itself", async () => {
+    // DETAIL carries exclusions_applied: false, so the tensors are out of date.
+    // A full callout used to state it under the frame strip, which the frames
+    // had already pushed off the fold. The count that IS the problem carries
+    // it instead, and the header's chip pulses its lamp about it.
     mockApi({ processed: true, excluded: [3] });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // DETAIL carries exclusions_applied: false, so the tensors are out of date.
+    const label = await screen.findByText(/1 excluded \(3\)/);
+    expect(label).toHaveClass("fr-stale");
+    expect(label).toHaveTextContent("needs re-run");
     expect(
-      await screen.findByText(
+      screen.queryByText(
         /excluded frames have changed since the tensors were built/,
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Re-run" })).toBeInTheDocument();
+  });
+
+  it("pulses the header chip while the tensors are out of date", async () => {
+    mockApi({ processed: true, excluded: [3] });
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // The chip's text is assembled from two nodes, so match on the element.
+    const chip = await waitFor(() => {
+      const found = [...document.querySelectorAll(".chip")].find((el) =>
+        el.textContent?.includes("needs re-run"),
+      );
+      expect(found).toBeDefined();
+      return found!;
+    });
+    expect(chip).toHaveClass("pulse");
+    expect(chip).toHaveAttribute("data-tone", "red");
   });
 
   it("opens the frame full size on double-click without toggling it", async () => {
@@ -1596,11 +1717,12 @@ describe("new series conditions", () => {
 });
 
 describe("QC chart axes", () => {
-  async function showCheck(name: RegExp) {
+  /** One check is drawn at a time; the picker chooses which. */
+  async function showCheck(label: string) {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    // The QC tabs appear once the tensors load (before that the section prompts).
-    fireEvent.click(await screen.findByRole("tab", { name }));
+    await screen.findByLabelText("Preprocessing check");
+    pickCheck(label);
   }
 
   it("names the quantity and unit on both axes of the kinematics chart", async () => {
@@ -1613,21 +1735,14 @@ describe("QC chart axes", () => {
   });
 
   it("names both axes of the interface chart in physical units", async () => {
-    await showCheck(/Interface evolution/);
+    await showCheck("Interface evolution");
 
     expect(screen.getByText(/x \(µm\), downstream/)).toBeInTheDocument();
     expect(screen.getByText(/y \(µm\), across channel/)).toBeInTheDocument();
   });
 
-  it("names both axes of the signed-distance chart", async () => {
-    await showCheck(/Signed distance/);
-
-    expect(screen.getByText(/x \(µm\), downstream/)).toBeInTheDocument();
-    expect(screen.getByText("y (µm)")).toBeInTheDocument();
-  });
-
   it("draws each frame as one closed silhouette, not loose arcs", async () => {
-    await showCheck(/Interface evolution/);
+    await showCheck("Interface evolution");
 
     const shapes = document.querySelectorAll(".qc-silhouette");
     expect(shapes).toHaveLength(1); // the fixture has one frame
@@ -1637,7 +1752,7 @@ describe("QC chart axes", () => {
   });
 
   it("keeps chart text off SVG's black default on the dark canvas", async () => {
-    await showCheck(/Interface evolution/);
+    await showCheck("Interface evolution");
 
     // The class has to land where the CSS can reach it; a bare <text> with a
     // descendant-only rule falls back to black and is invisible here.
@@ -1650,6 +1765,162 @@ describe("QC chart axes", () => {
   });
 });
 
+describe("ribbon and strip point at the same frame", () => {
+  // The overview can say where a frame IS, but without the link it can never
+  // say WHICH one — so taking a tick and pointing at a thumbnail now mark the
+  // same frame in both places.
+  const ticks = () => document.querySelectorAll(".ribbon-tick");
+  const tiles = () => document.querySelectorAll(".strip .fr");
+
+  async function showStrip() {
+    mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence · sample/);
+  }
+
+  it("marks the thumbnail for the tick under the pointer", async () => {
+    await showStrip();
+    fireEvent.pointerEnter(ticks()[1]);
+
+    expect(ticks()[1]).toHaveClass("cur");
+    expect(tiles()[1]).toHaveClass("cur");
+    expect(tiles()[0]).not.toHaveClass("cur");
+  });
+
+  it("marks the tick for the thumbnail under the pointer", async () => {
+    await showStrip();
+    fireEvent.pointerEnter(tiles()[2]);
+
+    expect(ticks()[2]).toHaveClass("cur");
+    expect(tiles()[2]).toHaveClass("cur");
+  });
+
+  it("takes the mark from the keyboard too, not the pointer alone", async () => {
+    await showStrip();
+    fireEvent.focus(screen.getByRole("button", { name: /^Frame 2,/ }));
+    expect(ticks()[1]).toHaveClass("cur");
+  });
+
+  it("releases the mark when the pointer leaves the strip", async () => {
+    await showStrip();
+    fireEvent.pointerEnter(tiles()[1]);
+    fireEvent.pointerLeave(document.querySelector(".strip")!);
+
+    expect(document.querySelector(".ribbon-tick.cur")).toBeNull();
+  });
+});
+
+describe("QC panel header", () => {
+  async function showQc() {
+    mockApi({ processed: true });
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByLabelText("Preprocessing check");
+  }
+
+  it("carries no heading of its own above the plot", async () => {
+    // "Preprocessing QC · computed from the training tensors" named the card
+    // twice over — the rail, the chooser and the axes all say it — and it
+    // pushed the one number the card produces away from the plot below it.
+    await showQc();
+    expect(
+      screen.queryByRole("heading", { name: /Preprocessing QC/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/computed from the training tensors/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clusters both menus at the left and closes the row with the finding", async () => {
+    await showQc();
+    const picker = screen.getByLabelText("Preprocessing check");
+    const bar = picker.closest(".cf-bar")!;
+    // The chooser and the downloads travel together; the reading is the only
+    // thing at the far end, where four format buttons used to sit.
+    expect(picker.closest(".cf-lead")).not.toBeNull();
+    expect(
+      bar.querySelector<HTMLElement>(".cf-lead [aria-haspopup='menu']"),
+    ).not.toBeNull();
+    expect(bar.lastElementChild).toHaveClass("qc-finding");
+  });
+
+  it("gives every check a headline finding, so the header keeps its shape", async () => {
+    await showQc();
+    expect(screen.getByText("180")).toBeInTheDocument(); // mm/s nose speed
+    expect(screen.getByText(/nose speed/)).toBeInTheDocument();
+
+    pickCheck("Interface evolution");
+
+    expect(screen.getByText(/frames overlaid/)).toBeInTheDocument();
+    expect(document.querySelector(".qc-finding")).not.toBeNull();
+  });
+});
+
+describe("QC chart interaction", () => {
+  const qcSvg = () =>
+    document.querySelector<SVGSVGElement>(".qc-sub .chart-wrap svg")!;
+  const live = () =>
+    document.querySelector<HTMLElement>(".qc-sub .chart-wrap [role='status']")!;
+
+  async function focusKinematics() {
+    mockApi({ processed: true });
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByRole("img", {
+      name: /Bubble length in micrometres against time/,
+    });
+    fireEvent.focus(qcSvg());
+  }
+
+  it("reaches every frame from the keyboard, not the pointer alone", async () => {
+    // A crosshair says nothing to anyone not holding a mouse, so the same
+    // readout is announced. Fixture: L = 600, 800, 1000 µm at t = 0, 0.5, 1 ms
+    // against a fit of 180 mm/s from 610 µm.
+    await focusKinematics();
+    expect(live()).toHaveTextContent("frame 1");
+
+    fireEvent.keyDown(qcSvg(), { key: "ArrowRight" });
+
+    expect(live()).toHaveTextContent("t = 0.5 ms");
+    expect(live()).toHaveTextContent("800 µm"); // measured
+    expect(live()).toHaveTextContent("700 µm"); // fit at t = 0.5
+    expect(live()).toHaveTextContent("+100.0 µm"); // the gap between them
+  });
+
+  it("carries the focused frame into the residual strip below the fit", async () => {
+    // Sharing one x axis is what lets a reader take a frame from the fit to
+    // its error; emphasising only one of the two panels would waste that.
+    await focusKinematics();
+    fireEvent.keyDown(qcSvg(), { key: "End" });
+
+    const dots = document.querySelectorAll(".qc-sub .qc-dot");
+    const resid = document.querySelectorAll(".qc-sub .qc-resid-dot");
+    expect(dots[dots.length - 1]).toHaveClass("hot");
+    expect(resid[resid.length - 1]).toHaveClass("hot");
+    expect(document.querySelectorAll(".qc-sub .hot")).toHaveLength(2);
+  });
+
+  it("clears the readout on Escape and on blur", async () => {
+    await focusKinematics();
+    fireEvent.keyDown(qcSvg(), { key: "Escape" });
+
+    expect(live()).toHaveTextContent("");
+    expect(document.querySelector(".qc-sub .qc-dot.hot")).toBeNull();
+  });
+
+  it("probes a silhouette in the interface check, dimming the rest", async () => {
+    mockApi({ processed: true });
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByLabelText("Preprocessing check");
+    pickCheck("Interface evolution");
+
+    fireEvent.focus(qcSvg());
+
+    // The fixture has one frame, so it is the hot one and there is no
+    // context left to recede — the classes still have to land.
+    expect(document.querySelector(".qc-silhouette")).toHaveClass("hot");
+    expect(live()).toHaveTextContent("nose x");
+  });
+});
+
 describe("frame boundary overlay", () => {
   // A calibrated, processed series is what makes the overlay possible: the
   // rings need µm/px and the raw frame size to land on real pixels.
@@ -1657,7 +1928,7 @@ describe("frame boundary overlay", () => {
 
   async function enlarge(frame: number) {
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText("Preprocessing QC");
+    await screen.findByLabelText("Preprocessing check");
     fireEvent.click(
       screen.getByRole("button", { name: `Enlarge frame ${frame}` }),
     );

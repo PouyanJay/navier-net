@@ -1,5 +1,6 @@
 import "./components.css";
 
+export { BrandMark, vorticityPoints, MARK_VIEWBOX } from "./BrandMark";
 export { Button } from "./Button";
 export { Callout, type CalloutTone } from "./Callout";
 export { Chip } from "./Chip";
@@ -16,6 +17,7 @@ export {
 export { Meter } from "./Meter";
 export { Panel } from "./Panel";
 export { ScrollBar, useScrollExtent, useWheelToHorizontal } from "./ScrollBar";
+export { Select, type SelectChoice } from "./Select";
 export { Stat, type Tone } from "./Stat";
 export { StatusDot } from "./StatusDot";
 export { Switch } from "./Switch";

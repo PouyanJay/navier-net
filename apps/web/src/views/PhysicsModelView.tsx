@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { StageAside } from "../app/StageAside";
-import { Callout } from "../components";
+import { Button, Callout } from "../components";
 import type { DatasetSummary } from "../lib/api";
 import { seriesName, seriesNameOf } from "../lib/series";
 import { CapacityPreset } from "./physics/CapacityPreset";
@@ -9,6 +9,7 @@ import { EnsembleCanvas } from "./physics/EnsembleCanvas";
 import { EquationsPanel } from "./physics/EquationsPanel";
 import { ModelBudget } from "./physics/ModelBudget";
 import { PerFieldTable } from "./physics/PerFieldTable";
+import { HugeiconsIcon, SaveIcon } from "../components/icons";
 import { RunBar } from "./physics/RunBar";
 import { usePhysicsModel } from "./physics/usePhysicsModel";
 import "./physics/physics.css";
@@ -18,31 +19,11 @@ import "./physics/physics.css";
 const ASIDE = {
   title: "Physics & model",
   subtitle: "equations · architecture",
-  width: 384,
+  width: 461,
 };
 
 interface PhysicsModelViewProps {
   datasets: DatasetSummary[];
-}
-
-/** Floppy-disk save glyph, drawn in the house SVG style (16-grid, 1.4 stroke). */
-function SaveIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      focusable="false"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M4 2.7h5.3L13.3 6.7v5.3a1.3 1.3 0 0 1-1.3 1.3H4a1.3 1.3 0 0 1-1.3-1.3V4A1.3 1.3 0 0 1 4 2.7Z" />
-      <path d="M5.6 2.7v3h3.2v-3" />
-      <path d="M5 13.3V9.6h6v3.7" />
-    </svg>
-  );
 }
 
 export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
@@ -53,7 +34,7 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
   if (datasets.length === 0) {
     return (
       <Callout tone="info">
-        No datasets yet — upload a sequence in Datasets to configure its physics
+        No datasets yet. Upload a sequence in Datasets to configure its physics
         and model.
       </Callout>
     );
@@ -64,35 +45,11 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
   return (
     <div className="stack">
       <div className="pm-head">
-        <div>
-          <p>
-            Set the equations and capacity on the left; everything here is
-            derived from them. Hover any equation for its math and detail, or
-            any derived row for its reasoning.
-          </p>
-        </div>
-        <div className="pm-headacts">
-          {model && (
-            <span
-              className={model.dirty ? "pm-statechip dirty" : "pm-statechip"}
-            >
-              <span className="dot" aria-hidden="true" />
-              {model.dirty ? "unsaved changes" : "saved"}
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn ghost icon-only pm-save"
-            data-tip={model?.saving ? "Saving…" : "Save configuration"}
-            aria-label={
-              model?.saving ? "Saving configuration" : "Save configuration"
-            }
-            disabled={!model || !model.dirty || model.saving}
-            onClick={() => model?.save()}
-          >
-            <SaveIcon />
-          </button>
-        </div>
+        <p>
+          Set the equations and capacity on the left; everything here is derived
+          from them. Hover any equation for its math and detail, or any derived
+          row for its reasoning.
+        </p>
       </div>
 
       {load.status === "loading" && (
@@ -129,6 +86,24 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
               datasetName={seriesNameOf(datasets, model.dataset)}
             />
             <CapacityPreset model={model} />
+            {/* Saving belongs with the configuration it commits, and stays
+                reachable without scrolling back up the equation list. */}
+            <div className="aside-actions pm-actions">
+              <span
+                className={model.dirty ? "pm-statechip dirty" : "pm-statechip"}
+              >
+                <span className="dot" aria-hidden="true" />
+                {model.dirty ? "unsaved changes" : "saved"}
+              </span>
+              <Button
+                variant="primary"
+                onClick={() => model.save()}
+                disabled={!model.dirty || model.saving}
+              >
+                <HugeiconsIcon icon={SaveIcon} size={15} />
+                {model.saving ? "Saving…" : "Save"}
+              </Button>
+            </div>
           </StageAside>
 
           {/* Canvas: what the configuration above derives, in the order a

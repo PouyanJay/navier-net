@@ -69,7 +69,7 @@ describe("InterfacePhysicsPanel", () => {
 
   it("distinguishes a front-geometry run whose diagnostics were never written", () => {
     render(<InterfacePhysicsPanel physics={null} frontGeometry />);
-    expect(screen.getByText(/re-run the evaluate stage/)).toBeInTheDocument();
+    expect(screen.getByText(/re-run the evaluate stage/i)).toBeInTheDocument();
   });
 
   it("says so when no physics residual was active at all", () => {

@@ -17,7 +17,7 @@ import {
   type RunJobStatus,
   type RunSummary,
 } from "./lib/api";
-import { isTrainedRun } from "./lib/runs";
+import { StageHeaderProvider, useStageHeaderSlot } from "./app/StageHeader";
 import { seriesNameOf } from "./lib/series";
 import { DatasetsView } from "./views/DatasetsView";
 import { PhysicsModelView } from "./views/PhysicsModelView";
@@ -49,10 +49,7 @@ const CONTINUE: Record<string, { label: string; next: string }> = {
   solver: { label: "Continue to results →", next: "results" },
 };
 
-const IDLE_STATUS: PlatformStatus = {
-  latestRun: null,
-  projects: 0,
-};
+const IDLE_STATUS: PlatformStatus = { projects: 0 };
 
 interface RepoFacts {
   datasets: DatasetSummary[];
@@ -79,7 +76,7 @@ export function App() {
 }
 
 function Workspace() {
-  const params = useParams<{ pid?: string; stage?: string }>();
+  const params = useParams<{ pid?: string; stage?: string; runId?: string }>();
   const navigate = useNavigate();
   // The deep results routes have no :stage param; they are always "results".
   const stage = params.pid ? (params.stage ?? "results") : undefined;
@@ -99,31 +96,31 @@ function Workspace() {
       .catch(() => setRepo(null)); // chrome only; views surface real errors
   }, []);
 
-  // The run chip is scoped to the open project: an empty project shows an
-  // untouched pipeline even when other projects have trained runs.
-  const status = useMemo<PlatformStatus>(() => {
-    if (!repo) return IDLE_STATUS;
-    const runs = project
-      ? repo.runs.filter(
-          (run) =>
-            run.dataset != null && project.datasets.includes(run.dataset),
-        )
-      : repo.runs;
-    const trained = runs.filter(isTrainedRun);
-    const latest = trained[trained.length - 1] ?? null;
+  const status = useMemo<PlatformStatus>(
+    () => (repo ? { projects: repo.projectCount } : IDLE_STATUS),
+    [repo],
+  );
+
+  /**
+   * The run the breadcrumb names, read from the URL rather than from "whichever
+   * run is newest". Only the deep results routes carry a :runId, so every other
+   * stage gets no run segment at all -- which is right, because on Datasets or
+   * Solver there is no run in view to name.
+   */
+  // The slot a stage fills with the identity of what it is showing.
+  const stageHeader = useStageHeaderSlot();
+
+  const runCrumb = useMemo(() => {
+    if (!params.runId || !repo) return null;
+    const run = repo.runs.find((candidate) => candidate.id === params.runId);
+    if (!run) return null;
     // Dataset-named legacy runs follow their series' current display label.
-    const latestName =
-      latest &&
-      (latest.dataset && latest.id === latest.dataset
-        ? seriesNameOf(repo.datasets, latest.dataset)
-        : latest.id);
-    return {
-      latestRun: latest
-        ? { id: latest.id, name: latestName ?? latest.id, steps: latest.steps }
-        : null,
-      projects: repo.projectCount,
-    };
-  }, [repo, project]);
+    const name =
+      run.dataset && run.id === run.dataset
+        ? (seriesNameOf(repo.datasets, run.dataset) ?? run.id)
+        : run.id;
+    return { id: run.id, name };
+  }, [params.runId, repo]);
 
   // Pick up a run already in flight (e.g. after a page reload mid-training).
   useEffect(() => {
@@ -222,18 +219,26 @@ function Workspace() {
       onNavigate={goToStage}
       activeRun={activeRun}
       status={status}
+      runCrumb={runCrumb}
       project={project?.name ?? null}
       onHome={goHome}
     >
-      <header className="pagehead">
-        <div>
-          <h1>{PAGE_TITLE[active]}</h1>
-          {PAGE_INTRO[active] && <p>{PAGE_INTRO[active]}</p>}
-        </div>
-        {active === "projects" && (
-          <Button variant="primary" onClick={() => setCreatingProject(true)}>
-            ＋ New project
-          </Button>
+      {/* The workspace home keeps a title: the rail calls it "Workspace", so
+          nothing else on screen names it. Inside a project the rail names every
+          stage already, so the header carries the stage's OBJECT instead. */}
+      <header className={active === "projects" ? "pagehead" : "stagehead"}>
+        {active === "projects" ? (
+          <>
+            <div>
+              <h1>{PAGE_TITLE[active]}</h1>
+              {PAGE_INTRO[active] && <p>{PAGE_INTRO[active]}</p>}
+            </div>
+            <Button variant="primary" onClick={() => setCreatingProject(true)}>
+              ＋ New project
+            </Button>
+          </>
+        ) : (
+          <div className="stagehead-slot" ref={stageHeader.setNode} />
         )}
         {project && CONTINUE[active] && (
           <Button
@@ -244,37 +249,41 @@ function Workspace() {
           </Button>
         )}
       </header>
-      <div className="stack">
-        {active === "results" && project && <ResultsPage project={project} />}
-        {active === "projects" && (
-          <ProjectsView
-            onOpen={openProject}
-            creating={creatingProject}
-            onCreatingChange={setCreatingProject}
-            onChanged={refreshStatus}
-          />
-        )}
-        {active === "datasets" && project && (
-          <DatasetsView
-            project={project}
-            onProjectChanged={handleProjectChanged}
-          />
-        )}
-        {active === "physics" && (
-          <PhysicsModelView
-            datasets={
-              repo
-                ? project
-                  ? repo.datasets.filter((d) => project.datasets.includes(d.id))
-                  : repo.datasets
-                : []
-            }
-          />
-        )}
-        {active === "solver" && (
-          <SolverView onRunState={handleRunState} project={project} />
-        )}
-      </div>
+      <StageHeaderProvider node={stageHeader.node}>
+        <div className="stack">
+          {active === "results" && project && <ResultsPage project={project} />}
+          {active === "projects" && (
+            <ProjectsView
+              onOpen={openProject}
+              creating={creatingProject}
+              onCreatingChange={setCreatingProject}
+              onChanged={refreshStatus}
+            />
+          )}
+          {active === "datasets" && project && (
+            <DatasetsView
+              project={project}
+              onProjectChanged={handleProjectChanged}
+            />
+          )}
+          {active === "physics" && (
+            <PhysicsModelView
+              datasets={
+                repo
+                  ? project
+                    ? repo.datasets.filter((d) =>
+                        project.datasets.includes(d.id),
+                      )
+                    : repo.datasets
+                  : []
+              }
+            />
+          )}
+          {active === "solver" && (
+            <SolverView onRunState={handleRunState} project={project} />
+          )}
+        </div>
+      </StageHeaderProvider>
     </AppShell>
   );
 }

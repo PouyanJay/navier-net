@@ -728,6 +728,8 @@ const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
 const datasetPath = (id: string) => `/api/datasets/${encodeURIComponent(id)}`;
 
 export const api = {
+  /** Liveness of the API this client talks to; the System panel reports it. */
+  health: () => getJson<{ status: string }>("/healthz"),
   listRuns: (project?: string) =>
     getJson<RunSummary[]>(
       project
@@ -787,6 +789,12 @@ export const api = {
     ),
   deleteProject: (id: string) =>
     send<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}`, "DELETE"),
+  /** Remove one series from a project; unshared data cascades away with it. */
+  removeSeries: (projectId: string, datasetId: string) =>
+    send<ProjectSummary>(
+      `/api/projects/${encodeURIComponent(projectId)}/datasets/${encodeURIComponent(datasetId)}`,
+      "DELETE",
+    ),
 
   listDatasets: () => getJson<DatasetSummary[]>("/api/datasets"),
   getDataset: (id: string) => getJson<DatasetDetail>(datasetPath(id)),

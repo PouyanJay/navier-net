@@ -16,7 +16,9 @@ import {
   type PreprocessStatus,
   type QcData,
 } from "../../lib/api";
+import { HugeiconsIcon, RerunIcon } from "../../components/icons";
 import { FrameLightbox } from "./FrameLightbox";
+import { FrameRibbon } from "./FrameRibbon";
 import { QcChecks } from "./QcPanel";
 
 interface ImageSequenceProps {
@@ -47,29 +49,6 @@ function calibrationLine(detail: DatasetDetail): string {
   }
   const fovMm = (detail.um_per_px * detail.frame_px[0]) / 1000;
   return `auto-calibrated · ${detail.um_per_px.toFixed(3)} µm px⁻¹ · FOV ${fovMm.toFixed(2)} mm`;
-}
-
-/** Circular arrow: this rebuilds an artifact that already exists. */
-function RerunIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path
-        d="M13.2 8a5.2 5.2 0 1 1-1.6-3.7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <path
-        d="M13.4 1.9v3.1h-3.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
 }
 
 /** The raw frames as an inline film strip; scrolls when it overflows. Clicking a
@@ -115,6 +94,11 @@ export function ImageSequence({
   }
 
   const running = preprocess?.state === "running";
+  /* The overview and the detail point at the same frame in both directions:
+     take a tick and the strip brings that thumbnail into view, point at a
+     thumbnail and the tick for it lights up in the bar above. Without the
+     link the ribbon can only say where a frame IS, never which one. */
+  const [current, setCurrent] = useState<number | null>(null);
   const excludedCount = detail.excluded_frames.length;
   const pendingRerun = detail.processed && !detail.exclusions_applied;
 
@@ -135,12 +119,25 @@ export function ImageSequence({
         </p>
       ) : (
         <>
+          <FrameRibbon
+            detail={detail}
+            current={current}
+            onSelect={(n) => {
+              setCurrent(n);
+              // Optional-called: scrolling the thumbnail into view is an
+              // enhancement, and jsdom's elements do not implement it — the
+              // ribbon's marking must not depend on the scroll existing.
+              const el = strip.current?.children[n - 1];
+              el?.scrollIntoView?.({ block: "nearest", inline: "center" });
+            }}
+          />
           <div
             ref={strip}
             id={stripId}
             className="strip"
             role="list"
             aria-label={`${detail.n_frames} raw frames`}
+            onPointerLeave={() => setCurrent(null)}
           >
             {frames.map((n) => {
               const holdout = n === detail.holdout_frame;
@@ -153,10 +150,12 @@ export function ImageSequence({
                     "fr",
                     holdout ? "hold" : "",
                     excluded ? "excl" : "",
+                    n === current ? "cur" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
                   role="listitem"
+                  onPointerEnter={() => setCurrent(n)}
                 >
                   <button
                     type="button"
@@ -166,6 +165,7 @@ export function ImageSequence({
                     aria-label={`Frame ${n}, ${state} training${holdout ? ", holdout frame" : ""}`}
                     onClick={() => handleClick(n, holdout)}
                     onDoubleClick={() => handleDoubleClick(n)}
+                    onFocus={() => setCurrent(n)}
                   >
                     <ArtifactImage
                       src={artifactUrl.datasetFrame(detail.id, n)}
@@ -207,8 +207,13 @@ export function ImageSequence({
             {excludedCount > 0 && (
               <>
                 {" · "}
-                <b className="mono">
+                {/* The count carries the staleness itself. It used to be
+                    stated again underneath in a full callout, which pushed the
+                    frames up the page to say what this line can say by going
+                    red — and the header's lamp is already pulsing about it. */}
+                <b className={pendingRerun ? "mono fr-stale" : "mono"}>
                   {excludedCount} excluded ({detail.excluded_frames.join(", ")})
+                  {pendingRerun && " · needs re-run"}
                 </b>
               </>
             )}
@@ -224,12 +229,6 @@ export function ImageSequence({
       {exclusionError && (
         <Callout tone="error" title="Could not change the excluded frames">
           {exclusionError}
-        </Callout>
-      )}
-      {pendingRerun && !running && (
-        <Callout tone="caution" title="Preprocessing is out of date">
-          The excluded frames have changed since the tensors were built. Re-run
-          preprocessing so the solver sees this set.
         </Callout>
       )}
       {running && (
@@ -300,7 +299,7 @@ function PreprocessAction({
         disabled={running}
         title="Rebuild the tensors so the excluded frames take effect"
       >
-        <RerunIcon />
+        <HugeiconsIcon icon={RerunIcon} size={15} />
         {running ? "Running…" : "Re-run"}
       </Button>
     );

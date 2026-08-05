@@ -10,7 +10,7 @@
   gap: var(--s5);
   padding: var(--s4) var(--s5);
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r);
 }
 .runrow .id {

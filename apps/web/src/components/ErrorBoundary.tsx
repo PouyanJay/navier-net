@@ -37,7 +37,7 @@ export class ErrorBoundary extends Component<
     if (this.state.message)
       return (
         <Callout tone="error" title={`${this.props.label} crashed`}>
-          {this.state.message} — the rest of the page is unaffected; switch tabs
+          {this.state.message}. The rest of the page is unaffected; switch tabs
           or reselect the run to retry.
         </Callout>
       );
