@@ -92,18 +92,31 @@ test("surfaces inside the rail are opaque", async ({ page }) => {
   // which is exactly what a reader sees as "the text is hiding behind things".
   await openStage(page, "Physics & model");
 
-  const opacity = await page.evaluate(() => {
+  const resolved = await page.evaluate(() => {
     const rail = document.querySelector(".stage-aside")!;
     const panel = getComputedStyle(rail).getPropertyValue("--panel").trim();
+    // Round-trip through a real element so var() and color-mix() are resolved
+    // to a concrete colour the way the painted card sees them.
     const probe = document.createElement("div");
     probe.style.backgroundColor = panel;
     document.body.append(probe);
-    const resolved = getComputedStyle(probe).backgroundColor;
+    const painted = getComputedStyle(probe).backgroundColor;
     probe.remove();
-    return resolved;
+    return { declared: panel, painted };
   });
-  // rgb(...) is opaque; rgba(..., a<1) is not.
-  expect(opacity).not.toMatch(/rgba\([^)]*,\s*0?\.\d+\s*\)/);
+
+  // Assert the alpha, rather than excluding one spelling of transparency: a
+  // token that resolves to nothing paints rgba(0, 0, 0, 0), which is the worst
+  // case of this bug and reads as opaque to any "is it not rgba(…, 0.84)" test.
+  // Counted, not pattern-matched: "rgb(20, 23, 30)" has three components and an
+  // implicit alpha of 1, and a regex looking for a trailing number in it reads
+  // the blue channel as the alpha.
+  const components = resolved.painted.match(/[\d.]+/g) ?? [];
+  const alpha = components.length >= 4 ? Number(components[3]) : 1;
+  expect(
+    alpha,
+    `--panel resolves to ${resolved.painted} (declared ${resolved.declared})`,
+  ).toBe(1);
 });
 
 test("an equation popover stays inside the rail that scrolls it", async ({
