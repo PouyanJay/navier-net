@@ -1126,34 +1126,47 @@
 }
 
 /* ── Derived scales ───────────────────────────────────────────────────
-   Magnitudes with units, so there is no parity for a needle to point at. */
+   Magnitudes with units, so there is no ratio to plot. One row each: the
+   symbol, the value, and what it is computed from — stacked, the three took
+   three lines to say what reads across in one. */
 .scales {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 1px;
-  background: var(--line);
+  grid-template-columns: repeat(auto-fit, minmax(182px, 1fr));
+  /* The separators are the tiles' own borders, not gaps showing the container
+     through: a row that does not divide evenly would otherwise leave the
+     remainder painted as a grey hole beside the last tile. */
+  background: var(--panel2);
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
 }
+/* The symbol names the row; the value and what it is computed from share the
+   line under it, so the formula does not cost a line of its own. */
 .scale {
-  background: var(--panel2);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "k k"
+    "v f";
+  align-items: baseline;
+  column-gap: var(--s3);
   padding: var(--s2) var(--s3);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   min-width: 0;
 }
 .scale .k {
-  display: block;
+  grid-area: k;
   font-size: 9px;
   letter-spacing: 0.11em;
   color: var(--faint);
 }
 .scale .v {
-  display: block;
-  font-size: 16px;
+  grid-area: v;
+  font-size: 15px;
   font-weight: 600;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
-  margin-top: 2px;
   white-space: nowrap;
 }
 .scale .v em {
@@ -1162,11 +1175,13 @@
   color: var(--ink3);
   margin-left: var(--s1);
 }
+/* The formula closes the line, so the values stay a scannable column. */
 .scale .f {
-  display: block;
+  grid-area: f;
+  justify-self: end;
+  min-width: 0;
   font-size: 9px;
   color: var(--faint);
-  margin-top: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
