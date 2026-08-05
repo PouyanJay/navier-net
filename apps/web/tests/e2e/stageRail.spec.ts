@@ -260,11 +260,46 @@ test("the QC picker swaps the chart at full width", async ({ page }) => {
   // Full width, not half of it.
   expect(wide.width).toBeGreaterThan(card.width * 0.85);
 
-  await picker.selectOption("interface");
+  await picker.click();
+  await page.getByRole("option", { name: /Interface evolution/ }).click();
   await expect(
     page.getByRole("img", { name: /Bubble outline for \d+ frames/ }),
   ).toBeVisible();
   await expect(svg).toHaveCount(1);
+});
+
+test("the check chooser is the app's own menu, not the platform's", async ({
+  page,
+}) => {
+  // A native <select> paints the operating system's menu: system font, system
+  // metrics, system colours, on neither of our surfaces and in neither theme.
+  await openStage(page, null);
+  const picker = page.getByLabel("Preprocessing check");
+  await picker.waitFor();
+  expect(await picker.evaluate((el) => el.tagName)).toBe("BUTTON");
+  await expect(page.locator(".qc-sub select")).toHaveCount(0);
+
+  await picker.click();
+  const menu = page.locator(".qc-sub .menu");
+  await expect(menu).toBeVisible();
+  // Drawn on the app's overlay surface, opaque, above the chart.
+  const surface = await menu.evaluate((el) =>
+    getComputedStyle(el).backgroundColor.replace(/\s/g, ""),
+  );
+  expect(surface).not.toContain("rgba");
+  await expect(menu.getByRole("option")).toHaveCount(2);
+
+  // Openable and takeable without a pointer.
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await picker.press("ArrowDown");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("img", { name: /Bubble outline for \d+ frames/ }),
+  ).toBeVisible();
+  await expect(picker).toBeFocused();
 });
 
 test("the QC chart is drawn at the width it is rendered at", async ({

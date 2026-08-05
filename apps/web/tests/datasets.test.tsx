@@ -331,6 +331,12 @@ function mockApi({
 
 afterEach(() => vi.unstubAllGlobals());
 
+/** Open the QC chooser and take an option, the way a user does. */
+function pickCheck(label: string) {
+  fireEvent.click(screen.getByLabelText("Preprocessing check"));
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(label) }));
+}
+
 const noop = vi.fn();
 
 /**
@@ -865,8 +871,7 @@ describe("DatasetsView", () => {
     // The other check is one select away, and the picker replaced the tabs:
     // one slot in the header however many checks there are.
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
-    const picker = screen.getByLabelText("Preprocessing check");
-    fireEvent.change(picker, { target: { value: "interface" } });
+    pickCheck("Interface evolution");
 
     expect(
       screen.getByRole("img", { name: /Bubble outline for \d+ frames/ }),
@@ -877,8 +882,9 @@ describe("DatasetsView", () => {
       }),
     ).not.toBeInTheDocument();
     // Signed distance is gone entirely, not merely unselected.
+    fireEvent.click(screen.getByLabelText("Preprocessing check"));
     expect(
-      within(picker as HTMLSelectElement).queryByText(/Signed distance/),
+      screen.queryByRole("option", { name: /Signed distance/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -1617,12 +1623,11 @@ describe("new series conditions", () => {
 
 describe("QC chart axes", () => {
   /** One check is drawn at a time; the picker chooses which. */
-  async function showCheck(value: string) {
+  async function showCheck(label: string) {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    fireEvent.change(await screen.findByLabelText("Preprocessing check"), {
-      target: { value },
-    });
+    await screen.findByLabelText("Preprocessing check");
+    pickCheck(label);
   }
 
   it("names the quantity and unit on both axes of the kinematics chart", async () => {
@@ -1635,14 +1640,14 @@ describe("QC chart axes", () => {
   });
 
   it("names both axes of the interface chart in physical units", async () => {
-    await showCheck("interface");
+    await showCheck("Interface evolution");
 
     expect(screen.getByText(/x \(µm\), downstream/)).toBeInTheDocument();
     expect(screen.getByText(/y \(µm\), across channel/)).toBeInTheDocument();
   });
 
   it("draws each frame as one closed silhouette, not loose arcs", async () => {
-    await showCheck("interface");
+    await showCheck("Interface evolution");
 
     const shapes = document.querySelectorAll(".qc-silhouette");
     expect(shapes).toHaveLength(1); // the fixture has one frame
@@ -1652,7 +1657,7 @@ describe("QC chart axes", () => {
   });
 
   it("keeps chart text off SVG's black default on the dark canvas", async () => {
-    await showCheck("interface");
+    await showCheck("Interface evolution");
 
     // The class has to land where the CSS can reach it; a bare <text> with a
     // descendant-only rule falls back to black and is invisible here.
@@ -1680,9 +1685,7 @@ describe("QC panel header", () => {
     await showQc();
     const heading = screen.getByRole("heading", { name: "Preprocessing QC" });
 
-    fireEvent.change(screen.getByLabelText("Preprocessing check"), {
-      target: { value: "interface" },
-    });
+    pickCheck("Interface evolution");
 
     expect(heading).toHaveTextContent("Preprocessing QC");
     expect(
@@ -1705,9 +1708,7 @@ describe("QC panel header", () => {
     expect(screen.getByText("180")).toBeInTheDocument(); // mm/s nose speed
     expect(screen.getByText(/nose speed/)).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Preprocessing check"), {
-      target: { value: "interface" },
-    });
+    pickCheck("Interface evolution");
 
     expect(screen.getByText(/frames overlaid/)).toBeInTheDocument();
     expect(document.querySelector(".qc-finding")).not.toBeNull();
@@ -1768,9 +1769,8 @@ describe("QC chart interaction", () => {
   it("probes a silhouette in the interface check, dimming the rest", async () => {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    fireEvent.change(await screen.findByLabelText("Preprocessing check"), {
-      target: { value: "interface" },
-    });
+    await screen.findByLabelText("Preprocessing check");
+    pickCheck("Interface evolution");
 
     fireEvent.focus(qcSvg());
 

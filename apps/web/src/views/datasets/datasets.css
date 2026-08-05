@@ -1076,24 +1076,10 @@
   padding: 2px 8px;
 }
 
-/* The check picker rides the chart's own toolbar, beside the export actions:
+/* The check chooser rides the chart's own toolbar, beside the export actions:
    it changes what is plotted, so it belongs against the plot, and one strip of
-   controls beats two stacked ones. Its caption travels with it. */
-.qc-pick {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  min-width: 0;
-}
-.qc-pick-sub {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
+   controls beats two stacked ones. It carries no caption of its own — each
+   option states what it draws, in the menu, where that helps you choose. */
 .qc-pick select {
   height: 30px;
   padding: 0 var(--s2);

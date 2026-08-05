@@ -979,6 +979,112 @@ text.chart-axis-title {
   min-width: 0;
 }
 
+/* ── Menu / popover (DESIGN_SYSTEM §8.5) ──────────────────────────────
+   The app draws its own menus. A native <select> renders the operating
+   system's, which arrives in the system font and the system colours, on
+   neither of our surfaces and in neither of our themes. */
+.menu {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  gap: 1px;
+  padding: var(--s1);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-menu);
+  max-height: min(336px, calc(100dvh - 96px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--s2);
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 560;
+  text-align: left;
+  cursor: pointer;
+}
+/* One highlight for hover and for the keyboard's position: they are the same
+   state, and two different ones would disagree about what Enter takes. */
+.menu-item:hover,
+.menu-item.active {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* The chooser itself: a trigger that states the current choice, and the menu
+   anchored under it. */
+.pick {
+  position: relative;
+  min-width: 0;
+}
+.pick-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  height: 30px;
+  padding: 0 var(--s2) 0 var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--rs);
+  background: var(--control);
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  cursor: pointer;
+  transition:
+    border-color 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.pick-btn:hover {
+  color: var(--text);
+  border-color: var(--control-border);
+}
+.pick-btn[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--primary);
+}
+.pick-val {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pick-menu {
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: 320px;
+}
+/* A reserved column, hidden rather than removed, so the labels do not shift
+   sideways as the choice moves down the list. */
+.pick-tick {
+  flex: none;
+  color: var(--primary);
+}
+.pick-item-main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.pick-item-main em {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  font-style: normal;
+  color: var(--faint);
+}
+
 /* One control strip per chart: the chart's own controls lead it, the export
    actions close it. Both ends are anchored, so nothing floats in between. */
 .cf-bar {

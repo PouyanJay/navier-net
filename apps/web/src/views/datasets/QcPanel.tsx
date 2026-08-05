@@ -1,8 +1,8 @@
 import * as d3 from "d3";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ChartFrame } from "../../components/ChartFrame";
-import { ViewCanvas } from "../../components";
+import { Select, ViewCanvas } from "../../components";
 import {
   attachCrosshair,
   makeTip,
@@ -133,7 +133,6 @@ function QcHeader({ finding }: { finding: Finding | null }) {
 
 export function QcChecks({ qc, processed }: QcChecksProps) {
   const [check, setCheck] = useState<Check>("kinematics");
-  const pickerId = useId();
 
   if (!qc) {
     return (
@@ -150,30 +149,22 @@ export function QcChecks({ qc, processed }: QcChecksProps) {
 
   const active = CHECKS.find((c) => c.id === check)!;
 
-  /* A select rather than a segmented control: it takes one slot however many
+  /* A chooser rather than a segmented control: it takes one slot however many
      checks there are. It rides in the chart's own toolbar because it changes
      what is plotted, and because a card with two stacked control strips reads
-     as an accident. */
+     as an accident. Each option carries what it draws, so the choice is made
+     on what the chart shows rather than on its name alone. */
   const picker = (
-    <div className="qc-pick">
-      {/* The caption sits outside the label: inside it, it would join the
-          select's accessible name and describe the wrong thing. */}
-      <label className="sr-only" htmlFor={pickerId}>
-        Preprocessing check
-      </label>
-      <select
-        id={pickerId}
-        value={check}
-        onChange={(event) => setCheck(event.target.value as Check)}
-      >
-        {CHECKS.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.label}
-          </option>
-        ))}
-      </select>
-      <span className="qc-pick-sub">{active.sub}</span>
-    </div>
+    <Select
+      label="Preprocessing check"
+      value={check}
+      options={CHECKS.map((c) => ({
+        value: c.id,
+        label: c.label,
+        hint: c.sub,
+      }))}
+      onChange={setCheck}
+    />
   );
 
   return (

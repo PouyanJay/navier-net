@@ -17,6 +17,7 @@ export {
 export { Meter } from "./Meter";
 export { Panel } from "./Panel";
 export { ScrollBar, useScrollExtent, useWheelToHorizontal } from "./ScrollBar";
+export { Select, type SelectChoice } from "./Select";
 export { Stat, type Tone } from "./Stat";
 export { StatusDot } from "./StatusDot";
 export { Switch } from "./Switch";
