@@ -15,6 +15,15 @@ interface Tile {
   about: string;
   /** What the current value means physically — the regime it puts the run in. */
   reading: (value: number) => string;
+  /**
+   * Where this group's verdict flips, and the decades worth plotting it over.
+   *
+   * A bare 0.0107 says nothing: it only means something against the threshold
+   * where surface tension stops winning. The four groups that HAVE such a
+   * threshold get it drawn; the rest are magnitudes, not switches, and stay
+   * compact values.
+   */
+  regime?: { threshold: number; min: number; max: number; at: string };
 }
 
 // Order and vocabulary follow the mockup; every value is the pipeline's own,
@@ -22,6 +31,7 @@ interface Tile {
 const TILES: Tile[] = [
   {
     key: "Re",
+    regime: { threshold: 2300, min: 1, max: 1e5, at: "Re ≈ 2300" },
     label: "RE",
     digits: 1,
     name: "Reynolds number",
@@ -33,6 +43,7 @@ const TILES: Tile[] = [
   },
   {
     key: "We",
+    regime: { threshold: 10, min: 1e-2, max: 1e3, at: "We ≈ 10" },
     label: "WE",
     digits: 2,
     name: "Weber number",
@@ -44,6 +55,7 @@ const TILES: Tile[] = [
   },
   {
     key: "Ca",
+    regime: { threshold: 1, min: 1e-4, max: 1e2, at: "Ca ≈ 1" },
     label: "CA",
     digits: 4,
     name: "Capillary number",
@@ -83,6 +95,7 @@ const TILES: Tile[] = [
   },
   {
     key: "Bond",
+    regime: { threshold: 0.1, min: 1e-3, max: 1e2, at: "Bo ≈ 0.1" },
     label: "BOND",
     digits: 3,
     name: "Bond number",
@@ -148,10 +161,55 @@ const TILES: Tile[] = [
   },
 ];
 
-const DEFAULT_KEY = "Ca";
+const DEFAULT_KEY = "Pe";
 
 function shownValue(tile: Tile, groups: DimensionlessGroups): string {
   return (groups[tile.key] * (tile.scale ?? 1)).toFixed(tile.digits);
+}
+
+/** Position on a log axis, 0 to 1, clamped so an extreme value stays on the bar. */
+function logPosition(value: number, min: number, max: number): number {
+  if (!(value > 0)) return 0;
+  const t =
+    (Math.log10(value) - Math.log10(min)) / (Math.log10(max) - Math.log10(min));
+  return Math.min(1, Math.max(0, t));
+}
+
+/**
+ * One group as a regime read: the value, where it sits against the threshold
+ * that decides its verdict, and the verdict itself.
+ *
+ * The verdict is not new — the panel has always computed it — it was just
+ * hidden behind selecting the tile.
+ */
+function RegimeCard({ tile, value }: { tile: Tile; value: number }) {
+  const { threshold, min, max, at } = tile.regime!;
+  const shown = (value * (tile.scale ?? 1)).toFixed(tile.digits);
+  return (
+    <div className="regime" role="group" aria-label={`${tile.name} definition`}>
+      <div className="regime-hd">
+        <span className="regime-name">
+          {tile.name} <span className="regime-sym mono">{tile.label}</span>
+        </span>
+        <span className="regime-val mono">{shown}</span>
+      </div>
+      <p className="regime-about">{tile.about}</p>
+      <div className="regime-scale" aria-hidden="true">
+        <span className="regime-rail" />
+        <span
+          className="regime-th"
+          style={{ left: `${logPosition(threshold, min, max) * 100}%` }}
+        >
+          <em className="mono">{at}</em>
+        </span>
+        <span
+          className="regime-mk"
+          style={{ left: `${logPosition(value, min, max) * 100}%` }}
+        />
+      </div>
+      <p className="regime-verdict">{tile.reading(value)}</p>
+    </div>
+  );
 }
 
 /** Dimensionless groups as mono stat tiles. Selecting a tile explains that group
@@ -164,21 +222,28 @@ export function GroupsPanel({
   groups: DimensionlessGroups;
 }) {
   const present = TILES.filter((tile) => groups[tile.key] != null);
+  // The four that decide the regime lead; the rest are scales, not switches.
+  const regimes = present.filter((tile) => tile.regime);
+  const derived = present.filter((tile) => !tile.regime);
   const [selectedKey, setSelectedKey] = useState(DEFAULT_KEY);
   const selected =
-    present.find((tile) => tile.key === selectedKey) ?? present[0] ?? null;
+    derived.find((tile) => tile.key === selectedKey) ?? derived[0] ?? null;
 
   return (
-    <Panel
-      title="Derived dimensionless groups"
-      subtitle={`dataset: ${datasetName}`}
-    >
+    <Panel title="Regime" subtitle={`derived from ${datasetName}`}>
+      <div className="regimes">
+        {regimes.map((tile) => (
+          <RegimeCard key={tile.key} tile={tile} value={groups[tile.key]} />
+        ))}
+      </div>
+
+      <p className="groups-lbl">Derived scales</p>
       <div
         className="groups"
         role="group"
-        aria-label="Dimensionless groups, select one for its definition"
+        aria-label="Derived scales, select one for its definition"
       >
-        {present.map((tile) => {
+        {derived.map((tile) => {
           const isSel = selected?.key === tile.key;
           return (
             <button

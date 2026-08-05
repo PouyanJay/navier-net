@@ -1035,3 +1035,104 @@
 .qc-sub-hd-second {
   margin-top: var(--s5);
 }
+
+/* ── Regime cards ─────────────────────────────────────────────────────
+   A value against the threshold that decides its verdict. The number alone
+   says nothing: Ca = 0.0107 only means "surface tension wins" if you already
+   know where the flip is, so the flip is drawn. */
+.regimes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(258px, 1fr));
+  gap: var(--s3);
+}
+.regime {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: var(--s3) var(--s4);
+  background: var(--panel2);
+}
+.regime-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.regime-name {
+  font-size: 12px;
+  font-weight: 620;
+  color: var(--ink);
+}
+.regime-sym {
+  font-size: 9.5px;
+  color: var(--ink3);
+  letter-spacing: 0.08em;
+}
+.regime-val {
+  font-size: 18px;
+  color: var(--acc);
+  font-variant-numeric: tabular-nums;
+}
+.regime-about {
+  margin: var(--s2) 0 0;
+  font-size: 11px;
+  color: var(--ink3);
+}
+.regime-scale {
+  position: relative;
+  height: 28px;
+  margin: var(--s3) 0 2px;
+}
+.regime-rail {
+  position: absolute;
+  inset-inline: 0;
+  top: 10px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--teal), var(--amber));
+  opacity: 0.45;
+}
+.regime-th {
+  position: absolute;
+  top: 3px;
+  width: 1.5px;
+  height: 17px;
+  background: var(--ink2);
+  opacity: 0.75;
+}
+.regime-th em {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-style: normal;
+  font-size: 8.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+.regime-mk {
+  position: absolute;
+  top: 5px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 999px;
+  background: var(--acc);
+  box-shadow:
+    0 0 0 3px var(--panel2),
+    0 0 0 4.5px var(--acc);
+}
+.regime-verdict {
+  margin: var(--s3) 0 0;
+  font-size: 12px;
+  color: var(--ink2);
+}
+
+/* The remaining groups are scales, not switches. */
+.groups-lbl {
+  margin: var(--s5) 0 var(--s2);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}

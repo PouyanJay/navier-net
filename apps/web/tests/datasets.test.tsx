@@ -746,25 +746,32 @@ describe("DatasetsView", () => {
     mockApi();
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // Capillary number is the default selection: it explains the group and the
-    // regime its value puts the run in.
+    // The four groups that decide the regime need no selecting: each shows its
+    // value, its ratio, and the verdict that value produces. A bare 0.0107
+    // means nothing without the threshold it is being read against.
     const ca = within(
-      await screen.findByRole("region", {
+      await screen.findByRole("group", {
         name: /Capillary number definition/,
       }),
     );
     expect(ca.getByText(/Viscous drag ÷ surface tension/)).toBeInTheDocument();
     expect(ca.getByText(/Bretherton film/)).toBeInTheDocument();
 
-    // Selecting the Reynolds tile switches the definition and read-back.
-    fireEvent.click(screen.getByRole("button", { name: /RE 215\.5/ }));
     const re = within(
-      await screen.findByRole("region", { name: /Reynolds number definition/ }),
+      screen.getByRole("group", { name: /Reynolds number definition/ }),
     );
     expect(
       re.getByText(/Inertial forces ÷ viscous forces/),
     ).toBeInTheDocument();
     expect(re.getByText(/Laminar/)).toBeInTheDocument();
+
+    // The remaining groups are scales rather than switches, so they keep the
+    // select-to-define tiles.
+    fireEvent.click(screen.getByRole("button", { name: /PR 9\.41/ }));
+    const pr = within(
+      await screen.findByRole("region", { name: /Prandtl number definition/ }),
+    );
+    expect(pr.getByText(/Momentum diffusivity/)).toBeInTheDocument();
   });
 
   it("uploads a new series through the modal and preprocesses it", async () => {
