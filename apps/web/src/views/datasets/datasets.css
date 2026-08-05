@@ -287,6 +287,11 @@
   color: var(--acc);
   font-weight: 500;
 }
+/* The excluded set no longer matches the tensors that were built from it. */
+.fr-stale {
+  color: var(--redtext);
+  font-weight: 600;
+}
 
 /* Frame lightbox: one frame at full size, wider than the task modals. */
 .lightbox-ov {
@@ -626,11 +631,6 @@
   font-family: var(--mono);
   font-size: 10px;
 }
-.qc-fit-label {
-  fill: var(--series-model);
-  font-family: var(--mono);
-  font-size: 11px;
-}
 
 /* SDF heatmap with its axis labels pinned around the canvas. */
 .qc-sdf {
@@ -894,34 +894,8 @@
   display: grid;
   gap: var(--s3);
 }
-/* Identity on the left, the open check's headline number on the right. The
-   heading names the section and never the chart: the picker in the toolbar
-   already names that, and a heading that restated it left two copies of the
-   same words side by side and reflowed the header on every switch. */
-.qc-sub-hd {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--s4);
-  flex-wrap: wrap;
-}
-.qc-sub-title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s2);
-  min-width: 0;
-}
-.qc-sub-title h3 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink);
-}
-.qc-sub-title .sub {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink3);
-}
+/* The finding closes the toolbar row the export buttons used to fill, so the
+   number the check produces sits directly above the plot that evidences it. */
 
 /* Upload-new-series modal: wider than a task modal and scrollable, since it now
    carries the full series setup (measurements + operating conditions). */
@@ -1053,13 +1027,12 @@
 .qc-finding {
   display: flex;
   align-items: baseline;
-  justify-content: flex-end;
   gap: var(--s2);
-  margin: 0 0 0 auto;
-  flex-wrap: wrap;
+  margin: 0;
+  min-width: 0;
 }
 .qc-finding-v {
-  font-size: 22px;
+  font-size: 19px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -1126,11 +1099,21 @@
   font-size: 9.5px;
   color: var(--ink3);
   letter-spacing: 0.08em;
+  /* The symbol is one token; "HELE-SHAW" broken over two lines is not one. */
+  white-space: nowrap;
 }
 .regime-val {
   font-size: 18px;
   color: var(--acc);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The unit is a quieter suffix, not part of the digits it follows. */
+.regime-val em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--ink3);
+  margin-left: var(--s1);
 }
 .regime-about {
   margin: var(--s2) 0 0;

@@ -193,8 +193,13 @@ export function ImageSequence({
             {excludedCount > 0 && (
               <>
                 {" · "}
-                <b className="mono">
+                {/* The count carries the staleness itself. It used to be
+                    stated again underneath in a full callout, which pushed the
+                    frames up the page to say what this line can say by going
+                    red — and the header's lamp is already pulsing about it. */}
+                <b className={pendingRerun ? "mono fr-stale" : "mono"}>
                   {excludedCount} excluded ({detail.excluded_frames.join(", ")})
+                  {pendingRerun && " · needs re-run"}
                 </b>
               </>
             )}
@@ -210,12 +215,6 @@ export function ImageSequence({
       {exclusionError && (
         <Callout tone="error" title="Could not change the excluded frames">
           {exclusionError}
-        </Callout>
-      )}
-      {pendingRerun && !running && (
-        <Callout tone="caution" title="Preprocessing is out of date">
-          The excluded frames have changed since the tensors were built. Re-run
-          preprocessing so the solver sees this set.
         </Callout>
       )}
       {running && (

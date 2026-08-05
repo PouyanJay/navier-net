@@ -42,16 +42,38 @@ describe("rowsToCsv", () => {
 });
 
 describe("ChartFrame", () => {
-  it("offers the standard chart actions", () => {
+  it("gathers every export behind one Download menu", () => {
+    // Four naked format buttons gave "take a copy of this" more width in the
+    // toolbar than the control that changes what is plotted.
     renderFrame();
-    for (const action of ["Expand", "PNG", "SVG", "CSV", "JSON"]) {
-      expect(screen.getByRole("button", { name: action })).toBeInTheDocument();
+    for (const format of ["PNG", "SVG", "CSV", "JSON"]) {
+      expect(screen.queryByRole("button", { name: format })).toBeNull();
     }
+
+    fireEvent.click(screen.getByLabelText("Download Test chart"));
+
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual([
+      "PNG imagehigh resolution",
+      "SVG imagevector, standalone",
+      "CSV datathe plotted values",
+      "JSON datathe plotted values",
+    ]);
+  });
+
+  it("puts Expand on the plot rather than in the toolbar", () => {
+    // It acts on the picture, and the picture is what you are pointing at
+    // when you want it bigger.
+    renderFrame();
+    const expand = screen.getByLabelText("Expand Test chart");
+    expect(expand.closest(".cf-plot")).not.toBeNull();
+    expect(expand.closest(".cf-bar")).toBeNull();
   });
 
   it("expands the chart into a modal with a live re-render", async () => {
     renderFrame();
-    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+    fireEvent.click(screen.getByLabelText("Expand Test chart"));
     const dialog = await screen.findByRole("dialog", { name: "Test chart" });
     expect(dialog).toHaveTextContent("big");
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -67,7 +89,8 @@ describe("ChartFrame", () => {
       return "blob:test";
     });
     renderFrame();
-    fireEvent.click(screen.getByRole("button", { name: "CSV" }));
+    fireEvent.click(screen.getByLabelText("Download Test chart"));
+    fireEvent.click(screen.getByRole("menuitem", { name: /CSV data/ }));
     await waitFor(() => expect(captured.length).toBe(1));
     // jsdom blobs predate Blob#text; FileReader is the portable read.
     const text = await new Promise<string>((resolve) => {

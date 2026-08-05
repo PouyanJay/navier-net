@@ -317,25 +317,40 @@ test("the QC chart is drawn at the width it is rendered at", async ({
 });
 
 test("the QC card carries one strip of controls, not two", async ({ page }) => {
-  // The picker used to sit in the header while the export actions sat on their
-  // own row underneath, leaving a ragged two-row header with a gap in it.
+  // The picker used to sit in a header row while four export buttons sat on
+  // their own row underneath, leaving a ragged two-row header with a gap in it.
   await openStage(page, null);
   const picker = page.getByLabel("Preprocessing check");
   await picker.waitFor();
 
   const pick = (await picker.boundingBox())!;
-  const act = (await page
-    .locator(".qc-sub .cf-acts button")
-    .first()
-    .boundingBox())!;
+  const download = (await page.getByLabel(/^Download /).boundingBox())!;
+  const finding = (await page.locator(".qc-finding").boundingBox())!;
   const centre = (b: { y: number; height: number }) => b.y + b.height / 2;
-  expect(Math.abs(centre(pick) - centre(act))).toBeLessThan(4);
-  // The picker leads the strip and the export actions close it.
-  expect(pick.x).toBeLessThan(act.x);
 
-  // And the heading names the section: it used to restate the picker's own
-  // label, putting the same words twice in one row.
-  await expect(page.locator(".qc-sub h3")).toHaveText("Preprocessing QC");
+  // One row: both menus and the reading share it.
+  expect(Math.abs(centre(pick) - centre(download))).toBeLessThan(4);
+  expect(Math.abs(centre(pick) - centre(finding))).toBeLessThan(8);
+  // The menus cluster at the left, the reading closes the row at the right.
+  expect(pick.x).toBeLessThan(download.x);
+  expect(download.x + download.width).toBeLessThan(finding.x);
+
+  // No heading above it: the chooser names the chart, the axes state the rest.
+  await expect(page.locator(".qc-sub h3")).toHaveCount(0);
+});
+
+test("expand rides the plot and opens it larger", async ({ page }) => {
+  await openStage(page, null);
+  await page.getByLabel("Preprocessing check").waitFor();
+
+  const expand = page.getByLabel(/^Expand /);
+  // On the picture, not in the toolbar row above it.
+  const plot = (await page.locator(".qc-sub .cf-plot").boundingBox())!;
+  const box = (await expand.boundingBox())!;
+  expect(box.y).toBeGreaterThan(plot.y);
+
+  await expand.click();
+  await expect(page.getByRole("dialog", { name: /kinematics/i })).toBeVisible();
 });
 
 test("the QC chart reads out the frame under the pointer", async ({ page }) => {

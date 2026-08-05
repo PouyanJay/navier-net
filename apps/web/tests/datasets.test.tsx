@@ -426,7 +426,6 @@ describe("DatasetsView", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByAltText(/Frame \d+ preview/).length).toBe(3);
     // QC is a sub-section of the same card; before preprocessing it prompts.
-    expect(screen.getByText("Preprocessing QC")).toBeInTheDocument();
     expect(
       screen.getByText(/Run preprocessing to compute the QC checks/),
     ).toBeInTheDocument();
@@ -748,13 +747,13 @@ describe("DatasetsView", () => {
     ).toBeInTheDocument();
   });
 
-  it("defines a dimensionless group and reads back its value on selection", async () => {
+  it("reads back every group's value, ratio and verdict without selecting", async () => {
     mockApi();
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // The four groups that decide the regime need no selecting: each shows its
-    // value, its ratio, and the verdict that value produces. A bare 0.0107
-    // means nothing without the threshold it is being read against.
+    // Each group shows its value, its ratio, and the verdict that value
+    // produces. A bare 0.0107 means nothing without the threshold it is being
+    // read against, and a reading nobody can see is a reading nobody has.
     const ca = within(
       await screen.findByRole("group", {
         name: /Capillary number definition/,
@@ -771,13 +770,15 @@ describe("DatasetsView", () => {
     ).toBeInTheDocument();
     expect(re.getByText(/Laminar/)).toBeInTheDocument();
 
-    // The remaining groups are scales rather than switches, so they keep the
-    // select-to-define tiles.
-    fireEvent.click(screen.getByRole("button", { name: /PR 9\.41/ }));
+    // The scales carry the same card. They used to be tiles you had to select
+    // one at a time, which left seven of the eight readings unread.
     const pr = within(
-      await screen.findByRole("region", { name: /Prandtl number definition/ }),
+      screen.getByRole("group", { name: /Prandtl number definition/ }),
     );
     expect(pr.getByText(/Momentum diffusivity/)).toBeInTheDocument();
+    expect(pr.getByText("9.41")).toBeInTheDocument();
+    // Only the four with a threshold draw the scale that decides their verdict.
+    expect(document.querySelectorAll(".regime-scale")).toHaveLength(4);
   });
 
   it("uploads a new series through the modal and preprocesses it", async () => {
@@ -1216,17 +1217,39 @@ describe("frame exclusion", () => {
     );
   });
 
-  it("warns that saved exclusions need a preprocessing re-run", async () => {
+  it("says saved exclusions need a re-run on the count itself", async () => {
+    // DETAIL carries exclusions_applied: false, so the tensors are out of date.
+    // A full callout used to state it under the frame strip, which the frames
+    // had already pushed off the fold. The count that IS the problem carries
+    // it instead, and the header's chip pulses its lamp about it.
     mockApi({ processed: true, excluded: [3] });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // DETAIL carries exclusions_applied: false, so the tensors are out of date.
+    const label = await screen.findByText(/1 excluded \(3\)/);
+    expect(label).toHaveClass("fr-stale");
+    expect(label).toHaveTextContent("needs re-run");
     expect(
-      await screen.findByText(
+      screen.queryByText(
         /excluded frames have changed since the tensors were built/,
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Re-run" })).toBeInTheDocument();
+  });
+
+  it("pulses the header chip while the tensors are out of date", async () => {
+    mockApi({ processed: true, excluded: [3] });
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    // The chip's text is assembled from two nodes, so match on the element.
+    const chip = await waitFor(() => {
+      const found = [...document.querySelectorAll(".chip")].find((el) =>
+        el.textContent?.includes("needs re-run"),
+      );
+      expect(found).toBeDefined();
+      return found!;
+    });
+    expect(chip).toHaveClass("pulse");
+    expect(chip).toHaveAttribute("data-tone", "red");
   });
 
   it("opens the frame full size on double-click without toggling it", async () => {
@@ -1674,33 +1697,33 @@ describe("QC panel header", () => {
   async function showQc() {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    // The heading is the section's, so it is on screen before the QC data is;
-    // the picker is what proves a check has actually been drawn.
     await screen.findByLabelText("Preprocessing check");
   }
 
-  it("names the section, leaving the chart to be named by its picker", async () => {
-    // The heading used to restate the picker's own label, so "Growth
-    // kinematics" sat twice in one row and the header reflowed on every switch.
+  it("carries no heading of its own above the plot", async () => {
+    // "Preprocessing QC · computed from the training tensors" named the card
+    // twice over — the rail, the chooser and the axes all say it — and it
+    // pushed the one number the card produces away from the plot below it.
     await showQc();
-    const heading = screen.getByRole("heading", { name: "Preprocessing QC" });
-
-    pickCheck("Interface evolution");
-
-    expect(heading).toHaveTextContent("Preprocessing QC");
     expect(
-      screen.queryByRole("heading", { name: /Interface evolution/ }),
+      screen.queryByRole("heading", { name: /Preprocessing QC/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/computed from the training tensors/),
     ).not.toBeInTheDocument();
   });
 
-  it("puts the picker in the chart's own toolbar, not a second control row", async () => {
+  it("clusters both menus at the left and closes the row with the finding", async () => {
     await showQc();
     const picker = screen.getByLabelText("Preprocessing check");
-    expect(picker.closest(".cf-bar")).not.toBeNull();
-    // One strip: the export actions share the row rather than stack under it.
+    const bar = picker.closest(".cf-bar")!;
+    // The chooser and the downloads travel together; the reading is the only
+    // thing at the far end, where four format buttons used to sit.
+    expect(picker.closest(".cf-lead")).not.toBeNull();
     expect(
-      picker.closest(".cf-bar")!.querySelector(".cf-acts button"),
+      bar.querySelector<HTMLElement>(".cf-lead [aria-haspopup='menu']"),
     ).not.toBeNull();
+    expect(bar.lastElementChild).toHaveClass("qc-finding");
   });
 
   it("gives every check a headline finding, so the header keeps its shape", async () => {
@@ -1788,7 +1811,7 @@ describe("frame boundary overlay", () => {
 
   async function enlarge(frame: number) {
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    await screen.findByText("Preprocessing QC");
+    await screen.findByLabelText("Preprocessing check");
     fireEvent.click(
       screen.getByRole("button", { name: `Enlarge frame ${frame}` }),
     );

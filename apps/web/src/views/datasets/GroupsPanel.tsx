@@ -1,5 +1,3 @@
-import { useState } from "react";
-
 import { Panel } from "../../components";
 import type { DimensionlessGroups } from "../../lib/api";
 
@@ -161,12 +159,6 @@ const TILES: Tile[] = [
   },
 ];
 
-const DEFAULT_KEY = "Pe";
-
-function shownValue(tile: Tile, groups: DimensionlessGroups): string {
-  return (groups[tile.key] * (tile.scale ?? 1)).toFixed(tile.digits);
-}
-
 /** Position on a log axis, 0 to 1, clamped so an extreme value stays on the bar. */
 function logPosition(value: number, min: number, max: number): number {
   if (!(value > 0)) return 0;
@@ -176,14 +168,17 @@ function logPosition(value: number, min: number, max: number): number {
 }
 
 /**
- * One group as a regime read: the value, where it sits against the threshold
- * that decides its verdict, and the verdict itself.
+ * One group as a card: its value, what the ratio is, and what that value means
+ * for this run.
  *
- * The verdict is not new — the panel has always computed it — it was just
- * hidden behind selecting the tile.
+ * The four groups with a threshold also draw where the value sits against it,
+ * because their number only means something relative to that flip. The rest
+ * are magnitudes, so they carry the same card without the scale.
+ *
+ * Every group used to be a bare tile you had to select to learn anything about,
+ * which meant eleven of the twelve readings were hidden at any moment.
  */
 function RegimeCard({ tile, value }: { tile: Tile; value: number }) {
-  const { threshold, min, max, at } = tile.regime!;
   const shown = (value * (tile.scale ?? 1)).toFixed(tile.digits);
   return (
     <div className="regime" role="group" aria-label={`${tile.name} definition`}>
@@ -191,29 +186,45 @@ function RegimeCard({ tile, value }: { tile: Tile; value: number }) {
         <span className="regime-name">
           {tile.name} <span className="regime-sym mono">{tile.label}</span>
         </span>
-        <span className="regime-val mono">{shown}</span>
+        <span className="regime-val mono">
+          {shown}
+          {tile.unit && <em>{tile.unit}</em>}
+        </span>
       </div>
       <p className="regime-about">{tile.about}</p>
-      <div className="regime-scale" aria-hidden="true">
-        <span className="regime-rail" />
-        <span
-          className="regime-th"
-          style={{ left: `${logPosition(threshold, min, max) * 100}%` }}
-        >
-          <em className="mono">{at}</em>
-        </span>
-        <span
-          className="regime-mk"
-          style={{ left: `${logPosition(value, min, max) * 100}%` }}
-        />
-      </div>
+      {tile.regime && <RegimeScale regime={tile.regime} value={value} />}
       <p className="regime-verdict">{tile.reading(value)}</p>
     </div>
   );
 }
 
-/** Dimensionless groups as mono stat tiles. Selecting a tile explains that group
- * and reads back what its value means for this run. */
+/** Where the value falls against the threshold that decides its verdict. */
+function RegimeScale({
+  regime,
+  value,
+}: {
+  regime: NonNullable<Tile["regime"]>;
+  value: number;
+}) {
+  const { threshold, min, max, at } = regime;
+  return (
+    <div className="regime-scale" aria-hidden="true">
+      <span className="regime-rail" />
+      <span
+        className="regime-th"
+        style={{ left: `${logPosition(threshold, min, max) * 100}%` }}
+      >
+        <em className="mono">{at}</em>
+      </span>
+      <span
+        className="regime-mk"
+        style={{ left: `${logPosition(value, min, max) * 100}%` }}
+      />
+    </div>
+  );
+}
+
+/** Every dimensionless group and derived scale, each read for this run. */
 export function GroupsPanel({
   datasetName,
   groups,
@@ -225,9 +236,6 @@ export function GroupsPanel({
   // The four that decide the regime lead; the rest are scales, not switches.
   const regimes = present.filter((tile) => tile.regime);
   const derived = present.filter((tile) => !tile.regime);
-  const [selectedKey, setSelectedKey] = useState(DEFAULT_KEY);
-  const selected =
-    derived.find((tile) => tile.key === selectedKey) ?? derived[0] ?? null;
 
   return (
     <Panel title="Regime" subtitle={`derived from ${datasetName}`}>
@@ -237,50 +245,15 @@ export function GroupsPanel({
         ))}
       </div>
 
-      <p className="groups-lbl">Derived scales</p>
-      <div
-        className="groups"
-        role="group"
-        aria-label="Derived scales, select one for its definition"
-      >
-        {derived.map((tile) => {
-          const isSel = selected?.key === tile.key;
-          return (
-            <button
-              type="button"
-              key={tile.key}
-              className={isSel ? "gtile sel" : "gtile"}
-              aria-pressed={isSel}
-              onClick={() => setSelectedKey(tile.key)}
-            >
-              <span className="k mono">{tile.label}</span>
-              <span className="v mono">
-                {shownValue(tile, groups)}
-                {tile.unit && <em>{tile.unit}</em>}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      {selected && (
-        <div
-          className="gdetail"
-          role="region"
-          aria-live="polite"
-          aria-label={`${selected.name} definition`}
-        >
-          <div className="gdetail-hd">
-            <b>{selected.name}</b>
-            <span className="gdetail-val mono">
-              {shownValue(selected, groups)}
-              {selected.unit && <em>{selected.unit}</em>}
-            </span>
+      {derived.length > 0 && (
+        <>
+          <p className="groups-lbl">Derived scales</p>
+          <div className="regimes">
+            {derived.map((tile) => (
+              <RegimeCard key={tile.key} tile={tile} value={groups[tile.key]} />
+            ))}
           </div>
-          <p>{selected.about}</p>
-          <p className="gdetail-read">
-            {selected.reading(groups[selected.key])}
-          </p>
-        </div>
+        </>
       )}
     </Panel>
   );

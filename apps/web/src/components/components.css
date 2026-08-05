@@ -224,6 +224,26 @@
   color: var(--redtext);
   border-color: transparent;
 }
+/* A chip reporting a state that is actively wrong pulses its lamp. Only the
+   dot moves — never the label under it — so nothing being read is animated,
+   and the words say it too for anyone who cannot see the motion. */
+.chip.pulse::before {
+  animation: chip-lamp 1.6s var(--ease) infinite;
+}
+@keyframes chip-lamp {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip.pulse::before {
+    animation: none;
+  }
+}
 
 /* Status dot + label */
 .dot {
@@ -1066,6 +1086,12 @@ text.chart-axis-title {
   width: max-content;
   max-width: 320px;
 }
+/* A trigger sitting at the right edge of its row hangs its menu inward, so it
+   never opens off the side of the card. */
+.pick-menu-end {
+  left: auto;
+  right: 0;
+}
 /* A reserved column, hidden rather than removed, so the labels do not shift
    sideways as the choice moves down the list. */
 .pick-tick {
@@ -1094,14 +1120,52 @@ text.chart-axis-title {
   gap: var(--s3);
   margin-bottom: var(--s1);
 }
+/* The controls cluster at the left: what is plotted, then a copy of it. The
+   chart's reading closes the row at the right. */
 .cf-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
   margin-right: auto;
   min-width: 0;
 }
-.cf-acts {
-  display: flex;
-  gap: var(--s1);
-  flex: none;
+
+/* Expand acts on the picture, so it lives on the picture. It rests hidden and
+   appears on hover or focus, the same way a frame tile reveals its enlarge
+   control, rather than parking a permanent glyph over the plot. */
+.cf-plot {
+  position: relative;
+}
+.cf-expand {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--canvas-rule);
+  border-radius: var(--rs);
+  background: color-mix(in srgb, var(--canvas-raised) 88%, transparent);
+  color: var(--canvas-quiet);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.cf-plot:hover .cf-expand,
+.cf-expand:focus-visible {
+  opacity: 1;
+}
+.cf-expand:hover {
+  color: var(--canvas-ink-strong);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cf-expand {
+    transition: none;
+  }
 }
 
 .cf-btn {

@@ -42,3 +42,7 @@ export { FloppyDiskIcon as SaveIcon } from "@hugeicons/core-free-icons";
    marks the option currently chosen in it. */
 export { ArrowDown01Icon as MenuOpenIcon } from "@hugeicons/core-free-icons";
 export { Tick02Icon as ChosenIcon } from "@hugeicons/core-free-icons";
+
+/* Chart actions: take a copy of what is on screen, and open it larger. */
+export { Download04Icon as DownloadIcon } from "@hugeicons/core-free-icons";
+export { Maximize01Icon as ExpandIcon } from "@hugeicons/core-free-icons";

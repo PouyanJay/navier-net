@@ -26,6 +26,7 @@ export function SeriesIdentity({
   const shape = w && h ? (w === h ? `${w}²` : `${w}×${h}`) : null;
   const excluded = detail?.excluded_frames.length ?? 0;
   const heldOut = detail?.holdout_frame != null;
+  const stale = detail?.exclusions_applied === false;
   const dt = series.dt_frame_ms;
 
   return (
@@ -56,10 +57,18 @@ export function SeriesIdentity({
               1 held out
             </span>
           )}
+          {/* Stale exclusions mean the tensors no longer match what is on
+              screen, so this is the one chip that reports a wrong state rather
+              than a fact. It goes red and its lamp pulses: the full callout it
+              replaced sat below the fold, where the frames had already pushed
+              it out of sight. */}
           {excluded > 0 && (
-            <span className="chip">
+            <span
+              className={stale ? "chip pulse" : "chip"}
+              data-tone={stale ? "red" : undefined}
+            >
               {excluded} excluded
-              {detail?.exclusions_applied === false ? " · needs re-run" : ""}
+              {stale ? " · needs re-run" : ""}
             </span>
           )}
         </span>

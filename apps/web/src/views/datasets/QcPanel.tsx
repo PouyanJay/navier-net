@@ -112,22 +112,21 @@ function qcRows(qc: QcData, check: Check): Record<string, unknown>[] {
   );
 }
 
-/** The section's identity and, on the right, whatever the open check found. */
-function QcHeader({ finding }: { finding: Finding | null }) {
+/**
+ * What the open check found, beside the control that chose it.
+ *
+ * There is no section heading above this. "Preprocessing QC · computed from
+ * the training tensors" named the card twice over — the rail, the chooser and
+ * the axes all already say what is being looked at — and it pushed the one
+ * number the card exists to produce further from the plot that evidences it.
+ */
+function QcFinding({ finding }: { finding: Finding }) {
   return (
-    <div className="qc-sub-hd">
-      <div className="qc-sub-title">
-        <h3>Preprocessing QC</h3>
-        <span className="sub">computed from the training tensors</span>
-      </div>
-      {finding && (
-        <p className="qc-finding">
-          <span className="qc-finding-v mono">{finding.value}</span>
-          <span className="qc-finding-u mono">{finding.unit}</span>
-          <span className="qc-finding-r mono">{finding.note}</span>
-        </p>
-      )}
-    </div>
+    <p className="qc-finding">
+      <span className="qc-finding-v mono">{finding.value}</span>
+      <span className="qc-finding-u mono">{finding.unit}</span>
+      <span className="qc-finding-r mono">{finding.note}</span>
+    </p>
   );
 }
 
@@ -137,7 +136,6 @@ export function QcChecks({ qc, processed }: QcChecksProps) {
   if (!qc) {
     return (
       <section className="qc-sub" aria-label="Preprocessing QC">
-        <QcHeader finding={null} />
         <p className="state-note" role="status">
           {processed
             ? "Building the QC checks from the tensors…"
@@ -154,6 +152,7 @@ export function QcChecks({ qc, processed }: QcChecksProps) {
      what is plotted, and because a card with two stacked control strips reads
      as an accident. Each option carries what it draws, so the choice is made
      on what the chart shows rather than on its name alone. */
+  const finding = active.finding(qc);
   const picker = (
     <Select
       label="Preprocessing check"
@@ -169,13 +168,12 @@ export function QcChecks({ qc, processed }: QcChecksProps) {
 
   return (
     <section className="qc-sub" aria-label="Preprocessing QC">
-      <QcHeader finding={active.finding(qc)} />
-
       <ChartFrame
         name={`${qc.dataset}-qc-${check}`}
         title={active.label}
         rows={qcRows(qc, check)}
         controls={picker}
+        trailing={finding && <QcFinding finding={finding} />}
         render={() => (
           <ViewCanvas>
             {check === "kinematics" && <KinematicsChart qc={qc} />}
@@ -194,19 +192,6 @@ interface AxisSpec {
   title: string;
   ticks?: number;
   format?: (value: number) => string;
-}
-
-/** Recessive gridlines across the plot, on the y ticks only. */
-function drawGrid(g: G, y: Linear, ticks: number): void {
-  g.append("g")
-    .attr("class", "chart-grid")
-    .selectAll("line")
-    .data(y.ticks(ticks))
-    .join("line")
-    .attr("x1", 0)
-    .attr("x2", INNER_W)
-    .attr("y1", (d) => y(d))
-    .attr("y2", (d) => y(d));
 }
 
 /**
@@ -353,13 +338,6 @@ function drawFitLine(g: G, x: Linear, y: Linear, kin: QcKinematics): void {
     .attr("y1", y(fitY(t0)))
     .attr("x2", x(t1))
     .attr("y2", y(fitY(t1)));
-  // Top left, where a rising series leaves room. Ending the label at the right
-  // edge put it on top of the last frame, the one furthest along the fit.
-  g.append("text")
-    .attr("class", "qc-fit-label")
-    .attr("x", 0)
-    .attr("y", 12)
-    .text(`fit dL/dt = ${kin.fit_slope_mm_s.toFixed(0)} mm/s`);
 }
 
 function drawMeasuredSeries(
@@ -401,7 +379,6 @@ function KinematicsChart({ qc }: { qc: QcData }) {
       .append("g")
       .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
     const { x, y } = kinScales(kin);
-    drawGrid(g, y, 5);
     drawAxes(
       g,
       x,
@@ -588,7 +565,6 @@ function InterfaceChart({ qc }: { qc: QcData }) {
       tokenColor(node, RAMP_TO, "#93c5fd"),
     );
 
-    drawGrid(g, y, 4);
     const paths = drawSilhouettes(g, xStar, yStar, frames, ramp);
     g.append("line")
       .attr("class", "qc-pin")
