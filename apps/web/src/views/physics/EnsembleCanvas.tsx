@@ -123,7 +123,7 @@ function FourierBlock({
         height={68}
         rx={8}
         fill="var(--view2)"
-        stroke="var(--acc2)"
+        stroke="var(--canvas-accent)"
       />
       <text
         x={X.ff}
@@ -131,7 +131,7 @@ function FourierBlock({
         textAnchor="middle"
         fontFamily="var(--mono)"
         fontSize="10.5"
-        fill="var(--acc2)"
+        fill="var(--canvas-accent)"
       >
         γ(x,y,t)
       </text>
@@ -237,7 +237,7 @@ function FieldLane({
         height={LANE_H - 8}
         rx={8}
         fill={selected ? "var(--view2)" : "transparent"}
-        stroke={selected ? "var(--acc2)" : "transparent"}
+        stroke={selected ? "var(--canvas-accent)" : "transparent"}
       />
       <path
         className="ribbon"
@@ -344,7 +344,7 @@ function Inspector({
               width: "9px",
               height: `${Math.max(3, (b.p / maxP) * 26)}px`,
               borderRadius: "2px 2px 0 0",
-              background: "var(--acc2)",
+              background: "var(--canvas-accent)",
               opacity: 0.75,
             }}
           />

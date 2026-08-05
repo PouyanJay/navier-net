@@ -152,3 +152,52 @@ test("light and dark both paint the page from the token layer", async ({
     expect(painted.colorScheme).toBe(theme);
   }
 });
+
+test("the UI accent is never a data colour", async ({ page }) => {
+  // --primary used to BE --series-1, so a button and the model's own prediction
+  // line were drawn in the same hex. Chrome and data must stay separable; the
+  // rule is Cloudscape's, in both directions.
+  const SERIES = [
+    "--series-1",
+    "--series-2",
+    "--series-3",
+    "--series-4",
+    "--series-5",
+    "--series-model",
+    "--series-measured",
+  ];
+  await page.goto("/");
+
+  for (const theme of ["dark", "light"] as const) {
+    await setTheme(page, theme);
+    const v = await resolved(page, [
+      "--primary",
+      "--primary-hover",
+      "--focus",
+      ...SERIES,
+    ]);
+    const clashes = SERIES.filter(
+      (s) =>
+        v[s] === v["--primary"] ||
+        v[s] === v["--primary-hover"] ||
+        v[s] === v["--focus"],
+    );
+    expect(clashes, `chrome shares a hex with data in ${theme}`).toEqual([]);
+  }
+});
+
+test("nothing on the canvas takes a colour that follows the theme", async ({
+  page,
+}) => {
+  // The canvas is dark in both themes, so a control drawn on it in --primary
+  // inverts underneath itself. --canvas-accent exists for exactly this.
+  await page.goto("/");
+
+  await setTheme(page, "dark");
+  const dark = await resolved(page, ["--canvas-accent"]);
+  await setTheme(page, "light");
+  const light = await resolved(page, ["--canvas-accent"]);
+
+  expect(dark["--canvas-accent"]).not.toBe("");
+  expect(light["--canvas-accent"]).toBe(dark["--canvas-accent"]);
+});

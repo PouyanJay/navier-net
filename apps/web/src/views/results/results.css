@@ -173,14 +173,14 @@
   cursor: pointer;
 }
 .viewport .lbtn[aria-pressed="true"] {
-  border-color: var(--acc);
-  color: var(--acc2);
+  border-color: var(--canvas-accent);
+  color: var(--canvas-accent);
 }
 .viewport .hudright {
   margin-left: auto;
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--acc2);
+  color: var(--canvas-accent);
 }
 .viewport svg {
   display: block;
@@ -200,10 +200,10 @@
 }
 .vp-interface {
   fill: rgb(62 76 104 / 55%);
-  stroke: var(--acc2);
+  stroke: var(--series-1);
   stroke-width: 1.6;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 6px var(--acc));
+  filter: drop-shadow(0 0 6px var(--series-1));
 }
 .vp-measured {
   fill: none;
@@ -213,7 +213,7 @@
   vector-effect: non-scaling-stroke;
 }
 .vp-cavity {
-  fill: var(--acc);
+  fill: var(--series-1);
 }
 .vp-label {
   fill: var(--sidetxt);
@@ -236,8 +236,8 @@
   flex: none;
   border-radius: 50%;
   border: none;
-  background: var(--acc);
-  color: #fff;
+  background: var(--canvas-accent);
+  color: var(--canvas);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -250,7 +250,7 @@
 }
 .viewport .vctl input[type="range"] {
   flex: 1;
-  accent-color: var(--acc);
+  accent-color: var(--canvas-accent);
 }
 .viewport .tval {
   font-family: var(--mono);
@@ -1568,15 +1568,16 @@
   cursor: not-allowed;
 }
 
-/* Front-velocity arrows over the reconstruction. Thin and accent-coloured so
-   they annotate the interface rather than compete with it — the contour is
-   still the subject of the viewport. */
+/* Front-velocity arrows over the reconstruction. A measurement drawn on the
+   canvas, so it takes a canvas colour: --acc would have flipped with the theme
+   while the canvas beneath it stayed dark. Thin, so it annotates the interface
+   rather than competing with it. */
 .vp-velocity line {
-  stroke: var(--acc2);
+  stroke: var(--series-5);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
 }
 
 .vp-arrowhead {
-  fill: var(--acc2);
+  fill: var(--series-5);
 }

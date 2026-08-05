@@ -55,6 +55,7 @@ export const VOCABULARY = {
     "--canvas-quiet",
     "--canvas-rule",
     "--canvas-scroll-thumb",
+    "--canvas-accent",
     "--focus-item-bg",
     "--focus-item-ink",
   ],

@@ -86,11 +86,15 @@
   --line-strong: rgb(238 241 246 / 0.15);
 
   /* ── Accent and semantics ────────────────────────────────────────── */
-  /* Dark-theme primaries are light and desaturated so they read as ink. */
-  --primary: #7fb2f0;
-  --primary-hover: #9cc5f7;
-  --primary-ink: #0a1421;
-  --primary-soft: rgb(127 178 240 / 0.12);
+  /* The accent is deliberately LOW-CHROMA, one step off the series ramp's
+     saturation. Chrome and data must never be the same colour: --primary used
+     to be #7fb2f0, the exact value of --series-1 and therefore of the model's
+     own prediction line, so a button and a forecast were indistinguishable.
+     Dark-theme primaries stay light so they read as ink. */
+  --primary: #8ba3c9;
+  --primary-hover: #a3b8d8;
+  --primary-ink: #0a1018;
+  --primary-soft: rgb(139 163 201 / 0.14);
 
   /* The warm second accent: what the model was NOT shown — the held-out frame,
      the unsupervised interval, a run still training. */
@@ -105,10 +109,10 @@
   --danger-text: #ffd2d1;
 
   /* A lighter, calmer sibling of --primary — deliberately not the same value. */
-  --focus: #a9cdf5;
+  --focus: #b3c4de;
   --hover: rgb(255 255 255 / 0.045);
   --hover-strong: rgb(255 255 255 / 0.075);
-  --selection: rgb(127 178 240 / 0.28);
+  --selection: rgb(139 163 201 / 0.28);
   --selection-ink: #f2f4f8;
 
   /* ── Elevation (§5.4) ────────────────────────────────────────────── */
@@ -136,6 +140,10 @@
   --canvas-quiet: #8b93a1;
   --canvas-rule: rgb(238 241 246 / 0.1);
   --canvas-scroll-thumb: rgb(238 241 246 / 0.16);
+  /* The accent for anything that LIVES on the canvas: a layer toggle, a HUD
+     readout, the scrubber, the ensemble's selected node. --primary cannot serve
+     here — it flips with the theme while the canvas underneath it does not. */
+  --canvas-accent: var(--series-1);
   /* The lane, frame or field currently under inspection. The ink is the canvas's
      own strong ink, not --text, which would follow the theme off the canvas. */
   --focus-item-bg: rgb(127 178 240 / 0.14);
@@ -263,13 +271,12 @@
   --line: rgb(20 28 42 / 0.09);
   --line-strong: rgb(20 28 42 / 0.16);
 
-  /* AA on --bg as link text; the mockup's #2f6fd0 was 4.31:1. --focus keeps
-     that lighter value, which is fine at the 3:1 non-text threshold and makes
-     the two genuinely distinct as §2.2 asks. */
-  --primary: #2e6cca;
-  --primary-hover: #23579f;
+  /* Low-chroma for the same reason as dark: 49% saturation against
+     --series-1's 77%, so chrome recedes and data advances. 5.26:1 on --bg. */
+  --primary: #4a6491;
+  --primary-hover: #3a5075;
   --primary-ink: #ffffff;
-  --primary-soft: rgb(46 108 202 / 0.12);
+  --primary-soft: rgb(74 100 145 / 0.13);
 
   --holdout: #8f5d13;
   --holdout-soft: rgb(143 93 19 / 0.12);
@@ -281,10 +288,10 @@
   --danger-surface: #fdeceb;
   --danger-text: #7a1a14;
 
-  --focus: #2f6fd0;
+  --focus: #5b79ab;
   --hover: rgb(20 28 42 / 0.045);
   --hover-strong: rgb(20 28 42 / 0.075);
-  --selection: rgb(47 111 208 / 0.22);
+  --selection: rgb(74 100 145 / 0.22);
   --selection-ink: #131722;
 
   /* Shadows on a light ground are tinted with the ink hue, not black, and
