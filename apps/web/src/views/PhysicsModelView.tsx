@@ -1,21 +1,20 @@
 import { useState } from "react";
 
 import { StageAside } from "../app/StageAside";
-import { Button, Callout } from "../components";
+import { Button, Callout, Select } from "../components";
+import { HugeiconsIcon, SaveIcon } from "../components/icons";
 import type { DatasetSummary } from "../lib/api";
 import { seriesName, seriesNameOf } from "../lib/series";
-import { CapacityPreset } from "./physics/CapacityPreset";
 import { EnsembleCanvas } from "./physics/EnsembleCanvas";
-import { EquationsPanel } from "./physics/EquationsPanel";
 import { ModelBudget } from "./physics/ModelBudget";
-import { PerFieldTable } from "./physics/PerFieldTable";
-import { HugeiconsIcon, SaveIcon } from "../components/icons";
+import { FormulationNote, ObjectivePanel } from "./physics/ObjectivePanel";
+import { PhysicsAside } from "./physics/PhysicsAside";
 import { RunBar } from "./physics/RunBar";
 import { usePhysicsModel } from "./physics/usePhysicsModel";
 import "./physics/physics.css";
 
-/** The equation rows carry a toggle, a name, badges and a weight field, so this
- * stage's aside needs more room than the default. */
+/** The equation rows carry a toggle, a name, a badge and a weight field, so
+ * this stage's aside needs more room than the default. */
 const ASIDE = {
   title: "Physics & model",
   subtitle: "equations · architecture",
@@ -26,6 +25,16 @@ interface PhysicsModelViewProps {
   datasets: DatasetSummary[];
 }
 
+/**
+ * The physics stage: compose the objective on the left, read what it costs and
+ * trains on the right.
+ *
+ * A PINN's physics configuration IS its loss function — every equation a term,
+ * every term a weight, every field a network that has to carry it. So the
+ * aside holds what is SET (the physics, the capacity) and the canvas holds
+ * everything DERIVED from it, in the order a researcher checks it: the price,
+ * the objective, the ensemble that pays it, the command that runs it.
+ */
 export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const dataset = selected ?? datasets[0]?.id ?? null;
@@ -44,14 +53,6 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
 
   return (
     <div className="stack">
-      <div className="pm-head">
-        <p>
-          Set the equations and capacity on the left; everything here is derived
-          from them. Hover any equation for its math and detail, or any derived
-          row for its reasoning.
-        </p>
-      </div>
-
       {load.status === "loading" && (
         <p className="state-note" role="status">
           Loading physics &amp; model…
@@ -64,28 +65,27 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
       {model && (
         <>
           {model.saveError && <Callout tone="error">{model.saveError}</Callout>}
+
           <StageAside {...ASIDE}>
             {datasets.length > 1 && (
-              <label className="pm-dataset">
-                <span className="runlead">Dataset</span>
-                <select
+              <div className="pm-dataset">
+                <Select
+                  label="Series"
                   value={dataset ?? ""}
-                  onChange={(e) => setSelected(e.target.value)}
-                  aria-label="Dataset"
-                >
-                  {datasets.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {seriesName(d)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={datasets.map((d) => ({
+                    value: d.id,
+                    label: seriesName(d),
+                  }))}
+                  onChange={setSelected}
+                />
+              </div>
             )}
-            <EquationsPanel
+
+            <PhysicsAside
               model={model}
               datasetName={seriesNameOf(datasets, model.dataset)}
             />
-            <CapacityPreset model={model} />
+
             {/* Saving belongs with the configuration it commits, and stays
                 reachable without scrolling back up the equation list. */}
             <div className="aside-actions pm-actions">
@@ -106,11 +106,13 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
             </div>
           </StageAside>
 
-          {/* Canvas: what the configuration above derives, in the order a
-              researcher reads it — the cost, then the architecture it buys. */}
+          {/* The canvas, in the order a researcher reads it: what it costs,
+              the objective that cost buys, the ensemble that carries it, and
+              the command that reproduces the lot. */}
           <ModelBudget model={model} />
+          <FormulationNote model={model} />
+          <ObjectivePanel model={model} />
           <EnsembleCanvas model={model} />
-          <PerFieldTable model={model} />
           <RunBar model={model} />
         </>
       )}

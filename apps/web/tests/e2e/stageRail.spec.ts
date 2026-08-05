@@ -449,3 +449,38 @@ test("regime scales line up across every card in a row", async ({ page }) => {
     expect(tops[i] - tops[i - 1]).toBeGreaterThan(8);
   }
 });
+
+test("an info panel keeps its content inside its own border", async ({
+  page,
+}) => {
+  // The command panel asked for a width from its CONTENT, while the placement
+  // was computed from the panel's default — so the text ran out past the
+  // rounded border. The panel owns the width now; only a browser can measure
+  // that it does.
+  await page.setViewportSize({ width: 1680, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: /^Open/ }).first().click();
+  await page
+    .getByRole("button", { name: "Physics & model", exact: true })
+    .click();
+  await page.getByText("Core physics").waitFor();
+
+  const info = page.getByRole("button", { name: "The exact command" });
+  await info.scrollIntoViewIfNeeded();
+  await info.hover();
+
+  const panel = page.locator(".infopop");
+  await expect(panel).toBeVisible();
+  const fits = await panel.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    return [...el.querySelectorAll("*")].every((node) => {
+      const r = node.getBoundingClientRect();
+      return r.right <= box.right + 0.5 && r.left >= box.left - 0.5;
+    });
+  });
+  expect(fits).toBe(true);
+  // And the panel itself stays on screen.
+  const box = (await panel.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(1680);
+});

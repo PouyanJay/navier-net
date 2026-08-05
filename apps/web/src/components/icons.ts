@@ -61,3 +61,9 @@ export { FastWindIcon as FlowIcon } from "@hugeicons/core-free-icons";
 /** One acquisition on its card in the series library: a dataset, so the
    glyph says "data", not "picture". */
 export { Database01Icon as SeriesIcon } from "@hugeicons/core-free-icons";
+
+/* The Physics stage's three config bands: the conservation laws that always
+   train, the physics you may add on top, and the capacity that carries it. */
+export { LockIcon as LockedIcon } from "@hugeicons/core-free-icons";
+export { AtomIcon as OptionalPhysicsIcon } from "@hugeicons/core-free-icons";
+export { NeuralNetworkIcon as CapacityIcon } from "@hugeicons/core-free-icons";

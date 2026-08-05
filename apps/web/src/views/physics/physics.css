@@ -54,39 +54,330 @@
 }
 
 .pm-dataset {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.pm-dataset select {
-  border: 1px solid var(--line-strong);
-  border-radius: var(--rs);
-  padding: 5px 9px;
-  font-family: var(--mono);
-  font-size: 12px;
-  background: var(--panel);
-  color: var(--ink);
+  margin-bottom: var(--s2);
 }
 
-/* The stage's inputs -- dataset, equations, capacity -- live in the shell's
-   aside; the canvas carries only what they derive. */
-.pm-capacity {
+/* ── The aside's config bands ─────────────────────────────────────────
+   Same idiom as the datasets rail: a bare icon-and-label separator over its
+   rows, no plate and no fold. The band label takes the chrome accent so the
+   sections read apart without a box around each one. */
+.pmband + .pmband {
+  margin-top: var(--s5);
+}
+.pmband-hd {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s2);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--acc);
+}
+.pmband-hd svg {
+  flex: none;
+}
+.pmband-hd .hint {
+  margin-left: auto;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  font-size: 9.5px;
+  color: var(--ink3);
+}
+.pmband-hd .hint.over {
+  color: var(--amber);
+  display: inline-flex;
+  align-items: center;
   gap: var(--s2);
 }
-.pm-capacity h3 {
-  margin: 0;
+.pmband-hd .hint.over button {
+  border: 0;
+  background: transparent;
+  color: var(--acc);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.pmsub {
+  margin: var(--s4) 0 var(--s2);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ── Equation rows ─────────────────────────────────────────────────── */
+.pmrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pmrow:last-child {
+  border-bottom: 0;
+}
+.pmrow.off .pmrow-nm b {
+  color: var(--ink3);
+}
+.pmrow-nm {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  position: relative;
+}
+.pmrow-nm b {
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 620;
   color: var(--ink);
 }
-.pm-capacity .seg {
-  /* Three presets in an aside column: let them share the width evenly rather
-     than sizing to their labels. */
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+/* A core equation states its weight; it cannot be typed here, so it is not a
+   field. The run-launch form owns those values. */
+.pmrow.core .pmrow-w {
+  font-size: 10px;
+  color: var(--faint);
+}
+.pmrow-w input {
+  width: 52px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--rs);
+  padding: 3px 6px;
+  text-align: right;
+  background: var(--panel2);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.pmrow-w input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* The price of the physics: the field this equation adds, in that field's own
+   hue, so the aside and the ensemble name it the same way. */
+.unlock {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+.unlock.p {
+  color: var(--f-p);
+  background: color-mix(in srgb, var(--f-p) 15%, transparent);
+}
+.replaced {
+  font-size: 9.5px;
+  color: var(--faint);
+  font-style: italic;
+}
+.unlock.T {
+  color: var(--f-t);
+  background: color-mix(in srgb, var(--f-t) 15%, transparent);
+}
+
+/* ── Globals and per-field architecture ────────────────────────────── */
+.pmfields {
+  margin: 0;
+}
+.pmglobal,
+.pmarch {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pmarch:last-child {
+  border-bottom: 0;
+}
+.pmglobal dt,
+.pmarch dt {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink2);
+}
+.pmglobal dt small {
+  color: var(--ink3);
+  font-size: 11px;
+}
+.pmglobal .range {
+  display: block;
+  font-size: 9px;
+  color: var(--faint);
+}
+.pmglobal dd,
+.pmarch dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+.pmglobal input,
+.pmarch input {
+  width: 72px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--rs);
+  padding: 4px 7px;
+  text-align: right;
+  background: var(--panel2);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.pmarch input {
+  width: 62px;
+}
+.pmglobal.warn input {
+  border-color: color-mix(in srgb, var(--amber) 55%, transparent);
+}
+.pmarch input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pmarch dt {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.pmarch .hue {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.pmarch .times {
+  color: var(--faint);
+  font-size: 10px;
+}
+.pmarch .locknote {
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--faint);
+}
+/* Overridden away from the preset: the same amber the platform uses for every
+   deliberate departure. */
+.pmarch.over input {
+  border-color: color-mix(in srgb, var(--amber) 50%, transparent);
+  color: var(--amber);
+}
+
+/* A caution belongs at the control that caused it, not in a table two panels
+   away — and it is advice, never a block: a judgement about resolvability, not
+   an invalid value. */
+.pmwarn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  margin: var(--s2) 0 0;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--rs);
+  background: var(--ambersoft);
+  color: var(--amber);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.pmwarn svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* ── The objective ────────────────────────────────────────────────────
+   The loss this configuration trains, derived live from the aside. Set in the
+   display serif because it is mathematics being read, not a control being
+   operated, with each term in the hue of the field it principally trains — so
+   a term and the network it pulls on are the same colour here and in the
+   ensemble below. */
+.objective {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 2.15;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.obj-lhs {
+  font-style: italic;
+}
+.obj-term {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.obj-term b {
+  font-weight: 700;
+}
+/* Not trained by this configuration. Ghosted rather than dropped: what is
+   absent from the objective is as much a part of it as what is present. */
+.obj-term.off,
+.obj-plus.off {
+  opacity: 0.35;
+}
+.obj-plus {
+  color: var(--faint);
+  margin: 0 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.obj-note {
+  margin: var(--s3) 0 0;
+  font-size: 11.5px;
+  color: var(--ink3);
+  text-wrap: pretty;
+}
+
+/* ── The interface formulation ────────────────────────────────────────
+   A readout, not a control: model.sharp_interface is resolved at run launch,
+   and the launcher appends the series' overrides after its own list, so a
+   copy owned here would silently outrank an explicit Solver choice. */
+.pmform {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+}
+.pmform-tag {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--panel2);
+  color: var(--ink3);
+}
+.pmform-tag.sharp {
+  background: var(--accsoft);
+  color: var(--acc);
+}
+.pmform p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink2);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+.pmform .dim {
+  color: var(--faint);
 }
 
 /* The derived shapes read out under the ensemble they describe, on the
@@ -112,36 +403,6 @@
 }
 
 /* ---- equation rows ---- */
-.eqrow {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--line);
-}
-.eqrow:last-child {
-  border-bottom: none;
-}
-.eqrow.off {
-  opacity: 0.6;
-}
-.eqrow .eqmain {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.eqrow b {
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.eqadds {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--acc);
-}
 .tag {
   font-family: var(--mono);
   font-size: 8.5px;
@@ -161,36 +422,19 @@
   background: var(--accsoft);
   color: var(--acc);
 }
-.wlab {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--ink3);
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.wlab input {
-  width: 52px;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  padding: 3px 6px;
-  font-size: 11px;
-  text-align: right;
-  font-family: var(--mono);
-  background: var(--panel);
-  color: var(--ink);
-}
 .wlab input:disabled {
   opacity: 0.5;
 }
 
 /* the info "i" trigger + hover/focus popover */
-.hasinfo {
-  position: relative;
+.runacts {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
 }
 .infob {
   flex: none;
+  padding: 0;
   width: 17px;
   height: 17px;
   border-radius: 50%;
@@ -205,40 +449,33 @@
   line-height: 1;
   cursor: help;
 }
-.hasinfo:hover .infob,
-.hasinfo:focus-within .infob {
+.infob:hover,
+.infob[aria-expanded="true"] {
   border-color: var(--acc2);
   color: var(--acc);
 }
+/* Portalled to the body (see InfoPopover): the rail scrolls, and an absolutely
+   positioned panel inside it is clipped by that scroll container — near the
+   foot of the rail it disappears below the edge entirely. Positioned in
+   viewport coordinates instead, so it holds wherever its row sits. */
 .infopop {
-  position: absolute;
-  z-index: 30;
-  /* Spans its anchor rather than taking a fixed width. The rail scrolls, so a
-     popover wider than the rail is clipped by that scroll container rather than
-     overhanging the canvas — it would simply disappear under the pipeline rail. */
-  left: 0;
-  right: 0;
-  top: calc(100% + 8px);
+  position: fixed;
+  z-index: 60;
   text-align: left;
   background: var(--panel);
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
+  box-shadow: var(--shadow-flyout);
   padding: 12px 14px;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition:
-    opacity 0.14s,
-    transform 0.14s;
-  pointer-events: none;
-}
-.hasinfo:hover .infopop,
-.hasinfo:focus-within .infopop {
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  pointer-events: auto;
+  color: var(--ink2);
+  /* The rail re-points the paper ink family onto the chrome one; the panel
+     lands on the page's own surface, so it takes the page's ink back. */
+  --ink: var(--text);
+  --ink2: var(--text-soft);
+  --ink3: var(--muted);
+  --panel: var(--surface);
+  --panel2: var(--surface-hover);
+  --line: rgb(238 241 246 / 0.08);
 }
 .eqmath {
   background: var(--panel2);
@@ -393,7 +630,7 @@
   border-radius: 2px;
   background: var(--acc);
 }
-.rrow .hasinfo {
+.rrow .infob {
   margin-left: auto;
 }
 .infopop.rwhy {
@@ -632,9 +869,6 @@
 .runfacts .dim {
   color: var(--ink3);
   font-weight: 400;
-}
-.cmdpop {
-  width: min(560px, 86vw);
 }
 .cmdpop code {
   display: block;

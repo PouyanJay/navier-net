@@ -319,6 +319,12 @@ export interface EquationState {
   core: boolean;
   enabled: boolean;
   weight: number;
+  /**
+   * Which interface treatment admits this equation: "any", or one of
+   * "diffuse" / "sharp". The registry selects on it so the trainer, the API
+   * and this UI read one table instead of each branching on the flag.
+   */
+  mode: "any" | "diffuse" | "sharp";
 }
 
 export interface PhysicsState {
@@ -326,6 +332,9 @@ export interface PhysicsState {
   equations: EquationState[];
   fields: string[];
   groups: Record<string, number>;
+  /** Whether the composed run imposes the interface conditions on an explicit
+   * front. Resolved at run launch, not owned per series — see the Solver. */
+  sharp_interface: boolean;
 }
 
 /** A physics edit: which toggleable Stage-B equations train, and weight overrides. */

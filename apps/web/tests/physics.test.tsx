@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EquationBlock } from "../src/components";
@@ -40,6 +46,7 @@ function eq(
     core: stage === "A",
     enabled: stage === "A",
     weight: 1.0,
+    mode: "any",
     ...extra,
   };
 }
@@ -47,6 +54,8 @@ function eq(
 const PHYSICS = {
   dataset: "sample",
   fields: ["phi", "u", "v", "s"],
+  // Resolved at run launch from whether the series trains `p`; Stage A does not.
+  sharp_interface: false,
   groups: { Re: 215.5, We: 2.302, Pe: 2028, hele_shaw: 0.2228, dT_ref: 28.74 },
   equations: [
     eq("vof", "Interface transport", "A", ["phi", "u", "v"]),
@@ -99,29 +108,33 @@ describe("EquationBlock", () => {
 });
 
 describe("PhysicsModelView", () => {
-  it("renders the equations, capacity, ensemble, table and run bar", async () => {
+  it("sets the physics in the aside and derives everything on the canvas", async () => {
     mockApi();
     renderStage(<PhysicsModelView datasets={DATASETS} />);
 
-    expect(
-      await screen.findByRole("heading", { name: "Governing equations" }),
-    ).toBeInTheDocument();
+    // Config: the physics that defines the objective, and the capacity that
+    // has to carry it. Both in bands, both in the aside.
+    expect(await screen.findByText("Core physics")).toBeInTheDocument();
+    expect(screen.getByText("Optional physics")).toBeInTheDocument();
+    expect(screen.getByText("Capacity")).toBeInTheDocument();
     expect(screen.getByText("Momentum")).toBeInTheDocument();
-    // The Model builder dissolved: its preset is config and went to the aside,
-    // its budget and derived shapes are readouts and went to the canvas.
-    expect(
-      screen.getByRole("heading", { name: "Capacity" }),
-    ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Medium/ })).toBeInTheDocument();
+
+    // Derived: the price, the loss it buys, the ensemble, the command.
     expect(
       screen.getByRole("status", { name: "Model budget" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Per-field architecture" }),
+      screen.getByRole("heading", { name: "The objective" }),
     ).toBeInTheDocument();
-    // The run bar shows the exact Hydra command.
     expect(
-      screen.getByText(/naviernet train dataset=sample/),
+      screen.getByRole("status", { name: "Interface formulation" }),
+    ).toBeInTheDocument();
+    // The exact command is one press away on the run bar; it mounts when
+    // opened rather than sitting hidden in the DOM.
+    fireEvent.click(screen.getByRole("button", { name: "The exact command" }));
+    expect(
+      await screen.findByText(/naviernet train dataset=sample/),
     ).toBeInTheDocument();
     // Stage A only, so four networks.
     expect(screen.getByText(/4 networks/)).toBeInTheDocument();
@@ -212,14 +225,20 @@ describe("PhysicsModelView", () => {
     await waitFor(() => expect(evap).toHaveAttribute("aria-checked", "true"));
   });
 
-  it("core equations are locked on and cannot be toggled off", async () => {
+  it("states the core equations rather than offering a switch that cannot move", async () => {
+    // They always train and their weights belong to the run-launch form, so
+    // the row carried a switch that could never move and a field that could
+    // never be typed in. Both were chrome.
     mockApi();
     renderStage(<PhysicsModelView datasets={DATASETS} />);
-    const vof = await screen.findByRole("switch", {
-      name: "Interface transport",
-    });
-    expect(vof).toBeDisabled();
-    expect(vof).toHaveAttribute("aria-checked", "true");
+    await screen.findByText("Core physics");
+
+    expect(
+      screen.queryByRole("switch", { name: "Interface transport" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Interface transport")).toBeInTheDocument();
+    // Only the four toggleable Stage-B equations carry a switch.
+    expect(screen.getAllByRole("switch")).toHaveLength(3);
   });
 
   it("shows an error state when the config fails to load", async () => {
@@ -280,24 +299,28 @@ describe("PhysicsModelView", () => {
     // The weight input is enabled for the now-on Stage-B equation.
     expect(momWeight).not.toBeDisabled();
     fireEvent.change(momWeight, { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "The exact command" }));
 
     await waitFor(() =>
       expect(screen.getByText(/training\.weights\.mom=3/)).toBeInTheDocument(),
     );
   });
 
-  it("core-equation weights are not editable here (owned by the run config)", async () => {
+  it("core-equation weights are stated, not offered as dead inputs", async () => {
     mockApi();
     renderStage(<PhysicsModelView datasets={DATASETS} />);
-    await screen.findByText("Momentum");
-    const vofWeight = document.querySelector("#w-vof") as HTMLInputElement;
-    expect(vofWeight).toBeDisabled();
+    await screen.findByText("Core physics");
+
+    // No input at all for a core weight: the Solver owns those values, and the
+    // band header says so.
+    expect(document.querySelector("#w-vof")).toBeNull();
+    expect(screen.getByText(/weights set at launch/)).toBeInTheDocument();
   });
 
-  it("locked Stage-B rows name the equation that unlocks them", async () => {
+  it("locked field rows name the equation that unlocks them", async () => {
     mockApi();
     renderStage(<PhysicsModelView datasets={DATASETS} />);
-    await screen.findByRole("heading", { name: "Per-field architecture" });
+    await screen.findByText("Capacity");
     expect(screen.getByText(/enable Momentum to unlock/)).toBeInTheDocument();
     expect(screen.getByText(/enable Energy to unlock/)).toBeInTheDocument();
   });
@@ -311,11 +334,155 @@ describe("PhysicsModelView", () => {
 
     fireEvent.change(widthInput, { target: { value: "200" } });
 
-    // The override chip appears with a reset-all control.
+    // The count and the way back ride the band's own header.
     expect(await screen.findByText(/overridden/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "reset" })).toBeInTheDocument();
+  });
+
+  it("writes the objective this configuration actually trains", async () => {
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    const objective = await screen.findByRole("heading", {
+      name: "The objective",
+    });
+    const panel = objective.closest(".card") as HTMLElement;
+
+    // Stage A: the supervised term plus the four core residuals, with the
+    // launch-default weights substituted rather than implied.
+    expect(within(panel).getByText("L_data")).toBeInTheDocument();
+    expect(within(panel).getByText("r_vof")).toBeInTheDocument();
+    expect(within(panel).getByText("L_bc")).toBeInTheDocument();
+
+    // What is NOT trained is part of the objective too, so momentum is shown
+    // ghosted rather than dropped.
+    const mom = within(panel).getByText("r_mom").closest(".obj-term");
+    expect(mom).toHaveClass("off");
+  });
+
+  it("un-ghosts a term in the objective when its equation is enabled", async () => {
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    const objective = (
+      await screen.findByRole("heading", { name: "The objective" })
+    ).closest(".card") as HTMLElement;
+    fireEvent.click(screen.getByRole("switch", { name: "Momentum" }));
+
+    // Scoped: the ensemble draws an `r_mom` hub of its own on the canvas.
+    await waitFor(() =>
+      expect(
+        within(objective).getByText("r_mom").closest(".obj-term"),
+      ).not.toHaveClass("off"),
+    );
+  });
+
+  it("reports the interface formulation rather than owning a second copy", async () => {
+    // model.sharp_interface is resolved at run launch, and the launcher appends
+    // the series overrides AFTER its own list — so a control here would
+    // silently outrank an explicit Solver choice. This page states the outcome.
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    const note = await screen.findByRole("status", {
+      name: "Interface formulation",
+    });
+
+    expect(note).toHaveTextContent("diffuse");
+    expect(note).toHaveTextContent(/no pressure field/i);
+    // Stated, never set.
+    expect(within(note).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(note).queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  it("swaps the physics that carries pressure when the front is explicit", async () => {
+    // Both treatments are real physics the registry carries; the field set
+    // decides which a launch gets. Momentum is the switch that ADDS pressure,
+    // so it stays on screen either way — what changes is what carries it.
+    mockApi(MODEL, {
+      ...PHYSICS,
+      fields: ["phi", "u", "v", "s", "p"],
+      equations: [
+        ...PHYSICS.equations.filter((e) => e.id !== "mom"),
+        eq("mom", "Momentum", "B", ["phi", "u", "v", "p"], {
+          fields_added: ["p"],
+          mode: "diffuse",
+          enabled: true,
+        }),
+        eq("darcy", "Darcy", "B", ["phi", "u", "v", "p"], { mode: "sharp" }),
+      ],
+    });
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    await screen.findByText("Optional physics");
+
+    // Pressure is trained, so a launch takes the sharp front by default.
     expect(
-      screen.getByRole("button", { name: "reset all" }),
+      screen.getByRole("status", { name: "Interface formulation" }),
+    ).toHaveTextContent("sharp front");
+    expect(screen.getByText("Darcy")).toBeInTheDocument();
+    // Momentum keeps its switch (it is the pressure switch) and says why it is
+    // not itself the residual being trained.
+    expect(screen.getByText("Momentum")).toBeInTheDocument();
+    expect(
+      screen.getByText(/carried by the front conditions/),
     ).toBeInTheDocument();
+  });
+
+  it("draws the same physics in the ensemble as the objective lists", async () => {
+    // A diagram that disagrees with the loss above it is worse than no diagram.
+    mockApi(MODEL, {
+      ...PHYSICS,
+      fields: ["phi", "u", "v", "s", "p"],
+      equations: [
+        ...PHYSICS.equations.filter((e) => e.id !== "mom"),
+        eq("mom", "Momentum", "B", ["phi", "u", "v", "p"], {
+          fields_added: ["p"],
+          mode: "diffuse",
+          enabled: true,
+        }),
+        eq("darcy", "Darcy", "B", ["phi", "u", "v", "p"], { mode: "sharp" }),
+      ],
+    });
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    const ensemble = await screen.findByRole("img", {
+      name: /network ensemble/i,
+    });
+
+    // The sharp treatment is admitted, so its residual is a hub and the
+    // diffuse one is not drawn at all.
+    expect(within(ensemble).getByText("r_darcy")).toBeInTheDocument();
+    expect(within(ensemble).queryByText("r_mom")).not.toBeInTheDocument();
+  });
+
+  it("opens an equation's detail outside the rail that scrolls it", async () => {
+    // An absolutely-positioned panel inside the rail is clipped by its scroll
+    // container — near the foot of the rail it disappears below the edge. The
+    // panel is portalled to the body instead, so it holds wherever the row is.
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    await screen.findByText("Core physics");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Interface transport detail" }),
+    );
+
+    const pop = await screen.findByRole("tooltip");
+    expect(pop).toBeInTheDocument();
+    // Outside the rail's subtree entirely: that is what escapes the clip.
+    expect(pop.closest(".stage-aside")).toBeNull();
+    expect(pop.parentElement).toBe(document.body);
+  });
+
+  it("names the fix on this page when the Solver would refuse the series", async () => {
+    // The Solver sends sharp by default and the API rejects that ask without a
+    // pressure field, so a Stage-A series would 422 at launch. The remedy is a
+    // toggle in this rail, and the note says so.
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    const note = await screen.findByRole("status", {
+      name: "Interface formulation",
+    });
+
+    expect(note).toHaveTextContent("diffuse");
+    expect(note).toHaveTextContent(/Enable Momentum above/);
+    expect(note).toHaveTextContent(/refuse this series/);
   });
 
   it("flags an interface epsilon that is too small", async () => {
