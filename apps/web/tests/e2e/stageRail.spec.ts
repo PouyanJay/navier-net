@@ -245,31 +245,38 @@ test("the frame ribbon holds every frame and never scrolls", async ({
   expect(label).toMatch(/\d+ frames/);
 });
 
-test("both QC checks sit side by side, with no switch", async ({ page }) => {
-  // Two is few enough to show at once, which is why the third view came out.
+test("the QC picker swaps the chart at full width", async ({ page }) => {
+  // Two-up was tried and abandoned: the checks have very different natural
+  // heights, so one panel became a tall column beside a short box with dead
+  // space under it. One chart at a time, full width, chosen by a select.
   await openStage(page, null);
-  await page.locator(".qc-one").first().waitFor();
+  const picker = page.getByLabel("Preprocessing check");
+  await picker.waitFor();
 
-  const panels = await page.locator(".qc-one").all();
-  expect(panels).toHaveLength(2);
-  const boxes = await Promise.all(panels.map((p) => p.boundingBox()));
-  // Same row, and each wide enough that a spatial plot still reads.
-  expect(Math.abs(boxes[0]!.y - boxes[1]!.y)).toBeLessThan(8);
-  expect(boxes[0]!.width).toBeGreaterThan(300);
-  await expect(page.locator('.qc-sub [role="tab"]')).toHaveCount(0);
+  const svg = page.locator(".qc-sub svg[role='img']");
+  await expect(svg).toHaveCount(1);
+  const wide = (await svg.boundingBox())!;
+  const card = (await page.locator(".qc-sub").boundingBox())!;
+  // Full width, not half of it.
+  expect(wide.width).toBeGreaterThan(card.width * 0.85);
+
+  await picker.selectOption("interface");
+  await expect(
+    page.getByRole("img", { name: /Bubble outline for \d+ frames/ }),
+  ).toBeVisible();
+  await expect(svg).toHaveCount(1);
 });
 
-test("the QC charts are drawn at the width they are rendered at", async ({
+test("the QC chart is drawn at the width it is rendered at", async ({
   page,
 }) => {
-  // A viewBox scales its type with everything else, so a system sized for a
-  // full-width card sets 10px labels at about 4px in half of one.
+  // A viewBox scales its type with everything else, so a coordinate system
+  // sized for the wrong width sets its labels at the wrong size.
   await openStage(page, null);
-  const svg = page.locator(".qc-one svg[role='img']").first();
+  const svg = page.locator(".qc-sub svg[role='img']").first();
   await svg.waitFor();
 
   const box = (await svg.boundingBox())!;
   const viewBox = (await svg.getAttribute("viewBox"))!.split(" ").map(Number);
-  // Rendered pixels per viewBox unit: below ~0.6 the axis labels stop reading.
   expect(box.width / viewBox[2]).toBeGreaterThan(0.6);
 });

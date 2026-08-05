@@ -1031,25 +1031,26 @@
   padding: 2px 8px;
 }
 
-/* The two QC checks, side by side and both always on. Below the width where a
-   half is about 300px they stack instead: a spatial plot of a 1700µm channel
-   squeezed that far stops being readable, which is the whole argument. */
-.qc-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--s4);
-  align-items: start;
+/* The check picker: one slot in the header however many checks there are, and
+   it leaves the header's width to the finding beside it. */
+.qc-pick {
+  margin-left: auto;
+  flex: none;
 }
-@media (max-width: 1360px) {
-  .qc-pair {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.qc-pick select {
+  height: 30px;
+  padding: 0 var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel2);
+  color: var(--ink2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
-.qc-one {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
+.qc-pick select:hover {
+  color: var(--ink);
+  border-color: var(--acc);
 }
 
 /* ── Regime cards ─────────────────────────────────────────────────────

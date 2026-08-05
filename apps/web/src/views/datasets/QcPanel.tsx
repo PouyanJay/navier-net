@@ -1,28 +1,41 @@
 import * as d3 from "d3";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { ChartFrame } from "../../components/ChartFrame";
 import { ViewCanvas } from "../../components";
 import type { QcData, QcKinematics } from "../../lib/api";
 
 /**
- * The charts sit two-up, so the coordinate system is sized for half a card
- * rather than a whole one.
+ * One chart at a time, at the card's full width.
  *
- * This matters more than it looks: a viewBox scales its type along with
- * everything else, so a 920-wide system rendered into 357px of card would set
- * its 10px tick labels at 3.9px. Narrowing the box is what keeps them readable
- * at the width they are actually drawn.
+ * Two-up was tried and does not work here: the checks have very different
+ * natural heights, so one panel ends up a tall column beside a short box with
+ * dead space under it, and a spatial plot of a 1700µm channel loses too much
+ * at half width. A viewBox scales its type along with everything else, so the
+ * system has to be sized for where it is actually drawn.
  */
-const WIDTH = 470;
+const WIDTH = 920;
 // Room on the left and bottom for tick labels *and* an axis title under them.
-const MARGIN = { top: 16, right: 14, bottom: 44, left: 52 };
+const MARGIN = { top: 18, right: 20, bottom: 54, left: 74 };
 const INNER_W = WIDTH - MARGIN.left - MARGIN.right;
 
 type G = d3.Selection<SVGGElement, unknown, null, undefined>;
 type Linear = d3.ScaleLinear<number, number>;
 
 type Check = "kinematics" | "interface";
+
+const CHECKS: { id: Check; label: string; sub: string }[] = [
+  {
+    id: "kinematics",
+    label: "Growth kinematics",
+    sub: "L(t), its fit, and the residual",
+  },
+  {
+    id: "interface",
+    label: "Interface evolution",
+    sub: "bubble silhouettes, first frame to last",
+  },
+];
 
 interface QcChecksProps {
   /** The QC data once the tensors exist, or null before / while they build. */
@@ -53,6 +66,9 @@ function qcRows(qc: QcData, check: Check): Record<string, unknown>[] {
 }
 
 export function QcChecks({ qc, processed }: QcChecksProps) {
+  const [check, setCheck] = useState<Check>("kinematics");
+  const pickerId = useId();
+
   if (!qc) {
     return (
       <section className="qc-sub" aria-label="Preprocessing QC">
@@ -71,63 +87,60 @@ export function QcChecks({ qc, processed }: QcChecksProps) {
     );
   }
 
+  const active = CHECKS.find((c) => c.id === check)!;
+
   return (
     <section className="qc-sub" aria-label="Preprocessing QC">
-      {/* Both checks, side by side and neither hidden. There is no switch left
-          to press: two is few enough to show, which is the whole reason the
-          third view came out. */}
-      <div className="qc-pair">
-        <div className="qc-one">
-          <div className="qc-sub-hd">
-            <div className="qc-sub-title">
-              <h3>Growth kinematics</h3>
-              <span className="sub">L(t), its fit, and the residual</span>
-            </div>
-          </div>
-          {qc.kinematics.t_ms.length > 1 && (
-            <p className="qc-finding">
-              <span className="qc-finding-v mono">
-                {qc.kinematics.fit_slope_mm_s.toFixed(0)}
-              </span>
-              <span className="qc-finding-u mono">mm·s⁻¹ nose speed</span>
-              <span className="qc-finding-r mono">
-                R² {fitR2(qc.kinematics).toFixed(3)}
-              </span>
-            </p>
-          )}
-          <ChartFrame
-            name={`${qc.dataset}-qc-kinematics`}
-            title="Growth kinematics"
-            rows={qcRows(qc, "kinematics")}
-            render={() => (
-              <ViewCanvas>
-                <KinematicsChart qc={qc} />
-              </ViewCanvas>
-            )}
-          />
+      <div className="qc-sub-hd">
+        <div className="qc-sub-title">
+          <h3>{active.label}</h3>
+          <span className="sub">{active.sub}</span>
         </div>
 
-        <div className="qc-one">
-          <div className="qc-sub-hd">
-            <div className="qc-sub-title">
-              <h3>Interface evolution</h3>
-              <span className="sub">
-                bubble silhouettes, first frame to last
-              </span>
-            </div>
-          </div>
-          <ChartFrame
-            name={`${qc.dataset}-qc-interface`}
-            title="Interface evolution"
-            rows={qcRows(qc, "interface")}
-            render={() => (
-              <ViewCanvas>
-                <InterfaceChart qc={qc} />
-              </ViewCanvas>
-            )}
-          />
-        </div>
+        {/* The kinematics finding leads its own chart: the nose speed is what
+            that check exists to produce, and R² is whether to believe it. */}
+        {check === "kinematics" && qc.kinematics.t_ms.length > 1 && (
+          <p className="qc-finding">
+            <span className="qc-finding-v mono">
+              {qc.kinematics.fit_slope_mm_s.toFixed(0)}
+            </span>
+            <span className="qc-finding-u mono">mm·s⁻¹ nose speed</span>
+            <span className="qc-finding-r mono">
+              R² {fitR2(qc.kinematics).toFixed(3)}
+            </span>
+          </p>
+        )}
+
+        {/* A select rather than a segmented control: it takes one slot however
+            many checks there are, and it leaves the header's width to the
+            finding beside it. */}
+        <label className="qc-pick">
+          <span className="sr-only">Preprocessing check</span>
+          <select
+            id={pickerId}
+            value={check}
+            onChange={(event) => setCheck(event.target.value as Check)}
+          >
+            {CHECKS.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
+
+      <ChartFrame
+        name={`${qc.dataset}-qc-${check}`}
+        title={active.label}
+        rows={qcRows(qc, check)}
+        render={() => (
+          <ViewCanvas>
+            {check === "kinematics" && <KinematicsChart qc={qc} />}
+            {check === "interface" && <InterfaceChart qc={qc} />}
+          </ViewCanvas>
+        )}
+      />
     </section>
   );
 }
@@ -168,7 +181,7 @@ function drawAxes(
   xAxis: AxisSpec,
   yAxis: AxisSpec,
 ): void {
-  const xTicks = x.ticks(xAxis.ticks ?? 4);
+  const xTicks = x.ticks(xAxis.ticks ?? 6);
   const yTicks = y.ticks(yAxis.ticks ?? 5);
   const xFormat = xAxis.format ?? d3.format("~s");
   const yFormat = yAxis.format ?? d3.format("~s");

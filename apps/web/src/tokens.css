@@ -402,6 +402,22 @@ body {
   color: var(--selection-ink);
 }
 
+/* Available to assistive tech, absent from the page.
+   Clipped rather than `display: none` or `visibility: hidden`, both of which
+   take it out of the accessibility tree too, and sized 1px rather than 0 so it
+   is not dropped as empty. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Tabular, aligned numerals wherever we show numbers. */
 .mono {
   font-family: var(--font-mono);
