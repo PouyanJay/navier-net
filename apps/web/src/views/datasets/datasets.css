@@ -12,59 +12,89 @@
 .dsx-main > * {
   min-width: 0;
 }
-/* Series library rows */
-.dsrows {
+/* ── Series cards ─────────────────────────────────────────────────────
+   Each series shares the condition cards' idiom, and the selected one holds
+   them INSIDE its body: containment is what says the conditions are this
+   series', not a neighbouring list. */
+.scards {
   display: flex;
   flex-direction: column;
-  gap: var(--s1);
+  gap: var(--s2);
 }
-.dsrow {
+.scard {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel2);
+  overflow: hidden;
+}
+.scard:hover {
+  border-color: var(--line-strong);
+}
+.scard.sel {
+  border-color: color-mix(in srgb, var(--acc) 40%, transparent);
+}
+.scard-hd {
   display: flex;
   align-items: center;
   gap: var(--s3);
   width: 100%;
-  text-align: left;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--rs);
-  padding: var(--s2) var(--s3);
-  color: var(--ink2);
+  padding: var(--s3);
+  border: 0;
+  background: transparent;
+  color: inherit;
   font: inherit;
+  text-align: left;
   cursor: pointer;
 }
-.dsrow:hover {
-  background: var(--panel2);
-}
-.dsrow.sel {
-  border-color: var(--acc);
+.scard.sel .scard-hd {
   background: var(--accsoft);
-  color: var(--ink);
 }
-/* The glyph stands bare — no plate, no border — so the row's only box is the
-   selection state itself. */
-.dsrow .ic {
+/* Bare glyph — no plate, no border; the card's border is the only box. */
+.scard-ic {
   flex: none;
   width: 22px;
-  color: var(--acc);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-.dsrow .m {
-  min-width: 0;
-}
-.dsrow .m b {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-}
-.dsrow .m span {
-  font-size: 11px;
   color: var(--ink3);
 }
-.dsrow .st {
-  margin-left: auto;
+.scard.sel .scard-ic,
+.scard.sel .scard-hd > .scard-m b,
+.scard.sel > .scard-hd .dcard-chev {
+  color: var(--acc);
+}
+/* Only the series card's own chevron: the nested condition cards manage
+   theirs, and this selector reaching them flipped every closed one. */
+.scard.sel > .scard-hd .dcard-chev {
+  transform: rotate(180deg);
+}
+.scard-m {
+  flex: 1;
+  min-width: 0;
+}
+.scard-m b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 640;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scard-m > span {
+  display: block;
+  font-size: 10px;
+  color: var(--ink3);
+}
+.scard .chip {
   flex: none;
+  font-size: 10px;
+}
+/* The nested condition cards, inset on the panel ground so the series card
+   visibly contains them. */
+.scard-body {
+  padding: var(--s2) var(--s2) var(--s1);
+  border-top: 1px solid var(--line);
 }
 
 /* "+ Upload new series" tile and the no-series empty state */
@@ -887,139 +917,72 @@
   flex: none;
 }
 
-/* ── Domain cards: the selected series' conditions ────────────────── */
-.dcards {
+/* ── Condition bands: the selected series' values, grouped by domain ──
+   A bare icon-and-label line separates the bands — no plate, no border, no
+   fold. Inside the series card, boxes-within-a-box read as chrome, and the
+   rows are few enough to simply show. */
+.dbands {
   display: flex;
   flex-direction: column;
-  gap: var(--s2);
+  /* Between-band air one step up from the within-band rhythm, so the bands
+     read as sections rather than as one continuous list. */
+  gap: var(--s5);
+  padding: var(--s2) var(--s2) var(--s3);
 }
-.dcard {
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel2);
-  overflow: hidden;
-}
-.dcard-hd {
+/* The band label takes the chrome accent — the UI's own slate blue, never a
+   series blue: chrome and data must stay different colours. Ink-grey made the
+   separators vanish into the rows they separate. */
+.dband-hd {
   display: flex;
   align-items: center;
-  gap: var(--s3);
-  width: 100%;
-  padding: var(--s3);
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.dcard:hover {
-  border-color: var(--line-strong);
-}
-.dcard-ic {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  display: grid;
-  place-items: center;
-  background: var(--hover);
-  color: var(--ink3);
-}
-.dcard-m {
-  flex: 1;
-  min-width: 0;
-}
-.dcard-m b {
-  display: block;
-  font-size: 12px;
-  font-weight: 640;
-  color: var(--ink);
-}
-.dcard-m > span {
-  display: block;
-  font-size: 10px;
-  color: var(--ink3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dcard-m > span.miss {
-  color: var(--amber);
-}
-.dcard-chev {
-  flex: none;
-  color: var(--ink3);
-  transition: transform 150ms var(--ease);
-}
-@media (prefers-reduced-motion: reduce) {
-  .dcard-chev {
-    transition: none;
-  }
-}
-
-/* Open: the header takes the accent plate and the rows unfold under it. */
-.dcard.open {
-  border-color: color-mix(in srgb, var(--acc) 34%, transparent);
-}
-.dcard.open .dcard-hd {
-  background: var(--accsoft);
-}
-.dcard.open .dcard-hd b,
-.dcard.open .dcard-ic {
-  color: var(--acc);
-}
-.dcard.open .dcard-ic {
-  background: color-mix(in srgb, var(--acc) 16%, transparent);
-}
-.dcard.open .dcard-chev {
-  transform: rotate(180deg);
-  color: var(--acc);
-}
-.dcard-rows {
+  gap: var(--s2);
   margin: 0;
-  padding: 0 var(--s3);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--acc);
 }
-.dcard-rows .drow {
+.dband-hd svg {
+  flex: none;
+}
+.dband-rows {
+  margin: var(--s1) 0 0;
+}
+.dband-rows .drow {
   display: flex;
   align-items: baseline;
   gap: var(--s3);
-  padding: 8px 0;
+  padding: 7px 0;
   border-bottom: 1px solid var(--line);
 }
-.dcard-rows .drow:last-child {
+.dband-rows .drow:last-child {
   border-bottom: 0;
 }
-.dcard-rows dt {
+.dband-rows dt {
   flex: 1;
   min-width: 0;
   font-size: 12.5px;
   color: var(--ink2);
 }
-.dcard-rows dd {
+.dband-rows dd {
   margin: 0;
   font-size: 13px;
   font-weight: 620;
   color: var(--ink);
   white-space: nowrap;
 }
-.dcard-rows dd em {
-  font-style: normal;
-  font-size: 9.5px;
-  font-weight: 400;
-  color: var(--ink3);
-  margin-left: 5px;
-}
 /* Computed from the rows above it: read, never edited, so it recedes. */
-.dcard-rows .drow.derived dt,
-.dcard-rows .drow.derived dd {
+.dband-rows .drow.derived dt,
+.dband-rows .drow.derived dd {
   color: var(--ink3);
   font-weight: 400;
 }
-.dcard-none {
+.dband-none {
   margin: 0;
-  padding: var(--s2) var(--s3) var(--s3);
+  padding: var(--s2);
   font-size: 11.5px;
-  color: var(--ink3);
+  color: var(--amber);
   text-wrap: pretty;
 }
 

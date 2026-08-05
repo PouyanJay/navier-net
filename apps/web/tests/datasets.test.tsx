@@ -436,73 +436,60 @@ describe("DatasetsView", () => {
     expect(await screen.findByText("215.5")).toBeInTheDocument();
   });
 
-  it("reads the selected series' conditions as one card per domain", async () => {
+  it("reads the selected series' conditions as labelled bands", async () => {
     mockApi();
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // Fluid and Geometry open by default: the identity of the rig, the first
-    // things checked against a lab notebook.
+    // Every band's rows are simply visible — no folds inside the series card.
     const fluid = within(
       await screen.findByRole("region", { name: "Fluid conditions" }),
     );
-    expect(fluid.getByRole("button")).toHaveAttribute("aria-expanded", "true");
     expect(fluid.getByText("Working fluid")).toBeInTheDocument();
     expect(fluid.getByText("FC-72")).toBeInTheDocument();
+    expect(fluid.queryByRole("button")).not.toBeInTheDocument();
 
     const geometry = within(
       screen.getByRole("region", { name: "Geometry conditions" }),
     );
-    expect(geometry.getByText("Channel height")).toBeInTheDocument();
+    expect(geometry.getByText("Channel height (µm)")).toBeInTheDocument();
     expect(geometry.getByText("150")).toBeInTheDocument();
     // Computed from the rows above it: shown, but marked as read-only derived.
-    expect(geometry.getByText("Hydraulic diameter")).toBeInTheDocument();
     expect(
-      geometry.getByText("Hydraulic diameter").closest(".drow"),
+      geometry.getByText("Hydraulic diameter (µm)").closest(".drow"),
     ).toHaveClass("derived");
 
-    // Closed cards still read: the summary stands in for the rows.
     const thermal = within(
       screen.getByRole("region", { name: "Thermal conditions" }),
     );
-    expect(thermal.getByRole("button")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(thermal.getByText(/q_wall 2 W·cm⁻²/)).toBeInTheDocument();
-    expect(thermal.queryByText("Wall heat flux")).not.toBeInTheDocument();
+    expect(thermal.getByText("Wall heat flux (W·cm⁻²)")).toBeInTheDocument();
   });
 
-  it("expands cards independently, so two bands compare side by side", async () => {
+  it("nests the conditions inside the selected series' own card", async () => {
     mockApi();
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    const card = (name: string) => within(screen.getByRole("region", { name }));
-    await screen.findByRole("region", { name: "Fluid conditions" });
 
-    // Opening Thermal leaves the two defaults open — no accordion.
-    fireEvent.click(card("Thermal conditions").getByRole("button"));
-
+    // Containment, not a heading, is what says the conditions belong to this
+    // series: the domain cards live inside the series card's region.
+    const card = await screen.findByRole("region", { name: "sample series" });
     expect(
-      card("Thermal conditions").getByText("Wall heat flux"),
+      within(card).getByRole("region", { name: "Fluid conditions" }),
     ).toBeInTheDocument();
-    expect(card("Fluid conditions").getByRole("button")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    expect(card("Geometry conditions").getByRole("button")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
 
-    // And each closes on its own.
-    fireEvent.click(card("Fluid conditions").getByRole("button"));
-    expect(card("Fluid conditions").getByRole("button")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(card("Geometry conditions").getByRole("button")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    // Re-clicking the selected series folds its conditions without
+    // deselecting — the canvas keeps exactly one series in view.
+    const header = within(card).getAllByRole("button")[0];
+    expect(header).toHaveAttribute("aria-current", "true");
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(header).toHaveAttribute("aria-current", "true");
+    expect(
+      within(card).queryByRole("region", { name: "Fluid conditions" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(header);
+    expect(
+      within(card).getByRole("region", { name: "Fluid conditions" }),
+    ).toBeInTheDocument();
   });
 
   it("edits a cheap condition live, without requiring a re-preprocess", async () => {

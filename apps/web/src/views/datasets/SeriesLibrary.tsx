@@ -55,8 +55,6 @@ interface Domain {
   id: string;
   title: string;
   icon: typeof FluidIcon;
-  /** One line honest enough to stand in for the rows when the card is shut. */
-  summary: (c: OperatingConditions) => string;
   rows: (c: OperatingConditions) => Row[];
 }
 
@@ -80,7 +78,6 @@ const DOMAINS: Domain[] = [
     id: "fluid",
     title: "Fluid",
     icon: FluidIcon,
-    summary: (c) => `${c.fluid} · T_sat ${c.T_sat_C} °C`,
     rows: (c) => [
       { label: "Working fluid", value: c.fluid },
       { label: "Saturation temp", value: c.T_sat_C, unit: "°C" },
@@ -90,8 +87,6 @@ const DOMAINS: Domain[] = [
     id: "geometry",
     title: "Geometry",
     icon: GeometryIcon,
-    summary: (c) =>
-      `${c.channel_width_um} × ${c.channel_height_um} µm · D_h ${hydraulicDiameter(c)} µm`,
     rows: (c) => [
       { label: "Channel width", value: c.channel_width_um, unit: "µm" },
       { label: "Channel height", value: c.channel_height_um, unit: "µm" },
@@ -107,7 +102,6 @@ const DOMAINS: Domain[] = [
     id: "thermal",
     title: "Thermal",
     icon: ThermalIcon,
-    summary: (c) => `q_wall ${c.q_wall_W_cm2} W·cm⁻²`,
     rows: (c) => [
       { label: "Wall heat flux", value: c.q_wall_W_cm2, unit: "W·cm⁻²" },
     ],
@@ -116,23 +110,13 @@ const DOMAINS: Domain[] = [
     id: "flow",
     title: "Flow & capture",
     icon: FlowIcon,
-    summary: (c) => `${c.flow_rate_mL_hr} mL·hr⁻¹ · Δt ${c.dt_frame_ms} ms`,
     rows: (c) => [
       { label: "Flow rate", value: c.flow_rate_mL_hr, unit: "mL·hr⁻¹" },
-      {
-        label: "Reference velocity",
-        value: c.U_ref_m_s ?? "—",
-        unit: c.U_ref_m_s != null ? "m·s⁻¹" : undefined,
-      },
+      { label: "Reference velocity", value: c.U_ref_m_s ?? "—", unit: "m·s⁻¹" },
       { label: "Frame interval", value: c.dt_frame_ms, unit: "ms" },
     ],
   },
 ];
-
-/* Fluid and Geometry open by default: they are the identity of the rig, the
-   first things checked against a lab notebook, and together they still leave
-   the other two cards' summaries on screen. */
-const OPEN_BY_DEFAULT = ["fluid", "geometry"];
 
 /**
  * What the rail can honestly say about the saved conditions.
@@ -169,67 +153,38 @@ function seriesMeta(summary: DatasetSummary): string {
   return parts.join(" ");
 }
 
-/** One condition domain: closed it is a summary, open it is the rows. */
-function DomainCard({
+/** One condition domain: a bare icon-and-label separator over its rows. No
+ * box and no fold — inside the series card, cards-within-a-card read as
+ * chrome, and a summary standing in for two visible rows saved nothing. */
+function DomainBand({
   domain,
   conditions,
-  unset,
-  open,
-  onToggle,
 }: {
   domain: Domain;
   conditions: OperatingConditions;
-  unset: boolean;
-  open: boolean;
-  onToggle: () => void;
 }) {
   return (
-    <section
-      className={open ? "dcard open" : "dcard"}
-      aria-label={`${domain.title} conditions`}
-    >
-      <button
-        type="button"
-        className="dcard-hd"
-        aria-expanded={open}
-        onClick={onToggle}
-      >
-        <span className="dcard-ic" aria-hidden="true">
-          <HugeiconsIcon icon={domain.icon} size={15} />
-        </span>
-        <span className="dcard-m">
-          <b>{domain.title}</b>
-          {/* Closed, the summary stands in for the rows, so it goes amber and
-              says so when there is nothing behind it to stand in for. */}
-          <span className={unset ? "mono miss" : "mono"}>
-            {unset ? "not set" : domain.summary(conditions)}
-          </span>
-        </span>
-        <span className="dcard-chev" aria-hidden="true">
-          <HugeiconsIcon icon={MenuOpenIcon} size={13} />
-        </span>
-      </button>
-      {open && !unset && (
-        <dl className="dcard-rows">
-          {domain.rows(conditions).map((row) => (
-            <div
-              key={row.label}
-              className={row.derived ? "drow derived" : "drow"}
-            >
-              <dt>{row.label}</dt>
-              <dd className="mono">
-                {row.value}
-                {row.unit && <em>{row.unit}</em>}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {open && unset && (
-        <p className="dcard-none">
-          Set in the conditions form; nothing is recorded for this series yet.
-        </p>
-      )}
+    <section className="dband" aria-label={`${domain.title} conditions`}>
+      <h3 className="dband-hd">
+        <HugeiconsIcon icon={domain.icon} size={13} aria-hidden="true" />
+        {domain.title}
+      </h3>
+      <dl className="dband-rows">
+        {domain.rows(conditions).map((row) => (
+          <div
+            key={row.label}
+            className={row.derived ? "drow derived" : "drow"}
+          >
+            {/* The unit rides the variable's name in brackets, so the value
+                column stays a clean run of numbers. */}
+            <dt>
+              {row.label}
+              {row.unit && ` (${row.unit})`}
+            </dt>
+            <dd className="mono">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
     </section>
   );
 }
@@ -257,19 +212,9 @@ export function SeriesLibrary({
 }: SeriesLibraryProps) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [openCards, setOpenCards] = useState<ReadonlySet<string>>(
-    () => new Set(OPEN_BY_DEFAULT),
-  );
+  const [conditionsShown, setConditionsShown] = useState(true);
   const trained = detail != null && trainedIds.has(detail.id);
   const unset = detail != null && !detail.conditions_set;
-
-  const toggleCard = (id: string) =>
-    setOpenCards((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   return (
     <>
@@ -280,66 +225,98 @@ export function SeriesLibrary({
           calibration and segmentation.
         </div>
       )}
-      <div className="dsrows">
-        {series.map((summary) => (
-          <button
-            key={summary.id}
-            type="button"
-            className={summary.id === selected ? "dsrow sel" : "dsrow"}
-            aria-current={summary.id === selected || undefined}
-            onClick={() => onSelect(summary.id)}
-          >
-            {/* A film strip, bare: the tile behind the old "TIF" text badge
-                boxed a glyph that already reads on its own. */}
-            <span className="ic" aria-hidden="true">
-              <HugeiconsIcon icon={SeriesIcon} size={17} />
-            </span>
-            <span
-              className="m"
-              title={summary.label ? `series id: ${summary.id}` : undefined}
+      {/* Each series is a card in the same idiom as the condition cards, and
+          the selected one holds them INSIDE it — the containment, not a
+          heading, is what says the conditions belong to this series. */}
+      <div className="scards">
+        {series.map((summary) => {
+          const isSelected = summary.id === selected;
+          const showsConditions = isSelected && conditionsShown;
+          return (
+            <section
+              key={summary.id}
+              className={isSelected ? "scard sel" : "scard"}
+              aria-label={`${seriesName(summary)} series`}
             >
-              <b>{seriesName(summary)}</b>
-              <span className="mono">{seriesMeta(summary)}</span>
-            </span>
-            <span className="st">
-              {seriesChip(summary, trainedIds.has(summary.id))}
-            </span>
-          </button>
-        ))}
-      </div>
-      {detail && detail.id === selected && (
-        <div className="dcards" aria-label={`${detail.id} conditions`}>
-          {DOMAINS.map((domain) => (
-            <DomainCard
-              key={domain.id}
-              domain={domain}
-              conditions={detail.conditions}
-              unset={unset}
-              open={openCards.has(domain.id)}
-              onToggle={() => toggleCard(domain.id)}
-            />
-          ))}
-
-          {detail.processed && !detail.conditions_applied && (
-            <div className="ds-reprocess">
-              <Callout tone="caution" title="Re-preprocess required">
-                A tensor-baked condition (frame interval, channel width, or
-                reference velocity) changed since these tensors were built.
-                {trained
-                  ? " Re-preprocessing rebuilds them and marks the trained run stale."
-                  : " Re-preprocess to rebuild them from the new values."}
-              </Callout>
-              <Button
-                variant="primary"
-                onClick={onPreprocess}
-                disabled={preprocessing}
+              <button
+                type="button"
+                className="scard-hd"
+                aria-current={isSelected || undefined}
+                aria-expanded={showsConditions}
+                title={summary.label ? `series id: ${summary.id}` : undefined}
+                onClick={() => {
+                  // Selecting a series opens it; re-clicking the selected one
+                  // folds its conditions without deselecting — the canvas
+                  // beside the rail always has exactly one series in view.
+                  if (isSelected) setConditionsShown(!conditionsShown);
+                  else {
+                    setConditionsShown(true);
+                    onSelect(summary.id);
+                  }
+                }}
               >
-                {preprocessing ? "Re-preprocessing…" : "Re-preprocess"}
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
+                <span className="scard-ic" aria-hidden="true">
+                  <HugeiconsIcon icon={SeriesIcon} size={16} />
+                </span>
+                <span className="scard-m">
+                  <b>{seriesName(summary)}</b>
+                  <span className="mono">{seriesMeta(summary)}</span>
+                </span>
+                {seriesChip(summary, trainedIds.has(summary.id))}
+                <span className="dcard-chev" aria-hidden="true">
+                  <HugeiconsIcon icon={MenuOpenIcon} size={13} />
+                </span>
+              </button>
+
+              {showsConditions && detail && detail.id === summary.id && (
+                <div className="scard-body">
+                  <div
+                    className="dbands"
+                    aria-label={`${detail.id} conditions`}
+                  >
+                    {unset ? (
+                      <p className="dband-none">
+                        No conditions recorded for this series yet — set them
+                        below.
+                      </p>
+                    ) : (
+                      DOMAINS.map((domain) => (
+                        <DomainBand
+                          key={domain.id}
+                          domain={domain}
+                          conditions={detail.conditions}
+                        />
+                      ))
+                    )}
+
+                    {detail.processed && !detail.conditions_applied && (
+                      <div className="ds-reprocess">
+                        <Callout tone="caution" title="Re-preprocess required">
+                          A tensor-baked condition (frame interval, channel
+                          width, or reference velocity) changed since these
+                          tensors were built.
+                          {trained
+                            ? " Re-preprocessing rebuilds them and marks the trained run stale."
+                            : " Re-preprocess to rebuild them from the new values."}
+                        </Callout>
+                        <Button
+                          variant="primary"
+                          onClick={onPreprocess}
+                          disabled={preprocessing}
+                        >
+                          {preprocessing
+                            ? "Re-preprocessing…"
+                            : "Re-preprocess"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
 
       {adding && (
         <NewSeriesModal
