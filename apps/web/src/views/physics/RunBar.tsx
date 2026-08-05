@@ -39,7 +39,7 @@ export function RunBar({ model }: { model: PhysicsModel }) {
           <Button onClick={copy}>
             {copied ? "Copied" : "Copy train command"}
           </Button>
-          <InfoPopover label="The exact command">
+          <InfoPopover label="The exact command" width={560}>
             <div className="cmdpop">
               <div className="cmdlead">exact command · reproducible</div>
               <code>{model.hydraCommand}</code>
