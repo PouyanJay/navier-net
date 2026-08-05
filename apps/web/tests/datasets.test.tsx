@@ -862,24 +862,16 @@ describe("DatasetsView", () => {
     expect(screen.getByText(/nose speed/)).toBeInTheDocument();
     expect(screen.getByText(/R²/)).toBeInTheDocument();
 
-    // The two spatial checks do share a switch: each draws the whole channel,
-    // so each needs the card's full width.
-    const evolution = screen.getByRole("tab", { name: /Interface evolution/ });
-    expect(evolution).toHaveAttribute("aria-selected", "true");
+    // Interface evolution sits beside it rather than behind a switch. Two
+    // checks is few enough to show at once, which is why there is no switch
+    // left at all.
     expect(
       screen.getByRole("img", { name: /Bubble outline for \d+ frames/ }),
     ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("tab", { name: /Signed distance/ }));
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("img", { name: /Signed distance field/ }),
-    ).toBeInTheDocument();
-    // Switching the field view leaves the kinematics chart in place.
-    expect(
-      screen.getByRole("img", {
-        name: /Bubble length in micrometres against time/,
-      }),
-    ).toBeInTheDocument();
+      screen.queryByRole("img", { name: /Signed distance field/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("marks the holdout frame in the strip", async () => {
@@ -1616,11 +1608,11 @@ describe("new series conditions", () => {
 });
 
 describe("QC chart axes", () => {
-  async function showCheck(name: RegExp) {
+  /** Both checks render together now, so there is nothing to click. */
+  async function showChecks() {
     mockApi({ processed: true });
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
-    // The QC tabs appear once the tensors load (before that the section prompts).
-    fireEvent.click(await screen.findByRole("tab", { name }));
+    await screen.findByText(/x \(µm\), downstream/);
   }
 
   it("names the quantity and unit on both axes of the kinematics chart", async () => {
@@ -1633,21 +1625,14 @@ describe("QC chart axes", () => {
   });
 
   it("names both axes of the interface chart in physical units", async () => {
-    await showCheck(/Interface evolution/);
+    await showChecks();
 
     expect(screen.getByText(/x \(µm\), downstream/)).toBeInTheDocument();
     expect(screen.getByText(/y \(µm\), across channel/)).toBeInTheDocument();
   });
 
-  it("names both axes of the signed-distance chart", async () => {
-    await showCheck(/Signed distance/);
-
-    expect(screen.getByText(/x \(µm\), downstream/)).toBeInTheDocument();
-    expect(screen.getByText("y (µm)")).toBeInTheDocument();
-  });
-
   it("draws each frame as one closed silhouette, not loose arcs", async () => {
-    await showCheck(/Interface evolution/);
+    await showChecks();
 
     const shapes = document.querySelectorAll(".qc-silhouette");
     expect(shapes).toHaveLength(1); // the fixture has one frame
@@ -1657,7 +1642,7 @@ describe("QC chart axes", () => {
   });
 
   it("keeps chart text off SVG's black default on the dark canvas", async () => {
-    await showCheck(/Interface evolution/);
+    await showChecks();
 
     // The class has to land where the CSS can reach it; a bare <text> with a
     // descendant-only rule falls back to black and is invisible here.

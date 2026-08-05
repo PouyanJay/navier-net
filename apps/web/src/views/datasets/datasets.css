@@ -1031,9 +1031,25 @@
   padding: 2px 8px;
 }
 
-/* The second QC header, above the field views' switch. */
-.qc-sub-hd-second {
-  margin-top: var(--s5);
+/* The two QC checks, side by side and both always on. Below the width where a
+   half is about 300px they stack instead: a spatial plot of a 1700µm channel
+   squeezed that far stops being readable, which is the whole argument. */
+.qc-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s4);
+  align-items: start;
+}
+@media (max-width: 1360px) {
+  .qc-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.qc-one {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
 }
 
 /* ── Regime cards ─────────────────────────────────────────────────────

@@ -1,34 +1,28 @@
 import * as d3 from "d3";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import { ChartFrame } from "../../components/ChartFrame";
 import { ViewCanvas } from "../../components";
 import type { QcData, QcKinematics } from "../../lib/api";
 
-const WIDTH = 920;
+/**
+ * The charts sit two-up, so the coordinate system is sized for half a card
+ * rather than a whole one.
+ *
+ * This matters more than it looks: a viewBox scales its type along with
+ * everything else, so a 920-wide system rendered into 357px of card would set
+ * its 10px tick labels at 3.9px. Narrowing the box is what keeps them readable
+ * at the width they are actually drawn.
+ */
+const WIDTH = 470;
 // Room on the left and bottom for tick labels *and* an axis title under them.
-const MARGIN = { top: 18, right: 20, bottom: 54, left: 74 };
+const MARGIN = { top: 16, right: 14, bottom: 44, left: 52 };
 const INNER_W = WIDTH - MARGIN.left - MARGIN.right;
 
 type G = d3.Selection<SVGGElement, unknown, null, undefined>;
 type Linear = d3.ScaleLinear<number, number>;
 
-type Check = "kinematics" | "interface" | "sdf";
-
-/**
- * The two spatial checks, which do share a switch.
- *
- * Both draw the channel across its full 1700µm, so both need the card's width;
- * side by side they would be about 300px wide and unreadable. Growth kinematics
- * is not among them — it is a time series with a headline number, so it is
- * always on screen above these.
- */
-type FieldCheck = Extract<Check, "interface" | "sdf">;
-
-const FIELD_CHECKS: { id: FieldCheck; label: string; sub: string }[] = [
-  { id: "interface", label: "Interface evolution", sub: "bubble silhouettes" },
-  { id: "sdf", label: "Signed distance", sub: "mid frame" },
-];
+type Check = "kinematics" | "interface";
 
 interface QcChecksProps {
   /** The QC data once the tensors exist, or null before / while they build. */
@@ -37,9 +31,6 @@ interface QcChecksProps {
   processed: boolean;
 }
 
-/** The three preprocessing checks as interactive charts behind one switch,
- * rendered as a sub-section within the image-sequence card so the frames and
- * the QC computed from them read as one thing. */
 /** The active check's data in export-friendly long format. */
 function qcRows(qc: QcData, check: Check): Record<string, unknown>[] {
   if (check === "kinematics")
@@ -48,31 +39,20 @@ function qcRows(qc: QcData, check: Check): Record<string, unknown>[] {
       length_um: qc.kinematics.length_um[i],
       fit_slope_mm_s: qc.kinematics.fit_slope_mm_s,
     }));
-  if (check === "interface")
-    return qc.interface.frames.flatMap((frame) =>
-      frame.rings.flatMap((ring, ringIndex) =>
-        ring.map(([xStar, yStar]) => ({
-          camera_frame: frame.camera_frame,
-          t_ms: frame.t_ms,
-          ring: ringIndex,
-          x_star: xStar,
-          y_star: yStar,
-        })),
-      ),
-    );
-  return qc.sdf.values.flatMap((row, rowIndex) =>
-    row.map((value, colIndex) => ({
-      row: rowIndex,
-      col: colIndex,
-      sdf: value,
-    })),
+  return qc.interface.frames.flatMap((frame) =>
+    frame.rings.flatMap((ring, ringIndex) =>
+      ring.map(([xStar, yStar]) => ({
+        camera_frame: frame.camera_frame,
+        t_ms: frame.t_ms,
+        ring: ringIndex,
+        x_star: xStar,
+        y_star: yStar,
+      })),
+    ),
   );
 }
 
 export function QcChecks({ qc, processed }: QcChecksProps) {
-  const [field, setField] = useState<FieldCheck>("interface");
-  const fieldCheck = FIELD_CHECKS.find((c) => c.id === field)!;
-
   if (!qc) {
     return (
       <section className="qc-sub" aria-label="Preprocessing QC">
@@ -93,72 +73,61 @@ export function QcChecks({ qc, processed }: QcChecksProps) {
 
   return (
     <section className="qc-sub" aria-label="Preprocessing QC">
-      {/* Growth kinematics is never hidden. It is the check a reader looks at
-          first, it is the one that produces a number, and unlike the two field
-          views it is a time series — so it reads fine at any width, while they
-          are spatial plots of a 1700µm channel that need theirs. */}
-      <div className="qc-sub-hd">
-        <div className="qc-sub-title">
-          <h3>Growth kinematics</h3>
-          <span className="sub">
-            L(t) with the linear fit, and its residual
-          </span>
+      {/* Both checks, side by side and neither hidden. There is no switch left
+          to press: two is few enough to show, which is the whole reason the
+          third view came out. */}
+      <div className="qc-pair">
+        <div className="qc-one">
+          <div className="qc-sub-hd">
+            <div className="qc-sub-title">
+              <h3>Growth kinematics</h3>
+              <span className="sub">L(t), its fit, and the residual</span>
+            </div>
+          </div>
+          {qc.kinematics.t_ms.length > 1 && (
+            <p className="qc-finding">
+              <span className="qc-finding-v mono">
+                {qc.kinematics.fit_slope_mm_s.toFixed(0)}
+              </span>
+              <span className="qc-finding-u mono">mm·s⁻¹ nose speed</span>
+              <span className="qc-finding-r mono">
+                R² {fitR2(qc.kinematics).toFixed(3)}
+              </span>
+            </p>
+          )}
+          <ChartFrame
+            name={`${qc.dataset}-qc-kinematics`}
+            title="Growth kinematics"
+            rows={qcRows(qc, "kinematics")}
+            render={() => (
+              <ViewCanvas>
+                <KinematicsChart qc={qc} />
+              </ViewCanvas>
+            )}
+          />
         </div>
-        {qc.kinematics.t_ms.length > 1 && (
-          <p className="qc-finding">
-            <span className="qc-finding-v mono">
-              {qc.kinematics.fit_slope_mm_s.toFixed(0)}
-            </span>
-            <span className="qc-finding-u mono">mm·s⁻¹ nose speed</span>
-            <span className="qc-finding-r mono">
-              R² {fitR2(qc.kinematics).toFixed(3)}
-            </span>
-          </p>
-        )}
-      </div>
-      <ChartFrame
-        name={`${qc.dataset}-qc-kinematics`}
-        title="Growth kinematics"
-        rows={qcRows(qc, "kinematics")}
-        render={() => (
-          <ViewCanvas>
-            <KinematicsChart qc={qc} />
-          </ViewCanvas>
-        )}
-      />
 
-      <div className="qc-sub-hd qc-sub-hd-second">
-        <div className="qc-sub-title">
-          <h3>{fieldCheck.label}</h3>
-          <span className="sub">{fieldCheck.sub}</span>
-        </div>
-        <div className="seg compact" role="tablist" aria-label="Field check">
-          {FIELD_CHECKS.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              role="tab"
-              aria-selected={field === c.id}
-              className={field === c.id ? "segb on" : "segb"}
-              title={c.sub}
-              onClick={() => setField(c.id)}
-            >
-              {c.label}
-            </button>
-          ))}
+        <div className="qc-one">
+          <div className="qc-sub-hd">
+            <div className="qc-sub-title">
+              <h3>Interface evolution</h3>
+              <span className="sub">
+                bubble silhouettes, first frame to last
+              </span>
+            </div>
+          </div>
+          <ChartFrame
+            name={`${qc.dataset}-qc-interface`}
+            title="Interface evolution"
+            rows={qcRows(qc, "interface")}
+            render={() => (
+              <ViewCanvas>
+                <InterfaceChart qc={qc} />
+              </ViewCanvas>
+            )}
+          />
         </div>
       </div>
-      <ChartFrame
-        name={`${qc.dataset}-qc-${field}`}
-        title={fieldCheck.label}
-        rows={qcRows(qc, field)}
-        render={() => (
-          <ViewCanvas>
-            {field === "interface" && <InterfaceChart qc={qc} />}
-            {field === "sdf" && <SdfChart qc={qc} />}
-          </ViewCanvas>
-        )}
-      />
     </section>
   );
 }
@@ -199,7 +168,7 @@ function drawAxes(
   xAxis: AxisSpec,
   yAxis: AxisSpec,
 ): void {
-  const xTicks = x.ticks(xAxis.ticks ?? 6);
+  const xTicks = x.ticks(xAxis.ticks ?? 4);
   const yTicks = y.ticks(yAxis.ticks ?? 5);
   const xFormat = xAxis.format ?? d3.format("~s");
   const yFormat = yAxis.format ?? d3.format("~s");
@@ -547,62 +516,5 @@ function InterfaceChart({ qc }: { qc: QcData }) {
       role="img"
       aria-label={`Bubble outline for ${frames.length} frames from ${frames[0]?.t_ms ?? 0} to ${frames[frames.length - 1]?.t_ms ?? 0} milliseconds, later frames drawn brighter, on axes in micrometres.`}
     />
-  );
-}
-
-// ── Signed distance field ────────────────────────────────────────────────────
-
-/** Diverging heatmap of the mid-frame signed distance field. */
-function SdfChart({ qc }: { qc: QcData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { values, t_ms, x_range, y_range } = qc.sdf;
-  const l_ref_um = qc.interface.l_ref_um;
-  const rows = values.length;
-  const cols = rows > 0 ? values[0].length : 0;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || rows === 0) return;
-    canvas.width = cols;
-    canvas.height = rows;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const image = ctx.createImageData(cols, rows);
-    // Matplotlib's RdBu, the colormap the pipeline's own QC figure uses.
-    for (let r = 0; r < rows; r += 1) {
-      for (let c = 0; c < cols; c += 1) {
-        const v = Math.max(-1, Math.min(1, values[r][c]));
-        const { r: red, g, b } = d3.rgb(d3.interpolateRdBu((v + 1) / 2));
-        const at = (r * cols + c) * 4;
-        image.data[at] = red;
-        image.data[at + 1] = g;
-        image.data[at + 2] = b;
-        image.data[at + 3] = 255;
-      }
-    }
-    ctx.putImageData(image, 0, 0);
-  }, [values, rows, cols]);
-
-  const um = (v: number) => Math.round(v * l_ref_um);
-
-  return (
-    <figure className="qc-sdf">
-      <span className="qc-sdf-ytitle mono">y (µm)</span>
-      <span className="qc-sdf-ymax mono">{um(y_range[1])}</span>
-      <span className="qc-sdf-ymin mono">{um(y_range[0])}</span>
-      <canvas
-        ref={canvasRef}
-        role="img"
-        aria-label={`Signed distance field at t = ${t_ms} ms across ${um(x_range[0])} to ${um(x_range[1])} µm downstream; red inside the vapour, blue outside.`}
-      />
-      <span className="qc-sdf-xmin mono">{um(x_range[0])}</span>
-      <span className="qc-sdf-xmax mono">{um(x_range[1])}</span>
-      <figcaption className="qc-sdf-xtitle mono">x (µm), downstream</figcaption>
-      <div className="qc-sdf-legend mono" aria-hidden="true">
-        <span>−1 vapour</span>
-        <span className="qc-sdf-bar" />
-        <span>+1 liquid</span>
-      </div>
-    </figure>
   );
 }

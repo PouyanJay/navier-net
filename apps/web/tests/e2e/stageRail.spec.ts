@@ -244,3 +244,32 @@ test("the frame ribbon holds every frame and never scrolls", async ({
   const label = await page.locator(".ribbon").getAttribute("aria-label");
   expect(label).toMatch(/\d+ frames/);
 });
+
+test("both QC checks sit side by side, with no switch", async ({ page }) => {
+  // Two is few enough to show at once, which is why the third view came out.
+  await openStage(page, null);
+  await page.locator(".qc-one").first().waitFor();
+
+  const panels = await page.locator(".qc-one").all();
+  expect(panels).toHaveLength(2);
+  const boxes = await Promise.all(panels.map((p) => p.boundingBox()));
+  // Same row, and each wide enough that a spatial plot still reads.
+  expect(Math.abs(boxes[0]!.y - boxes[1]!.y)).toBeLessThan(8);
+  expect(boxes[0]!.width).toBeGreaterThan(300);
+  await expect(page.locator('.qc-sub [role="tab"]')).toHaveCount(0);
+});
+
+test("the QC charts are drawn at the width they are rendered at", async ({
+  page,
+}) => {
+  // A viewBox scales its type with everything else, so a system sized for a
+  // full-width card sets 10px labels at about 4px in half of one.
+  await openStage(page, null);
+  const svg = page.locator(".qc-one svg[role='img']").first();
+  await svg.waitFor();
+
+  const box = (await svg.boundingBox())!;
+  const viewBox = (await svg.getAttribute("viewBox"))!.split(" ").map(Number);
+  // Rendered pixels per viewBox unit: below ~0.6 the axis labels stop reading.
+  expect(box.width / viewBox[2]).toBeGreaterThan(0.6);
+});
