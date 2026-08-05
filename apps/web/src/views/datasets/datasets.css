@@ -482,25 +482,31 @@
 }
 
 /* QC chart styling (on the dark view canvas) */
+/* The measured series is blue and its fit is amber. Named by position on the
+   series ramp rather than by --series-measured/--series-model, whose names
+   would be backwards here: the ramp is categorical, and these two are picked
+   as a pair that separates in greyscale as well as in hue. Both are canvas
+   tokens, so they hold their value in either theme on a canvas that does not
+   follow the theme. */
 .qc-fit {
   stroke-dasharray: 6 4;
-  stroke: var(--series-model);
+  stroke: var(--series-4);
 }
 .qc-measured {
-  stroke: var(--series-measured);
+  stroke: var(--series-1);
 }
 .qc-dot {
-  fill: var(--series-measured);
+  fill: var(--series-1);
 }
 /* The frame under the crosshair, in the fit and in its residual at once: the
    pair is the whole point of stacking the two panels on one x axis. */
 .qc-dot.hot {
-  r: 6;
+  r: 7;
   stroke: var(--canvas-ink-strong);
   stroke-width: 1.5;
 }
 .qc-resid-dot.hot {
-  r: 4.2;
+  r: 5;
   stroke: var(--canvas-ink-strong);
   stroke-width: 1.5;
 }
@@ -937,11 +943,11 @@
   stroke-width: 1;
 }
 .qc-resid-band {
-  fill: var(--series-measured);
+  fill: var(--series-1);
   opacity: 0.1;
 }
 .qc-resid-dot {
-  fill: var(--series-measured);
+  fill: var(--series-1);
 }
 .qc-resid-label {
   fill: var(--canvas-quiet);

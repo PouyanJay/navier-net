@@ -878,10 +878,10 @@ text.chart-axis-title {
 
 /* Preprocessing-QC readout: the measured series and the line fitted to it. */
 .chart-tip .tip-swatch.measured {
-  background: var(--series-measured);
+  background: var(--series-1);
 }
 .chart-tip .tip-swatch.fit {
-  background: var(--series-model);
+  background: var(--series-4);
 }
 
 /* Failed-artifact placeholder (replaces a broken <img>) */

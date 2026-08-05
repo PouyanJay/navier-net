@@ -313,7 +313,7 @@ function drawResiduals(g: G, x: Linear, kin: QcKinematics): Dots {
     .attr("class", "qc-resid-dot")
     .attr("cx", (_, i) => x(kin.t_ms[i]))
     .attr("cy", (d) => y(d))
-    .attr("r", 2.6);
+    .attr("r", 3.4);
 }
 
 function kinScales(kin: QcKinematics): { x: Linear; y: Linear } {
@@ -361,7 +361,7 @@ function drawMeasuredSeries(
     .attr("class", "qc-dot")
     .attr("cx", (_, i) => x(kin.t_ms[i]))
     .attr("cy", (d) => y(d))
-    .attr("r", 4);
+    .attr("r", 5);
 }
 
 /** Measured bubble length per frame with the linear growth fit. */
