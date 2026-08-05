@@ -112,12 +112,58 @@
   margin-bottom: var(--s1);
 }
 
+/* Every frame as one tick, in a bar that never scrolls whatever n_frames is.
+   The strip below can only ever show a window of a long acquisition; this keeps
+   the shape of the whole sequence on screen while that window moves. */
+.ribbon {
+  display: flex;
+  gap: 1.5px;
+  height: 18px;
+  align-items: stretch;
+  margin-bottom: var(--s3);
+}
+.ribbon-tick {
+  flex: 1 1 0;
+  min-width: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+  background: var(--phase-interface);
+  opacity: 0.32;
+  transition: opacity 150ms var(--ease);
+}
+.ribbon-tick.held {
+  background: var(--phase-film);
+  opacity: 1;
+}
+.ribbon-tick.excl {
+  background: var(--line-strong);
+  opacity: 1;
+}
+/* Hovering the bar recedes every tick but the one under the pointer, which is
+   what makes a single frame findable in two hundred. */
+.ribbon:hover .ribbon-tick {
+  opacity: 0.2;
+}
+.ribbon .ribbon-tick:hover {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ribbon-tick {
+    transition: none;
+  }
+}
+
 /* Frame strip: inline thumbnails, aspect preserved, with a thin scrollbar so
-   the overflow is discoverable without competing with the frames. */
+   the overflow is discoverable without competing with the frames. Snapping
+   lands a frame flush rather than cut in half. */
 .strip {
   display: flex;
   gap: var(--s2);
   overflow-x: auto;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
   scroll-padding-inline: var(--s2);
   /* The native bar is hidden in favour of `.strip-bar` below: on macOS it is an
      overlay that vanishes at rest, so the strip would give no sign that more
@@ -131,6 +177,7 @@
 .fr {
   flex: none;
   width: 96px;
+  scroll-snap-align: start;
   margin: 0;
   border: 1px solid var(--viewline);
   border-radius: var(--rs);

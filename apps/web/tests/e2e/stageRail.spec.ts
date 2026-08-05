@@ -216,3 +216,31 @@ test("the forward action stays at the far end of the header", async ({
   // Right-aligned whether or not the stage filled the slot beside it.
   expect(button.x + button.width).toBeGreaterThan(head.x + head.width * 0.75);
 });
+
+test("the frame ribbon holds every frame and never scrolls", async ({
+  page,
+}) => {
+  // n_frames is data: 12 here, hundreds for a long acquisition. The strip can
+  // only ever show a window of that, and what scrolling costs is the shape of
+  // the sequence — so the overview stays put while the detail moves.
+  await openStage(page, null);
+
+  // The frames arrive from the API, so wait for the ribbon itself rather than
+  // for the rail that was already mounted by the previous stage.
+  await page.locator(".ribbon-tick").first().waitFor();
+  const ticks = page.locator(".ribbon-tick");
+  const strip = page.locator(".strip");
+  const shown = await strip.locator(".fr").count();
+  expect(await ticks.count()).toBeGreaterThan(0);
+
+  const ribbonBox = (await page.locator(".ribbon").boundingBox())!;
+  const stripBox = (await strip.boundingBox())!;
+  // Never wider than its container, at any frame count.
+  expect(ribbonBox.width).toBeLessThanOrEqual(stripBox.width + 1);
+  // And it carries frames the strip is not currently showing.
+  expect(await ticks.count()).toBeGreaterThanOrEqual(shown);
+
+  // The roles are structural, not colour-only: the summary names them.
+  const label = await page.locator(".ribbon").getAttribute("aria-label");
+  expect(label).toMatch(/\d+ frames/);
+});

@@ -18,6 +18,7 @@ import {
 } from "../../lib/api";
 import { HugeiconsIcon, RerunIcon } from "../../components/icons";
 import { FrameLightbox } from "./FrameLightbox";
+import { FrameRibbon } from "./FrameRibbon";
 import { QcChecks } from "./QcPanel";
 
 interface ImageSequenceProps {
@@ -113,6 +114,13 @@ export function ImageSequence({
         </p>
       ) : (
         <>
+          <FrameRibbon
+            detail={detail}
+            onSelect={(n) => {
+              const el = strip.current?.children[n - 1];
+              el?.scrollIntoView({ block: "nearest", inline: "center" });
+            }}
+          />
           <div
             ref={strip}
             id={stripId}
