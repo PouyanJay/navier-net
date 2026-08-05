@@ -171,15 +171,15 @@ function StatusChips({
   running: boolean;
 }) {
   if (project) {
+    // Stage A only. A "Stage B" chip lived here too, hardcoded to "not
+    // configured" whatever the project's physics actually said. Nothing a run
+    // reports carries its stage, and a project can hold several datasets with
+    // different physics, so the chip had no honest project-level value to show.
+    // Physics & model already answers it per equation, with the toggles.
     return (
-      <>
-        <span className="chip" data-tone={trained ? "green" : undefined}>
-          Stage A · {trained ? "trained" : "untrained"}
-        </span>
-        <span className="chip" data-tone="amber">
-          Stage B · not configured
-        </span>
-      </>
+      <span className="chip" data-tone={trained ? "green" : undefined}>
+        Stage A · {trained ? "trained" : "untrained"}
+      </span>
     );
   }
   return (
