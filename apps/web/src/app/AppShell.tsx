@@ -114,13 +114,38 @@ function IconAction({
   label,
   onClick,
   href,
+  unavailable,
 }: {
   icon: typeof ShareIcon;
   label: string;
   onClick?: () => void;
   href?: string;
+  /**
+   * Why this action cannot be taken. An unlabelled glyph that looks live and
+   * then apologises is worse than one that says up front it is not ready, so
+   * the reason rides on the control itself.
+   *
+   * aria-disabled rather than disabled: a disabled button leaves the tab order
+   * and takes its own explanation with it, which is exactly the explanation
+   * someone reaching it by keyboard needs.
+   */
+  unavailable?: string;
 }) {
   const glyph = <HugeiconsIcon icon={icon} size={16} />;
+  if (unavailable) {
+    return (
+      <button
+        type="button"
+        className="iconaction"
+        aria-disabled="true"
+        aria-label={`${label} — ${unavailable}`}
+        title={`${label} — ${unavailable}`}
+        onClick={(event) => event.preventDefault()}
+      >
+        {glyph}
+      </button>
+    );
+  }
   if (href) {
     return (
       <a
@@ -527,22 +552,12 @@ export function AppShell({
           <IconAction
             icon={ShareIcon}
             label="Share"
-            onClick={() =>
-              toast(
-                "Sharing is not available yet",
-                "this workspace is local to your machine",
-              )
-            }
+            unavailable="not available: this workspace is local to your machine"
           />
           <IconAction
             icon={ExportReportIcon}
             label="Export report"
-            onClick={() =>
-              toast(
-                "Report export is not available yet",
-                "planned: PDF with config + figures",
-              )
-            }
+            unavailable="not available yet: planned as a PDF of the config and figures"
           />
         </div>
       </header>

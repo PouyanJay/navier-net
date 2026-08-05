@@ -63,7 +63,7 @@ describe("topbar status chips", () => {
 });
 
 describe("topbar actions", () => {
-  const ACTIONS = ["Source on GitHub", "Share", "Export report"];
+  const ACTIONS = ["Source on GitHub", /^Share/, /^Export report/];
 
   it("carries each action as a glyph with an accessible name", () => {
     shell(TRAINED);
@@ -83,6 +83,24 @@ describe("topbar actions", () => {
       "href",
       "https://github.com/PouyanJay/naviernet",
     );
+  });
+
+  it("says why an action is unavailable, on the control itself", () => {
+    // Both raise nothing now. As unlabelled glyphs they were indistinguishable
+    // from the working ones and apologised only after being pressed; the reason
+    // rides on the control instead. aria-disabled, not disabled, because a
+    // disabled button leaves the tab order and takes its explanation with it.
+    shell(TRAINED);
+
+    for (const label of [/^Share/, /^Export report/]) {
+      const action = screen.getByLabelText(label);
+      expect(action).toHaveAttribute("aria-disabled", "true");
+      expect(action).not.toBeDisabled();
+      expect(action.getAttribute("aria-label")).toMatch(/not available/);
+      expect(action.getAttribute("title")).toBe(
+        action.getAttribute("aria-label"),
+      );
+    }
   });
 
   it("has no search box, since the palette answers on its own key", () => {

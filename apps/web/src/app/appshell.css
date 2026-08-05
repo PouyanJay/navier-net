@@ -117,6 +117,17 @@
   background: var(--hover);
   color: var(--ink);
 }
+/* Unavailable, and saying so. It keeps its place in the tab order, because the
+   reason lives on the control and a disabled button cannot be reached to read
+   it. The hover plate does not appear: there is nothing to press. */
+.iconaction[aria-disabled="true"] {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.iconaction[aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--ink3);
+}
 @media (prefers-reduced-motion: reduce) {
   .iconaction {
     transition: none;
