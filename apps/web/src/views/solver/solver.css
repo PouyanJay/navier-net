@@ -9,43 +9,19 @@
   font-weight: 600;
   font-size: 15px;
 }
-.solver-head .actions {
-  margin-left: auto;
-  display: flex;
-  gap: var(--s2);
-}
-/* Reset/Run as pills, matching the Physics & model action row (the rounded
-   subtle-bordered chip + button language). Reset stays subtle, Run is the accent. */
-.solver-head .actions .btn {
-  border-radius: 99px;
-  padding: 5px 18px;
-  font-size: 12px;
-}
 
-/* Two-column solver layout: narrow config, wide monitor (mockup's .solx). The
-   columns stretch to a shared height so the single left card's bottom edge lines
-   up with the monitor/history/console stack on the right. */
-.solx {
-  display: grid;
-  grid-template-columns: minmax(300px, 350px) minmax(0, 1fr);
-  gap: var(--s5);
-  align-items: stretch;
-}
-@media (max-width: 1080px) {
-  .solx {
-    grid-template-columns: 1fr;
-    align-items: start;
-  }
-}
+/* The configuration lives in the stage aside, so the canvas is a single column:
+   what the run produces, top to bottom. */
 .solver-col {
   display: flex;
   flex-direction: column;
   gap: var(--s5);
   min-width: 0;
 }
-/* The left column is now one card; let it grow to fill the shared column height. */
-.solver-col:first-child > .card {
-  flex: 1 1 auto;
+
+/* Reset stays subtle and sized to its label; Run takes the rest of the bar. */
+.solver-actions {
+  grid-template-columns: auto 1fr;
 }
 
 /* Labelled divider between the run-config fields and the loss-weights section,

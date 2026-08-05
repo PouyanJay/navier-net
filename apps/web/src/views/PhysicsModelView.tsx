@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { StageAside } from "../app/StageAside";
-import { Callout } from "../components";
+import { Button, Callout } from "../components";
 import type { DatasetSummary } from "../lib/api";
 import { seriesName, seriesNameOf } from "../lib/series";
 import { CapacityPreset } from "./physics/CapacityPreset";
@@ -64,35 +64,11 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
   return (
     <div className="stack">
       <div className="pm-head">
-        <div>
-          <p>
-            Set the equations and capacity on the left; everything here is
-            derived from them. Hover any equation for its math and detail, or
-            any derived row for its reasoning.
-          </p>
-        </div>
-        <div className="pm-headacts">
-          {model && (
-            <span
-              className={model.dirty ? "pm-statechip dirty" : "pm-statechip"}
-            >
-              <span className="dot" aria-hidden="true" />
-              {model.dirty ? "unsaved changes" : "saved"}
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn ghost icon-only pm-save"
-            data-tip={model?.saving ? "Saving…" : "Save configuration"}
-            aria-label={
-              model?.saving ? "Saving configuration" : "Save configuration"
-            }
-            disabled={!model || !model.dirty || model.saving}
-            onClick={() => model?.save()}
-          >
-            <SaveIcon />
-          </button>
-        </div>
+        <p>
+          Set the equations and capacity on the left; everything here is derived
+          from them. Hover any equation for its math and detail, or any derived
+          row for its reasoning.
+        </p>
       </div>
 
       {load.status === "loading" && (
@@ -129,6 +105,24 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
               datasetName={seriesNameOf(datasets, model.dataset)}
             />
             <CapacityPreset model={model} />
+            {/* Saving belongs with the configuration it commits, and stays
+                reachable without scrolling back up the equation list. */}
+            <div className="aside-actions pm-actions">
+              <span
+                className={model.dirty ? "pm-statechip dirty" : "pm-statechip"}
+              >
+                <span className="dot" aria-hidden="true" />
+                {model.dirty ? "unsaved changes" : "saved"}
+              </span>
+              <Button
+                variant="primary"
+                onClick={() => model.save()}
+                disabled={!model.dirty || model.saving}
+              >
+                <SaveIcon />
+                {model.saving ? "Saving…" : "Save"}
+              </Button>
+            </div>
           </StageAside>
 
           {/* Canvas: what the configuration above derives, in the order a

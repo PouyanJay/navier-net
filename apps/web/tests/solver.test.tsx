@@ -15,6 +15,7 @@ import { Meter } from "../src/components/Meter";
 import { Switch } from "../src/components/Switch";
 import { SolverView } from "../src/views/SolverView";
 import { MonitorPanel } from "../src/views/solver/MonitorPanel";
+import { renderStage } from "./stageHarness";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -129,7 +130,7 @@ afterEach(() => {
 describe("SolverView", () => {
   it("renders the run configuration at the pipeline's defaults", async () => {
     stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     expect(await screen.findByLabelText("highest_t")).toBeChecked();
     expect(screen.getByLabelText("Steps")).toHaveValue(1500);
     expect(screen.getByLabelText(/Learning rate/)).toHaveValue(0.002);
@@ -140,7 +141,7 @@ describe("SolverView", () => {
 
   it("launches a run from the form and follows it live over SSE", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     fireEvent.change(screen.getByLabelText("Steps"), {
@@ -233,7 +234,7 @@ describe("SolverView", () => {
       ],
       posts,
     );
-    render(<SolverView />);
+    renderStage(<SolverView />);
 
     // Every processed series is selected by default; the unprocessed one is absent.
     expect(await screen.findByLabelText("ds_a")).toBeChecked();
@@ -264,7 +265,7 @@ describe("SolverView", () => {
       ],
       posts,
     );
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("ds_a");
 
     // Off by default (train on every frame); the user opts in. No strategy toggle.
@@ -284,7 +285,7 @@ describe("SolverView", () => {
 
   it("a single series offers no hold-out toggle and no frame holdout", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // Hold-out is a series concept: with one series there's nothing to hold out.
@@ -302,7 +303,7 @@ describe("SolverView", () => {
 
   it("starts at today's recipe: gradnorm, no causal, no adaptive", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     expect(screen.getByLabelText(/Weighting/)).toHaveValue("gradnorm");
@@ -323,7 +324,7 @@ describe("SolverView", () => {
 
   it("enables causal time-marching and posts the chosen mode", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     fireEvent.click(screen.getByRole("switch", { name: "Causal weighting" }));
@@ -342,7 +343,7 @@ describe("SolverView", () => {
 
   it("gates RBA / causal / adaptive valid-by-construction in both directions", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // Turn causal ON under gradnorm, then switch to RBA: causal is forced off and
@@ -393,7 +394,7 @@ describe("SolverView", () => {
 
   it("starts with the pin and growth constraints off and posts them so", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     expect(
@@ -416,7 +417,7 @@ describe("SolverView", () => {
 
   it("enables the pin + growth constraints and posts the tuned values", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // The front geometry is the default and pins the root exactly, so a run that
@@ -446,7 +447,7 @@ describe("SolverView", () => {
 
   it("gates front geometry against the hard pin valid-by-construction", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // Geometry off, pin on, geometry back on: the pin is forced off and disabled
@@ -467,7 +468,7 @@ describe("SolverView", () => {
 
   it("gates the sharp-interface switches on the front geometry", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // There is no front to impose the interface conditions on without the
@@ -499,7 +500,7 @@ describe("SolverView", () => {
 
   it("turning the front geometry off takes the sharp-interface switches with it", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
@@ -516,7 +517,7 @@ describe("SolverView", () => {
 
   it("reveals the interface-sharpening fields only while sharp interface is on", async () => {
     stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // Sharp interface is the default, so the fields are there from the start.
@@ -530,7 +531,7 @@ describe("SolverView", () => {
 
   it("toggling the pin and growth constraints off hides their fields again", async () => {
     stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
@@ -555,7 +556,7 @@ describe("SolverView", () => {
       ],
       posts,
     );
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("ds_a");
 
     // Two series -> each row gets a hold-out toggle; hold ds_b out, ds_a trains.
@@ -581,7 +582,7 @@ describe("SolverView", () => {
       ],
       posts,
     );
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("ds_a");
 
     fireEvent.click(screen.getByRole("button", { name: "Hold out ds_b" }));
@@ -603,7 +604,7 @@ describe("SolverView", () => {
       ],
       posts,
     );
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("ds_a");
 
     // Hold out ds_b, then uncheck ds_a — ds_b must not be left as the sole,
@@ -654,7 +655,7 @@ describe("SolverView", () => {
         return json({ detail: "not found" }, 404);
       }),
     );
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("ds_a");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
@@ -700,7 +701,7 @@ describe("SolverView", () => {
         return json({ detail: "not found" }, 404);
       }),
     );
-    render(<SolverView />);
+    renderStage(<SolverView />);
 
     // The row is labelled by the display name, not the raw id.
     expect(await screen.findByLabelText("High-T FC-72")).toBeChecked();
@@ -727,7 +728,7 @@ describe("SolverView", () => {
       datasets: ["ds_a"],
       created_at: "2026-07-24T00:00:00+00:00",
     };
-    render(<SolverView project={project} />);
+    renderStage(<SolverView project={project} />);
 
     expect(await screen.findByLabelText("ds_a")).toBeInTheDocument();
     // A processed dataset from another project must not appear here.
@@ -736,7 +737,7 @@ describe("SolverView", () => {
 
   it("surfaces a rejected launch as an alert", async () => {
     stubApi({ launchStatus: 409 });
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     const alert = await screen.findByRole("alert");
@@ -756,7 +757,7 @@ describe("SolverView", () => {
         },
       ],
     });
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     const alert = await screen.findByRole("alert");
@@ -768,7 +769,7 @@ describe("SolverView", () => {
 
   it("resume locks the config to the original run and posts run_id", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     fireEvent.click(
@@ -879,7 +880,7 @@ describe("SolverView sweep mode", () => {
       }),
     );
 
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
     fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
     fireEvent.change(screen.getByLabelText(/Seeds/), {
@@ -913,7 +914,7 @@ describe("SolverView sweep mode", () => {
 
   it("rejects an unparseable seed list by disabling Run", async () => {
     stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
     fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
     fireEvent.change(screen.getByLabelText(/Seeds/), {
@@ -1088,7 +1089,7 @@ describe("solver components", () => {
 describe("SolverView film pressure", () => {
   it("gates the film-pressure switch on the sharp interface", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // It corrects the jump, so it goes unusable without it.
@@ -1115,7 +1116,7 @@ describe("SolverView film pressure", () => {
 describe("SolverView defaults", () => {
   it("posts the recommended physics recipe without the user touching anything", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // Hitting Run straight away must give the best-known recipe. Every measured
@@ -1139,7 +1140,7 @@ describe("SolverView defaults", () => {
 describe("SolverView two-way closure", () => {
   it("is switchable, not just silently sent", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     // It ships on by default; the point of this test is that the panel can turn
@@ -1162,7 +1163,7 @@ describe("SolverView two-way closure", () => {
 describe("SolverView evolving width", () => {
   it("is gated on the front geometry and reaches the request", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
@@ -1181,7 +1182,7 @@ describe("SolverView evolving width", () => {
 describe("SolverView measured front velocity", () => {
   it("is gated on the front geometry and reaches the request", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
@@ -1203,7 +1204,7 @@ describe("SolverView measured front velocity", () => {
 
   it("reveals its weight fields only while it is on", async () => {
     stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     expect(screen.queryByLabelText(/Normal-speed weight/)).toBeNull();
@@ -1216,7 +1217,7 @@ describe("SolverView measured front velocity", () => {
 
   it("turning the front geometry off takes it with it", async () => {
     const posts = stubApi();
-    render(<SolverView />);
+    renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
     fireEvent.click(

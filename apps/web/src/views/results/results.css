@@ -325,20 +325,6 @@
 
 /* ---------- redesigned results page (run browser + tabbed outputs) ---------- */
 
-.resx {
-  display: grid;
-  grid-template-columns: minmax(272px, 300px) minmax(0, 1fr);
-  gap: var(--s4);
-  align-items: start;
-}
-
-.res-left {
-  position: sticky;
-  top: 0;
-  display: grid;
-  gap: var(--s4);
-}
-
 .res-main {
   display: grid;
   gap: var(--s4);
@@ -491,16 +477,6 @@
 .tab:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-@media (max-width: 1080px) {
-  .resx {
-    grid-template-columns: 1fr;
-  }
-
-  .res-left {
-    position: static;
-  }
 }
 
 .runrow-dot.live {

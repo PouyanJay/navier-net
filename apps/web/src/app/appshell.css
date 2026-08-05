@@ -383,13 +383,16 @@
   flex-direction: column;
   min-height: 0;
   /* The chrome surface, with the paper token family re-pointed onto it so the
-     stage's own content (rows, values, chips, callouts) stays legible. */
+     stage's own content (rows, values, chips, callouts) stays legible.
+     --panel must stay OPAQUE: it backs the popovers and cards that sit on this
+     rail, and the chrome fill behind it is translucent by design, so borrowing
+     that fill would let the rows underneath read straight through them. */
   --ink: var(--sidehl);
   --ink2: var(--sidetxt);
   --ink3: var(--sidetxt);
   --line: var(--sideline);
   --line2: var(--sideline);
-  --panel: var(--side);
+  --panel: var(--surface);
   --panel2: var(--side2);
   background: var(--side);
   border-right: 1px solid var(--sideline);
@@ -457,6 +460,31 @@
   flex-direction: column;
   gap: var(--s4);
 }
+/* A stage's action bar, pinned to the foot of its rail.
+   The stage's primary action (Run, Save) belongs with the configuration that
+   feeds it, but a long form would scroll it out of reach — so it stays put. The
+   negative margins cancel the body's padding so the bar spans the full rail,
+   and the frosted recipe (§5.5) is what stops the fields sliding underneath
+   from reading straight through it: the rail's own fill is translucent. */
+.aside-actions {
+  position: sticky;
+  bottom: calc(var(--s4) * -1);
+  z-index: 2;
+  display: grid;
+  gap: var(--s2);
+  align-items: center;
+  margin: auto calc(var(--s4) * -1) calc(var(--s4) * -1);
+  padding: var(--s3) var(--s4);
+  background: var(--side);
+  backdrop-filter: var(--chrome-backdrop);
+  -webkit-backdrop-filter: var(--chrome-backdrop);
+  isolation: isolate;
+  border-top: 1px solid var(--line);
+}
+.aside-actions .btn {
+  width: 100%;
+}
+
 /* Folded, the rail names itself along its own length rather than sitting as an
    anonymous strip. Decorative (aria-hidden): the toggle's own label already
    carries the name for assistive tech. */

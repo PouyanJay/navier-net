@@ -1,25 +1,16 @@
 /* Physics & Model view. Every colour/space is a token (tokens.css). */
 
+/* The stage's lede. Its action row moved to the rail, so this is a single
+   paragraph now rather than a two-item flex row. */
 .pm-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  flex-wrap: wrap;
   margin-bottom: 16px;
 }
 .pm-head p {
   color: var(--ink2);
   font-size: 12.5px;
   max-width: 64ch;
-  margin-top: 4px;
+  margin: 4px 0 0;
   line-height: 1.55;
-}
-.pm-headacts {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
 }
 .pm-statechip {
   display: inline-flex;
@@ -46,44 +37,20 @@
   background: var(--amber);
 }
 
-/* Compact save action: an icon button whose label appears on hover/focus, so
-   the header stays quiet next to the page's "Continue to solver" CTA. Accent
-   when there are changes to save; the disabled (already-saved) state mutes it. */
-.pm-save {
-  position: relative;
+/* Save sits beside its state chip: the chip explains, the button acts. */
+.pm-actions {
+  grid-template-columns: 1fr auto;
 }
-.pm-save::after {
-  content: attr(data-tip);
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  white-space: nowrap;
-  background: var(--ink);
-  color: var(--shell);
-  font-family: var(--sans);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 4px 8px;
-  border-radius: var(--rs);
-  box-shadow: var(--sh);
-  opacity: 0;
-  transform: translateY(-2px);
-  pointer-events: none;
-  transition:
-    opacity 0.12s ease,
-    transform 0.12s ease;
-  z-index: 30;
+/* The chip hugs its label rather than stretching across the free track. */
+.pm-actions .pm-statechip {
+  justify-self: start;
 }
-.pm-save:hover::after,
-.pm-save:focus-visible::after {
-  opacity: 1;
-  transform: translateY(0);
+.pm-actions .btn {
+  width: auto;
 }
-@media (prefers-reduced-motion: reduce) {
-  .pm-save::after {
-    transition: none;
-    transform: none;
-  }
+.pm-actions .btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .pm-dataset {
@@ -244,9 +211,12 @@
 .infopop {
   position: absolute;
   z-index: 30;
+  /* Spans its anchor rather than taking a fixed width. The rail scrolls, so a
+     popover wider than the rail is clipped by that scroll container rather than
+     overhanging the canvas — it would simply disappear under the pipeline rail. */
+  left: 0;
   right: 0;
   top: calc(100% + 8px);
-  width: min(400px, 78vw);
   text-align: left;
   background: var(--panel);
   border: 1px solid var(--line-strong);
