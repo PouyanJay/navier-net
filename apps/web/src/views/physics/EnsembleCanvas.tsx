@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { InfoPopover } from "../../components";
 import { type FieldArch, type FieldName, FIELDS, fmtCount } from "./model";
 import type { PhysicsModel } from "./usePhysicsModel";
 
@@ -453,14 +454,9 @@ function DerivedShapes({ model }: { model: PhysicsModel }) {
       {recommendations(model).map((reco, i) => (
         <div key={i} className={reco.modified ? "rrow mod" : "rrow"}>
           <span className="rv">{reco.value}</span>
-          <span className="hasinfo" tabIndex={0}>
-            <span className="infob" aria-hidden="true">
-              i
-            </span>
-            <div className="infopop rwhy" role="tooltip">
-              {reco.why}
-            </div>
-          </span>
+          <InfoPopover label={`${reco.value} — why`}>
+            <span className="rwhy">{reco.why}</span>
+          </InfoPopover>
         </div>
       ))}
     </div>

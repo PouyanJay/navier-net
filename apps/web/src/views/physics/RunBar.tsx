@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Button } from "../../components";
+import { Button, InfoPopover } from "../../components";
 import { FIELDS, fmtCount } from "./model";
 import type { PhysicsModel } from "./usePhysicsModel";
 
@@ -35,20 +35,16 @@ export function RunBar({ model }: { model: PhysicsModel }) {
             )}
           </div>
         </div>
-        <div
-          className="runacts hasinfo"
-          style={{ display: "flex", gap: "8px", alignItems: "center" }}
-        >
+        <div className="runacts">
           <Button onClick={copy}>
             {copied ? "Copied" : "Copy train command"}
           </Button>
-          <span className="infob" aria-hidden="true" tabIndex={0}>
-            i
-          </span>
-          <div className="infopop cmdpop" role="tooltip">
-            <div className="cmdlead">exact command · reproducible</div>
-            <code>{model.hydraCommand}</code>
-          </div>
+          <InfoPopover label="The exact command">
+            <div className="cmdpop">
+              <div className="cmdlead">exact command · reproducible</div>
+              <code>{model.hydraCommand}</code>
+            </div>
+          </InfoPopover>
         </div>
       </div>
     </section>

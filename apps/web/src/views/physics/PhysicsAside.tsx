@@ -1,4 +1,4 @@
-import { EquationBlock } from "../../components";
+import { EquationBlock, InfoPopover } from "../../components";
 import {
   CapacityIcon,
   HugeiconsIcon,
@@ -47,8 +47,9 @@ function EquationInfo({
   groups: Record<string, number>;
 }) {
   const shown = eq.groups.filter((g) => groups[g] !== undefined);
+  // Content only: InfoPopover owns the panel, its role and its placement.
   return (
-    <div className="infopop" role="tooltip">
+    <>
       <div className="eqmath">
         <EquationBlock tex={eq.tex} />
       </div>
@@ -75,7 +76,7 @@ function EquationInfo({
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -96,15 +97,14 @@ function CoreRow({
   groups: Record<string, number>;
 }) {
   return (
-    <div className="pmrow core hasinfo" tabIndex={0}>
+    <div className="pmrow core">
       <span className="pmrow-nm">
         <b>{eq.name}</b>
       </span>
       <span className="pmrow-w mono">w {eq.liveWeight}</span>
-      <span className="infob" aria-hidden="true">
-        i
-      </span>
-      <EquationInfo eq={eq} datasetName={datasetName} groups={groups} />
+      <InfoPopover label={`${eq.name} detail`}>
+        <EquationInfo eq={eq} datasetName={datasetName} groups={groups} />
+      </InfoPopover>
     </div>
   );
 }
@@ -139,7 +139,7 @@ function OptionalRow({
       >
         <span className="knob" aria-hidden="true" />
       </button>
-      <span className="pmrow-nm hasinfo" tabIndex={0}>
+      <span className="pmrow-nm">
         <b>{eq.name}</b>
         {/* The price of the physics, in the currency that matters: the field
             it adds, and therefore a whole network to train. */}
@@ -151,12 +151,14 @@ function OptionalRow({
         {replaced && (
           <span className="replaced">carried by the front conditions</span>
         )}
+      </span>
+      <InfoPopover label={`${eq.name} detail`}>
         <EquationInfo
           eq={eq}
           datasetName={datasetName}
           groups={groups(model)}
         />
-      </span>
+      </InfoPopover>
       <span className="pmrow-w">
         <label className="sr-only" htmlFor={`w-${eq.id}`}>
           {eq.name} loss weight

@@ -14,6 +14,7 @@ export {
   TextField,
   type SelectOption,
 } from "./Field";
+export { InfoPopover } from "./InfoPopover";
 export { Meter } from "./Meter";
 export { Panel } from "./Panel";
 export { ScrollBar, useScrollExtent, useWheelToHorizontal } from "./ScrollBar";

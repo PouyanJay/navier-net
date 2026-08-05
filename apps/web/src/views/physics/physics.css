@@ -427,11 +427,14 @@
 }
 
 /* the info "i" trigger + hover/focus popover */
-.hasinfo {
-  position: relative;
+.runacts {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
 }
 .infob {
   flex: none;
+  padding: 0;
   width: 17px;
   height: 17px;
   border-radius: 50%;
@@ -446,40 +449,33 @@
   line-height: 1;
   cursor: help;
 }
-.hasinfo:hover .infob,
-.hasinfo:focus-within .infob {
+.infob:hover,
+.infob[aria-expanded="true"] {
   border-color: var(--acc2);
   color: var(--acc);
 }
+/* Portalled to the body (see InfoPopover): the rail scrolls, and an absolutely
+   positioned panel inside it is clipped by that scroll container — near the
+   foot of the rail it disappears below the edge entirely. Positioned in
+   viewport coordinates instead, so it holds wherever its row sits. */
 .infopop {
-  position: absolute;
-  z-index: 30;
-  /* Spans its anchor rather than taking a fixed width. The rail scrolls, so a
-     popover wider than the rail is clipped by that scroll container rather than
-     overhanging the canvas — it would simply disappear under the pipeline rail. */
-  left: 0;
-  right: 0;
-  top: calc(100% + 8px);
+  position: fixed;
+  z-index: 60;
   text-align: left;
   background: var(--panel);
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
+  box-shadow: var(--shadow-flyout);
   padding: 12px 14px;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition:
-    opacity 0.14s,
-    transform 0.14s;
-  pointer-events: none;
-}
-.hasinfo:hover .infopop,
-.hasinfo:focus-within .infopop {
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  pointer-events: auto;
+  color: var(--ink2);
+  /* The rail re-points the paper ink family onto the chrome one; the panel
+     lands on the page's own surface, so it takes the page's ink back. */
+  --ink: var(--text);
+  --ink2: var(--text-soft);
+  --ink3: var(--muted);
+  --panel: var(--surface);
+  --panel2: var(--surface-hover);
+  --line: rgb(238 241 246 / 0.08);
 }
 .eqmath {
   background: var(--panel2);
@@ -634,7 +630,7 @@
   border-radius: 2px;
   background: var(--acc);
 }
-.rrow .hasinfo {
+.rrow .infob {
   margin-left: auto;
 }
 .infopop.rwhy {

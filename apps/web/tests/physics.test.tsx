@@ -130,8 +130,11 @@ describe("PhysicsModelView", () => {
     expect(
       screen.getByRole("status", { name: "Interface formulation" }),
     ).toBeInTheDocument();
+    // The exact command is one press away on the run bar; it mounts when
+    // opened rather than sitting hidden in the DOM.
+    fireEvent.click(screen.getByRole("button", { name: "The exact command" }));
     expect(
-      screen.getByText(/naviernet train dataset=sample/),
+      await screen.findByText(/naviernet train dataset=sample/),
     ).toBeInTheDocument();
     // Stage A only, so four networks.
     expect(screen.getByText(/4 networks/)).toBeInTheDocument();
@@ -296,6 +299,7 @@ describe("PhysicsModelView", () => {
     // The weight input is enabled for the now-on Stage-B equation.
     expect(momWeight).not.toBeDisabled();
     fireEvent.change(momWeight, { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "The exact command" }));
 
     await waitFor(() =>
       expect(screen.getByText(/training\.weights\.mom=3/)).toBeInTheDocument(),
@@ -445,6 +449,25 @@ describe("PhysicsModelView", () => {
     // diffuse one is not drawn at all.
     expect(within(ensemble).getByText("r_darcy")).toBeInTheDocument();
     expect(within(ensemble).queryByText("r_mom")).not.toBeInTheDocument();
+  });
+
+  it("opens an equation's detail outside the rail that scrolls it", async () => {
+    // An absolutely-positioned panel inside the rail is clipped by its scroll
+    // container — near the foot of the rail it disappears below the edge. The
+    // panel is portalled to the body instead, so it holds wherever the row is.
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    await screen.findByText("Core physics");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Interface transport detail" }),
+    );
+
+    const pop = await screen.findByRole("tooltip");
+    expect(pop).toBeInTheDocument();
+    // Outside the rail's subtree entirely: that is what escapes the clip.
+    expect(pop.closest(".stage-aside")).toBeNull();
+    expect(pop.parentElement).toBe(document.body);
   });
 
   it("names the fix on this page when the Solver would refuse the series", async () => {
