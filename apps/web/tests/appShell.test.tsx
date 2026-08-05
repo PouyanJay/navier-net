@@ -6,13 +6,15 @@ import { describe, expect, it, vi } from "vitest";
 import { AppShell, type PlatformStatus } from "../src/app/AppShell";
 import { ToastProvider } from "../src/components/Toast";
 
-const TRAINED: PlatformStatus = {
-  latestRun: { id: "fvb-fix-s0", name: "fvb-fix-s0", steps: 3000 },
-  projects: 1,
-};
-const EMPTY: PlatformStatus = { latestRun: null, projects: 3 };
+const TRAINED: PlatformStatus = { projects: 1 };
+const EMPTY: PlatformStatus = { projects: 3 };
+const OPEN_RUN = { id: "fvb-fix-s0", name: "fvb-fix-s0" };
 
-function shell(status: PlatformStatus, project: string | null = "demo") {
+function shell(
+  status: PlatformStatus,
+  project: string | null = "demo",
+  runCrumb: { id: string; name: string } | null = null,
+) {
   return render(
     <ToastProvider>
       <AppShell
@@ -20,6 +22,7 @@ function shell(status: PlatformStatus, project: string | null = "demo") {
         onNavigate={vi.fn()}
         activeRun={null}
         status={status}
+        runCrumb={runCrumb}
         project={project}
         onHome={vi.fn()}
       >
@@ -127,10 +130,20 @@ describe("the pipeline rail", () => {
     expect(screen.queryByText(/PyTorch/)).not.toBeInTheDocument();
   });
 
-  it("still names the run once, in the breadcrumb", () => {
-    // Removing the duplicate must not remove the original.
-    shell(TRAINED);
+  it("names the open run in the breadcrumb", () => {
+    shell(TRAINED, "demo", OPEN_RUN);
+    expect(document.querySelector(".crumb")!.textContent).toContain(
+      OPEN_RUN.name,
+    );
+  });
+
+  it("names no run on a stage that is not looking at one", () => {
+    // Datasets, Physics and Solver have no run in view, so the breadcrumb has
+    // nothing to name. It used to print whichever run was newest, on every
+    // stage, and kept printing it while Results showed a different one.
+    shell(TRAINED, "demo", null);
     const crumb = document.querySelector(".crumb")!;
-    expect(crumb.textContent).toContain(TRAINED.latestRun!.name);
+    expect(crumb.textContent).not.toContain("fvb-fix-s0");
+    expect(crumb.querySelector(".mono")).toBeNull();
   });
 });

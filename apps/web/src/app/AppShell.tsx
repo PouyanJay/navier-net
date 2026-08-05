@@ -82,9 +82,6 @@ export const NAV_ITEMS: NavItem[] = [
 
 /** What the shell knows about the platform's real state (drives chrome). */
 export interface PlatformStatus {
-  /** Latest trained run, for the breadcrumb's trailing segment. `name` is the
-   * display name (dataset-named legacy runs follow their series' label). */
-  latestRun: { id: string; name: string; steps: number | null } | null;
   /** Number of projects in the workspace (home-mode chip). */
   projects: number;
 }
@@ -94,6 +91,12 @@ interface AppShellProps {
   onNavigate: (id: string) => void;
   activeRun: RunJobStatus | null;
   status: PlatformStatus;
+  /**
+   * The run currently open, or null on every stage that is not looking at one.
+   * Read from the URL by the caller, so the breadcrumb names the run in view
+   * rather than whichever run happens to be newest.
+   */
+  runCrumb: { id: string; name: string } | null;
   /** Open project id, or null on the workspace home. Drives the rail mode. */
   project: string | null;
   onHome: () => void;
@@ -354,6 +357,7 @@ export function AppShell({
   onNavigate,
   activeRun,
   status,
+  runCrumb,
   project,
   onHome,
   children,
@@ -441,7 +445,7 @@ export function AppShell({
             /
           </span>
           <b>{project ?? "Projects"}</b>
-          {project && status.latestRun && status.latestRun.id !== project && (
+          {runCrumb && (
             <>
               <span className="crumb-sep" aria-hidden="true">
                 /
@@ -449,12 +453,12 @@ export function AppShell({
               <span
                 className="mono"
                 title={
-                  status.latestRun.name !== status.latestRun.id
-                    ? `outputs/${status.latestRun.id}`
+                  runCrumb.name !== runCrumb.id
+                    ? `outputs/${runCrumb.id}`
                     : undefined
                 }
               >
-                {status.latestRun.name}
+                {runCrumb.name}
               </span>
             </>
           )}

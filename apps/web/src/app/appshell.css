@@ -134,15 +134,15 @@
   display: flex;
   align-items: center;
   gap: var(--s3);
-  height: 36px;
-  padding: 0 var(--s3);
+  height: 40px;
+  padding: 0 9px;
   border: 0;
-  border-radius: var(--rs);
+  border-radius: 6px;
   background: none;
-  color: var(--sidetxt);
+  color: var(--ink3);
   font: inherit;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 530;
   cursor: pointer;
   transition:
     color 150ms var(--ease),
@@ -151,7 +151,7 @@
 .railsystem:hover,
 .railsystem[aria-expanded="true"] {
   background: var(--hover);
-  color: var(--sidehl);
+  color: var(--ink2);
 }
 @media (prefers-reduced-motion: reduce) {
   .railsystem {
@@ -213,24 +213,24 @@
    token family its own descendants already use, so the swap re-tones their
    text, borders and insets too -- a bare background swap would have left the
    pipeline rail's chrome-tuned text on a paper surface, unreadable in light. */
+/* The pipeline rail, organised as voicebook organises its sidebar: frosted
+   chrome over the ground, separated from the canvas by a hairline rather than a
+   structural border, and padded tight so the rows do the spacing. It no longer
+   re-points the ink family -- the rail stopped being a navy island when it
+   became chrome, so its contents use the app's ordinary tokens. */
 .sidebar {
   grid-column: 1;
   grid-row: 2;
-  color: var(--ink);
-  --sidetxt: var(--ink2);
-  --sidehl: var(--ink);
-  --sideline: var(--line-strong);
-  /* The stage markers and the back button fill with --side/--side2, so those
-     have to follow the surface too -- left raw, a navy marker would carry the
-     now-dark numeral on top of it. */
-  --side: var(--panel2);
-  --side2: var(--panel2);
-  background: var(--panel);
-  border-right: 1px solid var(--line-strong);
   display: flex;
   flex-direction: column;
-  padding: var(--s4) var(--s3);
-  gap: var(--s4);
+  gap: var(--s3);
+  padding: var(--s2) var(--s2) var(--s3);
+  background: var(--chrome-surface);
+  backdrop-filter: var(--chrome-backdrop);
+  -webkit-backdrop-filter: var(--chrome-backdrop);
+  isolation: isolate;
+  border-right: 1px solid var(--line);
+  color: var(--ink2);
   overflow-y: auto;
 }
 .nav {
@@ -248,9 +248,10 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--sidetxt);
+  color: var(--ink3);
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 530;
   cursor: pointer;
   transition:
     background 150ms var(--ease),
@@ -285,8 +286,7 @@
 .nav .txt span {
   display: block;
   font-size: 11px;
-  color: var(--sidetxt);
-  opacity: 0.75;
+  color: var(--faint);
 }
 
 /* "← All projects": the way back to the workspace home */
@@ -295,33 +295,39 @@
   align-items: center;
   gap: var(--s2);
   width: 100%;
-  padding: var(--s2) var(--s3);
-  margin-bottom: var(--s3);
+  height: 40px;
+  padding: 0 9px;
   background: transparent;
   border: 0;
   border-radius: 6px;
-  color: var(--sidetxt);
+  color: var(--ink3);
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 530;
   text-align: left;
   cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    color 150ms var(--ease);
 }
 .backhome:hover {
   background: var(--hover);
   color: var(--ink2);
 }
+@media (prefers-reduced-motion: reduce) {
+  .backhome {
+    transition: none;
+  }
+}
 
 /* Section labels in the rail (mono uppercase, mockup's .lbl) */
 .raillbl {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
+  padding: 0 9px 7px;
+  color: var(--faint);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
-  color: var(--sidetxt);
-  opacity: 0.75;
-  padding: 0 var(--s2);
-  margin-bottom: var(--s2);
 }
 
 /* Numbered pipeline nodes with a connector line between stages */
@@ -333,9 +339,9 @@
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  border: 1.5px solid var(--sideline);
-  background: var(--side);
-  color: var(--sidetxt);
+  border: 1.5px solid var(--line-strong);
+  background: var(--panel2);
+  color: var(--ink3);
   display: grid;
   place-items: center;
   z-index: 1;
@@ -351,7 +357,7 @@
   top: -14px;
   height: 14px;
   width: 1.5px;
-  background: var(--sideline);
+  background: var(--line-strong);
 }
 
 .sidebar .spacer {

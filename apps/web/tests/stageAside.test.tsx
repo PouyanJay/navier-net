@@ -14,7 +14,8 @@ function shell(children: React.ReactNode) {
         active="datasets"
         onNavigate={vi.fn()}
         activeRun={null}
-        status={{ latestRun: null, projects: 1 }}
+        status={{ projects: 1 }}
+        runCrumb={null}
         project="demo"
         onHome={vi.fn()}
       >
@@ -157,7 +158,8 @@ describe("StageAside", () => {
           active="physics"
           onNavigate={vi.fn()}
           activeRun={null}
-          status={{ latestRun: null, projects: 1 }}
+          status={{ projects: 1 }}
+          runCrumb={null}
           project="demo"
           onHome={vi.fn()}
         >

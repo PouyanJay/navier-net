@@ -17,7 +17,6 @@ import {
   type RunJobStatus,
   type RunSummary,
 } from "./lib/api";
-import { isTrainedRun } from "./lib/runs";
 import { seriesNameOf } from "./lib/series";
 import { DatasetsView } from "./views/DatasetsView";
 import { PhysicsModelView } from "./views/PhysicsModelView";
@@ -49,10 +48,7 @@ const CONTINUE: Record<string, { label: string; next: string }> = {
   solver: { label: "Continue to results →", next: "results" },
 };
 
-const IDLE_STATUS: PlatformStatus = {
-  latestRun: null,
-  projects: 0,
-};
+const IDLE_STATUS: PlatformStatus = { projects: 0 };
 
 interface RepoFacts {
   datasets: DatasetSummary[];
@@ -79,7 +75,7 @@ export function App() {
 }
 
 function Workspace() {
-  const params = useParams<{ pid?: string; stage?: string }>();
+  const params = useParams<{ pid?: string; stage?: string; runId?: string }>();
   const navigate = useNavigate();
   // The deep results routes have no :stage param; they are always "results".
   const stage = params.pid ? (params.stage ?? "results") : undefined;
@@ -99,31 +95,28 @@ function Workspace() {
       .catch(() => setRepo(null)); // chrome only; views surface real errors
   }, []);
 
-  // The run chip is scoped to the open project: an empty project shows an
-  // untouched pipeline even when other projects have trained runs.
-  const status = useMemo<PlatformStatus>(() => {
-    if (!repo) return IDLE_STATUS;
-    const runs = project
-      ? repo.runs.filter(
-          (run) =>
-            run.dataset != null && project.datasets.includes(run.dataset),
-        )
-      : repo.runs;
-    const trained = runs.filter(isTrainedRun);
-    const latest = trained[trained.length - 1] ?? null;
+  const status = useMemo<PlatformStatus>(
+    () => (repo ? { projects: repo.projectCount } : IDLE_STATUS),
+    [repo],
+  );
+
+  /**
+   * The run the breadcrumb names, read from the URL rather than from "whichever
+   * run is newest". Only the deep results routes carry a :runId, so every other
+   * stage gets no run segment at all -- which is right, because on Datasets or
+   * Solver there is no run in view to name.
+   */
+  const runCrumb = useMemo(() => {
+    if (!params.runId || !repo) return null;
+    const run = repo.runs.find((candidate) => candidate.id === params.runId);
+    if (!run) return null;
     // Dataset-named legacy runs follow their series' current display label.
-    const latestName =
-      latest &&
-      (latest.dataset && latest.id === latest.dataset
-        ? seriesNameOf(repo.datasets, latest.dataset)
-        : latest.id);
-    return {
-      latestRun: latest
-        ? { id: latest.id, name: latestName ?? latest.id, steps: latest.steps }
-        : null,
-      projects: repo.projectCount,
-    };
-  }, [repo, project]);
+    const name =
+      run.dataset && run.id === run.dataset
+        ? (seriesNameOf(repo.datasets, run.dataset) ?? run.id)
+        : run.id;
+    return { id: run.id, name };
+  }, [params.runId, repo]);
 
   // Pick up a run already in flight (e.g. after a page reload mid-training).
   useEffect(() => {
@@ -222,6 +215,7 @@ function Workspace() {
       onNavigate={goToStage}
       activeRun={activeRun}
       status={status}
+      runCrumb={runCrumb}
       project={project?.name ?? null}
       onHome={goHome}
     >

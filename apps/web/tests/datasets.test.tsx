@@ -347,7 +347,8 @@ describe("DatasetsView inside the real shell", () => {
           active="datasets"
           onNavigate={vi.fn()}
           activeRun={null}
-          status={{ latestRun: null, projects: 1 }}
+          status={{ projects: 1 }}
+          runCrumb={null}
           project={PROJECT.id}
           onHome={vi.fn()}
         >
