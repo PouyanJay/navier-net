@@ -1,4 +1,4 @@
-import { estMemoryMB, estMinutesPer1kSteps, fmtCount } from "./model";
+import { estMemoryMB, estMinutesPer1kSteps, FIELDS, fmtCount } from "./model";
 import type { PhysicsModel } from "./usePhysicsModel";
 
 /**
@@ -26,6 +26,17 @@ export function ModelBudget({ model }: { model: PhysicsModel }) {
         <div className="k">est · memory</div>
         <div className="v">
           {estMemoryMB(params).toFixed(0)} <small>MB</small>
+        </div>
+      </div>
+      {/* How many networks the physics bought — the count the ensemble draws
+          and the reason the other three numbers are what they are. */}
+      <div className="bud">
+        <div className="k">networks</div>
+        <div className="v">
+          {model.activeFields.length}{" "}
+          <small>
+            {model.activeFields.map((f) => FIELDS[f].label).join(" ")}
+          </small>
         </div>
       </div>
     </div>

@@ -25,6 +25,30 @@ interface Globals {
   nodewise: boolean;
 }
 
+/** A physics caution, carried to the control that caused it. */
+export interface Warning {
+  /** The global this warning belongs beside, or null for a whole-model one. */
+  at: "ffScale" | "alphaEps" | "width" | null;
+  message: string;
+}
+
+/**
+ * Which interface treatment the composed run gets, and why.
+ *
+ * NOT owned here. `model.sharp_interface` is resolved at run launch, where an
+ * unset request takes the recipe wherever the series fits (`p` is trained).
+ * The run launcher appends `series_overrides()` AFTER its own list and Hydra's
+ * last override wins, so a per-series copy of this flag would silently
+ * outrank the Solver's explicit choice. This page states what will happen and
+ * names where to change it.
+ */
+export interface Formulation {
+  sharp: boolean;
+  /** The equation ids this treatment admits that the other would not. */
+  admits: string[];
+  reason: string;
+}
+
 interface Baseline {
   perField: Record<FieldName, FieldArch>;
   globals: Pick<Globals, "ff" | "ffScale">;
@@ -66,6 +90,8 @@ export interface PhysicsModel {
   globalOverridden: (key: "ff" | "ffScale") => boolean;
   totalParams: number;
   overrideCount: number;
+  formulation: Formulation;
+  warnings: Warning[];
   dirty: boolean;
   saving: boolean;
   saveError: string | null;
@@ -82,6 +108,9 @@ export interface PhysicsModel {
 export interface EquationDisplay extends EquationState {
   /** live enabled state (overlays the loaded value with local edits) */
   on: boolean;
+  /** Whether the current interface treatment admits this equation at all. A
+   * diffuse run never trains the sharp trio, however many fields exist. */
+  admitted: boolean;
   /** live weight (overlays the loaded value) */
   liveWeight: number;
   toggleable: boolean;
@@ -227,11 +256,82 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
     saving,
     saveError,
     hydraCommand: buildHydra(edit, activeFields, edit.perField.phi),
+    formulation: formulationOf(activeFields.includes("p")),
+    warnings: validate(edit.globals, edit.perField, activeFields),
     save,
     ...deriveView(edit, activeFields),
     ...buildActions(edit, patch),
   };
   return { status: "ready", model };
+}
+
+/* Validation thresholds, named rather than inlined in the checks. */
+const MIN_ALPHA_EPS = 0.005; // interface half-width the image supervision resolves
+const SMALL_EPS = 0.03; // below this, sigma_B must be large enough to resolve it
+const MIN_FF_SCALE_FOR_SMALL_EPS = 2.5;
+const MAX_STABLE_WIDTH = 256; // beyond this, CPU step cost grows quadratically
+
+/**
+ * Physics cautions, each tagged with the control that caused it.
+ *
+ * Advice, never a block: these are judgements about resolvability, not invalid
+ * values, and a researcher may well know better than the heuristic.
+ */
+function validate(
+  globals: Globals,
+  perField: Record<FieldName, FieldArch>,
+  activeFields: FieldName[],
+): Warning[] {
+  const out: Warning[] = [];
+  if (globals.alphaEps < MIN_ALPHA_EPS) {
+    out.push({
+      at: "alphaEps",
+      message: `ε ${globals.alphaEps} is very small; the image supervision may not resolve it. Raise ε, or bin the frames.`,
+    });
+  }
+  if (
+    globals.ffScale < MIN_FF_SCALE_FOR_SMALL_EPS &&
+    globals.alphaEps <= SMALL_EPS
+  ) {
+    out.push({
+      at: "ffScale",
+      message: `σ_B ${globals.ffScale} is likely too low to resolve ε ${globals.alphaEps}; the α network will smooth the interface. Raise σ_B toward ${MIN_FF_SCALE_FOR_SMALL_EPS}, or ε back above ${SMALL_EPS}.`,
+    });
+  }
+  if (activeFields.some((f) => perField[f].width > MAX_STABLE_WIDTH)) {
+    out.push({
+      at: "width",
+      message: `Width above ${MAX_STABLE_WIDTH}: CPU step cost grows quadratically. Plan for a GPU device in the Solver.`,
+    });
+  }
+  return out;
+}
+
+/**
+ * Which interface treatment a launched run gets, and why.
+ *
+ * Predicted from the field set, NOT from the composed `model.sharp_interface`:
+ * that flag has no per-series override, so it always reads the schema default
+ * here, while the launcher resolves it against what the series trains. The
+ * Solver sends sharp by default and the API rejects that ask when there is no
+ * pressure field, so a series without `p` is the case worth naming — the fix
+ * for it lives on this page.
+ */
+function formulationOf(hasPressure: boolean): Formulation {
+  if (hasPressure) {
+    return {
+      sharp: true,
+      admits: ["darcy", "kinematic", "laplace"],
+      reason:
+        "Pressure is trained, so a launch imposes the interface conditions on the explicit front: Darcy drag, the kinematic condition, and the Young–Laplace jump.",
+    };
+  }
+  return {
+    sharp: false,
+    admits: ["mom"],
+    reason:
+      "No pressure field, so there is no front pressure to impose a jump on. Enable Momentum above to reach the sharp treatment; until then the Solver's sharp-interface option will refuse this series.",
+  };
 }
 
 /** The read-only derived values a view needs: field helpers, counts, and the
@@ -256,13 +356,21 @@ function deriveView(edit: EditState, activeFields: FieldName[]) {
     ) +
     (globalOverridden("ff") ? 1 : 0) +
     (globalOverridden("ffScale") ? 1 : 0);
-  // An equation is active when all the fields it needs are present -- derived
-  // live from the toggles, so coupled terms (e.g. the evaporation closure, which
-  // rides on temperature) light up with the equation that unlocks their field.
+  // An equation is active when the formulation admits it AND every field it
+  // needs is present -- derived live from the toggles, so coupled terms (the
+  // evaporation closure, which rides on temperature) light up with the
+  // equation that unlocks their field, and the sharp trio appears only under
+  // the sharp treatment.
   const activeSet = new Set<string>(activeFields);
+  const predictedSharp = activeFields.includes("p");
+  const admitted = (mode: EquationState["mode"] | undefined) =>
+    mode == null ||
+    mode === "any" ||
+    mode === (predictedSharp ? "sharp" : "diffuse");
   const equations: EquationDisplay[] = edit.equations.map((e) => ({
     ...e,
-    on: e.fields_required.every((f) => activeSet.has(f)),
+    on: admitted(e.mode) && e.fields_required.every((f) => activeSet.has(f)),
+    admitted: admitted(e.mode),
     liveWeight: edit.weights[e.weight_key] ?? e.weight,
     toggleable: TOGGLEABLE.has(e.id),
   }));

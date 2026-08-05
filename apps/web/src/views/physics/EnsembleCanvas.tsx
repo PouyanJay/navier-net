@@ -3,13 +3,16 @@ import { useEffect, useState } from "react";
 import { type FieldArch, type FieldName, FIELDS, fmtCount } from "./model";
 import type { PhysicsModel } from "./usePhysicsModel";
 
-// Which residual / supervision nodes train each field.
+/* Which residual / supervision nodes train each field. The sharp trio is here
+   alongside momentum: a launch takes one treatment or the other, and the
+   diagram draws whichever is actually admitted, so it never disagrees with
+   the objective above it. */
 const LINKS: Record<FieldName, string[]> = {
-  phi: ["data", "vof", "div", "mom"],
-  u: ["vof", "div", "bc", "mom"],
-  v: ["vof", "div", "bc", "mom"],
+  phi: ["data", "vof", "div", "mom", "darcy", "laplace"],
+  u: ["vof", "div", "bc", "mom", "darcy", "kinematic"],
+  v: ["vof", "div", "bc", "mom", "darcy", "kinematic"],
   s: ["div", "energy"],
-  p: ["mom"],
+  p: ["mom", "darcy", "laplace"],
   T: ["energy"],
 };
 
@@ -19,8 +22,25 @@ const RES_LABEL: Record<string, string> = {
   div: "r_div + src",
   bc: "L_bc · inlet + walls",
   mom: "r_mom",
+  darcy: "r_darcy",
+  kinematic: "r_kin · v_n = u·n",
+  laplace: "r_YL · curvature jump",
   energy: "r_energy",
 };
+
+/* Hub order, matching the registry so the diagram and the objective list the
+   same physics in the same sequence. */
+const RES_ORDER = [
+  "data",
+  "vof",
+  "div",
+  "bc",
+  "mom",
+  "darcy",
+  "kinematic",
+  "laplace",
+  "energy",
+];
 
 const X = { in: 58, ff: 205, net: 385, hub: 950 };
 const LANE_H = 62;
@@ -427,8 +447,8 @@ function DerivedShapes({ model }: { model: PhysicsModel }) {
     <div className="derived">
       <p className="reco-note">
         <b>Derived from your physics.</b> Parameter count is exact; time and
-        memory are estimates. Hover a row for the reasoning; edit anything in
-        the per-field table below to override.
+        memory are estimates. Hover a row for the reasoning; every shape here is
+        set in the Capacity band, in the rail.
       </p>
       {recommendations(model).map((reco, i) => (
         <div key={i} className={reco.modified ? "rrow mod" : "rrow"}>
@@ -457,7 +477,7 @@ export function EnsembleCanvas({ model }: { model: PhysicsModel }) {
   const enabledEq = new Set(
     model.equations.filter((e) => e.on).map((e) => e.id),
   );
-  const resNodes = ["data", "vof", "div", "bc", "mom", "energy"].filter(
+  const resNodes = RES_ORDER.filter(
     (id) => id === "data" || id === "bc" || enabledEq.has(id),
   );
 
