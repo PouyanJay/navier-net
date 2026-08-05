@@ -27,7 +27,7 @@ import {
   ThemeLightIcon,
 } from "../components/icons";
 import { useToast } from "../components/Toast";
-import type { RunJobStatus } from "../lib/api";
+import { api, type RunJobStatus } from "../lib/api";
 import { applyTheme, initialTheme, type Theme } from "../theme";
 import {
   AsideSlotProvider,
@@ -148,9 +148,31 @@ function IconAction({
   );
 }
 
-/** The rail's System entry: workspace identity, dismissed by outside click or Escape. */
+/**
+ * The rail's utility entry.
+ *
+ * Voicebook's sidebar foot is a nav of links into real settings sections, and
+ * it shows no account identity anywhere. NavierNet has no settings route to
+ * link to, so System reports what it can actually verify about the running
+ * platform instead: where the workspace lives and whether the API answering
+ * this page is up. The panel it opens is checked on open, not remembered.
+ */
 function SystemMenu() {
   const [open, setOpen] = useState(false);
+  const [api_up, setApiUp] = useState<"checking" | "up" | "down">("checking");
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setApiUp("checking");
+    api
+      .health()
+      .then(() => live && setApiUp("up"))
+      .catch(() => live && setApiUp("down"));
+    return () => {
+      live = false;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -168,27 +190,39 @@ function SystemMenu() {
     };
   }, [open]);
 
+  const API_LABEL = {
+    checking: "checking…",
+    up: "reachable",
+    down: "unreachable",
+  };
+
   return (
-    <div className="sysmenu-wrap">
+    <nav className="utility-nav sysmenu-wrap" aria-label="System">
       {open && (
         <div className="umenu" id="system-menu">
-          <div className="uh">
-            <b>Pouyan Jahangiri</b>
-            <span>local workspace</span>
+          <div className="kvrow">
+            <span>Workspace</span>
+            <b className="mono">local filesystem</b>
+          </div>
+          <div className="kvrow">
+            <span>API</span>
+            <b className="mono" data-state={api_up}>
+              {API_LABEL[api_up]}
+            </b>
           </div>
         </div>
       )}
       <button
         type="button"
-        className="railsystem"
+        className="nav-link"
         aria-expanded={open}
         aria-controls="system-menu"
         onClick={() => setOpen((current) => !current)}
       >
-        <HugeiconsIcon icon={SystemIcon} size={16} />
+        <HugeiconsIcon icon={SystemIcon} size={17} />
         <span>System</span>
       </button>
-    </div>
+    </nav>
   );
 }
 

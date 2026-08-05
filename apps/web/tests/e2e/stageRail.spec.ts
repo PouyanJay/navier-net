@@ -16,8 +16,15 @@ async function openStage(page: Page, stage: string | null) {
   await page.getByRole("button", { name: /^Open/ }).first().click();
   if (stage) {
     await page.getByRole("button", { name: stage, exact: true }).click();
+    // Wait for THIS stage's rail, not merely for a rail: the previous stage's
+    // is still mounted for a beat, so a bare `.stage-aside` wait returns while
+    // the incoming stage's content is still empty.
+    await page
+      .getByRole("complementary", { name: stage, exact: true })
+      .waitFor();
+  } else {
+    await page.locator(".stage-aside").waitFor();
   }
-  await page.locator(".stage-aside").waitFor();
 }
 
 /** Every control a stage keeps in its rail, by the stage that owns it. */

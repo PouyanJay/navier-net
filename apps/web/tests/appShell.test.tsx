@@ -1,14 +1,17 @@
 /** The shell's topbar chrome: the status chips it claims about a workspace. */
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell, type PlatformStatus } from "../src/app/AppShell";
+import { api } from "../src/lib/api";
 import { ToastProvider } from "../src/components/Toast";
 
 const TRAINED: PlatformStatus = { projects: 1 };
 const EMPTY: PlatformStatus = { projects: 3 };
 const OPEN_RUN = { id: "fvb-fix-s0", name: "fvb-fix-s0" };
+
+afterEach(() => vi.restoreAllMocks());
 
 function shell(
   status: PlatformStatus,
@@ -103,7 +106,11 @@ describe("the pipeline rail", () => {
     expect(screen.queryByText("PJ")).not.toBeInTheDocument();
   });
 
-  it("opens the System menu on click and names the workspace", async () => {
+  it("opens System on click and reports facts it can verify", async () => {
+    // It used to show a hardcoded name. Voicebook shows no account identity at
+    // all and links its foot into real settings sections; NavierNet has none to
+    // link to, so System states what it can actually check instead.
+    vi.spyOn(api, "health").mockResolvedValue({ status: "ok" });
     shell(TRAINED);
     const system = screen.getByRole("button", { name: /System/ });
     expect(system).toHaveAttribute("aria-expanded", "false");
@@ -111,7 +118,18 @@ describe("the pipeline rail", () => {
     fireEvent.click(system);
 
     expect(system).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("local workspace")).toBeInTheDocument();
+    expect(screen.getByText("local filesystem")).toBeInTheDocument();
+    expect(await screen.findByText("reachable")).toBeInTheDocument();
+    expect(screen.queryByText("Pouyan Jahangiri")).not.toBeInTheDocument();
+  });
+
+  it("says so when the API behind the page is not answering", async () => {
+    vi.spyOn(api, "health").mockRejectedValue(new Error("connection refused"));
+    shell(TRAINED);
+
+    fireEvent.click(screen.getByRole("button", { name: /System/ }));
+
+    expect(await screen.findByText("unreachable")).toBeInTheDocument();
   });
 
   it("carries the stages and no run metadata", () => {

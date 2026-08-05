@@ -123,96 +123,80 @@
   }
 }
 
-/* The rail's System entry, pinned to its foot. */
-.sysmenu-wrap {
-  position: relative;
+/* The rail's utility nav, shaped like voicebook's: a group of nav rows pinned
+   to the foot, in exactly the language the pipeline rows above it use. */
+.utility-nav {
+  display: grid;
+  gap: 2px;
   margin-top: auto;
-  padding: var(--s2) var(--s2) var(--s3);
+  position: relative;
 }
-.railsystem {
-  width: 100%;
+.utility-nav .nav-link {
   display: flex;
   align-items: center;
-  gap: var(--s3);
+  gap: 10px;
+  width: 100%;
   height: 40px;
   padding: 0 9px;
   border: 0;
   border-radius: 6px;
-  background: none;
+  background: transparent;
   color: var(--ink3);
   font: inherit;
   font-size: 12.5px;
   font-weight: 530;
+  text-align: left;
   cursor: pointer;
   transition:
-    color 150ms var(--ease),
-    background 150ms var(--ease);
+    background 150ms var(--ease),
+    color 150ms var(--ease);
 }
-.railsystem:hover,
-.railsystem[aria-expanded="true"] {
+.utility-nav .nav-link:hover,
+.utility-nav .nav-link[aria-expanded="true"] {
   background: var(--hover);
   color: var(--ink2);
 }
 @media (prefers-reduced-motion: reduce) {
-  .railsystem {
+  .utility-nav .nav-link {
     transition: none;
   }
 }
 
-.umenu {
-  position: absolute;
-  bottom: calc(100% - var(--s1));
-  left: var(--s2);
-  right: var(--s2);
-  width: 230px;
-  background: var(--panel);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r);
-  box-shadow: var(--sh);
-  padding: var(--s1);
-  z-index: 40;
-}
-.umenu .uh {
-  padding: var(--s2) var(--s2) var(--s2);
-  border-bottom: 1px solid var(--line);
-  margin-bottom: var(--s1);
-}
-.umenu .uh b {
-  display: block;
-  font-size: 13px;
-}
-.umenu .uh span {
-  font-family: var(--mono);
-  font-size: 10.5px;
+/* What System reports: facts the platform can actually check. */
+.umenu .kvrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  font-size: 11.5px;
   color: var(--ink3);
 }
-.uitem {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  width: 100%;
-  padding: var(--s2);
-  border: 0;
-  border-radius: var(--rs);
-  background: none;
+.umenu .kvrow b {
+  font-size: 11px;
+  font-weight: 600;
   color: var(--ink2);
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
 }
-.uitem:hover {
-  background: var(--panel2);
-  color: var(--ink);
+.umenu .kvrow b[data-state="up"] {
+  color: var(--green);
+}
+.umenu .kvrow b[data-state="down"] {
+  color: var(--red);
 }
 
-/* Sidebar rail; dark navy chrome */
-/* The two rails' surfaces are swapped: the pipeline rail carries the panel
-   surface and the stage aside carries the chrome one. Each rail re-points the
-   token family its own descendants already use, so the swap re-tones their
-   text, borders and insets too -- a bare background swap would have left the
-   pipeline rail's chrome-tuned text on a paper surface, unreadable in light. */
+.umenu {
+  position: absolute;
+  bottom: calc(100% + var(--s1));
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 7px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-menu);
+  padding: var(--s3);
+  z-index: 40;
+}
 /* The pipeline rail, organised as voicebook organises its sidebar: frosted
    chrome over the ground, separated from the canvas by a hairline rather than a
    structural border, and padded tight so the rows do the spacing. It no longer

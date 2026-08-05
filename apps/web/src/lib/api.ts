@@ -728,6 +728,8 @@ const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
 const datasetPath = (id: string) => `/api/datasets/${encodeURIComponent(id)}`;
 
 export const api = {
+  /** Liveness of the API this client talks to; the System panel reports it. */
+  health: () => getJson<{ status: string }>("/healthz"),
   listRuns: (project?: string) =>
     getJson<RunSummary[]>(
       project
