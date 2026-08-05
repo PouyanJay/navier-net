@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { ErrorIcon, HugeiconsIcon, InfoIcon, WarningIcon } from "./icons";
+
 export type CalloutTone = "error" | "caution" | "info";
 
 interface CalloutProps {
@@ -33,65 +35,17 @@ export function Callout({ tone, title, children, className }: CalloutProps) {
   );
 }
 
-/** State is carried by the icon shape as well as the colour (WCAG 1.4.1). */
+/**
+ * State is carried by the icon's shape as well as its colour (WCAG 1.4.1), so
+ * the three tones take structurally different glyphs — a circle, a triangle and
+ * a crossed circle — rather than one shape in three colours.
+ */
+const TONE_ICON: Record<CalloutTone, typeof InfoIcon> = {
+  info: InfoIcon,
+  caution: WarningIcon,
+  error: ErrorIcon,
+};
+
 function CalloutIcon({ tone }: { tone: CalloutTone }) {
-  if (tone === "info") {
-    return (
-      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-        <circle
-          cx="8"
-          cy="8"
-          r="6.4"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-        />
-        <circle cx="8" cy="5" r="0.95" fill="currentColor" />
-        <path
-          d="M8 7.4v4.2"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  }
-  if (tone === "caution") {
-    return (
-      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-        <path
-          d="M8 1.9 15 14H1Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M8 6.2v3.4"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-        <circle cx="8" cy="11.7" r="0.95" fill="currentColor" />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <circle
-        cx="8"
-        cy="8"
-        r="6.4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-      />
-      <path
-        d="M5.6 5.6 10.4 10.4M10.4 5.6 5.6 10.4"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+  return <HugeiconsIcon icon={TONE_ICON[tone]} size={16} />;
 }

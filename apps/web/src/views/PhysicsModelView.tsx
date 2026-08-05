@@ -9,6 +9,7 @@ import { EnsembleCanvas } from "./physics/EnsembleCanvas";
 import { EquationsPanel } from "./physics/EquationsPanel";
 import { ModelBudget } from "./physics/ModelBudget";
 import { PerFieldTable } from "./physics/PerFieldTable";
+import { HugeiconsIcon, SaveIcon } from "../components/icons";
 import { RunBar } from "./physics/RunBar";
 import { usePhysicsModel } from "./physics/usePhysicsModel";
 import "./physics/physics.css";
@@ -23,26 +24,6 @@ const ASIDE = {
 
 interface PhysicsModelViewProps {
   datasets: DatasetSummary[];
-}
-
-/** Floppy-disk save glyph, drawn in the house SVG style (16-grid, 1.4 stroke). */
-function SaveIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      focusable="false"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M4 2.7h5.3L13.3 6.7v5.3a1.3 1.3 0 0 1-1.3 1.3H4a1.3 1.3 0 0 1-1.3-1.3V4A1.3 1.3 0 0 1 4 2.7Z" />
-      <path d="M5.6 2.7v3h3.2v-3" />
-      <path d="M5 13.3V9.6h6v3.7" />
-    </svg>
-  );
 }
 
 export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
@@ -119,7 +100,7 @@ export function PhysicsModelView({ datasets }: PhysicsModelViewProps) {
                 onClick={() => model.save()}
                 disabled={!model.dirty || model.saving}
               >
-                <SaveIcon />
+                <HugeiconsIcon icon={SaveIcon} size={15} />
                 {model.saving ? "Saving…" : "Save"}
               </Button>
             </div>

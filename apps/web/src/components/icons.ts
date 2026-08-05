@@ -27,3 +27,13 @@ export { FilmRoll01Icon as StageDatasetsIcon } from "@hugeicons/core-free-icons"
 export { FunctionIcon as StagePhysicsIcon } from "@hugeicons/core-free-icons";
 export { CpuChargeIcon as StageSolverIcon } from "@hugeicons/core-free-icons";
 export { ChartLineData01Icon as StageResultsIcon } from "@hugeicons/core-free-icons";
+
+/* Status glyphs for callouts and the destructive/rebuild actions. Each names
+   what it means, not what it looks like, so a callout tone maps straight onto
+   one and swapping libraries never touches a view. */
+export { InformationCircleIcon as InfoIcon } from "@hugeicons/core-free-icons";
+export { Alert02Icon as WarningIcon } from "@hugeicons/core-free-icons";
+export { AlertCircleIcon as ErrorIcon } from "@hugeicons/core-free-icons";
+export { Delete02Icon as DeleteIcon } from "@hugeicons/core-free-icons";
+export { Refresh01Icon as RerunIcon } from "@hugeicons/core-free-icons";
+export { FloppyDiskIcon as SaveIcon } from "@hugeicons/core-free-icons";

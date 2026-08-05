@@ -304,3 +304,43 @@ describe("no reference dangles", () => {
     expect(dangling).toEqual([]);
   });
 });
+
+describe("icons come from the library, not by hand", () => {
+  /**
+   * Files allowed to draw SVG directly: charts, the reconstruction viewport,
+   * the ensemble, and the brand mark. Everything in that list renders DATA or
+   * the logo. A UI glyph drawn by hand drifts from the set around it -- wrong
+   * stroke, wrong grid, wrong optical size -- and cannot be swapped in one file
+   * the way DESIGN_SYSTEM §7 requires.
+   */
+  const DRAWS_ITS_OWN = [
+    "src/components/BrandMark.tsx",
+    "src/components/ReconstructionViewport.tsx",
+    "src/components/charts/",
+    "src/views/datasets/FrameLightbox.tsx",
+    "src/views/datasets/QcPanel.tsx",
+    "src/views/physics/EnsembleCanvas.tsx",
+    "src/views/results/FrameMatchPanel.tsx",
+  ];
+
+  it("has no hand-drawn glyph outside the visualisation files", () => {
+    const offenders = SOURCE_FILES.filter(
+      ({ path, text }) =>
+        /\.tsx$/.test(path) &&
+        text.includes("<svg") &&
+        !DRAWS_ITS_OWN.some((allowed) => path.startsWith(allowed)),
+    ).map(({ path }) => path);
+    expect(offenders).toEqual([]);
+  });
+
+  it("routes every icon through the one barrel", () => {
+    // Importing straight from @hugeicons in a view defeats the point: the
+    // barrel is what keeps the bundle to referenced glyphs and makes swapping
+    // libraries a one-file edit.
+    const direct = SOURCE_FILES.filter(
+      ({ path, text }) =>
+        path !== "src/components/icons.ts" && text.includes("@hugeicons/"),
+    ).map(({ path }) => path);
+    expect(direct).toEqual([]);
+  });
+});

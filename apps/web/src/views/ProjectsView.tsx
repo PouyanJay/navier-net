@@ -10,6 +10,7 @@ import {
   type RunSummary,
 } from "../lib/api";
 import { errorMessage } from "../lib/errors";
+import { DeleteIcon, HugeiconsIcon } from "../components/icons";
 import { hasEvaluation, isTrainedRun } from "../lib/runs";
 import "./datasets/datasets.css";
 import "./runs.css";
@@ -247,7 +248,7 @@ function ProjectCard({
               setConfirmingDelete(true);
             }}
           >
-            <TrashIcon />
+            <HugeiconsIcon icon={DeleteIcon} size={15} />
           </button>
           <button
             type="button"
@@ -285,27 +286,6 @@ function ProjectCard({
         />
       )}
     </div>
-  );
-}
-
-/** Recycle-bin glyph, drawn in the house SVG style (16-grid, 1.4 stroke). */
-function TrashIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      focusable="false"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M2.6 4.1h10.8" />
-      <path d="M6.4 4.1V2.7h3.2v1.4" />
-      <path d="M4 4.1l.55 8.1a1 1 0 0 0 1 .93h4.9a1 1 0 0 0 1-.93L12 4.1" />
-      <path d="M6.5 6.6v4M9.5 6.6v4" />
-    </svg>
   );
 }
 

@@ -16,6 +16,7 @@ import {
   type PreprocessStatus,
   type QcData,
 } from "../../lib/api";
+import { HugeiconsIcon, RerunIcon } from "../../components/icons";
 import { FrameLightbox } from "./FrameLightbox";
 import { QcChecks } from "./QcPanel";
 
@@ -47,29 +48,6 @@ function calibrationLine(detail: DatasetDetail): string {
   }
   const fovMm = (detail.um_per_px * detail.frame_px[0]) / 1000;
   return `auto-calibrated · ${detail.um_per_px.toFixed(3)} µm px⁻¹ · FOV ${fovMm.toFixed(2)} mm`;
-}
-
-/** Circular arrow: this rebuilds an artifact that already exists. */
-function RerunIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path
-        d="M13.2 8a5.2 5.2 0 1 1-1.6-3.7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <path
-        d="M13.4 1.9v3.1h-3.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
 }
 
 /** The raw frames as an inline film strip; scrolls when it overflows. Clicking a
@@ -300,7 +278,7 @@ function PreprocessAction({
         disabled={running}
         title="Rebuild the tensors so the excluded frames take effect"
       >
-        <RerunIcon />
+        <HugeiconsIcon icon={RerunIcon} size={15} />
         {running ? "Running…" : "Re-run"}
       </Button>
     );
