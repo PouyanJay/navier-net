@@ -158,30 +158,27 @@ function AccountMenu() {
   );
 }
 
-/** Topbar status chips: workspace counts at home, stage status in a project. */
+/**
+ * Topbar status chips: the workspace's counts, and only on the projects home.
+ *
+ * Inside a project the topbar says nothing about stage state. A pair of chips
+ * lived here once, "Stage A · trained" beside a "Stage B · not configured" that
+ * was a hardcoded string. The Stage B one was simply wrong for any project that
+ * had configured it; the Stage A one was accurate but redundant, since a
+ * series carries its own trained badge in the library and every run carries its
+ * status in the Results rail. Chrome recedes: it does not repeat what the
+ * content already says.
+ */
 function StatusChips({
   project,
-  trained,
   projectCount,
   running,
 }: {
   project: string | null;
-  trained: boolean;
   projectCount: number;
   running: boolean;
 }) {
-  if (project) {
-    // Stage A only. A "Stage B" chip lived here too, hardcoded to "not
-    // configured" whatever the project's physics actually said. Nothing a run
-    // reports carries its stage, and a project can hold several datasets with
-    // different physics, so the chip had no honest project-level value to show.
-    // Physics & model already answers it per equation, with the toggles.
-    return (
-      <span className="chip" data-tone={trained ? "green" : undefined}>
-        Stage A · {trained ? "trained" : "untrained"}
-      </span>
-    );
-  }
+  if (project) return null;
   return (
     <>
       <span className="chip">
@@ -463,7 +460,6 @@ export function AppShell({
         )}
         <StatusChips
           project={project}
-          trained={status.latestRun != null}
           projectCount={status.projects}
           running={activeRun?.state === "running"}
         />
