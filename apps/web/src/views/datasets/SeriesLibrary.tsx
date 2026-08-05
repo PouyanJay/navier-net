@@ -307,10 +307,6 @@ export function SeriesLibrary({
           </button>
         ))}
       </div>
-      <button type="button" className="addds" onClick={() => setAdding(true)}>
-        + Upload new series · TIFF frames
-      </button>
-
       {detail && detail.id === selected && (
         <div className="dcards" aria-label={`${detail.id} conditions`}>
           {DOMAINS.map((domain) => (
@@ -364,11 +360,16 @@ export function SeriesLibrary({
         />
       )}
 
-      <p className="note lib-note">
-        <b>Transfer learning:</b> once two or more series are preprocessed,
-        select them together in the Solver to train one model jointly across
-        their operating conditions.
-      </p>
+      {/* Upload sinks to the foot of the rail, just above the action bar:
+          growing the library is the last thing in reading order, after the
+          series that exist and the conditions of the one selected. */}
+      <button
+        type="button"
+        className="addds addds-foot"
+        onClick={() => setAdding(true)}
+      >
+        + Upload new series · TIFF frames
+      </button>
 
       {/* The shell's own action bar (see .aside-actions): the way out is in
           the same place whatever series is selected and whatever cards are

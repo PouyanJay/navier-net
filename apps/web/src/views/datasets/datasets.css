@@ -12,12 +12,6 @@
 .dsx-main > * {
   min-width: 0;
 }
-/* The action bar owns the foot of the rail now, so the guidance note simply
-   follows the content it explains. */
-.lib-note {
-  margin-top: var(--s4);
-}
-
 /* Series library rows */
 .dsrows {
   display: flex;
@@ -89,6 +83,9 @@
   font-weight: 600;
   margin-top: var(--s2);
   cursor: pointer;
+}
+.addds.addds-foot {
+  margin-top: auto;
 }
 .addds:hover {
   color: var(--acc);
@@ -1032,6 +1029,10 @@
   grid-auto-flow: column;
   justify-content: space-between;
   gap: var(--s3);
+  /* The upload tile above carries the auto margin that sinks this stack, so
+     the bar keeping its own (from .aside-actions) would split the free space
+     between them and open a gap right here. */
+  margin-top: 0;
 }
 .ds-ft .btn {
   width: auto;
