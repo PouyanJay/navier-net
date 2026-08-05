@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Button, Callout, Chip, DL, type KV } from "../../components";
+import { ConditionsIcon, HugeiconsIcon } from "../../components/icons";
 import type {
   ConditionsUpdate,
   DatasetDetail,
@@ -78,6 +79,21 @@ function conditionItems(detail: DatasetDetail): KV[] {
       value: c.dt_frame_ms,
     },
   ];
+}
+
+/**
+ * What the rail can honestly say about the saved conditions.
+ *
+ * The mockup reads "saved · 2 min ago", but nothing in the API records when a
+ * series was last written, so a relative time here would be invented. What is
+ * real, and more useful at this spot, is whether the values on screen are the
+ * ones the tensors were actually built from.
+ */
+function savedState(detail: DatasetDetail): string {
+  if (!detail.conditions_set) return "not set";
+  if (detail.processed && !detail.conditions_applied)
+    return "saved · not built";
+  return "saved";
 }
 
 function seriesChip(summary: DatasetSummary, trained: boolean) {
@@ -182,12 +198,6 @@ export function SeriesLibrary({
               {seriesName(detail)}
             </h3>
             <span className="sub">inputs</span>
-            <Button
-              className="ds-conditions-edit"
-              onClick={() => setEditing(true)}
-            >
-              Edit conditions
-            </Button>
           </div>
           <DL items={conditionItems(detail)} />
           {detail.processed && !detail.conditions_applied && (
@@ -210,6 +220,7 @@ export function SeriesLibrary({
           )}
         </section>
       )}
+
       {editing && detail && detail.id === selected && (
         <EditConditionsModal
           detail={detail}
@@ -223,6 +234,21 @@ export function SeriesLibrary({
         select them together in the Solver to train one model jointly across
         their operating conditions.
       </p>
+
+      {/* The shell's own action bar (see .aside-actions): sticky, frosted, and
+          ruled across the rail, so it stays put however long the list grows and
+          the fields sliding under it do not read through. The state beside the
+          button says whether what is saved is what the tensors were built
+          from. */}
+      {detail && detail.id === selected && (
+        <div className="aside-actions ds-ft">
+          <span className="ds-ft-state mono">{savedState(detail)}</span>
+          <Button variant="primary" onClick={() => setEditing(true)}>
+            <HugeiconsIcon icon={ConditionsIcon} size={14} aria-hidden="true" />
+            Edit conditions
+          </Button>
+        </div>
+      )}
     </>
   );
 }

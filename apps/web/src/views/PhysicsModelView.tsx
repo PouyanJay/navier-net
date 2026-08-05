@@ -19,7 +19,7 @@ import "./physics/physics.css";
 const ASIDE = {
   title: "Physics & model",
   subtitle: "equations · architecture",
-  width: 384,
+  width: 461,
 };
 
 interface PhysicsModelViewProps {

@@ -37,6 +37,8 @@ export { AlertCircleIcon as ErrorIcon } from "@hugeicons/core-free-icons";
 export { Delete02Icon as DeleteIcon } from "@hugeicons/core-free-icons";
 export { Refresh01Icon as RerunIcon } from "@hugeicons/core-free-icons";
 export { FloppyDiskIcon as SaveIcon } from "@hugeicons/core-free-icons";
+/** The recorded sheet of values behind a series, opened for editing. */
+export { File01Icon as ConditionsIcon } from "@hugeicons/core-free-icons";
 
 /* Menu furniture: the glyph that says a control opens a list, and the one that
    marks the option currently chosen in it. */

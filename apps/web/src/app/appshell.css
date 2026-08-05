@@ -6,7 +6,7 @@
   grid-template-columns: 248px 1fr;
   grid-template-rows: 56px 1fr;
   height: 100%;
-  --stage-aside-w: 320px;
+  --stage-aside-w: 384px;
   --stage-aside-w-collapsed: 44px;
 }
 .shell[data-aside="open"] {
@@ -505,7 +505,7 @@
    only way to reach that stage's selection. */
 @media (max-width: 1180px) {
   .shell {
-    --stage-aside-w: 272px;
+    --stage-aside-w: 326px;
   }
 }
 .workspace .page {

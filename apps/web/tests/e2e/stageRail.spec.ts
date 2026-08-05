@@ -397,3 +397,55 @@ test("the QC chart can be read without a pointer", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(page.locator(".qc-sub .chart-tip")).toBeHidden();
 });
+
+test("an expanded chart is centred on the viewport, not on its column", async ({
+  page,
+}) => {
+  // The overlay is position:fixed, but inside the stage it resolved against a
+  // containing block set by an ancestor, so it opened off-centre and small.
+  await openStage(page, null);
+  await page.getByLabel("Preprocessing check").waitFor();
+  await page.locator(".qc-sub .cf-plot").hover();
+  await page.getByLabel(/^Expand /).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  const box = (await dialog.boundingBox())!;
+  const view = page.viewportSize()!;
+
+  // Centred on both axes, within a few pixels.
+  expect(Math.abs(box.x + box.width / 2 - view.width / 2)).toBeLessThan(4);
+  expect(Math.abs(box.y + box.height / 2 - view.height / 2)).toBeLessThan(4);
+  // And large: it is the whole point of expanding.
+  expect(box.width).toBeGreaterThan(view.width * 0.85);
+});
+
+test("regime scales line up across every card in a row", async ({ page }) => {
+  // A definition that wraps to two lines in one card lifts the rail in every
+  // card beside it, and rails at four different heights across a row read as
+  // four unrelated pictures rather than one comparison. Subgrid shares the
+  // row's tracks; only a layout engine can confirm it actually did.
+  await openStage(page, null);
+  await page.locator(".regime-rail").first().waitFor();
+
+  const rails = await page.locator(".regime-rail").evaluateAll((els) =>
+    els
+      .map((el) => el.getBoundingClientRect())
+      .map((r) => ({
+        top: Math.round(r.top),
+        left: Math.round(r.left),
+      })),
+  );
+  expect(rails.length).toBeGreaterThan(2);
+
+  // Cards sharing a row are the ones whose rails start at different x; group
+  // by top and assert each group holds more than one card at the wide layout.
+  const rows = new Map<number, number>();
+  for (const rail of rails) rows.set(rail.top, (rows.get(rail.top) ?? 0) + 1);
+  expect([...rows.values()].every((n) => n >= 2)).toBe(true);
+  // And no rail is a lone stray a pixel off its neighbours.
+  const tops = [...rows.keys()].sort((a, b) => a - b);
+  for (let i = 1; i < tops.length; i++) {
+    expect(tops[i] - tops[i - 1]).toBeGreaterThan(8);
+  }
+});

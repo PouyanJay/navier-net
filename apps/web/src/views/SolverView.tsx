@@ -31,7 +31,7 @@ import "./solver/solver.css";
 const ASIDE = {
   title: "Solver",
   subtitle: "configure & run",
-  width: 384,
+  width: 461,
 };
 
 interface SolverViewProps {

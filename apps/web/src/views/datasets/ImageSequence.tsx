@@ -94,6 +94,11 @@ export function ImageSequence({
   }
 
   const running = preprocess?.state === "running";
+  /* The overview and the detail point at the same frame in both directions:
+     take a tick and the strip brings that thumbnail into view, point at a
+     thumbnail and the tick for it lights up in the bar above. Without the
+     link the ribbon can only say where a frame IS, never which one. */
+  const [current, setCurrent] = useState<number | null>(null);
   const excludedCount = detail.excluded_frames.length;
   const pendingRerun = detail.processed && !detail.exclusions_applied;
 
@@ -116,7 +121,9 @@ export function ImageSequence({
         <>
           <FrameRibbon
             detail={detail}
+            current={current}
             onSelect={(n) => {
+              setCurrent(n);
               const el = strip.current?.children[n - 1];
               el?.scrollIntoView({ block: "nearest", inline: "center" });
             }}
@@ -127,6 +134,7 @@ export function ImageSequence({
             className="strip"
             role="list"
             aria-label={`${detail.n_frames} raw frames`}
+            onPointerLeave={() => setCurrent(null)}
           >
             {frames.map((n) => {
               const holdout = n === detail.holdout_frame;
@@ -139,10 +147,12 @@ export function ImageSequence({
                     "fr",
                     holdout ? "hold" : "",
                     excluded ? "excl" : "",
+                    n === current ? "cur" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
                   role="listitem"
+                  onPointerEnter={() => setCurrent(n)}
                 >
                   <button
                     type="button"
@@ -152,6 +162,7 @@ export function ImageSequence({
                     aria-label={`Frame ${n}, ${state} training${holdout ? ", holdout frame" : ""}`}
                     onClick={() => handleClick(n, holdout)}
                     onDoubleClick={() => handleDoubleClick(n)}
+                    onFocus={() => setCurrent(n)}
                   >
                     <ArtifactImage
                       src={artifactUrl.datasetFrame(detail.id, n)}

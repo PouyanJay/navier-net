@@ -239,3 +239,47 @@ test("nothing asks for a weight the UI face cannot draw", async ({ page }) => {
   });
   expect(tooHeavy).toEqual([]);
 });
+
+test("the default button is a wash, not an outline (DESIGN_SYSTEM §8.1)", async ({
+  page,
+}) => {
+  // "The default is NOT an outlined button — it is a neutral wash. That is why
+  // the interface has so few visible borders." An outlined default was putting
+  // one around every action on the page.
+  await page.goto("/");
+  await page.getByRole("button", { name: /^Open/ }).first().click();
+  await page.getByLabel("Preprocessing check").waitFor();
+
+  const edit = page.getByRole("button", { name: /Edit conditions/ });
+  const css = await edit.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return {
+      borders: [
+        s.borderTopWidth,
+        s.borderRightWidth,
+        s.borderBottomWidth,
+        s.borderLeftWidth,
+      ],
+      background: s.backgroundColor,
+      color: s.color,
+    };
+  });
+  expect(css.borders).toEqual(["0px", "0px", "0px", "0px"]);
+
+  // It is the panel's action, so it is the filled variant: the accent plate
+  // with the ink that belongs on it, never a raw white that only one theme can
+  // carry. Both must be opaque and legible against each other.
+  const primary = await page.evaluate(() => {
+    const s = getComputedStyle(document.documentElement);
+    return {
+      plate: s.getPropertyValue("--primary").trim(),
+      ink: s.getPropertyValue("--primary-ink").trim(),
+    };
+  });
+  const hex = (c: string) => {
+    const [r, g, b] = c.match(/\d+/g)!.map(Number);
+    return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+  };
+  expect(hex(css.background)).toBe(primary.plate.toLowerCase());
+  expect(hex(css.color)).toBe(primary.ink.toLowerCase());
+});

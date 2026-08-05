@@ -747,38 +747,61 @@ describe("DatasetsView", () => {
     ).toBeInTheDocument();
   });
 
-  it("reads back every group's value, ratio and verdict without selecting", async () => {
+  it("reads every dimensionless group on the same card", async () => {
     mockApi();
     renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
 
-    // Each group shows its value, its ratio, and the verdict that value
-    // produces. A bare 0.0107 means nothing without the threshold it is being
-    // read against, and a reading nobody can see is a reading nobody has.
+    // A bare 0.0107 says nothing. It only means "surface tension wins" read
+    // against the flip, so the flip is drawn and the distance to it is the
+    // whole point of the bar.
     const ca = within(
       await screen.findByRole("group", {
         name: /Capillary number definition/,
       }),
     );
     expect(ca.getByText(/Viscous drag ÷ surface tension/)).toBeInTheDocument();
+    expect(ca.getByText("Ca ≈ 1")).toBeInTheDocument();
     expect(ca.getByText(/Bretherton film/)).toBeInTheDocument();
 
-    const re = within(
-      screen.getByRole("group", { name: /Reynolds number definition/ }),
-    );
-    expect(
-      re.getByText(/Inertial forces ÷ viscous forces/),
-    ).toBeInTheDocument();
-    expect(re.getByText(/Laminar/)).toBeInTheDocument();
-
-    // The scales carry the same card. They used to be tiles you had to select
-    // one at a time, which left seven of the eight readings unread.
+    // One card shape for one kind of thing: a group with no published flip is
+    // still a ratio, so it keeps the bar and labels the span instead. It used
+    // to be drawn as a dial, which said "different kind of quantity" about
+    // something that is not.
     const pr = within(
       screen.getByRole("group", { name: /Prandtl number definition/ }),
     );
     expect(pr.getByText(/Momentum diffusivity/)).toBeInTheDocument();
-    expect(pr.getByText("9.41")).toBeInTheDocument();
-    // Only the four with a threshold draw the scale that decides their verdict.
-    expect(document.querySelectorAll(".regime-scale")).toHaveLength(4);
+    expect(pr.getByText(/Momentum spreads/)).toBeInTheDocument();
+    expect(pr.getByText("10⁻²")).toBeInTheDocument();
+    expect(pr.getByText("10³")).toBeInTheDocument();
+    expect(document.querySelector(".dial-face")).toBeNull();
+  });
+
+  it("draws a scale on every group, and a tick only where one flips", async () => {
+    mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByRole("group", { name: /Reynolds number definition/ });
+
+    // The fixture carries Re, We, Ca, Bond, Pr and hele_shaw. All six get a
+    // scale; only the four with a published threshold get its marker.
+    expect(document.querySelectorAll(".regime-scale")).toHaveLength(6);
+    expect(document.querySelectorAll(".regime-th")).toHaveLength(4);
+  });
+
+  it("keeps the dimensional scales as values, not cards", () => {
+    // Micrometres and milliseconds are magnitudes, not a contest between two
+    // effects, so there is no ratio to plot.
+    mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+
+    return waitFor(() => {
+      const scales = document.querySelector(".scales")!;
+      expect(scales).not.toBeNull();
+      expect(scales.querySelector(".regime-scale")).toBeNull();
+      expect(
+        within(scales as HTMLElement).getByText("D_H"),
+      ).toBeInTheDocument();
+    });
   });
 
   it("uploads a new series through the modal and preprocesses it", async () => {
@@ -1690,6 +1713,51 @@ describe("QC chart axes", () => {
     expect(
       document.querySelectorAll("text.chart-axis-title").length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe("ribbon and strip point at the same frame", () => {
+  // The overview can say where a frame IS, but without the link it can never
+  // say WHICH one — so taking a tick and pointing at a thumbnail now mark the
+  // same frame in both places.
+  const ticks = () => document.querySelectorAll(".ribbon-tick");
+  const tiles = () => document.querySelectorAll(".strip .fr");
+
+  async function showStrip() {
+    mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByText(/Image sequence · sample/);
+  }
+
+  it("marks the thumbnail for the tick under the pointer", async () => {
+    await showStrip();
+    fireEvent.pointerEnter(ticks()[1]);
+
+    expect(ticks()[1]).toHaveClass("cur");
+    expect(tiles()[1]).toHaveClass("cur");
+    expect(tiles()[0]).not.toHaveClass("cur");
+  });
+
+  it("marks the tick for the thumbnail under the pointer", async () => {
+    await showStrip();
+    fireEvent.pointerEnter(tiles()[2]);
+
+    expect(ticks()[2]).toHaveClass("cur");
+    expect(tiles()[2]).toHaveClass("cur");
+  });
+
+  it("takes the mark from the keyboard too, not the pointer alone", async () => {
+    await showStrip();
+    fireEvent.focus(screen.getByRole("button", { name: /^Frame 2,/ }));
+    expect(ticks()[1]).toHaveClass("cur");
+  });
+
+  it("releases the mark when the pointer leaves the strip", async () => {
+    await showStrip();
+    fireEvent.pointerEnter(tiles()[1]);
+    fireEvent.pointerLeave(document.querySelector(".strip")!);
+
+    expect(document.querySelector(".ribbon-tick.cur")).toBeNull();
   });
 });
 

@@ -14,10 +14,13 @@ import type { DatasetDetail } from "../../lib/api";
  */
 export function FrameRibbon({
   detail,
+  current,
   onSelect,
 }: {
   detail: DatasetDetail;
-  /** Scrolls the thumbnail strip to the clicked frame. */
+  /** The frame the strip below is pointing at, marked here to match. */
+  current?: number | null;
+  /** Takes a frame: scrolls the strip to it and makes it the current one. */
   onSelect?: (frame: number) => void;
 }) {
   if (detail.n_frames === 0) return null;
@@ -43,9 +46,14 @@ export function FrameRibbon({
           <button
             key={n}
             type="button"
-            className={`ribbon-tick ${role}`}
+            className={`ribbon-tick ${role}${n === current ? " cur" : ""}`}
             aria-hidden="true"
             tabIndex={-1}
+            // Pointing at a tick is already asking about that frame, so it
+            // takes it. Waiting for a click would make the overview a
+            // navigation control rather than a reading of the sequence.
+            onPointerEnter={() => onSelect?.(n)}
+            onFocus={() => onSelect?.(n)}
             onClick={() => onSelect?.(n)}
           />
         );

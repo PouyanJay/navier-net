@@ -38,7 +38,7 @@ import "./results.css";
 const ASIDE = {
   title: "Results & validation",
   subtitle: "runs · outputs",
-  width: 336,
+  width: 403,
 };
 
 /** How many further optimisation steps a header "Resume training" asks for. */

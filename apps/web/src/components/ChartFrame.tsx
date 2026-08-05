@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import {
   canvasToPng,
@@ -186,39 +187,45 @@ export function ChartFrame({
           <HugeiconsIcon icon={ExpandIcon} size={15} aria-hidden="true" />
         </button>
       </div>
-      {expanded && (
-        <div
-          className="modal-ov"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setExpanded(false);
-          }}
-        >
+      {/* Portalled to the body: inside the stage the overlay is a fixed
+          element under ancestors that establish containing blocks, so it was
+          being sized and positioned against the content column rather than
+          the viewport, and opened off-centre. */}
+      {expanded &&
+        createPortal(
           <div
-            ref={dialog}
-            tabIndex={-1}
-            className="modal chart-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={title}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setExpanded(false);
+            className="modal-ov centred"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setExpanded(false);
             }}
           >
-            <div className="hd">
-              <h2>{title}</h2>
-              <button
-                type="button"
-                className="cf-btn"
-                onClick={() => setExpanded(false)}
-              >
-                Close
-              </button>
+            <div
+              ref={dialog}
+              tabIndex={-1}
+              className="modal chart-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label={title}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setExpanded(false);
+              }}
+            >
+              <div className="hd">
+                <h2>{title}</h2>
+                <button
+                  type="button"
+                  className="cf-btn"
+                  onClick={() => setExpanded(false)}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="chart-modal-body">{render(true)}</div>
             </div>
-            <div className="chart-modal-body">{render(true)}</div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
