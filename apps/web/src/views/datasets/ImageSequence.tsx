@@ -124,8 +124,11 @@ export function ImageSequence({
             current={current}
             onSelect={(n) => {
               setCurrent(n);
+              // Optional-called: scrolling the thumbnail into view is an
+              // enhancement, and jsdom's elements do not implement it — the
+              // ribbon's marking must not depend on the scroll existing.
               const el = strip.current?.children[n - 1];
-              el?.scrollIntoView({ block: "nearest", inline: "center" });
+              el?.scrollIntoView?.({ block: "nearest", inline: "center" });
             }}
           />
           <div
