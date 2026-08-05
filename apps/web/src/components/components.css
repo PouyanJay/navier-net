@@ -38,14 +38,18 @@
   padding: var(--s5);
 }
 
-/* Horizontal scrollbar for a scroller whose native bar is hidden. Slim enough
-   to sit under content without competing, but a real control: the thumb drags,
-   the track pages, and it takes focus for the arrow keys. */
+/* Horizontal scrollbar for a scroller whose native bar is hidden — on macOS the
+   native one is an overlay that vanishes at rest, so an overflowing strip would
+   give no sign that more exists. This one is always visible.
+
+   It is a real control: the thumb drags, the track pages, and it takes focus
+   for the arrow keys. So the 10px hit area stays while the ink shrinks to 2px,
+   which is what `padding` plus `background-clip: content-box` buys. */
 .hbar {
   position: relative;
-  height: 8px;
+  height: 10px;
   margin-top: var(--s2);
-  padding: 2px 0;
+  padding: 4px 0;
   border-radius: 999px;
   background: var(--line);
   background-clip: content-box;
@@ -54,17 +58,20 @@
 }
 .hbar-thumb {
   position: absolute;
-  inset-block: 2px;
+  inset-block: 4px;
   min-width: var(--s5);
   border-radius: 999px;
-  /* Muted, but far enough from the track to read as a separate object; at
-     --line the two were indistinguishable and the bar looked full width. */
-  background: color-mix(in srgb, var(--ink3) 55%, transparent);
-  transition: background 0.12s ease;
+  background: var(--scroll-thumb);
+  transition: background 150ms var(--ease);
 }
 .hbar:hover .hbar-thumb,
 .hbar:focus-visible .hbar-thumb {
-  background: var(--ink3);
+  background: var(--scroll-thumb-hover);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hbar-thumb {
+    transition: none;
+  }
 }
 .hbar-thumb:active {
   background: var(--acc);

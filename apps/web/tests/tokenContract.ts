@@ -45,6 +45,8 @@ export const VOCABULARY = {
     "--hover-strong",
     "--selection",
     "--selection-ink",
+    "--scroll-thumb",
+    "--scroll-thumb-hover",
   ],
   canvas: [
     "--canvas",

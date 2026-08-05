@@ -113,6 +113,11 @@
   --danger-surface: #2a1a1d;
   --danger-text: #ffd2d1;
 
+  /* Scrollbars in app chrome. --canvas-scroll-thumb is the canvas's own, and
+     stays theme-constant like everything else that sits on it. */
+  --scroll-thumb: rgb(238 241 246 / 0.16);
+  --scroll-thumb-hover: rgb(238 241 246 / 0.3);
+
   /* A lighter, calmer sibling of --primary — deliberately not the same value. */
   --focus: #b3c4de;
   --hover: rgb(255 255 255 / 0.045);
@@ -293,6 +298,9 @@
   --danger-surface: #fdeceb;
   --danger-text: #7a1a14;
 
+  --scroll-thumb: rgb(20 28 42 / 0.2);
+  --scroll-thumb-hover: rgb(20 28 42 / 0.34);
+
   --focus: #5b79ab;
   --hover: rgb(20 28 42 / 0.045);
   --hover-strong: rgb(20 28 42 / 0.075);
@@ -311,6 +319,47 @@
 /* ── Reset and base ──────────────────────────────────────────────────── */
 * {
   box-sizing: border-box;
+}
+
+/* Scrollbars: a thumb, and nothing else.
+   No track, no arrows, no corner, and no gutter reserved on a surface that is
+   not currently overflowing. The 3px transparent border with background-clip
+   is what turns a 10px hit target into ~4px of visible ink — the bar stays
+   easy to grab while reading as a hairline. Firefox gets the same two values
+   through its own two properties. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: padding-box;
+}
+
+/* A scroller ON the canvas takes the canvas's thumb: the canvas is dark in both
+   themes, so the chrome thumb would invert underneath itself there. */
+.viewport ::-webkit-scrollbar-thumb,
+.canvas-scroll ::-webkit-scrollbar-thumb {
+  background: var(--canvas-scroll-thumb);
+  background-clip: padding-box;
+}
+.viewport,
+.canvas-scroll {
+  scrollbar-color: var(--canvas-scroll-thumb) transparent;
 }
 
 html,
