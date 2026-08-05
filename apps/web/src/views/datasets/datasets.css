@@ -281,9 +281,11 @@
   height: 100%;
   pointer-events: none;
 }
+/* The segmented contour traced over a camera frame: the same interface the
+   viewport draws, so it takes the same token and cannot drift from it. */
 .frame-overlay path {
   fill: none;
-  stroke: var(--acc2);
+  stroke: var(--phase-interface);
   stroke-width: 1.5px;
   vector-effect: non-scaling-stroke;
 }

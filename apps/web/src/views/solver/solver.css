@@ -191,11 +191,12 @@
   margin-bottom: var(--s4);
 }
 
-/* Placeholder text inside the dark chart canvas. */
+/* Placeholder text inside the dark chart canvas, so canvas ink: --sidetxt
+   resolves to --muted, which is 3.2:1 here in the light theme. */
 .canvas-note {
   margin: 0;
   padding: var(--s6) var(--s4);
-  color: var(--sidetxt);
+  color: var(--canvas-quiet);
   font-size: 12px;
   text-align: center;
 }

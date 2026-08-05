@@ -155,7 +155,7 @@
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--sidetxt);
+  color: var(--canvas-quiet);
 }
 .viewport .layerbtns {
   display: flex;
@@ -169,7 +169,7 @@
   border-radius: var(--rs);
   border: 1px solid var(--viewline);
   background: transparent;
-  color: var(--sidetxt);
+  color: var(--canvas-quiet);
   cursor: pointer;
 }
 .viewport .lbtn[aria-pressed="true"] {
@@ -192,31 +192,37 @@
   vector-effect: non-scaling-stroke;
   opacity: 0.5;
 }
+/* The channel walls: structure, not a phase, so they take the canvas's quiet
+   ink rather than --sidetxt, which followed the theme off the canvas. */
 .vp-wall {
-  stroke: var(--sidetxt);
+  stroke: var(--canvas-quiet);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
   opacity: 0.55;
 }
+/* The model's own front, and the vapour it encloses. */
 .vp-interface {
-  fill: rgb(62 76 104 / 55%);
-  stroke: var(--series-1);
+  fill: var(--phase-vapour);
+  stroke: var(--phase-interface);
   stroke-width: 1.6;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 6px var(--series-1));
+  filter: drop-shadow(0 0 6px var(--phase-interface));
 }
+/* The measured mask, dashed so the pair survives grayscale: the model's front
+   is solid, the measurement is broken, and they are never told apart by hue
+   alone. */
 .vp-measured {
   fill: none;
-  stroke: var(--sidehl);
+  stroke: var(--phase-measured);
   stroke-width: 1.2;
   stroke-dasharray: 4 4;
   vector-effect: non-scaling-stroke;
 }
 .vp-cavity {
-  fill: var(--series-1);
+  fill: var(--phase-interface);
 }
 .vp-label {
-  fill: var(--sidetxt);
+  fill: var(--canvas-quiet);
   font-family: var(--mono);
   font-size: 10px;
 }
@@ -255,7 +261,7 @@
 .viewport .tval {
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--sidetxt);
+  color: var(--canvas-quiet);
   white-space: nowrap;
 }
 

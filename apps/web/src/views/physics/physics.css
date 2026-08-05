@@ -91,11 +91,13 @@
 
 /* The derived shapes read out under the ensemble they describe, on the
    always-dark view canvas -- so the paper ink family is re-pointed onto the
-   chrome one, the same move the aside makes. */
+   CANVAS one. It used to point at --sidehl/--sidetxt, which resolve to --text
+   and --muted: theme-varying ink on a surface that does not vary, and 1.06:1
+   and 3.2:1 respectively against the canvas in the light theme. */
 .viewport .derived {
-  --ink: var(--sidehl);
-  --ink2: var(--sidetxt);
-  --ink3: var(--sidetxt);
+  --ink: var(--canvas-ink-strong);
+  --ink2: var(--canvas-ink);
+  --ink3: var(--canvas-quiet);
   --line: var(--viewline);
   --line2: var(--viewline);
   /* The inset surfaces too, or the info buttons read as white discs on the

@@ -70,6 +70,13 @@ export const VOCABULARY = {
     "--series-measured",
     "--series-model",
   ],
+  /** Canvas residents: the two phases the product is actually about. */
+  phase: [
+    "--phase-vapour",
+    "--phase-interface",
+    "--phase-measured",
+    "--phase-film",
+  ],
   /** Canvas residents: the solver console's tones. */
   console: [
     "--console-text",
@@ -131,6 +138,7 @@ export const THEME_VARYING: readonly string[] = [
 export const CANVAS_TOKENS: readonly string[] = [
   ...VOCABULARY.canvas,
   ...VOCABULARY.series,
+  ...VOCABULARY.phase,
   ...VOCABULARY.console,
   ...VOCABULARY.field,
 ];

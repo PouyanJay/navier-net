@@ -159,6 +159,23 @@
   --focus-item-bg: rgb(127 178 240 / 0.14);
   --focus-item-ink: var(--canvas-ink-strong);
 
+  /* ── Phases [naviernet] ──────────────────────────────────────────────
+     The product's subject is a bubble in a channel, and until now the two
+     phases had no vocabulary: the interface borrowed --series-1, the vapour
+     was a raw rgb() in a view's stylesheet, and the measured mask took --text,
+     which flips with the theme on a canvas that does not.
+
+     A phase family makes the bubble ONE colour everywhere it is drawn — the
+     reconstruction viewport, the frame overlay, a legend, an exported figure —
+     and it survives re-ordering any chart's series. Canvas-resident, so like
+     every canvas token these never appear in a theme block. */
+  --phase-vapour: rgb(62 76 104 / 0.55);
+  --phase-interface: var(--series-1);
+  /* The measured mask, drawn against the model's own front. */
+  --phase-measured: var(--series-measured);
+  /* The thin Bretherton film, and the held-out frame that shares its warmth. */
+  --phase-film: var(--series-4);
+
   /* ── Series (§2.2) ───────────────────────────────────────────────── */
   /* Categorical; must survive grayscale, so pair hue with a dash pattern or
      marker shape rather than relying on hue alone. */
