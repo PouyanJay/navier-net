@@ -201,3 +201,41 @@ test("nothing on the canvas takes a colour that follows the theme", async ({
   expect(dark["--canvas-accent"]).not.toBe("");
   expect(light["--canvas-accent"]).toBe(dark["--canvas-accent"]);
 });
+
+test("the self-hosted faces actually load", async ({ page }) => {
+  // A missing @fontsource import is invisible: the stack falls through to a
+  // system face and the app still looks fine, just not like itself. Only a real
+  // browser can say whether the file arrived.
+  await page.goto("/");
+
+  // fonts.check() only answers for faces already fetched, and a browser fetches
+  // lazily on first use — so ask for each one explicitly and see if a face
+  // comes back. An absent @font-face resolves to an empty list.
+  const loaded = await page.evaluate(async () => {
+    const ask = async (spec: string) =>
+      (await document.fonts.load(spec)).length > 0;
+    return {
+      ui: await ask('600 13px "Instrument Sans Variable"'),
+      display: await ask('560 20px "Newsreader Variable"'),
+      mono: await ask('500 12px "JetBrains Mono"'),
+    };
+  });
+  expect(loaded).toEqual({ ui: true, display: true, mono: true });
+});
+
+test("nothing asks for a weight the UI face cannot draw", async ({ page }) => {
+  // Instrument Sans Variable is a 400-700 axis and font-synthesis is none, so a
+  // heavier request clamps silently rather than being faked.
+  await page.goto("/");
+  const tooHeavy = await page.evaluate(() => {
+    const seen = new Set<string>();
+    for (const el of document.querySelectorAll<HTMLElement>("body *")) {
+      const s = getComputedStyle(el);
+      if (!s.fontFamily.includes("Instrument Sans")) continue;
+      const w = Number(s.fontWeight);
+      if (w > 700) seen.add(`${el.tagName}.${el.className} @ ${w}`);
+    }
+    return [...seen];
+  });
+  expect(tooHeavy).toEqual([]);
+});

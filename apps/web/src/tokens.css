@@ -28,9 +28,14 @@
   color-scheme: dark;
 
   /* ── Type (§4.1) ─────────────────────────────────────────────────── */
+  /* Instrument Sans holds its counters at 11-13px, where most of this UI
+     lives, better than Geist did. Newsreader is optical-size aware, so the
+     equations and captions it sets stay even as they scale. */
   --font-ui:
-    "Geist Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-display: "Crimson Pro", "Iowan Old Style", Palatino, Georgia, serif;
+    "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system,
+    sans-serif;
+  --font-display:
+    "Newsreader Variable", "Iowan Old Style", Palatino, Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* ── Structure (§2.2) ────────────────────────────────────────────── */
