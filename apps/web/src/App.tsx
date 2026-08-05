@@ -17,6 +17,7 @@ import {
   type RunJobStatus,
   type RunSummary,
 } from "./lib/api";
+import { StageHeaderProvider, useStageHeaderSlot } from "./app/StageHeader";
 import { seriesNameOf } from "./lib/series";
 import { DatasetsView } from "./views/DatasetsView";
 import { PhysicsModelView } from "./views/PhysicsModelView";
@@ -106,6 +107,9 @@ function Workspace() {
    * stage gets no run segment at all -- which is right, because on Datasets or
    * Solver there is no run in view to name.
    */
+  // The slot a stage fills with the identity of what it is showing.
+  const stageHeader = useStageHeaderSlot();
+
   const runCrumb = useMemo(() => {
     if (!params.runId || !repo) return null;
     const run = repo.runs.find((candidate) => candidate.id === params.runId);
@@ -219,15 +223,22 @@ function Workspace() {
       project={project?.name ?? null}
       onHome={goHome}
     >
-      <header className="pagehead">
-        <div>
-          <h1>{PAGE_TITLE[active]}</h1>
-          {PAGE_INTRO[active] && <p>{PAGE_INTRO[active]}</p>}
-        </div>
-        {active === "projects" && (
-          <Button variant="primary" onClick={() => setCreatingProject(true)}>
-            ＋ New project
-          </Button>
+      {/* The workspace home keeps a title: the rail calls it "Workspace", so
+          nothing else on screen names it. Inside a project the rail names every
+          stage already, so the header carries the stage's OBJECT instead. */}
+      <header className={active === "projects" ? "pagehead" : "stagehead"}>
+        {active === "projects" ? (
+          <>
+            <div>
+              <h1>{PAGE_TITLE[active]}</h1>
+              {PAGE_INTRO[active] && <p>{PAGE_INTRO[active]}</p>}
+            </div>
+            <Button variant="primary" onClick={() => setCreatingProject(true)}>
+              ＋ New project
+            </Button>
+          </>
+        ) : (
+          <div className="stagehead-slot" ref={stageHeader.setNode} />
         )}
         {project && CONTINUE[active] && (
           <Button
@@ -238,37 +249,41 @@ function Workspace() {
           </Button>
         )}
       </header>
-      <div className="stack">
-        {active === "results" && project && <ResultsPage project={project} />}
-        {active === "projects" && (
-          <ProjectsView
-            onOpen={openProject}
-            creating={creatingProject}
-            onCreatingChange={setCreatingProject}
-            onChanged={refreshStatus}
-          />
-        )}
-        {active === "datasets" && project && (
-          <DatasetsView
-            project={project}
-            onProjectChanged={handleProjectChanged}
-          />
-        )}
-        {active === "physics" && (
-          <PhysicsModelView
-            datasets={
-              repo
-                ? project
-                  ? repo.datasets.filter((d) => project.datasets.includes(d.id))
-                  : repo.datasets
-                : []
-            }
-          />
-        )}
-        {active === "solver" && (
-          <SolverView onRunState={handleRunState} project={project} />
-        )}
-      </div>
+      <StageHeaderProvider node={stageHeader.node}>
+        <div className="stack">
+          {active === "results" && project && <ResultsPage project={project} />}
+          {active === "projects" && (
+            <ProjectsView
+              onOpen={openProject}
+              creating={creatingProject}
+              onCreatingChange={setCreatingProject}
+              onChanged={refreshStatus}
+            />
+          )}
+          {active === "datasets" && project && (
+            <DatasetsView
+              project={project}
+              onProjectChanged={handleProjectChanged}
+            />
+          )}
+          {active === "physics" && (
+            <PhysicsModelView
+              datasets={
+                repo
+                  ? project
+                    ? repo.datasets.filter((d) =>
+                        project.datasets.includes(d.id),
+                      )
+                    : repo.datasets
+                  : []
+              }
+            />
+          )}
+          {active === "solver" && (
+            <SolverView onRunState={handleRunState} project={project} />
+          )}
+        </div>
+      </StageHeaderProvider>
     </AppShell>
   );
 }

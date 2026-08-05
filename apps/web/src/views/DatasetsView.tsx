@@ -4,6 +4,7 @@ import { type ProjectSummary } from "../lib/api";
 import { seriesName } from "../lib/series";
 import { GroupsPanel } from "./datasets/GroupsPanel";
 import { ImageSequence } from "./datasets/ImageSequence";
+import { SeriesIdentity } from "./datasets/SeriesIdentity";
 import { SeriesLibrary } from "./datasets/SeriesLibrary";
 import {
   useDatasetData,
@@ -63,8 +64,17 @@ export function DatasetsView({ project, onProjectChanged }: DatasetsViewProps) {
     data.selected != null && series.some((d) => d.id === data.selected);
   const detail = inScope ? data.detail : null;
 
+  const selectedSeries = inScope
+    ? (series.find((d) => d.id === data.selected) ?? null)
+    : null;
+
   return (
     <>
+      <SeriesIdentity
+        series={selectedSeries}
+        detail={detail}
+        trained={selectedSeries != null && trainedIds.has(selectedSeries.id)}
+      />
       <StageAside {...ASIDE}>
         <SeriesLibrary
           project={project}

@@ -180,3 +180,39 @@ test("the pipeline rail marks its active stage without a border", async ({
     .evaluate((el) => getComputedStyle(el).color);
   expect(style.color).not.toBe(resting);
 });
+
+test("a stage names its object, not itself", async ({ page }) => {
+  // The rail said "Datasets & conditions" to get you here; an <h1> repeating it
+  // plus a paragraph explaining the stage cost about 140px above the fold and
+  // said nothing about the series in view.
+  await openStage(page, null);
+
+  const ident = page.locator(".ident");
+  await expect(ident).toBeVisible();
+  const text = await ident.innerText();
+  expect(text).toContain("Series-1");
+  expect(text).toMatch(/\d+ frames/);
+  // There is still exactly one h1, but it names the SERIES rather than the
+  // stage: the page's heading should be its object.
+  await expect(page.locator("h1")).toHaveCount(1);
+  await expect(page.locator("h1")).toHaveText("Series-1");
+  expect(text).not.toContain("Datasets & conditions");
+});
+
+test("a stage with nothing to say draws no header", async ({ page }) => {
+  // Results has no forward action and does not claim the slot, so the header
+  // would otherwise be a rule across an empty row.
+  await openStage(page, "Results & validation");
+  await expect(page.locator(".stagehead")).toBeHidden();
+});
+
+test("the forward action stays at the far end of the header", async ({
+  page,
+}) => {
+  await openStage(page, null);
+
+  const head = (await page.locator(".stagehead").boundingBox())!;
+  const button = (await page.locator(".stagehead > .btn").boundingBox())!;
+  // Right-aligned whether or not the stage filled the slot beside it.
+  expect(button.x + button.width).toBeGreaterThan(head.x + head.width * 0.75);
+});
