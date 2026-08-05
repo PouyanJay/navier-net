@@ -280,3 +280,70 @@ test("the QC chart is drawn at the width it is rendered at", async ({
   const viewBox = (await svg.getAttribute("viewBox"))!.split(" ").map(Number);
   expect(box.width / viewBox[2]).toBeGreaterThan(0.6);
 });
+
+test("the QC card carries one strip of controls, not two", async ({ page }) => {
+  // The picker used to sit in the header while the export actions sat on their
+  // own row underneath, leaving a ragged two-row header with a gap in it.
+  await openStage(page, null);
+  const picker = page.getByLabel("Preprocessing check");
+  await picker.waitFor();
+
+  const pick = (await picker.boundingBox())!;
+  const act = (await page
+    .locator(".qc-sub .cf-acts button")
+    .first()
+    .boundingBox())!;
+  const centre = (b: { y: number; height: number }) => b.y + b.height / 2;
+  expect(Math.abs(centre(pick) - centre(act))).toBeLessThan(4);
+  // The picker leads the strip and the export actions close it.
+  expect(pick.x).toBeLessThan(act.x);
+
+  // And the heading names the section: it used to restate the picker's own
+  // label, putting the same words twice in one row.
+  await expect(page.locator(".qc-sub h3")).toHaveText("Preprocessing QC");
+});
+
+test("the QC chart reads out the frame under the pointer", async ({ page }) => {
+  await openStage(page, null);
+  const svg = page.locator(".qc-sub svg[role='img']").first();
+  await svg.waitFor();
+  const box = (await svg.boundingBox())!;
+
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.35);
+
+  const tip = page.locator(".qc-sub .chart-tip");
+  await expect(tip).toBeVisible();
+  // Measured, fit and the gap between them: the check's whole question.
+  await expect(tip).toContainText("measured");
+  await expect(tip).toContainText("fit");
+  await expect(tip).toContainText("residual");
+  // The same frame is marked in the fit and in the residual strip below it.
+  const dot = page.locator(".qc-sub .qc-dot.hot");
+  await expect(dot).toHaveCount(1);
+  await expect(page.locator(".qc-sub .qc-resid-dot.hot")).toHaveCount(1);
+
+  // The cursor snaps to that frame rather than tracking the raw pointer, so
+  // the number in the readout is the one the line is standing on. (A zero-area
+  // <line> never satisfies toBeVisible, hence the geometric assertion.)
+  const cursor = page.locator(".qc-sub .chart-cursor");
+  await expect(cursor).not.toHaveCSS("display", "none");
+  expect(await cursor.getAttribute("x1")).toBe(await dot.getAttribute("cx"));
+});
+
+test("the QC chart can be read without a pointer", async ({ page }) => {
+  // A crosshair is a mouse affordance and says nothing to anyone without one.
+  await openStage(page, null);
+  const svg = page.locator(".qc-sub svg[role='img']").first();
+  await svg.waitFor();
+
+  await svg.focus();
+  await expect(page.locator(".qc-sub .chart-tip")).toBeVisible();
+  const live = page.locator(".qc-sub [role='status']");
+  await expect(live).toContainText("frame 1");
+
+  await page.keyboard.press("ArrowRight");
+  await expect(live).toContainText("frame 2");
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".qc-sub .chart-tip")).toBeHidden();
+});

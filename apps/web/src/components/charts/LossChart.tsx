@@ -2,7 +2,7 @@ import * as d3 from "d3";
 import { useEffect, useRef } from "react";
 
 import type { LossRecord } from "../../lib/api";
-import { attachCrosshair } from "./crosshair";
+import { attachCrosshair, type Readout } from "./crosshair";
 
 const WIDTH = 640;
 const HEIGHT = 210;
@@ -133,6 +133,7 @@ const READOUT_TERMS = ["data", "vof", "div", "src", "bc"] as const;
 export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
   const ref = useRef<SVGSVGElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
+  const liveRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     const svg = d3.select(ref.current);
@@ -156,6 +157,21 @@ export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
 
     // Crosshair: every loss term at the nearest logged step.
     const bisect = d3.bisector((r: LossRecord) => r.step).center;
+    const at = (index: number): Readout | null => {
+      const record = records[index];
+      if (!record) return null;
+      return {
+        xPix: x(record.step),
+        index,
+        title: `step ${record.step}`,
+        rows: READOUT_TERMS.map((term) => ({
+          text: `${term}  ${record[term].toExponential(2)}`,
+          swatchClass: (SERIES as readonly string[]).includes(term)
+            ? term
+            : undefined,
+        })),
+      };
+    };
     const hide = attachCrosshair({
       svg,
       g,
@@ -164,20 +180,8 @@ export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
       margin: MARGIN,
       innerWidth: INNER_W,
       innerHeight: INNER_H,
-      readout: (px) => {
-        const record = records[bisect(records, x.invert(px))];
-        if (!record) return null;
-        return {
-          xPix: x(record.step),
-          title: `step ${record.step}`,
-          rows: READOUT_TERMS.map((term) => ({
-            text: `${term}  ${record[term].toExponential(2)}`,
-            swatchClass: (SERIES as readonly string[]).includes(term)
-              ? term
-              : undefined,
-          })),
-        };
-      },
+      readout: (px) => at(bisect(records, x.invert(px))),
+      keyboard: { count: records.length, at, live: liveRef.current },
     });
     return hide;
   }, [records, rebalanceSteps]);
@@ -189,9 +193,10 @@ export function LossChart({ records, rebalanceSteps = [] }: LossChartProps) {
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         preserveAspectRatio="xMidYMid meet"
         role="img"
-        aria-label="Training loss per term over steps, on a logarithmic axis."
+        aria-label="Training loss per term over steps, on a logarithmic axis. Focus the chart and use the arrow keys to read each logged step."
       />
       <div ref={tipRef} className="chart-tip" style={{ display: "none" }} />
+      <p ref={liveRef} className="sr-only" role="status" aria-live="polite" />
     </div>
   );
 }

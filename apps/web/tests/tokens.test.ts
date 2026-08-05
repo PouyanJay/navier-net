@@ -305,6 +305,46 @@ describe("no reference dangles", () => {
   });
 });
 
+describe("the chart readout is drawn in canvas ink", () => {
+  /** One rule's declarations, by exact selector. */
+  function ruleBody(css: string, selector: string): string {
+    const at = css.indexOf(`\n${selector} {`);
+    expect(at, `${selector} not found`).toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf("}", at));
+  }
+
+  /* Chrome ink and its shim aliases. Any of these on the canvas inverts
+     underneath itself, because the canvas does not follow the theme. */
+  const CHROME_INK = [
+    "--text",
+    "--text-soft",
+    "--muted",
+    "--faint",
+    "--ink",
+    "--ink2",
+    "--ink3",
+    "--sidetxt",
+    "--sidehl",
+  ];
+
+  it("keeps the crosshair and its tooltip off chrome ink", () => {
+    // The regression this guards was live: .chart-tip resolved --sidetxt and
+    // .tip-x resolved --sidehl, which are --muted and --text. On the dark view
+    // canvas in the light theme that is near-black on near-black — the tooltip
+    // measured 1.06:1 and was, in practice, invisible.
+    const css = readFileSync(resolve("src/components/components.css"), "utf8");
+    const offenders = [".chart-cursor", ".chart-tip", ".chart-tip .tip-x"]
+      .flatMap((selector) => {
+        const body = ruleBody(css, selector);
+        return CHROME_INK.filter((token) =>
+          new RegExp(`var\\(${token}[),]`).test(body),
+        ).map((token) => `${selector} uses ${token}`);
+      })
+      .sort();
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("icons come from the library, not by hand", () => {
   /**
    * Files allowed to draw SVG directly: charts, the reconstruction viewport,

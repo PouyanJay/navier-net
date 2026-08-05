@@ -1665,6 +1665,122 @@ describe("QC chart axes", () => {
   });
 });
 
+describe("QC panel header", () => {
+  async function showQc() {
+    mockApi({ processed: true });
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    // The heading is the section's, so it is on screen before the QC data is;
+    // the picker is what proves a check has actually been drawn.
+    await screen.findByLabelText("Preprocessing check");
+  }
+
+  it("names the section, leaving the chart to be named by its picker", async () => {
+    // The heading used to restate the picker's own label, so "Growth
+    // kinematics" sat twice in one row and the header reflowed on every switch.
+    await showQc();
+    const heading = screen.getByRole("heading", { name: "Preprocessing QC" });
+
+    fireEvent.change(screen.getByLabelText("Preprocessing check"), {
+      target: { value: "interface" },
+    });
+
+    expect(heading).toHaveTextContent("Preprocessing QC");
+    expect(
+      screen.queryByRole("heading", { name: /Interface evolution/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("puts the picker in the chart's own toolbar, not a second control row", async () => {
+    await showQc();
+    const picker = screen.getByLabelText("Preprocessing check");
+    expect(picker.closest(".cf-bar")).not.toBeNull();
+    // One strip: the export actions share the row rather than stack under it.
+    expect(
+      picker.closest(".cf-bar")!.querySelector(".cf-acts button"),
+    ).not.toBeNull();
+  });
+
+  it("gives every check a headline finding, so the header keeps its shape", async () => {
+    await showQc();
+    expect(screen.getByText("180")).toBeInTheDocument(); // mm/s nose speed
+    expect(screen.getByText(/nose speed/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Preprocessing check"), {
+      target: { value: "interface" },
+    });
+
+    expect(screen.getByText(/frames overlaid/)).toBeInTheDocument();
+    expect(document.querySelector(".qc-finding")).not.toBeNull();
+  });
+});
+
+describe("QC chart interaction", () => {
+  const qcSvg = () =>
+    document.querySelector<SVGSVGElement>(".qc-sub .chart-wrap svg")!;
+  const live = () =>
+    document.querySelector<HTMLElement>(".qc-sub .chart-wrap [role='status']")!;
+
+  async function focusKinematics() {
+    mockApi({ processed: true });
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    await screen.findByRole("img", {
+      name: /Bubble length in micrometres against time/,
+    });
+    fireEvent.focus(qcSvg());
+  }
+
+  it("reaches every frame from the keyboard, not the pointer alone", async () => {
+    // A crosshair says nothing to anyone not holding a mouse, so the same
+    // readout is announced. Fixture: L = 600, 800, 1000 µm at t = 0, 0.5, 1 ms
+    // against a fit of 180 mm/s from 610 µm.
+    await focusKinematics();
+    expect(live()).toHaveTextContent("frame 1");
+
+    fireEvent.keyDown(qcSvg(), { key: "ArrowRight" });
+
+    expect(live()).toHaveTextContent("t = 0.5 ms");
+    expect(live()).toHaveTextContent("800 µm"); // measured
+    expect(live()).toHaveTextContent("700 µm"); // fit at t = 0.5
+    expect(live()).toHaveTextContent("+100.0 µm"); // the gap between them
+  });
+
+  it("carries the focused frame into the residual strip below the fit", async () => {
+    // Sharing one x axis is what lets a reader take a frame from the fit to
+    // its error; emphasising only one of the two panels would waste that.
+    await focusKinematics();
+    fireEvent.keyDown(qcSvg(), { key: "End" });
+
+    const dots = document.querySelectorAll(".qc-sub .qc-dot");
+    const resid = document.querySelectorAll(".qc-sub .qc-resid-dot");
+    expect(dots[dots.length - 1]).toHaveClass("hot");
+    expect(resid[resid.length - 1]).toHaveClass("hot");
+    expect(document.querySelectorAll(".qc-sub .hot")).toHaveLength(2);
+  });
+
+  it("clears the readout on Escape and on blur", async () => {
+    await focusKinematics();
+    fireEvent.keyDown(qcSvg(), { key: "Escape" });
+
+    expect(live()).toHaveTextContent("");
+    expect(document.querySelector(".qc-sub .qc-dot.hot")).toBeNull();
+  });
+
+  it("probes a silhouette in the interface check, dimming the rest", async () => {
+    mockApi({ processed: true });
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.change(await screen.findByLabelText("Preprocessing check"), {
+      target: { value: "interface" },
+    });
+
+    fireEvent.focus(qcSvg());
+
+    // The fixture has one frame, so it is the hot one and there is no
+    // context left to recede — the classes still have to land.
+    expect(document.querySelector(".qc-silhouette")).toHaveClass("hot");
+    expect(live()).toHaveTextContent("nose x");
+  });
+});
+
 describe("frame boundary overlay", () => {
   // A calibrated, processed series is what makes the overlay possible: the
   // rings need µm/px and the raw frame size to land on real pixels.

@@ -561,13 +561,25 @@
 /* QC chart styling (on the dark view canvas) */
 .qc-fit {
   stroke-dasharray: 6 4;
-  stroke: var(--amber);
+  stroke: var(--series-model);
 }
 .qc-measured {
-  stroke: var(--acc2);
+  stroke: var(--series-measured);
 }
 .qc-dot {
-  fill: var(--acc2);
+  fill: var(--series-measured);
+}
+/* The frame under the crosshair, in the fit and in its residual at once: the
+   pair is the whole point of stacking the two panels on one x axis. */
+.qc-dot.hot {
+  r: 6;
+  stroke: var(--canvas-ink-strong);
+  stroke-width: 1.5;
+}
+.qc-resid-dot.hot {
+  r: 4.2;
+  stroke: var(--canvas-ink-strong);
+  stroke-width: 1.5;
 }
 /* One frame's bubble outline. Translucent so the stack of frames reads as
    growth; even-odd so a ring inside a ring stays a hole. */
@@ -577,8 +589,33 @@
   stroke-width: 1.3;
   stroke-linejoin: round;
 }
-.qc-silhouette:hover {
-  fill-opacity: 0.24;
+/* The frame readout runs along the top of the plot as one line. A stacked box
+   is taller than the clear band above a bubble in a shallow channel, so it
+   would sit on the outline it is describing. */
+.qc-frame-tip {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+}
+.qc-frame-tip .tip-x {
+  margin-bottom: 0;
+}
+.qc-frame-tip .tip-row {
+  gap: var(--s1);
+}
+.qc-frame-tip .tip-swatch {
+  display: none;
+}
+
+/* Probing one frame pushes the rest back rather than hiding them: the stack is
+   the context that makes a single outline mean anything. */
+.qc-silhouette.cool {
+  opacity: 0.28;
+}
+.qc-silhouette.hot {
+  opacity: 1;
+  fill-opacity: 0.26;
+  stroke-width: 2;
 }
 .qc-pin {
   stroke: var(--console-dim);
@@ -590,7 +627,7 @@
   font-size: 10px;
 }
 .qc-fit-label {
-  fill: var(--amber);
+  fill: var(--series-model);
   font-family: var(--mono);
   font-size: 11px;
 }
@@ -857,17 +894,22 @@
   display: grid;
   gap: var(--s3);
 }
+/* Identity on the left, the open check's headline number on the right. The
+   heading names the section and never the chart: the picker in the toolbar
+   already names that, and a heading that restated it left two copies of the
+   same words side by side and reflowed the header on every switch. */
 .qc-sub-hd {
   display: flex;
-  align-items: flex-end;
-  gap: var(--s3);
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s4);
   flex-wrap: wrap;
 }
 .qc-sub-title {
   display: flex;
   align-items: baseline;
   gap: var(--s2);
-  margin-right: auto;
+  min-width: 0;
 }
 .qc-sub-title h3 {
   margin: 0;
@@ -1005,12 +1047,15 @@
   font-size: 9px;
 }
 
-/* The kinematics finding, ahead of the plot that evidences it. */
+/* The open check's finding, ahead of the plot that evidences it. Anchored to
+   the header's right edge rather than left to float between the title and the
+   controls, which is where it read as misplaced. */
 .qc-finding {
   display: flex;
   align-items: baseline;
+  justify-content: flex-end;
   gap: var(--s2);
-  margin: 0;
+  margin: 0 0 0 auto;
   flex-wrap: wrap;
 }
 .qc-finding-v {
@@ -1031,11 +1076,23 @@
   padding: 2px 8px;
 }
 
-/* The check picker: one slot in the header however many checks there are, and
-   it leaves the header's width to the finding beside it. */
+/* The check picker rides the chart's own toolbar, beside the export actions:
+   it changes what is plotted, so it belongs against the plot, and one strip of
+   controls beats two stacked ones. Its caption travels with it. */
 .qc-pick {
-  margin-left: auto;
-  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+.qc-pick-sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .qc-pick select {
   height: 30px;

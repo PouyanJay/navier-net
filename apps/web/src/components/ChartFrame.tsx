@@ -21,6 +21,13 @@ interface ChartFrameProps {
   json?: unknown;
   /** Raster charts (canvas) have no meaningful SVG export. */
   raster?: boolean;
+  /**
+   * The chart's own controls, led into the toolbar row ahead of the export
+   * actions. A control that changes what is plotted belongs beside the chart
+   * it changes, and sharing this row keeps a card to one strip of controls
+   * rather than two stacked ones.
+   */
+  controls?: ReactNode;
   /** Renders the chart — called for the inline view AND the expanded modal,
    * so the modal gets a live instance, not a stale copy. */
   render: (expanded: boolean) => ReactNode;
@@ -38,6 +45,7 @@ export function ChartFrame({
   rows,
   json,
   raster = false,
+  controls,
   render,
 }: ChartFrameProps) {
   const host = useRef<HTMLDivElement>(null);
@@ -98,53 +106,60 @@ export function ChartFrame({
   };
 
   const toolbar = (
-    <div className="cf-bar" role="group" aria-label={`${title} chart actions`}>
-      <button
-        type="button"
-        className="cf-btn"
-        onClick={() => setExpanded(true)}
-        title="Expand the chart"
+    <div className="cf-bar">
+      {controls && <div className="cf-lead">{controls}</div>}
+      <div
+        className="cf-acts"
+        role="group"
+        aria-label={`${title} chart actions`}
       >
-        Expand
-      </button>
-      <button
-        type="button"
-        className="cf-btn"
-        onClick={() => void exportImage("png")}
-        title="Download as high-resolution PNG"
-      >
-        PNG
-      </button>
-      {!raster && (
         <button
           type="button"
           className="cf-btn"
-          onClick={() => void exportImage("svg")}
-          title="Download as standalone SVG"
+          onClick={() => setExpanded(true)}
+          title="Expand the chart"
         >
-          SVG
+          Expand
         </button>
-      )}
-      {rows && (
-        <>
+        <button
+          type="button"
+          className="cf-btn"
+          onClick={() => void exportImage("png")}
+          title="Download as high-resolution PNG"
+        >
+          PNG
+        </button>
+        {!raster && (
           <button
             type="button"
             className="cf-btn"
-            onClick={() => exportData("csv")}
-            title="Download the charted data as CSV"
+            onClick={() => void exportImage("svg")}
+            title="Download as standalone SVG"
           >
-            CSV
+            SVG
           </button>
-          <button
-            type="button"
-            className="cf-btn"
-            onClick={() => exportData("json")}
-            title="Download the charted data as JSON"
-          >
-            JSON
-          </button>
-        </>
-      )}
+        )}
+        {rows && (
+          <>
+            <button
+              type="button"
+              className="cf-btn"
+              onClick={() => exportData("csv")}
+              title="Download the charted data as CSV"
+            >
+              CSV
+            </button>
+            <button
+              type="button"
+              className="cf-btn"
+              onClick={() => exportData("json")}
+              title="Download the charted data as JSON"
+            >
+              JSON
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 

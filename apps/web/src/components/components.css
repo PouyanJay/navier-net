@@ -772,8 +772,12 @@ text.chart-axis-title {
   fill: transparent;
   cursor: crosshair;
 }
+/* Canvas ink, not chrome ink. The cursor and its readout are drawn ON the view
+   canvas, which is dark in both themes, so a theme-varying token here inverts
+   underneath itself: --sidehl resolves to --text, which in the light theme is
+   near-black on near-black. */
 .chart-cursor {
-  stroke: var(--sidetxt);
+  stroke: var(--canvas-quiet);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   pointer-events: none;
@@ -781,19 +785,28 @@ text.chart-axis-title {
 .chart-tip {
   position: absolute;
   pointer-events: none;
-  background: var(--view2);
-  border: 1px solid var(--viewline);
+  background: var(--canvas-raised);
+  border: 1px solid var(--canvas-rule);
   border-radius: var(--rs);
   padding: var(--s2) var(--s3);
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--sidetxt);
-  white-space: nowrap;
+  color: var(--canvas-ink);
+  white-space: pre;
   z-index: 2;
 }
 .chart-tip .tip-x {
-  color: var(--sidehl);
+  color: var(--canvas-ink-strong);
   margin-bottom: 2px;
+}
+
+/* A chart that can be stepped from the keyboard has to say where focus is, and
+   the ring is on the canvas too: --focus follows the theme, --canvas-accent
+   does not. */
+.chart-wrap svg:focus-visible {
+  outline: 2px solid var(--canvas-accent);
+  outline-offset: 2px;
+  border-radius: var(--rs);
 }
 .chart-tip .tip-row {
   display: flex;
@@ -830,6 +843,14 @@ text.chart-axis-title {
 }
 .chart-tip .tip-swatch.div {
   background: var(--purple);
+}
+
+/* Preprocessing-QC readout: the measured series and the line fitted to it. */
+.chart-tip .tip-swatch.measured {
+  background: var(--series-measured);
+}
+.chart-tip .tip-swatch.fit {
+  background: var(--series-model);
 }
 
 /* Failed-artifact placeholder (replaces a broken <img>) */
@@ -958,11 +979,23 @@ text.chart-axis-title {
   min-width: 0;
 }
 
+/* One control strip per chart: the chart's own controls lead it, the export
+   actions close it. Both ends are anchored, so nothing floats in between. */
 .cf-bar {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: var(--s1);
+  gap: var(--s3);
   margin-bottom: var(--s1);
+}
+.cf-lead {
+  margin-right: auto;
+  min-width: 0;
+}
+.cf-acts {
+  display: flex;
+  gap: var(--s1);
+  flex: none;
 }
 
 .cf-btn {

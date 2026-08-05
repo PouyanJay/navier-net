@@ -162,6 +162,7 @@ export function CompareChart({
 }: CompareChartProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
+  const liveRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     const svg = d3.select(svgRef.current);
@@ -232,6 +233,37 @@ export function CompareChart({
     });
 
     // Crosshair + tooltip: nearest-x readout across every series.
+    const readoutAt = (xValue: number) => {
+      const nearest = drawable.map((s) => {
+        const idx = d3
+          .bisector((p: ComparePoint) => p.x)
+          .center(s.points, xValue);
+        return { id: s.id, point: s.points[idx] };
+      });
+      const anchor = nearest.find((entry) => entry.point != null)?.point;
+      if (!anchor) return null;
+      return {
+        xPix: x(anchor.x),
+        title: `${xLabel} ${anchor.x}`,
+        // A series with nothing at this x reads "not measured" rather than
+        // borrowing a neighbour's number.
+        rows: nearest.map((entry, i) => ({
+          text: `${entry.id}  ${
+            entry.point?.y == null ? "not measured" : yFormat(entry.point.y)
+          }`,
+          swatchClass: paletteClass(drawable[i], i),
+        })),
+      };
+    };
+    // Arrow keys step the densest series' x values: the one that resolves the
+    // most positions is the one a reader loses least by stepping through.
+    const axis = drawable
+      .reduce(
+        (best, s) => (s.points.length > best.points.length ? s : best),
+        drawable[0],
+      )
+      .points.map((p) => p.x);
+
     const hide = attachCrosshair({
       svg,
       g,
@@ -240,28 +272,11 @@ export function CompareChart({
       margin: MARGIN,
       innerWidth: INNER_W,
       innerHeight: INNER_H,
-      readout: (px) => {
-        const xValue = x.invert(px);
-        const nearest = drawable.map((s) => {
-          const idx = d3
-            .bisector((p: ComparePoint) => p.x)
-            .center(s.points, xValue);
-          return { id: s.id, point: s.points[idx] };
-        });
-        const anchor = nearest.find((entry) => entry.point != null)?.point;
-        if (!anchor) return null;
-        return {
-          xPix: x(anchor.x),
-          title: `${xLabel} ${anchor.x}`,
-          // A series with nothing at this x reads "not measured" rather than
-          // borrowing a neighbour's number.
-          rows: nearest.map((entry, i) => ({
-            text: `${entry.id}  ${
-              entry.point?.y == null ? "not measured" : yFormat(entry.point.y)
-            }`,
-            swatchClass: paletteClass(drawable[i], i),
-          })),
-        };
+      readout: (px) => readoutAt(x.invert(px)),
+      keyboard: {
+        count: axis.length,
+        at: (index) => readoutAt(axis[index]),
+        live: liveRef.current,
       },
     });
     return hide;
@@ -277,6 +292,7 @@ export function CompareChart({
         aria-label={ariaLabel}
       />
       <div ref={tipRef} className="chart-tip" style={{ display: "none" }} />
+      <p ref={liveRef} className="sr-only" role="status" aria-live="polite" />
     </div>
   );
 }
