@@ -140,3 +140,125 @@ def test_cap_freedom_trains_end_to_end(tmp_path):
     model, _, _ = load_model(cfg, paths)
 
     assert model.nets["phi"].cap_freedom is True
+
+
+# --------------------------------------------------------------------------
+# T1 -- the angular modulation: free where it should be, absent where the R3
+# guarantees live
+# --------------------------------------------------------------------------
+
+
+def _loud(geo, scale: float = 30.0):
+    """Amplify the cap net so its deviation is unmistakable. Initialised, the net
+    sits within a hair of the circle on purpose; a test of what the freedom CAN
+    do has to open it up first (the same trick the nose-rate regression uses)."""
+    with torch.no_grad():
+        geo.cap_net[-1].weight.mul_(scale)
+        geo.cap_net[-1].bias.add_(0.7)
+    return geo
+
+
+def _front_of(geo, t: float, n_body: int = 24, n_cap: int = 24):
+    return geo.front(torch.tensor([[t]]), n_body=n_body, n_cap=n_cap)
+
+
+def test_the_modulation_is_identically_zero_on_the_body(tmp_path):
+    """The gate vanishes at the seam, which is what makes the body untouched --
+    and that is what keeps the alpha field and the front samples describing the
+    same shape. Points strictly between the two apexes must be unmoved."""
+    free, plain = _loud(_free(3)), _geo(3)
+    f = free.frame(torch.tensor([[0.4]]))
+    ax, bx = float(f.ax.detach()), float(f.bx.detach())
+
+    x = torch.zeros(200, 3)
+    x[:, 0] = torch.linspace(ax + 1e-3, bx - 1e-3, 200)  # body only
+    x[:, 1] = 0.25 + 0.15 * torch.rand(200)
+    x[:, 2] = 0.4
+
+    assert torch.allclose(free(x), plain(x), atol=1e-9)
+
+
+def test_the_root_apex_stays_exactly_on_the_measured_anchor(tmp_path):
+    """The gate is zero at the apex, so the pin the R3 win was built on survives
+    the freedom -- on random weights, and far outside the training window."""
+    geo = _loud(_free(5))
+    for t in (0.0, 0.5, 1.0, 7.3):
+        root = geo.root_point(t)
+        assert torch.allclose(root[0], torch.tensor(PRIORS["x_root"]), atol=1e-6)
+        phi = geo(torch.tensor([[float(root[0]), float(root[1]), t]]))
+        assert abs(float(phi)) < 1e-5, f"interface must pass through the root at t={t}"
+
+
+def test_the_nose_apex_stays_exactly_the_monotone_nose(tmp_path):
+    """Same at the far end: the tip is still s(t), so the monotone-nose guarantee
+    is untouched and the freed cap cannot smuggle the front forward."""
+    free, plain = _loud(_free(5)), _geo(5)
+    for t in (0.0, 0.5, 1.0, 7.3):
+        tt = torch.tensor([[t]])
+        assert torch.allclose(free.nose(tt), plain.nose(tt), atol=1e-9)
+        tip = free.nose_point(t)
+        assert torch.allclose(tip[0], free.nose(tt).reshape(()), atol=1e-6)
+        phi = free(torch.tensor([[float(tip[0]), float(tip[1]), t]]))
+        assert abs(float(phi)) < 1e-5
+
+
+def test_the_cap_is_no_longer_a_circle(tmp_path):
+    """The point of the whole exercise: the distance from the cap centre to the
+    interface must VARY with angle. On the circular construction it is constant
+    to machine precision."""
+    free, plain = _loud(_free(11)), _geo(11)
+
+    def cap_radii(geo):
+        front = _front_of(geo, 0.6)
+        frame = geo.frame(torch.tensor([[0.6]]))
+        on_nose = (front.on_cap.squeeze(1) > 0) & (front.u.squeeze(1) == 1.0)
+        pts = front.points[on_nose]
+        centre = torch.cat(
+            [frame.bx, geo.centerline(torch.ones(1, 1), torch.tensor([[0.6]]))], 1
+        )
+        return (pts[:, :2] - centre).norm(dim=1)
+
+    assert float(cap_radii(plain).std()) < 1e-6, "the baseline cap must be a circle"
+    assert float(cap_radii(free).std()) > 1e-3, "the freed cap must not be one"
+
+
+def test_the_departure_from_the_circle_respects_its_bound(tmp_path):
+    """delta is the guarantee the cap cannot fold. Even with the net driven hard,
+    the radius must stay within delta of the circle it replaces."""
+    delta = 0.2
+    geo = _loud(_free(13, delta=delta), scale=200.0)
+    front = _front_of(geo, 0.6, n_cap=64)
+    frame = geo.frame(torch.tensor([[0.6]]))
+    on_nose = (front.on_cap.squeeze(1) > 0) & (front.u.squeeze(1) == 1.0)
+    pts = front.points[on_nose]
+    centre = torch.cat([frame.bx, geo.centerline(torch.ones(1, 1), torch.tensor([[0.6]]))], 1)
+
+    ratio = (pts[:, :2] - centre).norm(dim=1) / float(frame.r_nose)
+    assert float((ratio - 1.0).abs().max()) <= delta + 1e-6
+
+
+def test_every_front_sample_still_lies_on_the_interface(tmp_path):
+    """Field/front consistency, the invariant the whole construction rests on: if
+    `forward` and `front` disagreed, the data term and the sharp-interface
+    residuals would be pulling on two different bubbles."""
+    geo = _loud(_free(17))
+    for t in (0.2, 0.9):
+        front = _front_of(geo, t, n_body=32, n_cap=32)
+        phi = geo(front.points)
+        assert float(phi.abs().max()) < 1e-4, f"front sample off the interface at t={t}"
+
+
+def test_the_freed_cap_still_closes_one_connected_shape(tmp_path):
+    """The topology guarantee: a positive radius everywhere means the vapour
+    region cannot split, and delta < 1 is what keeps it positive."""
+    geo = _loud(_free(19), scale=200.0)
+    front = _front_of(geo, 0.7, n_body=64, n_cap=64)
+    frame = geo.frame(torch.tensor([[0.7]]))
+
+    # Every sampled point sits at a strictly positive distance from the spine.
+    spine_y = geo.centerline(front.u, front.points[:, 2:3])
+    spine_x = frame.ax + front.u * (frame.bx - frame.ax)
+    radial = (
+        (front.points[:, 0:1] - spine_x) ** 2 + (front.points[:, 1:2] - spine_y) ** 2
+    ).sqrt()
+    assert float(radial.min()) > 0.0

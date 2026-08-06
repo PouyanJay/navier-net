@@ -435,6 +435,50 @@ class GeometricInterface(nn.Module):
         half = _half_height(self._anchors(ctx))
         return half * (2.0 * raw - 1.0 if self.allow_pinch else raw)
 
+    def _cap_modulation(
+        self,
+        nx: torch.Tensor,
+        ny: torch.Tensor,
+        u: torch.Tensor,
+        t: torch.Tensor,
+        ctx: GeometryContext,
+    ) -> torch.Tensor:
+        """The cap's departure from its circle, as a factor on the local radius.
+
+        ``(nx, ny)`` is the unit radial direction from the spine point out to the
+        query point -- the circle's own outward normal. The gate is
+        ``4 nx^2 ny^2``, which is ``sin^2(2 psi)`` in the cap angle, and every
+        property this construction needs is a property of that gate:
+
+        - **Zero at the apex** (``ny = 0``). The tip does not move, so the root
+          stays pinned exactly on the measured anchor and the nose stays exactly
+          the monotone ``s(t)``. Those two are what the R3 win was built on, and
+          a gate that was non-zero here would quietly spend them.
+        - **Zero at the seam, and across the whole body** (``nx = 0``: on the body
+          the spine point shares the query point's x). So the cap still meets the
+          profile, and -- the invariant everything rests on -- ``forward`` and
+          ``front`` keep describing ONE shape. If they diverged, the data term and
+          the sharp-interface residuals would be pulling on two different bubbles.
+        - **Quadratic about the apex** (``b''(0) = 2``), which is the whole point:
+          for a polar curve with ``r'(0) = 0``, ``kappa = (r - r'')/r^2``, so a
+          non-zero ``r''`` at the tip moves the tip curvature off ``1/r``. A
+          flattened nose -- what an advancing bubble in a Hele-Shaw gap actually
+          has -- becomes reachable for the first time.
+
+        Even powers throughout, so it is smooth across ``nx = 0`` with no
+        ``atan2`` and no ``abs``: a kink at the seam would have fed straight into
+        the jump condition as a curvature spike (the KAPPA lesson).
+
+        ``tanh`` bounds the departure to ``cap_delta`` of the local radius, which
+        is what stops a cap folding through itself; the net's zero bias means the
+        construction OPENS as the circle it replaces and learns its way off it.
+        """
+        if not self.cap_freedom:
+            return torch.ones_like(nx)
+        gate = 4.0 * nx**2 * ny**2
+        features = _with_context(torch.cat([nx, ny, u, t], dim=1), ctx.c)
+        return 1.0 + self.cap_delta * gate * torch.tanh(self.cap_net(features))
+
     def _width_logit(
         self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext
     ) -> torch.Tensor:
@@ -539,7 +583,15 @@ class GeometricInterface(nn.Module):
         radius = self._radius(u, t, ctx) * f.scale
         spine_x = f.ax + u * (f.bx - f.ax)
         spine_y = self.centerline(u, t, ctx)
-        d_sq = (x[:, 0:1] - spine_x) ** 2 + (x[:, 1:2] - spine_y) ** 2
+        dx, dy = x[:, 0:1] - spine_x, x[:, 1:2] - spine_y
+        d_sq = dx**2 + dy**2
+        # Free caps: the radius the field compares against varies with the
+        # direction the query point lies in. The gate is zero on the body (where
+        # `dx` is zero because the spine point shares the point's x), so this is
+        # the same field as before everywhere except inside the two caps.
+        if self.cap_freedom:
+            d = torch.sqrt(d_sq + ABS_SMOOTH**2)
+            radius = radius * self._cap_modulation(dx / d, dy / d, u, t, ctx)
         # Matched floors: phi = 0 exactly where d = R (the interface, incl. both
         # apexes), while staying C-infinity on the spine (the KAPPA lesson).
         # `copysign` carries a negative radius through as a negative phi, so a
@@ -693,6 +745,12 @@ class GeometricInterface(nn.Module):
         centre_x = torch.where(at_root, frame.ax, frame.bx)
         sign = torch.where(at_root, -torch.ones_like(query.u), torch.ones_like(query.u))
         cos, sin = torch.cos(query.angle), torch.sin(query.angle)
+
+        # The same modulation `forward` applies, read off the same outward radial
+        # direction -- here it is the cap angle itself, since these points ARE the
+        # cap. `sign` carries the root cap's outward direction (-x), so one net
+        # sees a consistent frame at both ends.
+        radius = radius * self._cap_modulation(sign * cos, sin, query.u, query.t, ctx)
 
         position = torch.cat(
             [
