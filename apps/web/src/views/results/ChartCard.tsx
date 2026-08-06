@@ -32,11 +32,14 @@ export function ChartCard({
   raster,
   render,
 }: ChartCardProps) {
+  // The unit belongs to the quantity, so it sits with the name rather than
+  // floating at the far edge of the card above an unrelated button.
   return (
     <div className="kin-chart">
       <div className="kin-chart-head">
-        <h3>{title}</h3>
-        <span className="kin-unit">{unit}</span>
+        <h3>
+          {title} <span className="kin-unit">{unit}</span>
+        </h3>
       </div>
       <ChartFrame
         name={name}

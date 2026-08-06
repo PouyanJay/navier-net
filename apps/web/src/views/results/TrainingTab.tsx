@@ -4,6 +4,7 @@ import {
   CompareChart,
   type CompareSeries,
 } from "../../components/charts/CompareChart";
+import { ResidualBars } from "../../components/charts/ResidualBars";
 import { api, type LossRecord } from "../../lib/api";
 import { useApiResource } from "./useApiResource";
 
@@ -32,6 +33,10 @@ const TERM_LABELS: Record<string, { family: Family; label: string }> = {
 };
 
 type Family = "core" | "interface" | "extra";
+
+/** The five terms the tab charted before it read the record. Marked on the bars
+ * so what this chart ADDED reads without a legend claiming it. */
+const PREVIOUSLY_CHARTED = new Set(["data", "vof", "div", "src", "bc"]);
 
 /** Keys that are not loss terms. */
 const NOT_A_TERM = new Set(["step", "lr"]);
@@ -130,27 +135,54 @@ export function TrainingTab({ runId }: TrainingTabProps) {
       )}
       {history && history.length > 0 && (
         <>
-          <ChartFrame
-            name={`${runId}-loss-history`}
-            title="Training loss per term"
-            rows={history as unknown as Record<string, unknown>[]}
-            render={() => (
-              <ViewCanvas>
-                <CompareChart
-                  series={series}
-                  logY
-                  xLabel="step"
-                  yLabel="residual · log scale"
-                  ariaLabel={`Every recorded loss term over optimisation steps, log scale. ${
-                    dominant
-                      ? `${dominant.key} ends highest at ${dominant.final.toExponential(1)}.`
-                      : ""
-                  }`}
-                  yFormat={(v) => v.toExponential(1)}
-                />
-              </ViewCanvas>
-            )}
-          />
+          <div className="train-charts">
+            <ChartFrame
+              name={`${runId}-loss-history`}
+              title="Training loss per term"
+              rows={history as unknown as Record<string, unknown>[]}
+              render={() => (
+                <ViewCanvas>
+                  <CompareChart
+                    series={series}
+                    logY
+                    xLabel="step"
+                    yLabel="residual · log scale"
+                    ariaLabel={`Every recorded loss term over optimisation steps, log scale. ${
+                      dominant
+                        ? `${dominant.key} ends highest at ${dominant.final.toExponential(1)}.`
+                        : ""
+                    }`}
+                    yFormat={(v) => v.toExponential(1)}
+                  />
+                </ViewCanvas>
+              )}
+            />
+            {/* Where the objective's weight sits at the last step: the curves
+              answer "did it converge", this answers "on what". */}
+            <ChartFrame
+              name={`${runId}-final-residuals`}
+              title="Final residual per term"
+              rows={terms.map((term) => ({
+                term: term.key,
+                final: term.final,
+              }))}
+              render={() => (
+                <ViewCanvas>
+                  <ResidualBars
+                    bars={terms.map((term) => ({
+                      key: term.key,
+                      value: term.final,
+                      family: term.family,
+                      known: PREVIOUSLY_CHARTED.has(term.key),
+                    }))}
+                    ariaLabel={`Final residual per term, log scale. ${
+                      dominant ? `${dominant.key} is largest.` : ""
+                    }`}
+                  />
+                </ViewCanvas>
+              )}
+            />
+          </div>
           <div className="legend">
             {terms.map((term, i) => (
               <span className={`li fam-${term.family}`} key={term.key}>
@@ -161,7 +193,7 @@ export function TrainingTab({ runId }: TrainingTabProps) {
           {dominant && runnerUp && (
             <p className="train-dominant">
               <b>{dominant.key} dominates the objective</b> at{" "}
-              {dominant.final.toExponential(2)} —{" "}
+              {dominant.final.toExponential(2)}:{" "}
               {(dominant.final / runnerUp.final).toFixed(0)}× {runnerUp.key}
               {dataTerm && dataTerm.key !== dominant.key
                 ? ` and ${(dominant.final / dataTerm.final).toFixed(0)}× the data term`

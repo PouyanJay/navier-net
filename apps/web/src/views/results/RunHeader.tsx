@@ -91,6 +91,14 @@ export function RunHeader({
           {displayName}
         </span>
         <Chip tone={status.tone}>{status.label}</Chip>
+        {/* The series a run trained on is part of its identity, so it reads on
+            the same line rather than opening a row of its own. */}
+        {all.map((id) => (
+          <Chip key={id} tone={heldout.has(id) ? "amber" : "default"}>
+            {labelOf(id)}
+            {heldout.has(id) ? " · held out" : ""}
+          </Chip>
+        ))}
         {standing && <span className="run-header-rank">{standing}</span>}
         <span className="run-header-date">{formatRunDate(run.date)}</span>
         <span className="run-header-spacer" />
@@ -119,15 +127,6 @@ export function RunHeader({
         >
           Delete run
         </Button>
-      </div>
-
-      <div className="run-chips">
-        {all.map((id) => (
-          <Chip key={id} tone={heldout.has(id) ? "amber" : "default"}>
-            {labelOf(id)}
-            {heldout.has(id) ? " · held out" : ""}
-          </Chip>
-        ))}
       </div>
 
       <div className="run-meta">
@@ -161,7 +160,7 @@ export function RunHeader({
         </details>
       ) : (
         <p className="cfgsnap-missing">
-          No config snapshot — this run cannot be reproduced exactly, and its
+          No config snapshot: this run cannot be reproduced exactly, and its
           network cannot be rebuilt to replay.
         </p>
       )}

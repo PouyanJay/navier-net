@@ -3,17 +3,17 @@
    a third column; stages that do not stay at two. */
 .shell {
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: 248px minmax(0, 1fr);
   grid-template-rows: 56px 1fr;
   height: 100%;
   --stage-aside-w: 384px;
   --stage-aside-w-collapsed: 44px;
 }
 .shell[data-aside="open"] {
-  grid-template-columns: 248px var(--stage-aside-w) 1fr;
+  grid-template-columns: 248px var(--stage-aside-w) minmax(0, 1fr);
 }
 .shell[data-aside="collapsed"] {
-  grid-template-columns: 248px var(--stage-aside-w-collapsed) 1fr;
+  grid-template-columns: 248px var(--stage-aside-w-collapsed) minmax(0, 1fr);
 }
 .shell[data-aside] .topbar {
   grid-column: 1 / 4;

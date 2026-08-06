@@ -271,19 +271,51 @@ export function AgreementTab({
                 <i className="sw-dot supervised" /> supervised frame
               </span>
               <span className="li">
-                <i className="sw-dot validation" /> validation frame · axis A
-              </span>
-              <span className="li">
-                <i className="sw-dot hold" /> holdout frame
+                <i className="sw-dot validation" /> never supervised · axis A
               </span>
               <span className="li">
                 <i className="sw-dot transfer" /> transfer · never trained
               </span>
             </div>
+            {/* The chart says which frame is worst; this is where you go and
+                look at it. Ranked, so the tail reads before the mean does. */}
+            <p className="agree-band">Frames, worst first</p>
+            <div className="frame-ranks">
+              {blocks
+                .flatMap((block) =>
+                  block.frames.map((frame) => ({
+                    ...frame,
+                    block: block.name,
+                  })),
+                )
+                .sort((a, b) => a.iou - b.iou)
+                .slice(0, 6)
+                .map((frame) => (
+                  <div
+                    key={`${frame.block}-${frame.frame}`}
+                    className={
+                      frame.role === "supervised"
+                        ? "frame-rank"
+                        : "frame-rank held"
+                    }
+                  >
+                    <span>
+                      Frame {frame.frame}
+                      <small>
+                        {blocks.length > 1 ? `${labelOf(frame.block)} · ` : ""}
+                        {frame.role === "supervised"
+                          ? "supervised"
+                          : `${frame.role} · never supervised`}
+                      </small>
+                    </span>
+                    <b>{fmtIou(frame.iou)}</b>
+                  </div>
+                ))}
+            </div>
             <p className="figcap">
-              <b>Figure 6.</b> Validation frames are each condition's held-out
-              tail: extrapolation in time, the honest split. A held-out
-              condition's frames were never trained at all.
+              <b>Figure 6.</b> Validation frames are each condition&apos;s
+              held-out tail: extrapolation in time, the honest split. A held-out
+              condition&apos;s frames were never trained at all.
             </p>
           </>
         )}

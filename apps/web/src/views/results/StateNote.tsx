@@ -39,10 +39,10 @@ export function NotReplayable({ runId }: { runId: string }) {
     <StateNote tone="caution" title="This run cannot be replayed.">
       <span className="mono">{runId}</span> recorded no{" "}
       <span className="mono">.hydra/config.yaml</span>, so the network cannot be
-      rebuilt around its checkpoint. Its measurements are unaffected —
-      agreement, kinematics, physics and every CSV read from what the evaluate
-      stage wrote. Re-running the evaluate stage on a run launched from the
-      Solver restores the player.
+      rebuilt around its checkpoint. Its measurements are unaffected: agreement,
+      kinematics, physics and every CSV read from what the evaluate stage wrote.
+      Re-running the evaluate stage on a run launched from the Solver restores
+      the player.
     </StateNote>
   );
 }

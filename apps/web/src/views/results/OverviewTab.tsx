@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { Panel, Stat, ViewCanvas } from "../../components";
 import { ChartFrame } from "../../components/ChartFrame";
 import {
@@ -59,7 +61,7 @@ function narrative(
   validation: PhysicsValidation | null,
   scores: FrameScore[],
   labelOf: (id: string) => string,
-): string {
+): ReactNode {
   const { all, heldout } = runConditions(run);
   const axisA = unsupervisedIou(validation);
   const transfer = validation?.transfer_iou_mean ?? null;
@@ -68,18 +70,24 @@ function narrative(
   if (transfer != null) {
     const held = [...heldout].map(labelOf).join(", ");
     return (
-      `Trained on ${trained.length} condition${trained.length === 1 ? "" : "s"}, ` +
-      `this run reconstructs unseen instants of those conditions to IoU ${fmtIou(axisA)}, ` +
-      `and an entirely unseen condition (${held}, supplied only as dimensionless groups) ` +
-      `to IoU ${fmtIou(transfer)}. The transfer number is the evidence that the model ` +
-      `learned physics, not footage.`
+      <>
+        Trained on <N>{trained.length}</N> condition
+        {trained.length === 1 ? "" : "s"}, this run reconstructs unseen instants
+        of those conditions to IoU <N>{fmtIou(axisA)}</N>, and an entirely
+        unseen condition ({held}, supplied only as dimensionless groups) to IoU{" "}
+        <N>{fmtIou(transfer)}</N>. The transfer number is the evidence that the
+        model learned physics, not footage.
+      </>
     );
   }
   if (all.length > 1) {
     return (
-      `Trained jointly on all ${all.length} conditions, this run reconstructs unseen ` +
-      `instants to IoU ${fmtIou(axisA)}. No condition was held out, so transfer ` +
-      `(axis B) is untested. Hold one out in the Solver to claim it.`
+      <>
+        Trained jointly on all <N>{all.length}</N> conditions, this run
+        reconstructs unseen instants to IoU <N>{fmtIou(axisA)}</N>. No condition
+        was held out, so transfer (axis B) is untested. Hold one out in the
+        Solver to claim it.
+      </>
     );
   }
 
@@ -87,21 +95,33 @@ function narrative(
   const held = scores.filter((score) => score.held);
   if (held.length === 0 || supervised.length === 0) {
     return (
-      `A single-condition run over ${scores.length || "no"} evaluated frame` +
-      `${scores.length === 1 ? "" : "s"}, every one of them supervised. Nothing here ` +
-      `is evidence of generalization: set a validation split in the Solver to hold ` +
-      `the tail of the series back.`
+      <>
+        A single-condition run over <N>{scores.length}</N> evaluated frame
+        {scores.length === 1 ? "" : "s"}, every one of them supervised. Nothing
+        here is evidence of generalization: set a validation split in the Solver
+        to hold the tail of the series back.
+      </>
     );
   }
   const supMean = mean(supervised.map((s) => s.iou))!;
   const worst = held.reduce((low, s) => (s.iou < low.iou ? s : low), held[0]);
   return (
-    `A single-condition run. On the ${supervised.length} frames it was shown it agrees to ` +
-    `${fmtIou(supMean)}; on the ${held.length} it never saw it holds ${fmtIou(axisA)}, ` +
-    `falling to ${fmtIou(worst.iou)} at frame ${worst.frame} — the furthest extrapolation ` +
-    `in the series. That gap, ${(supMean - worst.iou).toFixed(3)}, is this run's claim ` +
-    `about generalization in time.`
+    <>
+      A single-condition run. On the <N>{supervised.length}</N> frames it was
+      shown it agrees to <N>{fmtIou(supMean)}</N>; on the <N>{held.length}</N>{" "}
+      it never saw it holds <N>{fmtIou(axisA)}</N>, falling to{" "}
+      <N>{fmtIou(worst.iou)}</N> at frame <N>{worst.frame}</N>, the furthest
+      extrapolation in the series. That gap of{" "}
+      <N>{(supMean - worst.iou).toFixed(3)}</N> is this run&apos;s claim about
+      generalization in time.
+    </>
   );
+}
+
+/** A number inside the verdict, tagged so the sentence can be skimmed for its
+ * quantities without reading it. */
+function N({ children }: { children: ReactNode }) {
+  return <b className="num">{children}</b>;
 }
 
 /**

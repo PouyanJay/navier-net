@@ -1009,6 +1009,35 @@ text.chart-axis-title {
   position: relative;
   min-width: 0;
 }
+/* A small chart carries its download on the plot beside expand: a full-width
+   toolbar row over a 120px picture is wider than the thing it acts on. */
+.cf-take {
+  position: absolute;
+  top: var(--s2);
+  right: calc(var(--s2) + 34px);
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 150ms var(--ease);
+}
+.cf-plot:hover .cf-take,
+.cf-take:focus-within {
+  opacity: 1;
+}
+.cf-take .pick-btn {
+  min-height: 26px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--canvas) 82%, transparent);
+  border: 1px solid var(--canvas-rule);
+  color: var(--canvas-ink);
+}
+.cf-take .pick-btn:hover {
+  color: var(--canvas-ink-strong);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cf-take {
+    transition: none;
+  }
+}
 
 /* ── Menu / popover (DESIGN_SYSTEM §8.5) ──────────────────────────────
    The app draws its own menus. A native <select> renders the operating

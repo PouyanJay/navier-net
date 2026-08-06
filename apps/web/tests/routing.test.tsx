@@ -532,7 +532,8 @@ describe("results routing", () => {
     await waitFor(() =>
       expect(screen.getByText(/transfer iou/i)).toBeInTheDocument(),
     );
-    expect(screen.getByText("0.903")).toBeInTheDocument();
+    // In the stat and again in the verdict, which tags its own numbers.
+    expect(screen.getAllByText("0.903").length).toBeGreaterThan(0);
 
     // The verdict narrative states what the numbers argue.
     expect(
@@ -728,7 +729,8 @@ describe("results routing", () => {
     expect(
       await screen.findByText(/transfer iou · all frames/i),
     ).toBeInTheDocument();
-    expect(screen.getByText("0.903")).toBeInTheDocument();
+    // In the stat and again in the verdict, which tags its own numbers.
+    expect(screen.getAllByText("0.903").length).toBeGreaterThan(0);
     // With one training dataset the envelope is a point: groups where the
     // held-out value differs read extrapolated; the matching one (Pr) reads
     // inside. Both states must be present and text-labeled.

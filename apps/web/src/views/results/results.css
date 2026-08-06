@@ -336,6 +336,13 @@
   gap: var(--s4);
   min-width: 0;
 }
+/* A grid item's min-width is auto, so one unwrappable child sets the whole
+   column's width: the config snapshot's <pre> is 1 656px of YAML, and it was
+   pushing the entire canvas past the viewport instead of scrolling inside its
+   own box. */
+.res-main > * {
+  min-width: 0;
+}
 
 .res-quiet {
   color: var(--ink3);
@@ -821,15 +828,30 @@
   }
 }
 
+/* The verdict is read, not admired: the UI face at body size, with its
+   quantities tagged so the sentence can be skimmed for them. An italic serif at
+   15px over a dark ground was the least legible text on the page. */
 .verdict-narr {
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: 15px;
-  color: var(--ink2);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-soft);
   border-top: 1px solid var(--line);
   margin: var(--s4) 0 0;
   padding-top: var(--s3);
   max-width: 72ch;
+  text-wrap: pretty;
+}
+.verdict-narr .num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--hover-strong);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
 }
 
 .glance-chips {
@@ -1074,6 +1096,18 @@
   margin-top: var(--s3);
 }
 
+/* The map and the transport it is scrubbed with are one instrument, not two
+   stacked cards: the plot closes at the bottom only where the controls end. */
+.chart-frame .field-view {
+  margin-top: 0;
+  border-bottom: 0;
+  border-radius: var(--r) var(--r) 0 0;
+}
+.chart-frame + .field-view-ctl {
+  margin-top: 0;
+  border-radius: 0 0 var(--r) var(--r);
+}
+
 .field-canvas {
   display: block;
   width: 100%;
@@ -1173,10 +1207,28 @@
   stroke-width: 1.6;
 }
 
+/* A never-supervised frame is an open ring on the canvas ground: it differs
+   from a supervised dot in SHAPE as well as hue, so the pair survives
+   grayscale and reads at a glance as "this one was withheld". */
 .iou-dot.validation {
-  fill: var(--purple);
-  stroke: var(--view);
-  stroke-width: 1.6;
+  fill: var(--canvas);
+  stroke: var(--holdout);
+  stroke-width: 2.2;
+}
+
+/* The span of frames the model never saw, drawn as a region. */
+.iou-heldband {
+  fill: var(--holdout);
+  opacity: 0.08;
+}
+.iou-heldedge {
+  stroke: var(--holdout);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.75;
+}
+.iou-heldlabel {
+  fill: var(--holdout);
 }
 
 .iou-dot.transfer {
@@ -1255,8 +1307,11 @@
   background: var(--acc2);
 }
 
+/* The legend's swatch is the mark the chart actually draws: a withheld frame
+   is an open ring in the holdout accent, in both places. */
 .sw-dot.validation {
-  background: var(--purple);
+  background: none;
+  border: 2px solid var(--holdout);
 }
 
 .sw-dot.transfer {
@@ -1266,7 +1321,7 @@
 
 .sw-dot.hold {
   background: none;
-  border: 2px solid var(--amber);
+  border: 2px solid var(--holdout);
 }
 
 .transfer-grid {
@@ -2080,4 +2135,111 @@
 .tab-n.warn {
   background: var(--holdout-soft);
   color: var(--holdout);
+}
+
+/* The frames worth looking at, ranked. The chart says which one is worst and
+   the tail is where extrapolation lives, so the list leads with it. */
+.agree-band {
+  margin: var(--s5) 0 var(--s2);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.frame-ranks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--s1);
+}
+.frame-rank {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+.frame-rank.held {
+  border-color: color-mix(in srgb, var(--holdout) 35%, var(--line));
+  background: var(--holdout-soft);
+}
+.frame-rank > span {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+.frame-rank small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.frame-rank > b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text);
+}
+.frame-rank.held > b {
+  color: var(--holdout);
+}
+
+/* The final-residual ranking: the ordering is the point, so the labels are
+   mono and the ghosted bars are the ones the curve chart already carried. */
+.resbars {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.resbars text {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.resbar-key {
+  font-size: 9.5px;
+  fill: var(--canvas-ink);
+}
+.resbar-key.known {
+  fill: var(--canvas-quiet);
+}
+.resbar-val {
+  font-size: 9px;
+  fill: var(--canvas-quiet);
+}
+.resbar-foot {
+  font-size: 9px;
+  fill: var(--canvas-quiet);
+}
+
+/* The two training charts answer different questions: did it converge, and on
+   what is the objective's weight sitting. Side by side they are read together,
+   and two panels of different heights read as one broken row, so the cells are
+   equal and each plot fits inside its own (letterboxed, never distorted). */
+.train-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-auto-rows: 1fr;
+  gap: var(--s3);
+  align-items: stretch;
+}
+.train-charts > .chart-frame,
+.train-charts .cf-plot,
+.train-charts .view-canvas {
+  height: 100%;
+}
+.train-charts .view-canvas {
+  display: grid;
+  align-items: center;
+}
+.train-charts .view-canvas svg {
+  height: 100%;
+  max-height: 260px;
+}
+@media (max-width: 1200px) {
+  .train-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

@@ -406,9 +406,8 @@ export function FieldsTab({
         <NotReplayable runId={runId} />
         <p className="state-note">
           A field map asks the checkpoint for values at points the camera never
-          sampled, so it needs the architecture the snapshot records — unlike
-          the agreement, kinematics and physics this run measured, which all
-          still read.
+          sampled, so it needs the architecture the snapshot records. The
+          agreement, kinematics and physics this run measured all still read.
         </p>
       </Panel>
     );
