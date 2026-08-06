@@ -3,7 +3,6 @@ import { useCallback, useMemo, useState } from "react";
 import { StageAside } from "../app/StageAside";
 import { ChartFrame } from "../components/ChartFrame";
 import {
-  Button,
   Callout,
   Chip,
   Console,
@@ -13,7 +12,7 @@ import {
   ViewCanvas,
 } from "../components";
 import type { ProjectSummary, RunJobStatus } from "../lib/api";
-import { RunConfigPanel } from "./solver/ConfigPanels";
+import { useCapabilityGuard } from "./solver/capabilityGuard";
 import {
   FORM_DEFAULTS,
   parseSeeds,
@@ -21,17 +20,20 @@ import {
   type SolverFormState,
 } from "./solver/form";
 import { MonitorPanel } from "./solver/MonitorPanel";
+import type { LaunchMode } from "./solver/RunBand";
+import { SolverAside } from "./solver/SolverAside";
 import { SweepPanel } from "./solver/SweepPanel";
 import { useRunTargets } from "./solver/useRunTargets";
+import { useSeriesCapability } from "./solver/useSeriesCapability";
 import { useSolverRun } from "./solver/useSolverRun";
 import "./solver/solver.css";
 
-/** The config grid pairs its fields two-up, so this stage's aside needs the same
- * room as Physics rather than the shell's default. */
+/** The rail is a stack of labelled rows, not a two-up field grid, so it needs
+ * less room than the Physics aside — enough for a long label and its value. */
 const ASIDE = {
   title: "Solver",
   subtitle: "configure & run",
-  width: 461,
+  width: 400,
 };
 
 interface SolverViewProps {
@@ -58,10 +60,13 @@ function statusDot(status: RunJobStatus | null): DotState {
 /** The Solver: configure a run on the left, watch it live on the right. */
 export function SolverView({ onRunState, project }: SolverViewProps) {
   const [form, setForm] = useState<SolverFormState>(FORM_DEFAULTS);
-  const [sweepMode, setSweepMode] = useState(false);
+  const [mode, setMode] = useState<LaunchMode>("new");
   const [seedsText, setSeedsText] = useState("0, 1, 2");
   const targets = useRunTargets(project?.datasets ?? null);
   const run = useSolverRun(onRunState, targets.refreshRuns);
+  // The launcher resolves the interface family against the primary series, so
+  // that is the one whose fields decide which treatments the rail may offer.
+  const capability = useSeriesCapability(targets.selected[0] ?? null);
 
   const patchForm = useCallback(
     (patch: Partial<SolverFormState>) =>
@@ -69,11 +74,21 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
     [],
   );
 
+  useCapabilityGuard(form, patchForm, capability);
+
   const seeds = useMemo(() => parseSeeds(seedsText), [seedsText]);
 
+  const selectMode = useCallback(
+    (next: LaunchMode) => {
+      setMode(next);
+      targets.setResume(next === "resume");
+    },
+    [targets],
+  );
+
   const submit = useCallback(() => {
-    const { resume, resumeRunId, selected, heldout } = targets;
-    if (sweepMode) {
+    const { resumeRunId, selected, heldout } = targets;
+    if (mode === "sweep") {
       // A sweep varies seeds on one dataset; use the first selected series.
       if (selected.length === 0 || !seeds) return;
       void run.startSweep({
@@ -82,13 +97,20 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
       });
       return;
     }
-    if ((resume && !resumeRunId) || (!resume && selected.length === 0)) return;
+    if (mode === "resume") {
+      if (!resumeRunId) return;
+      void run.start(toLaunchRequest(form, { resumeRunId }));
+      return;
+    }
+    if (selected.length === 0) return;
     // One series may be held out of training (axis B) as a transfer test.
-    const target = resume
-      ? { resumeRunId }
-      : { datasets: selected, heldout: heldout ? [heldout] : [] };
-    void run.start(toLaunchRequest(form, target));
-  }, [run, form, targets, sweepMode, seeds]);
+    void run.start(
+      toLaunchRequest(form, {
+        datasets: selected,
+        heldout: heldout ? [heldout] : [],
+      }),
+    );
+  }, [run, form, targets, mode, seeds]);
 
   const rebalanceSteps = useMemo(() => {
     if (run.hist.length === 0) return [];
@@ -101,50 +123,26 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
 
   const dot = statusDot(run.status);
   const latest = run.hist.length > 0 ? run.hist[run.hist.length - 1] : null;
-  const targetReady = targets.resume
-    ? targets.resumeRunId !== ""
-    : targets.selected.length > 0;
-  const canRun = !run.running && targetReady && (!sweepMode || seeds !== null);
   const noDatasets =
     targets.available !== null && targets.available.length === 0;
 
   return (
     <>
       <StageAside {...ASIDE}>
-        <RunConfigPanel
+        <SolverAside
           form={form}
           onForm={patchForm}
-          availableDatasets={targets.available ?? []}
-          selectedDatasets={targets.selected}
-          onToggleDataset={targets.toggleDataset}
-          onSelectAllDatasets={targets.selectAll}
-          heldout={targets.heldout}
-          onToggleHeldout={targets.toggleHeldout}
-          resume={targets.resume}
-          onResume={targets.setResume}
-          resumableRuns={targets.resumableRuns}
-          resumeRunId={targets.resumeRunId}
-          onResumeRunId={targets.setResumeRunId}
-          sweepMode={sweepMode}
-          onSweepMode={(on) => {
-            setSweepMode(on);
-            if (on) targets.setResume(false);
-          }}
+          mode={mode}
+          onMode={selectMode}
+          targets={targets}
+          capability={capability}
           seedsText={seedsText}
           onSeedsText={setSeedsText}
-          seedsValid={seeds !== null}
-          locked={run.running}
+          seeds={seeds}
+          running={run.running}
+          onReset={run.reset}
+          onRun={submit}
         />
-        {/* Launching is this stage's primary action, so it stays reachable
-            without scrolling back up past a long form. */}
-        <div className="aside-actions solver-actions">
-          <Button onClick={run.reset} disabled={run.running}>
-            Reset
-          </Button>
-          <Button variant="primary" onClick={submit} disabled={!canRun}>
-            Run
-          </Button>
-        </div>
       </StageAside>
 
       <div className="solver-head">

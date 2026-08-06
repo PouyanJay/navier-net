@@ -1,3 +1,6 @@
+/* The Solver stage: a rail of labelled bands on the left, what the run produces
+   on the right. Every colour, space and size is a token (tokens.css). */
+
 .solver-head {
   display: flex;
   align-items: center;
@@ -5,7 +8,7 @@
   margin-bottom: var(--s5);
 }
 .solver-head .id {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-weight: 600;
   font-size: 15px;
 }
@@ -19,34 +22,300 @@
   min-width: 0;
 }
 
-/* Reset stays subtle and sized to its label; Run takes the rest of the bar. */
-.solver-actions {
-  grid-template-columns: auto 1fr;
+/* ── Rail furniture ──────────────────────────────────────────────────────
+   The small pieces every band shares: a group label, an explanatory note, a
+   caution, and a vertical stack of full-width fields. */
+.rail-label {
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.02em;
+  color: var(--text-soft);
+  padding: 0;
+}
+.rail-note {
+  margin: var(--s2) 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.rail-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s3);
+  margin-top: var(--s3);
+}
+/* Advice at the control that caused it — a judgement about what this series can
+   support, never a silent narrowing of the options. */
+.rail-caution {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  margin: var(--s3) 0 0;
+  padding: var(--s2) var(--s3);
+  border-radius: 6px;
+  background: var(--holdout-soft);
+  color: var(--holdout);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.rail-caution svg {
+  flex: none;
+  margin-top: 2px;
+}
+.rail-caution b {
+  font-weight: 660;
 }
 
-/* Labelled divider between the run-config fields and the loss-weights section,
-   now that both share one card. */
-.cfg-subhead {
+/* A group inside a band, too small to be a band of its own. */
+.sublabel {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: var(--s2);
-  margin: var(--s4) 0 var(--s3);
-  padding-top: var(--s4);
-  border-top: 1px solid var(--line);
+  margin: var(--s5) 0 var(--s2);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
 }
-.cfg-subnote {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--ink3);
+.sublabel span {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  color: var(--faint);
 }
 
-/* Dataset multi-select: the project's processed series to train on. */
+/* ── Value row ───────────────────────────────────────────────────────────
+   One numeric setting: name and meaning on the left, the value in a fixed
+   right-hand column so the numbers form a scannable stack. A 384px rail cannot
+   hold two columns of stacked label-over-input fields without every label
+   wrapping onto three lines. */
+.vrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s1) 0;
+  border-bottom: 1px solid var(--line);
+}
+.vrow:last-child {
+  border-bottom: 0;
+}
+.vrow > label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 560;
+  color: var(--text-soft);
+}
+.vrow-hint {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--faint);
+  text-wrap: pretty;
+}
+.vrow .ug {
+  flex: none;
+  width: 108px;
+}
+.vrow .ug input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  text-align: right;
+  color: var(--text);
+  padding: var(--s2);
+  min-width: 0;
+}
+
+/* ── Switch row ──────────────────────────────────────────────────────────
+   A switch, what it does, and the settings it owns — nested under it rather
+   than collected in a grid at the foot of the rail where nothing says which
+   switch they belong to. */
+.srow {
+  margin-top: var(--s3);
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line);
+}
+/* Consecutive switches are one list, so only the first is spaced off whatever
+   precedes it. */
+.srow + .srow {
+  margin-top: 0;
+}
+.srow:last-child {
+  border-bottom: 0;
+}
+/* The hint is a sentence, not a value, so it wraps under the label instead of
+   competing with it for a second column. */
+.srow .wsw {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+}
+.srow .sw {
+  margin-top: 1px;
+}
+.srow .sw-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--text-soft);
+}
+.srow .sw-hint,
+.srow-why {
+  flex-basis: 100%;
+  margin: 0 0 0 calc(34px + var(--s3));
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.srow .sw-hint {
+  color: var(--faint);
+}
+.srow-why {
+  margin-top: var(--s1);
+  color: var(--muted);
+}
+.srow-sub {
+  margin: var(--s2) 0 var(--s1) var(--s5);
+  padding-left: var(--s3);
+  border-left: 1px solid var(--line-strong);
+}
+.srow-sub .vrow {
+  border-bottom: 0;
+}
+
+/* ── Interface treatment ─────────────────────────────────────────────────
+   The three coherent formulations as one choice. They are a ladder, not four
+   independent switches, and the thing that changes between them — which
+   equation closes momentum — reads out under the group. */
+.treatments {
+  display: grid;
+  gap: var(--s1);
+}
+.treat {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 34px;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--control);
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    border-color 150ms var(--ease),
+    color 150ms var(--ease);
+}
+/* A real radio marker: the chosen rung differs in shape, not only in tint. */
+.treat::before {
+  content: "";
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1px solid var(--control-border);
+}
+.treat.on::before {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 3px var(--primary);
+}
+.treat:hover:not([aria-disabled="true"]) {
+  background: var(--control-hover);
+  color: var(--text-soft);
+}
+.treat.on {
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent);
+  color: var(--text);
+}
+.treat[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.treat-nm {
+  font-size: 12.5px;
+  font-weight: 620;
+}
+.treat-note {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--faint);
+}
+.treat.on .treat-note {
+  color: var(--primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .treat {
+    transition: none;
+  }
+}
+
+/* What the treatment costs, in the only currency that matters here: the
+   equation the run solves for momentum. */
+.treat-readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: var(--s3) 0 0;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-soft);
+  text-wrap: pretty;
+}
+.treat-tag {
+  flex: none;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.treat-detail {
+  margin: var(--s2) 0 var(--s4);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+/* ── Launch mode ─────────────────────────────────────────────────────── */
+.seg.modes {
+  margin-bottom: var(--s2);
+}
+.seg.modes .segb {
+  flex: 1;
+  min-height: 28px;
+  text-align: center;
+}
+.seg.modes .segb[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Series multi-select ─────────────────────────────────────────────── */
 .ds-select {
   border: none;
-  margin: 0 0 var(--s3);
+  margin: var(--s3) 0 0;
   padding: 0;
-  min-inline-size: 0; /* fieldset default min-width breaks the grid otherwise */
+  min-inline-size: 0; /* fieldset default min-width breaks the layout otherwise */
 }
 .ds-select-hd {
   display: flex;
@@ -55,21 +324,13 @@
   gap: var(--s2);
   margin-bottom: var(--s2);
 }
-.cfg-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ink2);
-  letter-spacing: 0.02em;
-  padding: 0;
-}
 .ds-joint-tag {
   margin-left: var(--s2);
-  font-family: var(--mono);
   font-size: 10px;
   font-weight: 500;
-  color: var(--acc);
-  background: var(--accsoft);
-  border-radius: 99px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-radius: 999px;
   padding: 1px 7px;
   letter-spacing: 0;
 }
@@ -82,78 +343,78 @@
   gap: 2px;
   max-height: 168px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .ds-item {
   display: flex;
   align-items: center;
   gap: var(--s2);
   padding: var(--s1) var(--s2);
-  border-radius: var(--rs);
+  border-radius: 5px;
   font-size: 12.5px;
   cursor: pointer;
+  min-width: 0;
+}
+.ds-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ds-item:hover {
-  background: var(--panel2);
+  background: var(--hover);
 }
 .ds-item input {
-  accent-color: var(--acc);
+  accent-color: var(--primary);
   cursor: pointer;
+  flex: none;
 }
 .ds-select:disabled .ds-item {
   cursor: not-allowed;
   opacity: 0.6;
 }
-.ds-hint {
-  margin: var(--s2) 0 0;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--ink3);
-}
 
 /* A series row: the in-run checkbox plus, once the run is joint, a train ↔
-   hold-out toggle. The held-out series (axis B) is tinted amber. */
+   hold-out toggle. The held-out series (axis B) takes the warm second accent —
+   it is exactly what that token is for: data the model is not shown. */
 .ds-row {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  border-radius: var(--rs);
+  border-radius: 5px;
 }
 .ds-row .ds-item {
   flex: 1 1 auto;
 }
 .ds-row.held {
-  background: var(--ambersoft);
+  background: var(--holdout-soft);
 }
 .ds-holdout {
   flex: none;
   margin-right: var(--s2);
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.02em;
-  color: var(--ink3);
-  background: var(--panel2);
+  color: var(--muted);
+  background: var(--control);
   border: 1px solid var(--line-strong);
-  border-radius: 99px;
+  border-radius: 999px;
   padding: 2px 9px;
   cursor: pointer;
   transition:
-    color 150ms ease,
-    background 150ms ease,
-    border-color 150ms ease;
+    color 150ms var(--ease),
+    background 150ms var(--ease),
+    border-color 150ms var(--ease);
 }
 .ds-holdout:hover:not(:disabled) {
-  color: var(--amber);
-  border-color: var(--amber);
+  color: var(--holdout);
+  border-color: var(--holdout);
 }
 .ds-holdout.on {
-  color: var(--amber);
-  background: var(--ambersoft);
-  border-color: var(--amber);
-}
-.ds-holdout:focus-visible {
-  outline: 2px solid var(--acc);
-  outline-offset: 1px;
+  color: var(--holdout);
+  background: var(--holdout-soft);
+  border-color: var(--holdout);
 }
 .ds-holdout:disabled {
   opacity: 0.5;
@@ -165,22 +426,32 @@
   }
 }
 
-/* Config field grid inside the cards. */
-.cfg {
+/* ── Launch dock ─────────────────────────────────────────────────────────
+   The last thing before Run states what Run will do, and a Run that cannot be
+   pressed says why — the configuration above it is four folded bands long. */
+.solver-dock {
+  grid-template-columns: minmax(0, 1fr);
+}
+.dock-summary {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.dock-blocked {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--holdout);
+  text-wrap: pretty;
+}
+.dock-buttons {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-  gap: var(--s3);
-}
-.cfg-narrow {
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-}
-.switch-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s3);
-  margin-top: var(--s4);
-  padding-top: var(--s4);
-  border-top: 1px solid var(--line);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s2);
 }
 
 /* Live stats row above the progress meter. */
@@ -191,8 +462,7 @@
   margin-bottom: var(--s4);
 }
 
-/* Placeholder text inside the dark chart canvas, so canvas ink: --sidetxt
-   resolves to --muted, which is 3.2:1 here in the light theme. */
+/* Placeholder text inside the dark chart canvas. */
 .canvas-note {
   margin: 0;
   padding: var(--s6) var(--s4);
@@ -216,5 +486,5 @@
 
 /* Invalid free-text input (e.g. an unparseable seed list). */
 .ug:has(input[aria-invalid]) {
-  border-color: var(--red);
+  border-color: var(--danger);
 }

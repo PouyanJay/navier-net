@@ -43,9 +43,9 @@ test("configure, launch, watch live, and find the run in Results", async ({
 
   // A tiny but real configuration; every field maps onto cfg.training.
   await page.getByLabel("Steps").fill("25");
-  await page.getByLabel("Data batch").fill("64");
-  await page.getByLabel("Collocation batch").fill("64");
-  await page.getByLabel("Boundary batch").fill("16");
+  await page.getByLabel("Data points").fill("64");
+  await page.getByLabel("Collocation points").fill("64");
+  await page.getByLabel("Boundary points").fill("16");
   await page.getByLabel(/Log every/).fill("10");
   await page.getByRole("switch", { name: "Render deliverables" }).click();
 

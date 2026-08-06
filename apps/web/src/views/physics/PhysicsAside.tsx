@@ -1,4 +1,4 @@
-import { EquationBlock, InfoPopover } from "../../components";
+import { Band, EquationBlock, InfoPopover } from "../../components";
 import {
   CapacityIcon,
   HugeiconsIcon,
@@ -223,12 +223,11 @@ export function PhysicsAside({
 
   return (
     <>
-      <section className="pmband">
-        <p className="pmband-hd">
-          <HugeiconsIcon icon={LockedIcon} size={13} aria-hidden="true" />
-          Core physics
-          <span className="hint">always trains · weights set at launch</span>
-        </p>
+      <Band
+        icon={LockedIcon}
+        label="Core physics"
+        hint="always trains · weights set at launch"
+      >
         {core.map((eq) => (
           <CoreRow
             key={eq.id}
@@ -237,20 +236,13 @@ export function PhysicsAside({
             groups={model.groups}
           />
         ))}
-      </section>
+      </Band>
 
-      <section className="pmband">
-        <p className="pmband-hd">
-          <HugeiconsIcon
-            icon={OptionalPhysicsIcon}
-            size={13}
-            aria-hidden="true"
-          />
-          Optional physics
-          <span className="hint">
-            {model.formulation.sharp ? "sharp front" : "diffuse"}
-          </span>
-        </p>
+      <Band
+        icon={OptionalPhysicsIcon}
+        label="Optional physics"
+        hint={model.formulation.sharp ? "sharp front" : "diffuse"}
+      >
         {optional.map((eq) => (
           <OptionalRow
             key={eq.id}
@@ -259,22 +251,22 @@ export function PhysicsAside({
             datasetName={datasetName}
           />
         ))}
-      </section>
+      </Band>
 
-      <section className="pmband">
-        <p className="pmband-hd">
-          <HugeiconsIcon icon={CapacityIcon} size={13} aria-hidden="true" />
-          Capacity
-          {model.overrideCount > 0 && (
-            <span className="hint over">
+      <Band
+        icon={CapacityIcon}
+        label="Capacity"
+        hint={
+          model.overrideCount > 0 && (
+            <span className="over">
               {model.overrideCount} overridden
               <button type="button" onClick={model.resetToPreset}>
                 reset
               </button>
             </span>
-          )}
-        </p>
-
+          )
+        }
+      >
         <div className="seg" role="radiogroup" aria-label="Capacity preset">
           {PRESET_META.map((preset) => {
             const on = model.preset === preset.name;
@@ -403,7 +395,7 @@ export function PhysicsAside({
         {at("width").map((w, i) => (
           <Caution key={i} warning={w} />
         ))}
-      </section>
+      </Band>
     </>
   );
 }

@@ -70,13 +70,22 @@ class FakeEventSource {
   }
 }
 
+/** What a series trains. The Solver reads this to know whether the sharp
+ * treatment (pressure) and the depletable superheat (temperature) are even
+ * reachable, so every stub has to answer it. */
+const STAGE_B_FIELDS = ["phi", "u", "v", "s", "p", "T"];
+const STAGE_A_FIELDS = ["phi", "u", "v", "s"];
+
 function stubApi({
   launchStatus = 202,
   launchDetail = "a training run is already in progress",
+  fields = STAGE_B_FIELDS,
 }: {
   launchStatus?: number;
   /** Error `detail` for a non-202 launch; an array mimics FastAPI's 422 shape. */
   launchDetail?: unknown;
+  /** The fields the primary series trains (Stage-A series train no p or T). */
+  fields?: string[];
 } = {}) {
   const posts: unknown[] = [];
   vi.stubGlobal(
@@ -88,6 +97,15 @@ function stubApi({
         return launchStatus === 202
           ? json(LAUNCHED)
           : json({ detail: launchDetail }, launchStatus);
+      }
+      if (path.includes("/api/physics/")) {
+        return json({
+          dataset: path.split("/").pop(),
+          equations: [],
+          fields,
+          groups: {},
+          sharp_interface: fields.includes("p"),
+        });
       }
       if (path.endsWith("/api/datasets")) return json(DATASETS);
       if (path.endsWith("/api/runs/active")) return json(null);
@@ -132,11 +150,29 @@ describe("SolverView", () => {
     stubApi();
     renderStage(<SolverView />);
     expect(await screen.findByLabelText("highest_t")).toBeChecked();
-    expect(screen.getByLabelText("Steps")).toHaveValue(1500);
+    expect(screen.getByLabelText(/Steps/)).toHaveValue(1500);
     expect(screen.getByLabelText(/Learning rate/)).toHaveValue(0.002);
     expect(screen.getByLabelText(/w\s*data/)).toHaveValue(10);
+    // The recommended recipe is the rung the ladder starts on.
+    expect(screen.getByRole("radio", { name: /Sharp front/ })).toBeChecked();
     const idleLine = "[naviernet] solver idle; configure a run and press Run";
     expect(screen.getByText(idleLine)).toBeInTheDocument();
+  });
+
+  it("states what Run will do, and why it cannot be pressed", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(
+      screen.getByText(/highest_t · 1500 steps · sharp front/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(
+      screen.getByText("Select at least one series to train on."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
   });
 
   it("launches a run from the form and follows it live over SSE", async () => {
@@ -144,7 +180,7 @@ describe("SolverView", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.change(screen.getByLabelText("Steps"), {
+    fireEvent.change(screen.getByLabelText(/Steps/), {
       target: { value: "40" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
@@ -397,9 +433,9 @@ describe("SolverView", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    expect(
-      screen.getByRole("switch", { name: "Hard root pin" }),
-    ).not.toBeChecked();
+    // The pin belongs to the diffuse rung alone: the explicit front pins the
+    // root by construction, so under the default there is no pin to offer.
+    expect(screen.queryByRole("switch", { name: "Hard root pin" })).toBeNull();
     expect(
       screen.getByRole("switch", { name: "Growth constraints" }),
     ).not.toBeChecked();
@@ -420,9 +456,9 @@ describe("SolverView", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    // The front geometry is the default and pins the root exactly, so a run that
-    // wants the SOFT pin has to turn it off first.
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    // The explicit front pins the root exactly, so a run that wants the SOFT
+    // pin has to step down to the diffuse treatment first.
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
     fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
     expect(screen.getByLabelText(/Pin gate scale/)).toHaveValue(0.1);
     fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
@@ -445,19 +481,18 @@ describe("SolverView", () => {
     expect(body.kin_weight_evap).toBe(0);
   });
 
-  it("gates front geometry against the hard pin valid-by-construction", async () => {
+  it("makes the pin and the explicit front mutually exclusive by construction", async () => {
     const posts = stubApi();
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    // Geometry off, pin on, geometry back on: the pin is forced off and disabled
-    // (the geometry pins exactly by construction -- the trainer rejects the combo).
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    // Set the pin on the rung that offers it, then climb back: the pin is not
+    // merely disabled, it is not part of this formulation at all -- the same
+    // combination the trainer rejects, made unreachable rather than refused.
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
     fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
-    const pin = screen.getByRole("switch", { name: "Hard root pin" });
-    expect(pin).toBeDisabled();
-    expect(pin).not.toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /Explicit front/ }));
+    expect(screen.queryByRole("switch", { name: "Hard root pin" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -466,67 +501,98 @@ describe("SolverView", () => {
     expect(body.hard_pin).toBe(false);
   });
 
-  it("gates the sharp-interface switches on the front geometry", async () => {
+  it("offers each treatment only the options that treatment admits", async () => {
     const posts = stubApi();
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    // There is no front to impose the interface conditions on without the
-    // geometry, so both switches go unusable the moment it is turned off.
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    // Sharp: the film-pressure correction exists because the jump does.
     expect(
-      screen.getByRole("switch", { name: "Sharp interface" }),
-    ).toBeDisabled();
+      screen.getByRole("switch", { name: "Film pressure" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("switch", { name: "Allow pinch-off" }),
-    ).toBeDisabled();
+    ).toBeInTheDocument();
 
-    // Bringing the geometry back does NOT silently restore what it cleared --
-    // re-enabling a prerequisite is not consent to everything that hung off it.
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    // Explicit front: the front options remain, the jump's correction does not.
+    fireEvent.click(screen.getByRole("radio", { name: /Explicit front/ }));
+    expect(screen.queryByRole("switch", { name: "Film pressure" })).toBeNull();
     expect(
-      screen.getByRole("switch", { name: "Sharp interface" }),
-    ).not.toBeChecked();
+      screen.getByRole("switch", { name: "Allow pinch-off" }),
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
+    // Diffuse: no front at all, so nothing that reads one is offered.
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
+    expect(
+      screen.queryByRole("switch", { name: "Allow pinch-off" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("switch", { name: "Hard root pin" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    // Every flag below the chosen rung is cleared, not left dangling.
+    expect(body.front_geometry).toBe(false);
+    expect(body.sharp_interface).toBe(false);
+    expect(body.film_pressure).toBe(false);
+    expect(body.allow_pinch).toBe(false);
+    expect(body.front_velocity).toBe(false);
+  });
+
+  it("names the momentum closure each treatment implies", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // The thing that actually changes between the rungs, said out loud.
+    expect(
+      screen.getByText(/Darcy drag, imposed ON the front/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Explicit front/ }));
+    expect(
+      screen.getByText(/2-D depth-averaged momentum \(Hele-Shaw\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("climbs back to the sharp rung with its recipe intact", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Sharp front/ }));
     fireEvent.click(screen.getByRole("switch", { name: "Allow pinch-off" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
     const body = posts[0] as Record<string, unknown>;
+    expect(body.front_geometry).toBe(true);
     expect(body.sharp_interface).toBe(true);
+    expect(body.film_pressure).toBe(true);
     expect(body.allow_pinch).toBe(true);
   });
 
-  it("turning the front geometry off takes the sharp-interface switches with it", async () => {
+  it("reveals the sharpening fields only once sharpening is switched on", async () => {
     const posts = stubApi();
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
-
-    // Left set, the request would be a 422 the user never asked for.
-    expect(
-      screen.getByRole("switch", { name: "Sharp interface" }),
-    ).not.toBeChecked();
+    // Off by default: the interface holds its width unless asked otherwise.
+    expect(screen.queryByLabelText(/Anneal over/)).toBeNull();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Sharpen the interface" }),
+    );
+    expect(screen.getByLabelText(/Anneal over/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Final/)).toHaveValue(0.02);
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
-    expect((posts[0] as Record<string, unknown>).sharp_interface).toBe(false);
-  });
-
-  it("reveals the interface-sharpening fields only while sharp interface is on", async () => {
-    stubApi();
-    renderStage(<SolverView />);
-    await screen.findByLabelText("highest_t");
-
-    // Sharp interface is the default, so the fields are there from the start.
-    expect(screen.getByLabelText(/Sharpening steps/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
-    expect(screen.queryByLabelText(/Sharpening steps/)).toBeNull();
-    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
-    expect(screen.getByLabelText(/Sharpening steps/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Final/)).toBeInTheDocument();
+    const body = posts[0] as Record<string, unknown>;
+    // A target of 0 with a non-zero schedule is a 422; the switch cannot make one.
+    expect(body.alpha_eps_anneal_steps).toBeGreaterThan(0);
+    expect(body.alpha_eps_final).toBe(0.02);
   });
 
   it("toggling the pin and growth constraints off hides their fields again", async () => {
@@ -534,7 +600,7 @@ describe("SolverView", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
     fireEvent.click(screen.getByRole("switch", { name: "Hard root pin" }));
     fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
     expect(screen.getByLabelText(/Pin gate scale/)).toBeInTheDocument();
@@ -545,6 +611,40 @@ describe("SolverView", () => {
     expect(screen.getByLabelText(/Growth margin/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch", { name: "Growth constraints" }));
     expect(screen.queryByLabelText(/Growth margin/)).toBeNull();
+  });
+
+  it("refuses a treatment the series cannot support, and says why", async () => {
+    const posts = stubApi({ fields: STAGE_A_FIELDS });
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // A Stage-A series trains no pressure, so the sharp rung is unreachable --
+    // and the API would reject an explicit ask for it. The form steps down to
+    // the explicit front and states the reason at the control.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("radio", { name: /Explicit front/ }),
+      ).toBeChecked(),
+    );
+    expect(screen.getByRole("radio", { name: /Sharp front/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(
+      screen.getByText(/does not\s+train\. Enable Momentum/),
+    ).toBeInTheDocument();
+    // Same for the superheat, which reads a temperature field this series has not got.
+    expect(
+      screen.getByRole("switch", { name: "Depletable superheat" }),
+    ).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.sharp_interface).toBe(false);
+    expect(body.film_pressure).toBe(false);
+    expect(body.depletable_superheat).toBe(false);
+    expect(body.front_geometry).toBe(true); // the capsule needs no Stage-B field
   });
 
   it("holds out a whole series from its row and posts it as a transfer condition", async () => {
@@ -772,10 +872,11 @@ describe("SolverView", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.click(
-      screen.getByRole("switch", { name: "Resume from checkpoint" }),
-    );
-    expect(screen.getByLabelText("highest_t")).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: "Resume" }));
+    // The series list is replaced by the checkpoint it continues, and the note
+    // says what a resume actually keeps.
+    expect(screen.queryByLabelText("highest_t")).toBeNull();
+    expect(screen.getByText(/Only/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Learning rate/)).toBeDisabled();
     // The accuracy controls are fixed by the original run too (resume ignores them).
     expect(screen.getByLabelText(/Weighting/)).toBeDisabled();
@@ -786,15 +887,15 @@ describe("SolverView", () => {
       screen.getByRole("switch", { name: "Adaptive collocation" }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("switch", { name: "Hard root pin" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("switch", { name: "Front geometry" }),
-    ).toBeDisabled();
-    expect(
       screen.getByRole("switch", { name: "Growth constraints" }),
     ).toBeDisabled();
-    const resumeSelect = await screen.findByLabelText("Run to resume");
+    expect(screen.getByRole("radio", { name: /Diffuse/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    // Steps is the one field a resume still honours.
+    expect(screen.getByLabelText(/Steps/)).toBeEnabled();
+    const resumeSelect = await screen.findByLabelText(/Run to resume/);
     expect(resumeSelect).toHaveValue("highest_t");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
@@ -843,6 +944,15 @@ describe("SolverView sweep mode", () => {
             ],
           });
         }
+        if (path.includes("/api/physics/")) {
+          return json({
+            dataset: "highest_t",
+            equations: [],
+            fields: STAGE_B_FIELDS,
+            groups: {},
+            sharp_interface: true,
+          });
+        }
         if (path.endsWith("/api/datasets")) return json(DATASETS);
         if (path.endsWith("/api/sweeps/active")) return json(null);
         if (path.endsWith("/api/runs/active")) return json(null);
@@ -882,7 +992,7 @@ describe("SolverView sweep mode", () => {
 
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
-    fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Seed sweep" }));
     fireEvent.change(screen.getByLabelText(/Seeds/), {
       target: { value: "3, 4" },
     });
@@ -916,7 +1026,7 @@ describe("SolverView sweep mode", () => {
     stubApi();
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
-    fireEvent.click(screen.getByRole("switch", { name: "Seed sweep" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Seed sweep" }));
     fireEvent.change(screen.getByLabelText(/Seeds/), {
       target: { value: "1, 1, x" },
     });
@@ -1087,25 +1197,16 @@ describe("solver components", () => {
 });
 
 describe("SolverView film pressure", () => {
-  it("gates the film-pressure switch on the sharp interface", async () => {
+  it("exists only where the jump it corrects does", async () => {
     const posts = stubApi();
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    // It corrects the jump, so it goes unusable without it.
-    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
-    expect(
-      screen.getByRole("switch", { name: "Film pressure" }),
-    ).toBeDisabled();
-    // Turning the jump condition off took its correction with it, and bringing
-    // the jump back does not silently restore it.
-    fireEvent.click(screen.getByRole("switch", { name: "Sharp interface" }));
-    expect(
-      screen.getByRole("switch", { name: "Film pressure" }),
-    ).not.toBeChecked();
-    expect(
-      screen.getByRole("switch", { name: "Film pressure" }),
-    ).not.toBeDisabled();
+    // It corrects the Young-Laplace jump, so it belongs to the sharp rung and
+    // nowhere else: stepping down does not disable it, it removes it.
+    expect(screen.getByRole("switch", { name: "Film pressure" })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /Explicit front/ }));
+    expect(screen.queryByRole("switch", { name: "Film pressure" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -1146,7 +1247,7 @@ describe("SolverView two-way closure", () => {
     // It ships on by default; the point of this test is that the panel can turn
     // it OFF -- a knob that is sent but has no control is not configurable.
     const closure = screen.getByRole("switch", {
-      name: "Two-way evap closure",
+      name: "Two-way evaporation",
     });
     expect(closure).toBeChecked();
     fireEvent.click(closure);
@@ -1161,16 +1262,14 @@ describe("SolverView two-way closure", () => {
 });
 
 describe("SolverView evolving width", () => {
-  it("is gated on the front geometry and reaches the request", async () => {
+  it("is offered only with an explicit front, and reaches the request", async () => {
     const posts = stubApi();
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
-    expect(
-      screen.getByRole("switch", { name: "Evolving width" }),
-    ).toBeDisabled();
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
+    expect(screen.queryByRole("switch", { name: "Evolving width" })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /Sharp front/ }));
     fireEvent.click(screen.getByRole("switch", { name: "Evolving width" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
@@ -1180,16 +1279,21 @@ describe("SolverView evolving width", () => {
 });
 
 describe("SolverView measured front velocity", () => {
-  it("is gated on the front geometry and reaches the request", async () => {
+  it("is unavailable without a front, and reaches the request with one", async () => {
     const posts = stubApi();
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    // The switch stays on screen under the diffuse treatment, carrying the only
+    // explanation there is for why it cannot be used.
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
     expect(
       screen.getByRole("switch", { name: "Measured front velocity" }),
     ).toBeDisabled();
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    expect(
+      screen.getByText(/no front to give a normal speed/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Sharp front/ }));
     fireEvent.click(
       screen.getByRole("switch", { name: "Measured front velocity" }),
     );
@@ -1200,6 +1304,27 @@ describe("SolverView measured front velocity", () => {
     expect(body.front_velocity).toBe(true);
     expect(body.fv_weight).toBe(10);
     expect(body.fv_apex_weight).toBe(10);
+  });
+
+  it("will not launch a measurement it then ignores", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Measured front velocity" }),
+    );
+    for (const field of [/Normal-speed weight/, /Apex weight/]) {
+      fireEvent.change(screen.getByLabelText(field), {
+        target: { value: "0" },
+      });
+    }
+
+    // The API rejects this combination; the dock says so before the request.
+    expect(
+      screen.getByText(/needs a weight on the profile or the apex/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
   });
 
   it("reveals its weight fields only while it is on", async () => {
@@ -1215,7 +1340,7 @@ describe("SolverView measured front velocity", () => {
     expect(screen.getByLabelText(/Apex weight/)).toBeInTheDocument();
   });
 
-  it("turning the front geometry off takes it with it", async () => {
+  it("stepping down to the diffuse treatment takes it with it", async () => {
     const posts = stubApi();
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
@@ -1223,7 +1348,7 @@ describe("SolverView measured front velocity", () => {
     fireEvent.click(
       screen.getByRole("switch", { name: "Measured front velocity" }),
     );
-    fireEvent.click(screen.getByRole("switch", { name: "Front geometry" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
