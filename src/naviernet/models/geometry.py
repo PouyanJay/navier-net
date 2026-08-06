@@ -13,14 +13,21 @@ Structural guarantees (each regression-tested):
 - the interface passes exactly through the root point at every t;
 - the nose never retreats, and extrapolates at its last learned rate;
 - the vapour region is one connected capsule closed at both ends;
-- the caps are CIRCULAR (constant curvature -- the Young-Laplace cap shape),
-  the width is bounded by the channel, and phi is smooth on the spine (the
+- the width is bounded by the channel, and phi is smooth on the spine (the
   matched-floor form; Stage-B curvature differentiates phi twice, the same
   lesson the hard-pin gate learned). At the cap-body seams the u-clamp leaves
   phi C0-but-not-C1: a measured, accepted trade-off (kappa*grad(alpha) stays
   O(10-50) there, far under harmful scale; a C1 blend would require tying the
   boundary radius slope to zero and cost expressivity) -- regression-tested at
   the seam points.
+
+The caps are circular by default -- constant curvature, the STATIC Young-Laplace
+cap shape. ``model.cap_freedom`` drops that assumption (see
+:meth:`GeometricInterface._cap_modulation`): an advancing bubble in a Hele-Shaw
+gap has a flattened nose, and asserting a circle there denies the shape to the
+data (a circle cannot comply) and the curvature to the physics (it is handed
+1/r rather than reading it off the curve). Everything above still holds with the
+freedom on; the gate is built to vanish exactly where those guarantees live.
 """
 
 from __future__ import annotations
@@ -196,6 +203,20 @@ def _with_context(features: torch.Tensor, c: torch.Tensor | None) -> torch.Tenso
     if c is None:
         return features
     return torch.cat([features, c[:1].expand(features.shape[0], -1)], dim=-1)
+
+
+def _d_wrt(leaf: torch.Tensor):
+    """Derivative operator with respect to ``leaf``, graph kept.
+
+    ``create_graph`` is what lets a SECOND derivative be taken, and what lets the
+    loss reach the nets through the curvature -- the shape has to be movable by
+    the term that reads it.
+    """
+
+    def derivative(field: torch.Tensor) -> torch.Tensor:
+        return torch.autograd.grad(field, leaf, torch.ones_like(field), create_graph=True)[0]
+
+    return derivative
 
 
 def _inverse_softplus(value: float) -> float:
@@ -741,16 +762,29 @@ class GeometricInterface(nn.Module):
         simply the radial direction.
         """
         at_root = query.u < 0.5
-        radius = torch.where(at_root, frame.r_root, frame.r_nose)
+        base = torch.where(at_root, frame.r_root, frame.r_nose)
         centre_x = torch.where(at_root, frame.ax, frame.bx)
         sign = torch.where(at_root, -torch.ones_like(query.u), torch.ones_like(query.u))
-        cos, sin = torch.cos(query.angle), torch.sin(query.angle)
+
+        # The cap angle becomes a leaf, so the curve's own derivatives in it are
+        # available by autograd (the same device `_body_frame` uses for u). Without
+        # free caps nothing depends on it and the circle's closed forms are exact
+        # and cheaper, so that path stays byte-for-byte what it was.
+        psi = query.angle.detach().requires_grad_(True) if self.cap_freedom else query.angle
+        cos, sin = torch.cos(psi), torch.sin(psi)
 
         # The same modulation `forward` applies, read off the same outward radial
         # direction -- here it is the cap angle itself, since these points ARE the
         # cap. `sign` carries the root cap's outward direction (-x), so one net
         # sees a consistent frame at both ends.
-        radius = radius * self._cap_modulation(sign * cos, sin, query.u, query.t, ctx)
+        radius = base * self._cap_modulation(sign * cos, sin, query.u, query.t, ctx)
+
+        if self.cap_freedom:
+            d_psi = _d_wrt(psi)
+            r_psi = d_psi(radius)
+            r_psi2 = d_psi(r_psi)
+        else:
+            r_psi = r_psi2 = torch.zeros_like(radius)
 
         position = torch.cat(
             [
@@ -758,6 +792,15 @@ class GeometricInterface(nn.Module):
                 self.centerline(query.u, query.t, ctx) + radius * sin,
             ],
             dim=1,
+        )
+        # A polar curve r(psi) about the cap centre. Both reduce to the circle's
+        # closed forms when r' = r'' = 0 -- the normal to the radial direction and
+        # kappa to 1/r -- which is why freeing the cap changes nothing until the
+        # cap net moves off its zero bias.
+        norm = torch.sqrt(radius**2 + r_psi**2).clamp(min=ABS_SMOOTH)
+        normal = (
+            torch.cat([sign * (radius * cos + r_psi * sin), radius * sin - r_psi * cos], dim=1)
+            / norm
         )
         # A cap that has VANISHED (a non-positive radius, reachable only under
         # `allow_pinch`) has no curvature to report. Flooring its radius would
@@ -768,10 +811,10 @@ class GeometricInterface(nn.Module):
         # no interface, no capillary pressure.
         kappa = torch.where(
             radius > ABS_SMOOTH,
-            1.0 / radius.clamp(min=ABS_SMOOTH),
+            (radius**2 + 2.0 * r_psi**2 - radius * r_psi2) / norm**3,
             torch.zeros_like(radius),
         )
-        return position, torch.cat([sign * cos, sin], dim=1), kappa
+        return position, normal, kappa
 
     def _normal_speed(
         self, position: torch.Tensor, normal: torch.Tensor, t: torch.Tensor

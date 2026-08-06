@@ -262,3 +262,88 @@ def test_the_freed_cap_still_closes_one_connected_shape(tmp_path):
         (front.points[:, 0:1] - spine_x) ** 2 + (front.points[:, 1:2] - spine_y) ** 2
     ).sqrt()
     assert float(radial.min()) > 0.0
+
+
+# --------------------------------------------------------------------------
+# T2 -- curvature read off the curve, not asserted as 1/r
+# --------------------------------------------------------------------------
+
+
+def _nose_cap(front):
+    return (front.on_cap.squeeze(1) > 0) & (front.u.squeeze(1) == 1.0)
+
+
+def test_the_circular_cap_still_reports_exactly_one_over_r():
+    """The closed form has to survive the rewrite, or the baseline of the bench
+    is not the baseline any more."""
+    geo = _geo(23)
+    front = _front_of(geo, 0.5, n_cap=32)
+    frame = geo.frame(torch.tensor([[0.5]]))
+
+    kappa = front.kappa_par[_nose_cap(front)]
+    assert torch.allclose(kappa, 1.0 / frame.r_nose.detach(), atol=1e-6)
+    assert float(kappa.std()) < 1e-6, "a circle has one curvature"
+
+
+def test_the_freed_cap_reports_a_curvature_that_varies_along_it():
+    """The asserted constant is gone: a cap with a shape has a curvature profile."""
+    geo = _loud(_free(23))
+    front = _front_of(geo, 0.5, n_cap=32)
+
+    kappa = front.kappa_par[_nose_cap(front)]
+    assert float(kappa.std()) > 1e-2, "a shaped cap cannot have one curvature"
+
+
+def test_the_tip_curvature_is_no_longer_pinned_to_one_over_r():
+    """The whole point. `kappa = (r - r'')/r^2` at the apex, so the freed cap can
+    present a FLATTER tip than its radius -- which is what an advancing bubble in
+    a Hele-Shaw gap actually has, and what the jump condition needs to be able to
+    ask for."""
+    geo = _loud(_free(29))
+    front = _front_of(geo, 0.5, n_cap=65)  # odd, so a sample lands on psi = 0
+    frame = geo.frame(torch.tensor([[0.5]]))
+
+    on_cap = _nose_cap(front)
+    apex = front.angle[on_cap].abs().argmin()
+    kappa_tip = float(front.kappa_par[on_cap][apex])
+    circle = float(1.0 / frame.r_nose.detach())
+
+    assert abs(kappa_tip - circle) / circle > 0.05, (
+        f"tip curvature {kappa_tip:.3f} is still the circle's {circle:.3f}"
+    )
+
+
+def test_the_outward_normal_follows_the_shaped_cap():
+    """A non-circular cap's normal is no longer the radial direction, and that
+    normal is what the kinematic condition and the Bretherton capillary number
+    are read along -- so it has to follow the curve, not the circle."""
+    geo = _loud(_free(31))
+    front = _front_of(geo, 0.5, n_cap=32)
+    frame = geo.frame(torch.tensor([[0.5]]))
+
+    on_cap = _nose_cap(front)
+    normal = front.normal[on_cap]
+    centre = torch.cat(
+        [frame.bx, geo.centerline(torch.ones(1, 1), torch.tensor([[0.5]]))], dim=1
+    ).detach()
+    radial = front.points[on_cap][:, :2] - centre
+    radial = radial / radial.norm(dim=1, keepdim=True)
+
+    assert torch.allclose(normal.norm(dim=1), torch.ones(int(on_cap.sum())), atol=1e-5)
+    # Still outward...
+    assert float((normal * radial).sum(dim=1).min()) > 0.0
+    # ...but no longer the radial direction itself.
+    assert float((normal - radial).norm(dim=1).max()) > 1e-2
+
+
+def test_the_curvature_can_be_trained_through():
+    """`create_graph` is load-bearing: if the loss cannot reach the cap net
+    through kappa, the jump condition still cannot bend the nose and the whole
+    change is cosmetic."""
+    geo = _loud(_free(37))
+    front = _front_of(geo, 0.5, n_cap=16)
+    front.kappa_par.sum().backward()
+
+    grads = [p.grad for p in geo.cap_net.parameters() if p.grad is not None]
+    assert grads, "no gradient reached the cap net through the curvature"
+    assert max(float(g.abs().max()) for g in grads) > 0.0
