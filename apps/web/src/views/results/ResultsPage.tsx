@@ -139,7 +139,9 @@ export function ResultsPage({ project }: ResultsPageProps) {
     () => (selected ? runCapability(selected, detail) : null),
     [selected, detail],
   );
-  const { validation } = useValidation(selected?.id ?? null);
+  const { validation, loading: validationLoading } = useValidation(
+    selected?.id ?? null,
+  );
   // Where this run stands in the rail's ranking, carried into the header so the
   // standing you chose it by is still on screen while you read it.
   const standing = useMemo(() => {
@@ -328,6 +330,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                   run={selected}
                   detail={detail}
                   validation={validation}
+                  validationLoading={validationLoading}
                   datasetLabels={datasetLabels}
                   onOpenTab={openTab}
                 />
@@ -374,6 +377,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                       : null
                   }
                   validation={validation}
+                  validationLoading={validationLoading}
                 />
               ) : activeTab === "velocity" ? (
                 <FrontVelocityTab

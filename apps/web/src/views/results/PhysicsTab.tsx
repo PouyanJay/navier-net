@@ -87,6 +87,9 @@ interface PhysicsTabProps {
   /** The series' display label (ids stay in URLs; labels in copy). */
   datasetName: string | null;
   validation: PhysicsValidation | null;
+  /** The validation payload is still in flight. A check whose input has not
+   * arrived has no verdict to give, so none is drawn. */
+  validationLoading: boolean;
 }
 
 /** The checks that hold independently of training, and the dimensionless
@@ -98,6 +101,7 @@ export function PhysicsTab({
   dataset,
   datasetName,
   validation,
+  validationLoading,
 }: PhysicsTabProps) {
   const groupsQ = useApiResource<DimensionlessGroups>(
     dataset,
@@ -148,15 +152,21 @@ export function PhysicsTab({
             </div>
 
             <p className="check-band">Measured</p>
-            {verdict.measured.length === 0 && (
+            {validationLoading && (
+              <p className="state-note" role="status">
+                Reading this run's measurements…
+              </p>
+            )}
+            {!validationLoading && verdict.measured.length === 0 && (
               <p className="state-note">
                 This run recorded no physics diagnostics; re-run the evaluate
                 stage to measure them.
               </p>
             )}
-            {verdict.measured.map((check) => (
-              <CheckRow key={check.id} check={check} />
-            ))}
+            {!validationLoading &&
+              verdict.measured.map((check) => (
+                <CheckRow key={check.id} check={check} />
+              ))}
             {film != null && (
               <CheckRow
                 check={{
@@ -171,7 +181,7 @@ export function PhysicsTab({
               />
             )}
 
-            {verdict.notRun.length > 0 && (
+            {!validationLoading && verdict.notRun.length > 0 && (
               <>
                 <p className="check-band">Not run</p>
                 {verdict.notRun.map((check) => (

@@ -661,16 +661,15 @@ describe("results routing", () => {
     expect(
       await screen.findByRole("heading", { name: /physics validation/i }),
     ).toBeInTheDocument();
-    expect(
-      await screen.findByText(/nose-speed agreement/i),
-    ).toBeInTheDocument();
-    // The method's own open question is stated once, as a note — not failed as
+    // Wait for the validation payload to land before reading any verdict: the
+    // tab states none until it does, and the tolerance is what says it has.
+    expect(await screen.findByText(/tol 10 %/)).toBeInTheDocument();
+    expect(screen.getByText(/nose-speed agreement/i)).toBeInTheDocument();
+    // The method's own open question is stated once, as a note, not failed as
     // a per-run check on every run ever trained.
     expect(
       screen.getByText(/global mass closure is not yet quantitative/i),
     ).toBeInTheDocument();
-    // And every measured check states the tolerance it is read against.
-    expect(screen.getByText(/tol 10 %/)).toBeInTheDocument();
     // Group tiles from the condition's own groups endpoint.
     expect(await screen.findByText("320")).toBeInTheDocument();
 

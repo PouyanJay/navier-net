@@ -15,6 +15,9 @@ interface OverviewTabProps {
   run: RunSummary;
   detail: RunDetail | null;
   validation: PhysicsValidation | null;
+  /** The validation payload is still in flight; no verdict is stated until it
+   * lands, in the summary or in the tab it summarises. */
+  validationLoading: boolean;
   datasetLabels: Map<string, string>;
   onOpenTab: (tab: ResultTabId) => void;
 }
@@ -137,6 +140,7 @@ export function OverviewTab({
   run,
   detail,
   validation,
+  validationLoading,
   datasetLabels,
   onOpenTab,
 }: OverviewTabProps) {
@@ -267,12 +271,18 @@ export function OverviewTab({
         <Panel
           title="Physics"
           subtitle={
-            verdict.measured.length === 0
-              ? "not measured"
-              : `${verdict.flags.length} of ${verdict.measured.length} outside tolerance`
+            validationLoading
+              ? "reading"
+              : verdict.measured.length === 0
+                ? "not measured"
+                : `${verdict.flags.length} of ${verdict.measured.length} outside tolerance`
           }
         >
-          {verdict.measured.length === 0 ? (
+          {validationLoading ? (
+            <p className="state-note" role="status">
+              Reading this run&apos;s measurements…
+            </p>
+          ) : verdict.measured.length === 0 ? (
             <p className="state-note">
               No physics diagnostics recorded for this run.
             </p>
