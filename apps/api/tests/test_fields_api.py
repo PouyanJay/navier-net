@@ -115,3 +115,39 @@ def test_residual_maps_evaluate_via_autograd(client: TestClient, trained_run: st
     )
     assert response.status_code == 404
     assert "Stage-B" in response.json()["detail"]
+
+
+def test_velocity_field_serves_a_quiver_with_its_own_front(
+    client: TestClient, trained_run: str
+):
+    """The inferred flow travels with the interface it flows around: an arrow
+    field without that boundary cannot be read, and the two must come from the
+    same instant, which one payload guarantees and two requests do not."""
+    body = client.get(f"/api/runs/{trained_run}/velocity", params={"t": 0.1}).json()
+
+    assert body["unit"] == "mm·s⁻¹"
+    # Two lattices: the arrows coarse (a vector per pixel is ink, not data),
+    # the contour from the full field grid.
+    assert len(body["u"]) == len(body["y_um"])
+    assert len(body["u"][0]) == len(body["x_um"])
+    assert len(body["v"]) == len(body["u"])
+    assert body["speed_max"] >= body["speed_mean"] >= 0
+    x0, x1, y0, y1 = body["domain_um"]
+    assert x1 > x0 and y1 > y0
+    # Every arrow anchor sits inside the channel, never on a wall.
+    assert all(x0 < x < x1 for x in body["x_um"])
+    assert all(y0 < y < y1 for y in body["y_um"])
+    assert isinstance(body["interface"], list)
+
+
+def test_velocity_field_clamps_to_the_trained_span(client: TestClient, trained_run: str):
+    """Past the footage the model is inventing, so the request is clamped rather
+    than answered — the same rule the scalar maps follow."""
+    body = client.get(f"/api/runs/{trained_run}/velocity", params={"t": 99.0}).json()
+
+    assert body["t_star"] == pytest.approx(body["t_max_star"])
+    assert body["t_ms"] >= 0
+
+
+def test_velocity_field_for_an_unknown_run_is_404(client: TestClient):
+    assert client.get("/api/runs/nope/velocity").status_code == 404

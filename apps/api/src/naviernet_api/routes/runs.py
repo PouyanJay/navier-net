@@ -260,6 +260,22 @@ def get_field(
     return payload
 
 
+@router.get("/{run_id}/velocity")
+def get_velocity(
+    run_id: str,
+    t: float = Query(default=0.0),
+    dataset: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """The inferred velocity field at time t*, as a quiver plus the interface
+    it flows around. No velocity was ever supplied to the model; this is the
+    governing equations' own answer, which is why it travels with the front."""
+    payload = fields_service.velocity_field(settings, run_id, t, dataset)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"no trained model for run {run_id!r}")
+    return payload
+
+
 @router.get("/{run_id}/interface")
 def get_interface(
     run_id: str,

@@ -1,15 +1,22 @@
 /** The Results canvas: what a run can still answer, which checks actually ran,
  * and what a tab holds before you open it. */
 
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import type { PhysicsValidation, RunDetail, RunSummary } from "../src/lib/api";
+import type {
+  PhysicsValidation,
+  RunDetail,
+  RunSummary,
+  VelocityFieldMap,
+} from "../src/lib/api";
 import {
   physicsVerdict,
   unsupervisedIou,
 } from "../src/views/results/physicsChecks";
 import { runCapability } from "../src/views/results/runCapability";
 import { tabBadges } from "../src/views/results/tabBadges";
+import { VelocityField } from "../src/views/results/VelocityField";
 
 const RUN: RunSummary = {
   id: "fvb-w1-s0",
@@ -198,5 +205,78 @@ describe("tabBadges", () => {
     expect(badges.velocity).toMatchObject({ text: "none", warn: true });
     // One trained run in the project is not a comparison.
     expect(badges.compare).toMatchObject({ text: "1 run", warn: true });
+  });
+});
+
+describe("VelocityField", () => {
+  const FIELD: VelocityFieldMap = {
+    run_id: "r4-causal-s2",
+    dataset: null,
+    unit: "mm·s⁻¹",
+    t_star: 0.5,
+    t_min_star: 0,
+    t_max_star: 3.33,
+    t_ms: 0.75,
+    x_um: [100, 300, 500],
+    y_um: [70, 140, 210],
+    // A fast row, a slow row, and one that is effectively still.
+    u: [
+      [120, 150, 180],
+      [40, 60, 80],
+      [0.5, 0.4, 0.3],
+    ],
+    v: [
+      [10, -10, 5],
+      [4, -4, 2],
+      [0.1, 0, -0.1],
+    ],
+    speed_max: 180.07,
+    speed_mean: 60,
+    domain_um: [0, 1668, 0, 282],
+    interface: [
+      [
+        [200, 100],
+        [400, 100],
+        [400, 200],
+        [200, 200],
+      ],
+    ],
+  };
+
+  it("draws the channel at its true aspect, so a direction is a direction", () => {
+    const { container } = render(
+      <VelocityField field={FIELD} ariaLabel="velocity" />,
+    );
+    const svg = container.querySelector("svg")!;
+    const [, , width, height] = svg
+      .getAttribute("viewBox")!
+      .split(" ")
+      .map(Number);
+    // A stretched plot rotates every vector on the page: the plot box's aspect
+    // must be the channel's (1668 × 282), padding aside.
+    const plotW = width - 34 - 16;
+    const plotH = height - 26 - 30;
+    expect(plotH / plotW).toBeCloseTo(282 / 1668, 3);
+  });
+
+  it("states its scale, and says the velocity was never supplied", () => {
+    render(<VelocityField field={FIELD} ariaLabel="velocity" />);
+    // Without a reference arrow a quiver is a picture of a direction field.
+    expect(screen.getByText(/180 mm·s⁻¹ · peak/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/no velocity data was ever supplied/),
+    ).toBeInTheDocument();
+  });
+
+  it("draws a still point as a dot rather than as a tiny fast arrow", () => {
+    const { container } = render(
+      <VelocityField field={FIELD} ariaLabel="velocity" />,
+    );
+    // The bottom row is under 1 % of the peak: three dots, and six arrows.
+    expect(container.querySelectorAll(".vfield-still")).toHaveLength(3);
+    expect(container.querySelectorAll(".vfield-arrow")).toHaveLength(6);
+    // The front is drawn over the arrows, filled and stroked.
+    expect(container.querySelectorAll(".vfield-front")).toHaveLength(1);
+    expect(container.querySelectorAll(".vfield-vapour")).toHaveLength(1);
   });
 });

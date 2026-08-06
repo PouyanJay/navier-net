@@ -33,6 +33,31 @@ export interface RunSummary {
   steps_total?: number | null;
 }
 
+/** The inferred velocity field at one instant: a quiver plus the interface it
+ * flows around. No velocity was ever supplied to the model, which is the whole
+ * claim, so the front travels with it. */
+export interface VelocityFieldMap {
+  run_id: string;
+  dataset: string | null;
+  unit: string;
+  t_star: number;
+  t_min_star: number;
+  t_max_star: number;
+  t_ms: number;
+  /** Arrow anchors, in µm. */
+  x_um: number[];
+  y_um: number[];
+  /** Components at each anchor, [row][column], in `unit`. */
+  u: number[][];
+  v: number[][];
+  speed_max: number;
+  speed_mean: number;
+  /** [x0, x1, y0, y1] of the channel, in µm. */
+  domain_um: [number, number, number, number];
+  /** The alpha = threshold contours at this instant, as [x, y] µm rings. */
+  interface: [number, number][][];
+}
+
 export interface ArtifactFlags {
   checkpoint: boolean;
   metrics: boolean;
@@ -787,6 +812,11 @@ export const api = {
   getField: (id: string, name: string, t: number, dataset?: string) =>
     getJson<FieldMap>(
       `${runPath(id)}/field?name=${encodeURIComponent(name)}&t=${t.toFixed(3)}` +
+        (dataset ? `&dataset=${encodeURIComponent(dataset)}` : ""),
+    ),
+  getVelocityField: (id: string, t: number, dataset?: string) =>
+    getJson<VelocityFieldMap>(
+      `${runPath(id)}/velocity?t=${t.toFixed(3)}` +
         (dataset ? `&dataset=${encodeURIComponent(dataset)}` : ""),
     ),
   getInterface: (id: string, frames = 48) =>

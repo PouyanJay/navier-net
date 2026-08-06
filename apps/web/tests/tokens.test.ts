@@ -361,6 +361,7 @@ describe("icons come from the library, not by hand", () => {
     "src/views/datasets/QcPanel.tsx",
     "src/views/physics/EnsembleCanvas.tsx",
     "src/views/results/FrameMatchPanel.tsx",
+    "src/views/results/VelocityField.tsx",
   ];
 
   it("has no hand-drawn glyph outside the visualisation files", () => {

@@ -2243,3 +2243,66 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ── The inferred velocity field ────────────────────────────────────────
+   The platform's strongest single claim: the camera measured an interface and
+   nothing else, so every arrow here comes from the governing equations. It is
+   drawn on the canvas, where every plot lives, with the front over it. */
+.vfield-wrap {
+  position: relative;
+}
+.vfield {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.vfield-channel {
+  fill: none;
+  stroke: var(--canvas-quiet);
+  stroke-width: 1.2;
+  opacity: 0.5;
+}
+/* Inside the front the velocity is the vapour's, which is a different quantity
+   from the liquid's; the wash says so without hiding the arrows. */
+.vfield-vapour {
+  fill: var(--phase-vapour);
+  opacity: 0.85;
+}
+.vfield-front {
+  fill: none;
+  stroke: var(--phase-interface);
+  stroke-width: 1.7;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 5px var(--phase-interface));
+}
+/* Below the still threshold an arrow would be a head on a two-pixel shaft,
+   which reads as fast rather than as stagnant. */
+.vfield-still {
+  fill: var(--canvas-quiet);
+  opacity: 0.5;
+}
+.vfield-arrow {
+  cursor: crosshair;
+}
+.vfield-arrow.hot line,
+.vfield-arrow.hot polygon {
+  stroke: var(--canvas-ink-strong);
+  stroke-width: 0.6;
+}
+.vfield-ref {
+  stroke: var(--canvas-ink);
+  stroke-width: 1.4;
+}
+.vfield-ref-head {
+  fill: var(--canvas-ink);
+}
+.vfield-label {
+  fill: var(--canvas-quiet);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+.vfield-tip-uv {
+  display: block;
+  color: var(--canvas-quiet);
+  font-size: 10px;
+}

@@ -2,14 +2,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Callout, Panel } from "../../components";
 import { ChartFrame } from "../../components/ChartFrame";
-import { api, ApiError, type FieldMap } from "../../lib/api";
+import {
+  api,
+  ApiError,
+  type FieldMap,
+  type VelocityFieldMap,
+} from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import type { RunCapability } from "./runCapability";
 import { NotReplayable } from "./StateNote";
+import { VelocityField } from "./VelocityField";
 import { cmap, cssGradient, type ColormapName } from "./fieldColormaps";
 
 interface FieldDef {
-  k: "alpha" | "u" | "v" | "umag" | "s" | "p" | "T";
+  k: "vectors" | "alpha" | "u" | "v" | "umag" | "s" | "p" | "T";
   chip: string;
   label: string;
   /** The governing statement this field answers to. */
@@ -20,6 +26,13 @@ interface FieldDef {
 }
 
 const FIELD_DEFS: FieldDef[] = [
+  {
+    k: "vectors",
+    chip: "u,v",
+    label: "velocity field",
+    eq: "(u, v) · the flow the camera never measured, inferred from the equations alone",
+    cm: "blue",
+  },
   {
     k: "alpha",
     chip: "α",
@@ -324,10 +337,15 @@ export function FieldsTab({
   joint,
   capability,
 }: FieldsTabProps) {
-  const [field, setField] = useState<FieldDef>(FIELD_DEFS[1]);
+  // Opens on the speed map, as it always has. The vector view is the same
+  // instant read a different way, one chip along.
+  const [field, setField] = useState<FieldDef>(
+    FIELD_DEFS.find((def) => def.k === "umag") ?? FIELD_DEFS[0],
+  );
   const [tRatio, setTRatio] = useState(0.34);
   const [playing, setPlaying] = useState(false);
   const [map, setMap] = useState<FieldMap | null>(null);
+  const [vectors, setVectors] = useState<VelocityFieldMap | null>(null);
   // Seeded from the field set the run recorded, so the picker is right on the
   // first paint rather than after a round trip.
   const [available, setAvailable] = useState<string[] | null>(
@@ -346,6 +364,23 @@ export function FieldsTab({
     debounce.current = setTimeout(() => {
       const span = map ? map.t_max_star - map.t_min_star : 1;
       const t = (map?.t_min_star ?? 0) + tRatio * span;
+      if (field.k === "vectors") {
+        api
+          .getVelocityField(runId, t, scopedDataset)
+          .then((payload) => {
+            if (!alive) return;
+            setVectors(payload);
+            setError(null);
+            setUnavailable(false);
+          })
+          .catch((exc: unknown) => {
+            if (!alive) return;
+            if (exc instanceof ApiError && exc.status === 404)
+              setUnavailable(true);
+            else setError(errorMessage(exc));
+          });
+        return;
+      }
       api
         .getField(runId, field.k, t, scopedDataset)
         .then((payload) => {
@@ -466,7 +501,29 @@ export function FieldsTab({
             first.
           </p>
         )}
-        {!error && !unavailable && map && (
+        {!error && !unavailable && field.k === "vectors" && vectors && (
+          <ChartFrame
+            name={`${runId}-velocity`}
+            title="Inferred velocity field"
+            rows={vectors.y_um.flatMap((yUm, row) =>
+              vectors.x_um.map((xUm, column) => ({
+                x_um: xUm,
+                y_um: yUm,
+                u: vectors.u[row][column],
+                v: vectors.v[row][column],
+              })),
+            )}
+            render={() => (
+              <div className="field-view">
+                <VelocityField
+                  field={vectors}
+                  ariaLabel={`Inferred velocity field at t ${vectors.t_ms.toFixed(2)} ms; peak ${vectors.speed_max.toFixed(0)} ${vectors.unit}.`}
+                />
+              </div>
+            )}
+          />
+        )}
+        {!error && !unavailable && field.k !== "vectors" && map && (
           <ChartFrame
             name={`${runId}-${field.k}`}
             title={field.label}
