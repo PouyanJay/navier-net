@@ -369,8 +369,11 @@
    A ranked list of experiments, not a folder listing: every row leads with the
    best metric that run recorded (and names which one), seed replicates fold
    into the experiment they belong to, and a comparison is assembled here. */
+/* The filter and the order it is read in, on one row: three segments spent a
+   whole row of the rail advertising the two orders you were not in. */
 .rail-tools {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--s2);
   margin-bottom: var(--s3);
 }
@@ -388,11 +391,38 @@
 .rail-search::placeholder {
   color: var(--faint);
 }
-/* The metric picker spans the rail: three equal segments, so which one is
-   active reads from the shape of the control rather than from its width. */
-.rail-lead .segb {
-  flex: 1;
-  text-align: center;
+/* The order the list is in, and the control that changes it. It names the
+   current order: a cycling button showing only its glyph is a guess. */
+.rail-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--control);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.rail-sort:hover {
+  background: var(--control-hover);
+  color: var(--text);
+}
+.rail-sort svg {
+  flex: none;
+  color: var(--primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-sort {
+    transition: none;
+  }
 }
 
 .runlist {

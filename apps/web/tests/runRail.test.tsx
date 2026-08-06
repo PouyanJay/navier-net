@@ -189,7 +189,7 @@ describe("RunRail", () => {
     );
   });
 
-  it("re-ranks when the leading metric changes", () => {
+  it("cycles the sort order, and always says which one it is in", () => {
     renderRail();
     // The row that holds rank 1, not merely the first row: the incomparable
     // run sorts high on val IoU but is deliberately left unnumbered.
@@ -199,8 +199,23 @@ describe("RunRail", () => {
         .find((row) => row.textContent?.startsWith("1"))!;
     expect(ranked()).toHaveTextContent("fvb-fix");
 
-    fireEvent.click(screen.getByRole("button", { name: "mean IoU" }));
+    // One control that cycles, naming the order it is in and the next one, so
+    // it is never a guess what a click will do.
+    const sort = screen.getByRole("button", { name: /Sort order: val IoU/ });
+    fireEvent.click(sort);
     expect(ranked()).toHaveTextContent("r4-causal");
+    expect(
+      screen.getByRole("button", { name: /Sort order: mean IoU/ }),
+    ).toBeInTheDocument();
+
+    // Round the cycle: newest, then back to where it started.
+    fireEvent.click(
+      screen.getByRole("button", { name: /Sort order: mean IoU/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Sort order: newest/ }));
+    expect(
+      screen.getByRole("button", { name: /Sort order: val IoU/ }),
+    ).toBeInTheDocument();
   });
 
   it("gives an incomparable run no rank number at all", () => {

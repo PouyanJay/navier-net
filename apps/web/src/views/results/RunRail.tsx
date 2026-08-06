@@ -1,7 +1,11 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
 
 import { Band, Button } from "../../components";
-import { StageResultsIcon } from "../../components/icons";
+import {
+  HugeiconsIcon,
+  SortIcon,
+  StageResultsIcon,
+} from "../../components/icons";
 import type { RunSummary } from "../../lib/api";
 import { isTrainedRun, MAX_COMPARED } from "../../lib/runs";
 import {
@@ -86,26 +90,24 @@ export function RunRail({
             aria-label="Filter runs"
             onChange={(event) => setQuery(event.target.value)}
           />
-          {/* The metric a row leads with is also the one it is ranked by, so this
-            is one control doing both jobs — and the rows themselves label the
-            number, which is where that label belongs. */}
-          <div
-            className="seg compact rail-lead"
-            role="group"
-            aria-label="Lead and sort runs by"
+          {/* One control that cycles, rather than three segments spending a
+              whole row on the two orders you are not in. It always says which
+              order it IS — a cycling button that only shows its icon is a
+              guess — and names the next one for the pointer and for a reader. */}
+          <button
+            type="button"
+            className="rail-sort"
+            title={`Sorted by ${rankMetric(metric).label}. Click to sort by ${
+              rankMetric(nextMetric(metric)).label
+            }.`}
+            aria-label={`Sort order: ${rankMetric(metric).label}. Change to ${
+              rankMetric(nextMetric(metric)).label
+            }.`}
+            onClick={() => setMetric(nextMetric(metric))}
           >
-            {RANK_METRICS.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={option.id === metric ? "segb on" : "segb"}
-                aria-pressed={option.id === metric}
-                onClick={() => setMetric(option.id)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+            <HugeiconsIcon icon={SortIcon} size={13} aria-hidden="true" />
+            {rankMetric(metric).label}
+          </button>
         </div>
 
         {families.length === 0 ? (
@@ -170,6 +172,12 @@ export function RunRail({
     </>
   );
 }
+
+/** The next order in the cycle: val IoU, mean IoU, newest, round again. */
+const nextMetric = (metric: RankMetricId): RankMetricId => {
+  const index = RANK_METRICS.findIndex((option) => option.id === metric);
+  return RANK_METRICS[(index + 1) % RANK_METRICS.length].id;
+};
 
 const dayOf = (family: RunFamily | undefined) =>
   family ? (formatRunDate(family.newest)?.split(" · ")[0] ?? "") : "";
