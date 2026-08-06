@@ -228,6 +228,8 @@ class GeometricInterface(nn.Module):
         allow_pinch: bool = False,
         n_cond: int = 0,
         evolving_width: bool = False,
+        cap_freedom: bool = False,
+        cap_delta: float = 0.2,
     ):
         super().__init__()
         # The REFERENCE dataset's anchors. A single-dataset run has only these; a
@@ -240,6 +242,20 @@ class GeometricInterface(nn.Module):
         # radius is strictly positive and the nose strictly non-retreating.
         self.allow_pinch = bool(allow_pinch)
         self.evolving_width = bool(evolving_width)
+        # The end caps stop being circles. Validated here rather than at the call
+        # site because this is the object that owns the bound: at delta >= 1 the
+        # modulation can drive the cap radius to zero or through it, and the cap
+        # folds through itself -- which is not a shape the physics can be scored
+        # on. Checked whatever `cap_freedom` says, so a config that would break
+        # the moment the flag is flipped fails now instead of then.
+        self.cap_freedom = bool(cap_freedom)
+        self.cap_delta = float(cap_delta)
+        if not 0.0 <= self.cap_delta < 1.0:
+            raise ValueError(
+                f"model.cap_delta must be in [0, 1) -- it is the cap's departure from "
+                f"its circle as a FRACTION of the local radius, and at 1 the radius "
+                f"reaches zero and the cap self-intersects. Got {self.cap_delta}."
+            )
         self._y_half = _half_height(priors)
         # The reference dataset's measured start and speed. Every per-dataset
         # quantity below is expressed RELATIVE to these, so one shared set of
@@ -282,6 +298,14 @@ class GeometricInterface(nn.Module):
                 out_bias=start,
             )
         self.center_net = _mlp(2 + self.n_cond, out_bias=0.0)
+        # The cap's departure from its circle, over (cos psi, sin psi, u, t): the
+        # angle enters through its sine and cosine rather than through psi itself,
+        # so there is no atan2 branch in the field and no wrap to reason about.
+        # `u` (0 at the root cap, 1 at the nose) is what lets one net give the two
+        # caps different shapes. Bias 0 -> tanh(0) = 0 -> the construction OPENS as
+        # the circle it replaces and learns its way off it.
+        if self.cap_freedom:
+            self.cap_net = _mlp(4 + self.n_cond, out_bias=0.0)
         # s(t_min) = x_root + softplus(_s0_raw): initialized so the nose starts
         # at the measured first-training-frame front.
         self._s0_raw = nn.Parameter(torch.log(torch.expm1(torch.tensor(self._ref_gap))))

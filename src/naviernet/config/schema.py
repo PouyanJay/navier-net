@@ -174,6 +174,26 @@ class ModelConfig:
     # of a rate, which continues at its last learned rate); the width never got
     # it. Requires `front_geometry`; off by default.
     evolving_width: bool = False
+    # Cap freedom: let the END CAPS have a shape. Without this the caps are exact
+    # circles -- past the nose apex the spine parameter clamps, so the field is
+    # `r_nose - |x - b|` at every step of training, and `_cap_frame` hands the
+    # Young-Laplace residual `kappa = 1/r` as a GIVEN. The cap is the one region
+    # the data cannot reach (the circle cannot comply) and the physics cannot
+    # reshape (its curvature is asserted), which is the standing hypothesis for a
+    # nose jump error stuck at 0.257 against a < 0.10 target. The circular-cap
+    # justification holds only for a STATIC interface at uniform pressure; an
+    # advancing bubble in a Hele-Shaw gap has a flattened nose, which is what the
+    # Bretherton term already models transversely.
+    # The radius gains a bounded angular modulation whose gate vanishes at the
+    # apex (so the root pin and the monotone nose stay EXACT) and at the seam (so
+    # the cap still meets the body, and the modulation is identically zero on the
+    # body -- which is what keeps the alpha field and the explicit front samples
+    # describing the same shape). Between them the cap's curvature, including at
+    # the tip, is free. Requires `front_geometry`; off by default.
+    cap_freedom: bool = False
+    # How far the cap may depart from its circle, as a fraction of the local
+    # radius. Bounded on purpose: unbounded, a cap can fold or self-intersect.
+    cap_delta: float = 0.2
     # Sharp-interface physics (R4): drive the shape with the conditions that hold
     # AT a fluid interface -- the Young-Laplace jump and the kinematic condition,
     # sampled on the explicit front -- instead of a bulk momentum residual a free
