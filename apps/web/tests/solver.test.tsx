@@ -541,6 +541,47 @@ describe("SolverView", () => {
     expect(body.front_velocity).toBe(false);
   });
 
+  it("offers the free end caps on both front rungs, and never on the diffuse one", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // Sharp and explicit-front both have caps to free.
+    expect(
+      screen.getByRole("switch", { name: "Free the end caps" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Explicit front/ }));
+    expect(
+      screen.getByRole("switch", { name: "Free the end caps" }),
+    ).toBeInTheDocument();
+
+    // A diffuse run has no capsule, so it has no caps to free.
+    fireEvent.click(screen.getByRole("radio", { name: /Diffuse/ }));
+    expect(
+      screen.queryByRole("switch", { name: "Free the end caps" }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).cap_freedom).toBe(false);
+  });
+
+  it("sends the freed caps and their bound with the run", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Free the end caps" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.cap_freedom).toBe(true);
+    // The bound rides along at its default; it is tuned from the CLI/API, so the
+    // aside offers the decision rather than every dial.
+    expect(body.cap_delta).toBe(0.2);
+  });
+
   it("names the momentum closure each treatment implies", async () => {
     stubApi();
     renderStage(<SolverView />);

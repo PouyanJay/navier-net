@@ -81,6 +81,7 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       film_pressure: false,
       allow_pinch: false,
       evolving_width: false,
+      cap_freedom: false,
       front_velocity: false,
     };
   }
@@ -105,7 +106,12 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
 
 /** A boolean that refines the chosen treatment, offered only where it applies. */
 export interface Modifier {
-  key: "hard_pin" | "allow_pinch" | "evolving_width" | "film_pressure";
+  key:
+    | "hard_pin"
+    | "allow_pinch"
+    | "evolving_width"
+    | "film_pressure"
+    | "cap_freedom";
   label: string;
   hint: string;
   /** The rungs that admit it; on any other rung it is not shown at all. */
@@ -124,6 +130,14 @@ export const MODIFIERS: Modifier[] = [
     label: "Film pressure",
     hint: "Bretherton film offset on the bubble's sides",
     on: ["sharp"],
+  },
+  {
+    // First among the shape modifiers: it is the one that decides whether the
+    // bubble's ends can have a shape at all.
+    key: "cap_freedom",
+    label: "Free the end caps",
+    hint: "the nose is shaped, not a circle of fixed curvature",
+    on: ["front", "sharp"],
   },
   {
     key: "evolving_width",

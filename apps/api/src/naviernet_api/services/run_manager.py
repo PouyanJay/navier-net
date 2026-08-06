@@ -532,6 +532,8 @@ def _configure(
         f"model.front_geometry={str(request.front_geometry).lower()}",
         f"model.allow_pinch={str(request.allow_pinch).lower()}",
         f"model.evolving_width={str(request.evolving_width).lower()}",
+        f"model.cap_freedom={str(request.cap_freedom).lower()}",
+        f"model.cap_delta={request.cap_delta}",
         f"training.evap_closure_two_way={str(request.evap_closure_two_way).lower()}",
         f"training.alpha_eps_anneal_steps={request.alpha_eps_anneal_steps}",
         f"training.alpha_eps_final={request.alpha_eps_final}",

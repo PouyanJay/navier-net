@@ -30,6 +30,8 @@ export interface SolverFormState {
   sharp_interface: boolean;
   allow_pinch: boolean;
   evolving_width: boolean;
+  cap_freedom: boolean;
+  cap_delta: number;
   film_pressure: boolean;
   depletable_superheat: boolean;
   evap_closure_two_way: boolean;
@@ -90,6 +92,14 @@ export const FORM_DEFAULTS: SolverFormState = {
   allow_pinch: false,
   // Evolving width: opt-in until benched. Off by default.
   evolving_width: false,
+  // Free end caps: the nose and root stop being constant-curvature arcs, so the
+  // data can fit them and the Young-Laplace jump can reshape them. Opt-in until
+  // benched, so the current recipe stays reproducible head to head. `cap_delta`
+  // bounds the departure as a fraction of the local radius; it rides the request
+  // at its default and is tuned from the CLI/API, like the fine kinematics
+  // sub-parameters -- the aside offers the decision, not every dial.
+  cap_freedom: false,
+  cap_delta: 0.2,
   // Film pressure: the offset the depth-averaged pressure cannot carry at the
   // bubble's sides. Also sharp-interface-gated.
   film_pressure: true,

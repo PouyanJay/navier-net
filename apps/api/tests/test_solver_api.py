@@ -675,3 +675,36 @@ def test_asking_explicitly_for_an_unsupported_condition_is_rejected(client):
     r = client.post("/api/runs", json={**TINY_RUN, "sharp_interface": True})
     assert r.status_code == 422
     assert "'p'" in r.text and "Stage-B" in r.text
+
+
+def test_launch_rejects_cap_freedom_without_the_front(client):
+    """A free level set has no caps to free; the flag only means something on the
+    geometric construction."""
+    r = client.post(
+        "/api/runs", json={**TINY_RUN, "front_geometry": False, "cap_freedom": True}
+    )
+    assert r.status_code == 422
+    assert "front_geometry" in r.text
+
+
+@pytest.mark.parametrize("bad", [-0.1, 1.0, 3.0])
+def test_launch_rejects_a_cap_delta_outside_its_bound(client, bad):
+    """The bound is what stops a cap folding through itself, so the API holds it
+    rather than letting the geometry raise deep in the worker."""
+    r = client.post("/api/runs", json={**TINY_RUN, "cap_freedom": True, "cap_delta": bad})
+    assert r.status_code == 422
+
+
+def test_cap_freedom_reaches_the_run_it_launched(client: TestClient):
+    """The flag has to travel all the way into the run's own config, or a run
+    trains a circular cap while the UI says otherwise."""
+    launched = client.post(
+        "/api/runs", json={**TINY_RUN, "cap_freedom": True, "cap_delta": 0.3}
+    )
+    assert launched.status_code == 202
+    run_id = launched.json()["run_id"]
+    read_stream(client, run_id)  # drain = wait for completion
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["model"]["cap_freedom"] is True
+    assert cfg["model"]["cap_delta"] == pytest.approx(0.3)
