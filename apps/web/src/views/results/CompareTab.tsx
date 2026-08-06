@@ -12,11 +12,8 @@ import {
   type RunMetrics,
   type RunSummary,
 } from "../../lib/api";
-import { isTrainedRun } from "../../lib/runs";
+import { isTrainedRun, MAX_COMPARED } from "../../lib/runs";
 import { fmtIou, runDisplayName } from "./format";
-
-/** Comparing more runs than chart series colors would un-name the lines. */
-const MAX_COMPARED = 4;
 
 interface RunFacts {
   metrics: RunMetrics | null;
@@ -27,6 +24,8 @@ interface CompareTabProps {
   runs: RunSummary[];
   /** The run open in the page; preselected. */
   currentId: string;
+  /** Further runs the rail picked, preselected alongside `currentId`. */
+  alsoCompare?: string[];
   datasetLabels: Map<string, string>;
 }
 
@@ -42,10 +41,44 @@ interface MetricRow {
 }
 
 const ROWS: MetricRow[] = [
+  // What differs first: a comparison of two numbers means nothing until the
+  // configurations behind them are on the same screen.
   {
-    label: "In-distribution IoU · A",
-    value: (facts) =>
-      facts?.metrics?.val_iou_mean ?? facts?.metrics?.iou_val ?? null,
+    label: "Recipe",
+    value: (_, run) =>
+      run.recipe == null
+        ? "not recorded"
+        : run.recipe.length === 0
+          ? "recommended"
+          : run.recipe.join(" · "),
+  },
+  { label: "Seed", value: (_, run) => run.seed ?? "not recorded" },
+  {
+    label: "Steps",
+    value: (_, run) => run.steps,
+    format: (v) => v.toLocaleString(),
+  },
+  {
+    label: "Frames evaluated",
+    value: (_, run) => run.n_frames ?? null,
+    format: (v) => String(v),
+  },
+  {
+    label: "Conditions trained",
+    value: (_, run) =>
+      (run.datasets?.length ?? 1) - (run.heldout_datasets?.length ?? 0),
+    format: (v) => String(v),
+  },
+  // Then the scores, on the same ladder the run list leads with. The retired
+  // holdout-frame row is gone: it could only ever print a dash.
+  {
+    label: "Validation IoU · A",
+    value: (facts, run) =>
+      facts?.metrics?.val_iou_mean ??
+      facts?.metrics?.iou_val ??
+      run.val_iou_mean ??
+      run.iou_val ??
+      null,
     best: true,
   },
   {
@@ -55,38 +88,55 @@ const ROWS: MetricRow[] = [
   },
   {
     label: "Mean IoU",
-    value: (facts) => facts?.metrics?.iou_mean ?? null,
+    value: (facts, run) => facts?.metrics?.iou_mean ?? run.iou_mean ?? null,
     best: true,
-  },
-  {
-    label: "Holdout-frame IoU",
-    value: (facts) => facts?.metrics?.iou_holdout ?? null,
-    best: true,
-  },
-  {
-    label: "Steps",
-    value: (_, run) => run.steps,
-    format: (v) => v.toLocaleString(),
-  },
-  {
-    label: "Conditions trained",
-    value: (_, run) =>
-      (run.datasets?.length ?? 1) - (run.heldout_datasets?.length ?? 0),
-    format: (v) => String(v),
   },
 ];
+
+/** What the compared runs have in common, when that makes their gap readable.
+ * Two runs that differ in one knob attribute their difference to it; two that
+ * differ in several attribute it to nothing. */
+function differing(runs: RunSummary[]): string | null {
+  if (runs.length !== 2) return null;
+  const [a, b] = runs;
+  const sameSteps = a.steps === b.steps;
+  const sameSeed = a.seed === b.seed;
+  const recipeA = (a.recipe ?? []).join("+");
+  const recipeB = (b.recipe ?? []).join("+");
+  if (a.recipe == null || b.recipe == null) return null;
+  if (recipeA === recipeB) {
+    return sameSeed
+      ? null
+      : "Same recipe, different seed: the gap below is this configuration's own spread.";
+  }
+  return sameSteps && sameSeed
+    ? "One knob apart. Everything but the recipe matches, so the gap below is attributable to it."
+    : null;
+}
 
 /** Side-by-side metrics and overlaid data-loss for up to four trained runs. */
 export function CompareTab({
   runs,
   currentId,
+  alsoCompare,
   datasetLabels,
 }: CompareTabProps) {
   const trained = runs.filter(isTrainedRun);
   const [picked, setPicked] = useState<Set<string>>(() => {
     const first = trained.find((run) => run.id === currentId) ?? trained[0];
-    const second = trained.find((run) => run.id !== first?.id);
-    return new Set([first?.id, second?.id].filter(Boolean) as string[]);
+    // A comparison assembled in the rail arrives whole; otherwise the tab opens
+    // on the run being read plus whichever other one is at hand.
+    const rest = (alsoCompare ?? []).filter((id) =>
+      trained.some((run) => run.id === id && run.id !== first?.id),
+    );
+    const fallback = rest.length
+      ? []
+      : [trained.find((run) => run.id !== first?.id)?.id];
+    return new Set(
+      [first?.id, ...rest, ...fallback]
+        .filter(Boolean)
+        .slice(0, MAX_COMPARED) as string[],
+    );
   });
   const [facts, setFacts] = useState<Map<string, RunFacts>>(new Map());
 
@@ -163,6 +213,11 @@ export function CompareTab({
         })}
       </div>
 
+      {differing(selected) && (
+        <p className="note">
+          <b>{differing(selected)}</b>
+        </p>
+      )}
       <div className="cmp-table-wrap">
         <table className="cmp-table">
           <thead>

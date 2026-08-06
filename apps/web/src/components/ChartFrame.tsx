@@ -153,28 +153,29 @@ export function ChartFrame({
       : []),
   ];
 
-  const toolbar = (
-    <div className="cf-bar">
-      <div className="cf-lead">
-        {controls}
-        <MenuButton
-          label={`Download ${title}`}
-          text="Download"
-          icon={
-            <HugeiconsIcon icon={DownloadIcon} size={14} aria-hidden="true" />
-          }
-          actions={downloads}
-        />
-      </div>
-      {trailing}
-    </div>
-  );
-
   return (
     <div className="chart-frame">
-      {toolbar}
+      {/* The row exists only for a chart's OWN controls now. Taking a copy acts
+          on the picture, so it lives on the picture beside expand, the same way
+          a frame tile carries its enlarge control. */}
+      {(controls || trailing) && (
+        <div className="cf-bar">
+          <div className="cf-lead">{controls}</div>
+          {trailing}
+        </div>
+      )}
       <div className="cf-plot" ref={host}>
         {render(false)}
+        <div className="cf-take">
+          <MenuButton
+            label={`Download ${title}`}
+            icon={
+              <HugeiconsIcon icon={DownloadIcon} size={14} aria-hidden="true" />
+            }
+            actions={downloads}
+            align="end"
+          />
+        </div>
         {/* On the plot, not in the toolbar: it acts on the picture, and the
             picture is what you are pointing at when you want it bigger. */}
         <button

@@ -110,7 +110,7 @@
   margin-top: 1px;
 }
 .callout.error {
-  color: var(--redtext);
+  color: var(--danger);
   border-color: color-mix(in srgb, var(--red) 40%, transparent);
   background: var(--redsoft);
 }
@@ -221,7 +221,7 @@
 }
 .chip[data-tone="red"] {
   background: var(--redsoft);
-  color: var(--redtext);
+  color: var(--danger);
   border-color: transparent;
 }
 /* A chip reporting a state that is actively wrong pulses its lamp. Only the
@@ -331,11 +331,16 @@
 }
 .btn.danger:hover:not(:disabled) {
   background: var(--redsoft);
-  color: var(--redtext);
+  color: var(--danger);
 }
+/* `--danger` is THE danger ink; `--danger-text` is the ink used on the filled
+   danger surface, and on an ordinary ground it reads near-white in the dark
+   theme and near-black in the light one. This button sits in a row of quiet
+   ghost actions, where that made the destructive one the loudest thing on the
+   card. */
 .btn.ghost.danger {
   background: transparent;
-  color: var(--redtext);
+  color: var(--danger);
 }
 .btn.ghost.danger:hover:not(:disabled) {
   background: var(--redsoft);
@@ -1008,6 +1013,35 @@ text.chart-axis-title {
 .chart-frame {
   position: relative;
   min-width: 0;
+}
+/* A small chart carries its download on the plot beside expand: a full-width
+   toolbar row over a 120px picture is wider than the thing it acts on. */
+.cf-take {
+  position: absolute;
+  top: var(--s2);
+  right: calc(var(--s2) + 34px);
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 150ms var(--ease);
+}
+.cf-plot:hover .cf-take,
+.cf-take:focus-within {
+  opacity: 1;
+}
+.cf-take .pick-btn {
+  min-height: 26px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--canvas) 82%, transparent);
+  border: 1px solid var(--canvas-rule);
+  color: var(--canvas-ink);
+}
+.cf-take .pick-btn:hover {
+  color: var(--canvas-ink-strong);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cf-take {
+    transition: none;
+  }
 }
 
 /* ── Menu / popover (DESIGN_SYSTEM §8.5) ──────────────────────────────

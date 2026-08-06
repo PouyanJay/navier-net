@@ -40,6 +40,16 @@ class FieldUnavailable(Exception):
     """A well-formed request for a field this checkpoint does not have."""
 
 
+# Arrows need spacing, not pixels: a vector per grid cell is a solid band of
+# ink. The quiver is sampled onto its own coarse lattice, sized so a channel
+# reads as a flow rather than as a texture.
+_QUIVER_COLUMNS = 34
+_QUIVER_ROWS = 9
+# A contour needs the opposite: the interface is the overlay that makes the
+# quiver readable, so alpha is evaluated on the FULL field grid.
+_MIN_CONTOUR_POINTS = 6
+
+
 @dataclass(frozen=True)
 class _FieldScene:
     """A loaded run, scoped to one dataset's data + conditioning."""
@@ -260,3 +270,122 @@ def _computed_groups(cfg) -> dict[str, float]:
     from naviernet.physics.groups import compute_groups
 
     return compute_groups(cfg)
+
+
+def velocity_field(
+    settings: Settings, run_id: str, t_star: float, dataset: str | None
+) -> dict | None:
+    """The inferred velocity field at one instant, as a quiver plus the front.
+
+    The figure this serves is the platform's strongest single claim: the camera
+    measured an interface and nothing else, so every arrow here is inferred from
+    the governing equations alone. It therefore travels with the interface
+    contour at the same instant, because an arrow field without the boundary it
+    is flowing around cannot be read.
+
+    Two lattices, deliberately: the arrows on a coarse one (a vector per pixel
+    is ink, not information) and alpha on the field grid, so the contour stays
+    smooth.
+    """
+    paths = runs_service.run_paths_for(settings, run_id)
+    if paths is None or not paths.checkpoint.is_file():
+        return None
+
+    mtime = paths.checkpoint.stat().st_mtime
+    key = (run_id, dataset, "__quiver__", round(float(t_star), 3))
+    with _lock:
+        cached = _cache.get(key)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+
+    scene = _scene(settings, run_id, dataset, mtime)
+    if scene is None:
+        return None
+    payload = _evaluate_velocity(scene, run_id, dataset, float(t_star))
+    with _lock:
+        _cache[key] = (mtime, payload)
+        while len(_cache) > _CACHE_SIZE:
+            del _cache[next(iter(_cache))]
+    return payload
+
+
+def _evaluate_velocity(
+    scene: _FieldScene, run_id: str, dataset: str | None, t_star: float
+) -> dict:
+    import torch
+
+    data, model = scene.data, scene.model
+    t_lo, t_hi = float(data.t[0]), float(data.t[-1])
+    t = min(max(t_star, t_lo), t_hi)
+    u_mm_s = scene.u_ref_m_s * 1e3
+
+    xs_star = np.asarray(data.x)
+    ys_star = np.asarray(data.y)
+    ix = _interior(len(xs_star), _QUIVER_COLUMNS)
+    iy = _interior(len(ys_star), _QUIVER_ROWS)
+    gx, gy = np.meshgrid(xs_star[ix], ys_star[iy], indexing="xy")
+    flat = np.stack([gx.ravel(), gy.ravel(), np.full(gx.size, t)], axis=1)
+    template = data.frame_grid(0, scene.stride)[0]
+    points = torch.as_tensor(flat, dtype=template.dtype, device=template.device)
+
+    ctx = None if scene.c is None else scene.c.expand(points.shape[0], -1)
+    with torch.no_grad():
+        u, v = model.velocity(points, ctx)
+    u_grid = (u.cpu().numpy() * u_mm_s).reshape(gx.shape)
+    v_grid = (v.cpu().numpy() * u_mm_s).reshape(gx.shape)
+    speed = np.hypot(u_grid, v_grid)
+
+    return {
+        "run_id": run_id,
+        "dataset": dataset,
+        "unit": "mm·s⁻¹",
+        "t_star": round(t, 4),
+        "t_min_star": round(t_lo, 4),
+        "t_max_star": round(t_hi, 4),
+        "t_ms": round(t * float(data.meta["t_ref_ms"]), 4),
+        "x_um": [round(float(x) * scene.l_ref_um, 2) for x in xs_star[ix]],
+        "y_um": [round(float(y) * scene.l_ref_um, 2) for y in ys_star[iy]],
+        "u": [[round(float(value), 4) for value in row] for row in u_grid],
+        "v": [[round(float(value), 4) for value in row] for row in v_grid],
+        "speed_max": round(float(np.nanmax(speed)), 4),
+        "speed_mean": round(float(np.nanmean(speed)), 4),
+        "domain_um": [
+            round(float(xs_star[0]) * scene.l_ref_um, 2),
+            round(float(xs_star[-1]) * scene.l_ref_um, 2),
+            round(float(ys_star[0]) * scene.l_ref_um, 2),
+            round(float(ys_star[-1]) * scene.l_ref_um, 2),
+        ],
+        "interface": _interface_contours(scene, t),
+    }
+
+
+def _interior(count: int, wanted: int) -> np.ndarray:
+    """`wanted` anchor indices strictly inside a grid of `count` points.
+
+    Strictly inside on purpose: an arrow drawn on the wall is half outside the
+    channel, and the first and last columns carry the inlet and outlet
+    conditions rather than the flow. A grid too small to have an interior (the
+    test tensors) collapses to its middle rather than falling back onto a wall.
+    """
+    if count <= 2:
+        return np.array([count // 2])
+    span = min(wanted, count - 2)
+    return np.unique(np.linspace(1, count - 2, span).round().astype(int))
+
+
+def _interface_contours(scene: _FieldScene, t: float) -> list[list[list[float]]]:
+    """The alpha = threshold contour at this instant, in µm."""
+    from contourpy import contour_generator
+
+    from naviernet.evaluation import predict_alpha
+
+    alpha = predict_alpha(scene.model, scene.data, float(t), scene.stride)
+    xs = (np.asarray(scene.data.x)[:: scene.stride] * scene.l_ref_um).astype(float)
+    ys = (np.asarray(scene.data.y)[:: scene.stride] * scene.l_ref_um).astype(float)
+    generator = contour_generator(x=xs, y=ys, z=np.asarray(alpha))
+    lines = generator.lines(float(scene.cfg.evaluation.threshold))
+    return [
+        [[round(float(x), 1), round(float(y), 1)] for x, y in line]
+        for line in lines
+        if len(line) >= _MIN_CONTOUR_POINTS
+    ]

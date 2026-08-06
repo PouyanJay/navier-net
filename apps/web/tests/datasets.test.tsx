@@ -1830,17 +1830,20 @@ describe("QC panel header", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("clusters both menus at the left and closes the row with the finding", async () => {
+  it("leaves the header to the chooser and the reading, and puts taking a copy on the picture", async () => {
     await showQc();
     const picker = screen.getByLabelText("Preprocessing check");
     const bar = picker.closest(".cf-bar")!;
-    // The chooser and the downloads travel together; the reading is the only
-    // thing at the far end, where four format buttons used to sit.
+    // The chooser leads the row and the reading closes it. Downloading acts on
+    // the picture, so it sits on the picture beside expand rather than spending
+    // header width on a word.
     expect(picker.closest(".cf-lead")).not.toBeNull();
-    expect(
-      bar.querySelector<HTMLElement>(".cf-lead [aria-haspopup='menu']"),
-    ).not.toBeNull();
     expect(bar.lastElementChild).toHaveClass("qc-finding");
+    const frame = picker.closest(".chart-frame")!;
+    expect(
+      frame.querySelector(".cf-take [aria-haspopup='menu']"),
+    ).not.toBeNull();
+    expect(frame.querySelector(".cf-bar [aria-haspopup='menu']")).toBeNull();
   });
 
   it("gives every check a headline finding, so the header keeps its shape", async () => {

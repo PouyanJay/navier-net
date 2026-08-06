@@ -47,6 +47,10 @@ export { File01Icon as ConditionsIcon } from "@hugeicons/core-free-icons";
 export { ArrowDown01Icon as MenuOpenIcon } from "@hugeicons/core-free-icons";
 export { Tick02Icon as ChosenIcon } from "@hugeicons/core-free-icons";
 
+/** The order a list is in. One glyph for the control that changes it, which
+   states the order it is currently in rather than only that it can change. */
+export { SortByDown02Icon as SortIcon } from "@hugeicons/core-free-icons";
+
 /* Chart actions: take a copy of what is on screen, and open it larger. */
 export { Download04Icon as DownloadIcon } from "@hugeicons/core-free-icons";
 export { Maximize01Icon as ExpandIcon } from "@hugeicons/core-free-icons";

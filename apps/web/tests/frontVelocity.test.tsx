@@ -12,6 +12,18 @@ import {
   FrontVelocityTab,
   speedReadout,
 } from "../src/views/results/FrontVelocityTab";
+import type { RunCapability } from "../src/views/results/runCapability";
+
+/** A run that asked for the measurement and can be replayed. */
+const CAPABILITY: RunCapability = {
+  replayable: true,
+  fields: ["phi", "u", "v", "s"],
+  hasFrontVelocity: true,
+  frontVelocityRequested: true,
+  figures: 0,
+  hasVideo: false,
+  nFrames: 11,
+};
 
 /** Six bins: one per cap, two per body — the traversal in miniature. The nose
  * cap's measured values are null, as the suppression rule requires. */
@@ -120,7 +132,13 @@ afterEach(() => vi.restoreAllMocks());
 describe("FrontVelocityTab", () => {
   it("charts the nose speed with its unit", async () => {
     serve(REPORT);
-    render(<FrontVelocityTab runId="run-a" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     expect(await screen.findByText("Nose speed")).toBeInTheDocument();
     // Every speed chart carries the same axis unit beside its heading: the
@@ -128,18 +146,46 @@ describe("FrontVelocityTab", () => {
     expect(screen.getAllByText("µm/ms")).toHaveLength(4);
   });
 
-  it("says the report has not been written rather than drawing an empty axis", async () => {
+  it("tells a run that asked for the measurement from one that did not", async () => {
     serve(new ApiError("no front-velocity report", 404));
-    render(<FrontVelocityTab runId="run-a" />);
-
+    // Asked for, report absent: the evaluate stage owes it.
+    const asked = render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
     expect(
-      await screen.findByText(/re-run the evaluate stage/i),
+      await screen.findByText(/the report is missing/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/re-run evaluate/i)).toBeInTheDocument();
+    asked.unmount();
+
+    // Never asked for: nothing is owed, and the Solver is where that changes.
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={{ ...CAPABILITY, frontVelocityRequested: false }}
+        noseSpeed={172}
+      />,
+    );
+    expect(
+      await screen.findByText(/did not measure the front's velocity/i),
+    ).toBeInTheDocument();
+    // The nose's own rate is known either way.
+    expect(screen.getAllByText(/172.0 mm·s⁻¹/).length).toBeGreaterThan(0);
   });
 
   it("surfaces a real failure as an error, not as missing data", async () => {
     serve(new ApiError("checkpoint unreadable", 500));
-    render(<FrontVelocityTab runId="run-a" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     expect(
       await screen.findByText("Could not load the front velocity"),
@@ -148,14 +194,27 @@ describe("FrontVelocityTab", () => {
 
   it("scopes the request to the viewed condition of a joint run", async () => {
     const spy = serve(REPORT);
-    render(<FrontVelocityTab runId="run-a" dataset="series_2" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        dataset="series_2"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     await waitFor(() => expect(spy).toHaveBeenCalledWith("run-a", "series_2"));
   });
 
   it("draws a held-out interval apart from the trained ones", async () => {
     serve(REPORT);
-    render(<FrontVelocityTab runId="run-a" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
     const card = (await screen.findByText("Nose speed")).closest(".kin-chart")!;
 
     // Amber is the holdout tone; one of this chart's three measured pairs spans
@@ -168,14 +227,26 @@ describe("FrontVelocityTab", () => {
 
   it("names the held-out interval, so the distinction is not colour alone", async () => {
     serve(REPORT);
-    render(<FrontVelocityTab runId="run-a" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     expect(await screen.findByText(/held-out frame/)).toBeInTheDocument();
   });
 
   it("charts both apex components, one axis each", async () => {
     serve(REPORT);
-    render(<FrontVelocityTab runId="run-a" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     expect(
       await screen.findByText("Apex velocity · along x"),
@@ -185,7 +256,13 @@ describe("FrontVelocityTab", () => {
 
   it("explains a run with no explicit front instead of drawing an empty apex axis", async () => {
     serve({ ...REPORT, front_geometry: false, apex: null });
-    render(<FrontVelocityTab runId="run-a" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     expect(await screen.findByText(/model.front_geometry/)).toBeInTheDocument();
     expect(screen.getByText(/Enable Front geometry/)).toBeInTheDocument();
@@ -198,7 +275,13 @@ describe("FrontVelocityTab", () => {
 
   it("walks the front's segments and names them on the axis", async () => {
     serve(REPORT);
-    const { container } = render(<FrontVelocityTab runId="run-a" />);
+    const { container } = render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     expect(
       await screen.findByText("Normal speed along the front"),
@@ -216,7 +299,13 @@ describe("FrontVelocityTab", () => {
 
   it("marks the nose cap as a span the measurement deliberately omits", async () => {
     serve(REPORT);
-    const { container } = render(<FrontVelocityTab runId="run-a" />);
+    const { container } = render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
     await screen.findByText("Normal speed along the front");
 
     // Exactly one band is muted, and it is the one the report flagged.
@@ -228,7 +317,13 @@ describe("FrontVelocityTab", () => {
 
   it("breaks the measured line across the gap instead of drawing through it", async () => {
     serve(REPORT);
-    const { container } = render(<FrontVelocityTab runId="run-a" />);
+    const { container } = render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
     await screen.findByText("Normal speed along the front");
 
     // Two sub-paths (an "M" each) for the measured series: one either side of
@@ -241,7 +336,13 @@ describe("FrontVelocityTab", () => {
 
   it("scrubs between frame pairs", async () => {
     serve(REPORT);
-    render(<FrontVelocityTab runId="run-a" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     expect(await screen.findByText("Frames 1\u20132")).toBeInTheDocument();
     const scrubber = screen.getByLabelText("Frame pair");
@@ -253,7 +354,13 @@ describe("FrontVelocityTab", () => {
 
   it("draws the kymograph as an image with a signed scale", async () => {
     serve(REPORT);
-    render(<FrontVelocityTab runId="run-a" />);
+    render(
+      <FrontVelocityTab
+        runId="run-a"
+        capability={CAPABILITY}
+        noseSpeed={172}
+      />,
+    );
 
     expect(await screen.findByText("Kymograph")).toBeInTheDocument();
     expect(

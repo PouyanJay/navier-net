@@ -14,11 +14,48 @@ export interface RunSummary {
   heldout_datasets?: string[];
   /** Joint runs' in-distribution (axis-A) validation IoU. */
   val_iou_mean?: number | null;
+  /** In-distribution validation IoU — written by every evaluated run. */
+  iou_val?: number | null;
+  /** Mean IoU over the evaluated frames — likewise. */
+  iou_mean?: number | null;
+  /** How many frames that mean covers; two runs evaluated over different frame
+   * counts are different measurements, not a better and a worse one. */
+  n_frames?: number | null;
+  /** The seed the run recorded (not the one its name claims). */
+  seed?: number | null;
+  /** What the run did differently, in the Solver's own vocabulary. `null` means
+   * the run wrote no config snapshot; `[]` means the recommended recipe. */
+  recipe?: string[] | null;
   /** ISO timestamp of the run directory. */
   date?: string | null;
   /** Live progress while the server is training this run. */
   steps_done?: number | null;
   steps_total?: number | null;
+}
+
+/** The inferred velocity field at one instant: a quiver plus the interface it
+ * flows around. No velocity was ever supplied to the model, which is the whole
+ * claim, so the front travels with it. */
+export interface VelocityFieldMap {
+  run_id: string;
+  dataset: string | null;
+  unit: string;
+  t_star: number;
+  t_min_star: number;
+  t_max_star: number;
+  t_ms: number;
+  /** Arrow anchors, in µm. */
+  x_um: number[];
+  y_um: number[];
+  /** Components at each anchor, [row][column], in `unit`. */
+  u: number[][];
+  v: number[][];
+  speed_max: number;
+  speed_mean: number;
+  /** [x0, x1, y0, y1] of the channel, in µm. */
+  domain_um: [number, number, number, number];
+  /** The alpha = threshold contours at this instant, as [x, y] µm rings. */
+  interface: [number, number][][];
 }
 
 export interface ArtifactFlags {
@@ -27,6 +64,10 @@ export interface ArtifactFlags {
   groups: boolean;
   video: boolean;
   figures: string[];
+  /** The evaluate stage wrote a front-velocity report. */
+  front_velocity?: boolean;
+  /** The run kept the config snapshot its architecture is rebuilt from. */
+  config?: boolean;
 }
 
 /** A joint run's held-out transfer scores (metrics.json v2). */
@@ -771,6 +812,11 @@ export const api = {
   getField: (id: string, name: string, t: number, dataset?: string) =>
     getJson<FieldMap>(
       `${runPath(id)}/field?name=${encodeURIComponent(name)}&t=${t.toFixed(3)}` +
+        (dataset ? `&dataset=${encodeURIComponent(dataset)}` : ""),
+    ),
+  getVelocityField: (id: string, t: number, dataset?: string) =>
+    getJson<VelocityFieldMap>(
+      `${runPath(id)}/velocity?t=${t.toFixed(3)}` +
         (dataset ? `&dataset=${encodeURIComponent(dataset)}` : ""),
     ),
   getInterface: (id: string, frames = 48) =>

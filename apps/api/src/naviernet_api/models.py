@@ -43,6 +43,21 @@ class RunSummary(BaseModel):
     datasets: list[str] = Field(default_factory=list)  # every dataset the run spans
     heldout_datasets: list[str] = Field(default_factory=list)  # axis-B conditions
     val_iou_mean: float | None = None  # joint runs' in-distribution (axis-A) IoU
+    # The two metrics every evaluated run writes, whatever its vintage. Without
+    # them the list has no number to lead with at all: `iou_holdout` belongs to
+    # the retired single-frame holdout and `val_iou_mean` only to joint runs, so
+    # on a single-series run both are null and the row led with nothing.
+    iou_val: float | None = None  # in-distribution validation IoU
+    iou_mean: float | None = None  # mean IoU over the evaluated frames
+    # How many frames that mean covers. Two runs evaluated over different frame
+    # counts are different measurements, not a better and a worse one, so the
+    # list needs this to say which of its rows may honestly be ranked together.
+    n_frames: int | None = None
+    # The run's own seed and the recipe it ran, read from its config snapshot.
+    # `recipe` is None when the run wrote no snapshot (a CLI-era or bench run) --
+    # distinct from an empty list, which means "the recommended recipe, exactly".
+    seed: int | None = None
+    recipe: list[str] | None = None
     date: str | None = None  # ISO timestamp of the run directory
     steps_done: int | None = None  # live progress while the server trains it
     steps_total: int | None = None
@@ -56,6 +71,14 @@ class ArtifactFlags(BaseModel):
     groups: bool = False
     video: bool = False
     figures: list[str] = []
+    # Whether the evaluate stage wrote a front-velocity report. Without it the
+    # UI could only find out by asking for the report and reading a 404, so the
+    # tab that holds it looked identical to one with six panels of content.
+    front_velocity: bool = False
+    # Whether the run kept the config snapshot its architecture is rebuilt from.
+    # A run without one keeps every measurement it made and can never be
+    # replayed, which is a different thing from a run that failed.
+    config: bool = False
 
 
 class RunDetail(BaseModel):

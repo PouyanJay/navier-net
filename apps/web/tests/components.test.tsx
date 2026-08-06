@@ -87,6 +87,8 @@ describe("RunHeader delete action", () => {
       run={makeRun(status)}
       detail={null}
       datasetLabels={new Map()}
+      validationFrames={[10, 11]}
+      standing="rank 1 of 3 · best val IoU"
       viewDataset={null}
       onViewDataset={() => {}}
       onResume={() => {}}

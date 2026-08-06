@@ -13,6 +13,8 @@ import type {
 } from "../../lib/api";
 import { ChartCard } from "./ChartCard";
 import { FrontProfilePanel } from "./FrontProfilePanel";
+import type { RunCapability } from "./runCapability";
+import { StateNote } from "./StateNote";
 import { useFrontVelocity } from "./useFrontVelocity";
 
 /** µm/ms is the axis unit -- it makes each speed chart the visible slope of the
@@ -159,6 +161,10 @@ function ApexCharts({ apex, stem }: { apex: ApexVelocity; stem: string }) {
 }
 
 interface FrontVelocityTabProps {
+  /** Whether the run asked for the measurement at all, and the inferred nose
+   * speed it has regardless. */
+  capability: RunCapability;
+  noseSpeed: number | null;
   runId: string;
   /** The viewing condition of a joint run; null = the run's own (single). */
   dataset?: string | null;
@@ -172,7 +178,12 @@ interface FrontVelocityTabProps {
  * the last supervised frame, and the one a reader otherwise has to recover by
  * differentiating a position curve by eye.
  */
-export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
+export function FrontVelocityTab({
+  runId,
+  dataset,
+  capability,
+  noseSpeed,
+}: FrontVelocityTabProps) {
   const { report, error, loading } = useFrontVelocity(runId, dataset);
   const stem = `${runId}${dataset ? `-${dataset}` : ""}`;
 
@@ -192,15 +203,55 @@ export function FrontVelocityTab({ runId, dataset }: FrontVelocityTabProps) {
       </Callout>
     );
 
-  if (!report)
+  // Two different situations wore one empty state: a run that never measured
+  // the front's velocity, and one that did but whose report is missing. The
+  // advice differs, so the states do.
+  if (!report) {
+    const asked = capability.frontVelocityRequested;
     return (
-      <Panel title="Front velocity" subtitle="how fast the interface moved">
-        <p className="state-note">
-          No front kinematics recorded for this run. Re-run the evaluate stage
-          to measure them.
-        </p>
+      <Panel
+        title="Front velocity"
+        subtitle={
+          asked ? "measured · report missing" : "not measured by this run"
+        }
+      >
+        {asked ? (
+          <StateNote tone="caution" title="The report is missing.">
+            This run enabled the measured front velocity, so the evaluate stage
+            should have written a normal-speed profile. Re-run evaluate to
+            produce it.
+          </StateNote>
+        ) : (
+          <StateNote
+            title={
+              asked === false
+                ? "This run did not measure the front's velocity."
+                : "No front-velocity report, and no config to say whether one was asked for."
+            }
+          >
+            {asked === false ? (
+              <>
+                The <span className="mono">Measured front velocity</span> option
+                was off when it was launched, so no normal-speed profile was
+                recorded. Enable it in the Solver and re-run to get one.
+              </>
+            ) : (
+              <>
+                Re-running the evaluate stage on a run launched from the Solver
+                records it.
+              </>
+            )}
+          </StateNote>
+        )}
+        {noseSpeed != null && (
+          <p className="state-note">
+            The nose&apos;s own rate is known without it, from the reconstructed
+            front: <b className="mono">{noseSpeed.toFixed(1)} mm·s⁻¹</b>.
+          </p>
+        )}
       </Panel>
     );
+  }
 
   return (
     <>

@@ -28,7 +28,7 @@
   color: var(--ink2);
 }
 .state-note.error {
-  color: var(--redtext);
+  color: var(--danger);
 }
 /* Caution: a saved change that is not in effect yet, or an action the pipeline
    will not accept. Not an error; nothing failed. */

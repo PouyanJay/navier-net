@@ -188,6 +188,54 @@ def test_summary_carries_datasets_heldout_val_iou_and_date(client, repo_root: Pa
     assert demo["date"] is not None  # ISO timestamp from the run directory
 
 
+def test_summary_carries_the_metrics_the_list_can_actually_lead_with(client):
+    """`iou_holdout` belongs to the retired single-frame holdout and
+    `val_iou_mean` only to joint runs, so on an ordinary run both are null and
+    the list had no number to show. The two metrics every evaluated run does
+    write travel too, with the frame count that says which rows may be ranked
+    against each other."""
+    demo = {run["id"]: run for run in client.get("/api/runs").json()}["demo_run"]
+
+    assert demo["iou_mean"] == pytest.approx(0.962)
+    assert demo["n_frames"] == 2  # iou_per_frame has two entries
+
+
+def test_summary_reads_the_recipe_and_seed_from_the_config_snapshot(client, repo_root: Path):
+    """What a run DID is in its config, not in its name: only sweep children are
+    named by the machine, and a hand-typed `-s2` suffix can disagree with the
+    seed the run recorded."""
+    run = repo_root / "outputs" / "causal_run"
+    (run / "checkpoints").mkdir(parents=True)
+    (run / ".hydra").mkdir()
+    (run / ".hydra" / "config.yaml").write_text(
+        "dataset: highest_t\n"
+        "model:\n  front_geometry: true\n  sharp_interface: true\n"
+        "  evolving_width: true\n"
+        "training:\n  seed: 4\n  causal_weighting: true\n  weighting: rba\n"
+    )
+
+    row = {r["id"]: r for r in client.get("/api/runs").json()}["causal_run"]
+
+    assert row["seed"] == 4
+    assert row["recipe"] == ["sharp", "evwidth", "causal", "RBA"]
+    # A run whose snapshot has none of them is the recommended recipe exactly...
+    assert {r["id"]: r for r in client.get("/api/runs").json()}["demo_run"]["recipe"] == [
+        "diffuse"
+    ]
+
+
+def test_a_run_without_a_config_snapshot_reports_no_recipe(client, repo_root: Path):
+    """None is not []: an empty recipe means "the recommended one, exactly",
+    while None means the run predates the snapshot and nothing may be guessed."""
+    run = repo_root / "outputs" / "bench_run"
+    (run / "checkpoints").mkdir(parents=True)
+
+    row = {r["id"]: r for r in client.get("/api/runs").json()}["bench_run"]
+
+    assert row["recipe"] is None
+    assert row["seed"] is None
+
+
 def test_summary_reflects_live_job_state(client, repo_root: Path):
     """A run the server is training shows as running (with progress); a run
     whose job errored shows as failed — overriding the on-disk view."""

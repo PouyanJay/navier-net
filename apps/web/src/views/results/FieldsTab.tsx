@@ -2,12 +2,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Callout, Panel } from "../../components";
 import { ChartFrame } from "../../components/ChartFrame";
-import { api, ApiError, type FieldMap } from "../../lib/api";
+import {
+  api,
+  ApiError,
+  type FieldMap,
+  type VelocityFieldMap,
+} from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
+import type { RunCapability } from "./runCapability";
+import { NotReplayable } from "./StateNote";
+import { VelocityField } from "./VelocityField";
 import { cmap, cssGradient, type ColormapName } from "./fieldColormaps";
 
 interface FieldDef {
-  k: "alpha" | "u" | "v" | "umag" | "s" | "p" | "T";
+  k: "vectors" | "alpha" | "u" | "v" | "umag" | "s" | "p" | "T";
   chip: string;
   label: string;
   /** The governing statement this field answers to. */
@@ -18,6 +26,13 @@ interface FieldDef {
 }
 
 const FIELD_DEFS: FieldDef[] = [
+  {
+    k: "vectors",
+    chip: "u,v",
+    label: "velocity field",
+    eq: "(u, v) · the flow the camera never measured, inferred from the equations alone",
+    cm: "blue",
+  },
   {
     k: "alpha",
     chip: "α",
@@ -305,6 +320,9 @@ interface FieldsTabProps {
   /** The series' display label (ids stay in URLs; labels in copy). */
   datasetName: string | null;
   joint: boolean;
+  /** What this run can still answer. Fields need the network rebuilt, so a run
+   * without a config snapshot is refused here rather than asked and erroring. */
+  capability: RunCapability;
 }
 
 /**
@@ -317,12 +335,22 @@ export function FieldsTab({
   dataset,
   datasetName,
   joint,
+  capability,
 }: FieldsTabProps) {
-  const [field, setField] = useState<FieldDef>(FIELD_DEFS[1]);
+  // Opens on the speed map, as it always has. The vector view is the same
+  // instant read a different way, one chip along.
+  const [field, setField] = useState<FieldDef>(
+    FIELD_DEFS.find((def) => def.k === "umag") ?? FIELD_DEFS[0],
+  );
   const [tRatio, setTRatio] = useState(0.34);
   const [playing, setPlaying] = useState(false);
   const [map, setMap] = useState<FieldMap | null>(null);
-  const [available, setAvailable] = useState<string[] | null>(null);
+  const [vectors, setVectors] = useState<VelocityFieldMap | null>(null);
+  // Seeded from the field set the run recorded, so the picker is right on the
+  // first paint rather than after a round trip.
+  const [available, setAvailable] = useState<string[] | null>(
+    capability.fields.length > 0 ? capability.fields : null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -330,11 +358,29 @@ export function FieldsTab({
   const scopedDataset = joint ? (dataset ?? undefined) : undefined;
 
   useEffect(() => {
+    if (!capability.replayable) return;
     let alive = true;
     clearTimeout(debounce.current);
     debounce.current = setTimeout(() => {
       const span = map ? map.t_max_star - map.t_min_star : 1;
       const t = (map?.t_min_star ?? 0) + tRatio * span;
+      if (field.k === "vectors") {
+        api
+          .getVelocityField(runId, t, scopedDataset)
+          .then((payload) => {
+            if (!alive) return;
+            setVectors(payload);
+            setError(null);
+            setUnavailable(false);
+          })
+          .catch((exc: unknown) => {
+            if (!alive) return;
+            if (exc instanceof ApiError && exc.status === 404)
+              setUnavailable(true);
+            else setError(errorMessage(exc));
+          });
+        return;
+      }
       api
         .getField(runId, field.k, t, scopedDataset)
         .then((payload) => {
@@ -360,7 +406,7 @@ export function FieldsTab({
     // `map` is deliberately not a dependency: it only supplies the time span
     // for the ratio→t* mapping, and refetching on every payload would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, scopedDataset, field, tRatio]);
+  }, [runId, scopedDataset, field, tRatio, capability.replayable]);
 
   // Playback: step the scrubber; the fetch effect above follows each step
   // (the server caches per rounded t, so a second loop replays instantly).
@@ -385,6 +431,22 @@ export function FieldsTab({
     map != null
       ? `t* ${map.t_star.toFixed(2)} of ${map.t_max_star.toFixed(2)}`
       : "…";
+
+  if (!capability.replayable) {
+    return (
+      <Panel
+        title="Predicted fields"
+        subtitle={`${datasetName ?? dataset ?? "run"} · needs the network rebuilt`}
+      >
+        <NotReplayable runId={runId} />
+        <p className="state-note">
+          A field map asks the checkpoint for values at points the camera never
+          sampled, so it needs the architecture the snapshot records. The
+          agreement, kinematics and physics this run measured all still read.
+        </p>
+      </Panel>
+    );
+  }
 
   return (
     <>
@@ -435,10 +497,33 @@ export function FieldsTab({
         )}
         {unavailable && (
           <p className="state-note">
-            No trained model to evaluate; train this run in the Solver first.
+            This run has no checkpoint to evaluate; train it in the Solver
+            first.
           </p>
         )}
-        {!error && !unavailable && map && (
+        {!error && !unavailable && field.k === "vectors" && vectors && (
+          <ChartFrame
+            name={`${runId}-velocity`}
+            title="Inferred velocity field"
+            rows={vectors.y_um.flatMap((yUm, row) =>
+              vectors.x_um.map((xUm, column) => ({
+                x_um: xUm,
+                y_um: yUm,
+                u: vectors.u[row][column],
+                v: vectors.v[row][column],
+              })),
+            )}
+            render={() => (
+              <div className="field-view">
+                <VelocityField
+                  field={vectors}
+                  ariaLabel={`Inferred velocity field at t ${vectors.t_ms.toFixed(2)} ms; peak ${vectors.speed_max.toFixed(0)} ${vectors.unit}.`}
+                />
+              </div>
+            )}
+          />
+        )}
+        {!error && !unavailable && field.k !== "vectors" && map && (
           <ChartFrame
             name={`${runId}-${field.k}`}
             title={field.label}

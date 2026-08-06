@@ -1,24 +1,19 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { StageAside } from "../../app/StageAside";
-import { Callout, ConfirmDeleteDialog, Panel } from "../../components";
+import { Band, Callout, ConfirmDeleteDialog } from "../../components";
+import { StageResultsIcon } from "../../components/icons";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { useToast } from "../../components/Toast";
 import {
   api,
   type DatasetSummary,
   type ProjectSummary,
-  type RunStatus,
   type RunSummary,
 } from "../../lib/api";
-import { isTrainedRun } from "../../lib/runs";
-import {
-  runConditions,
-  runDisplayName,
-  runHeadline,
-  runRowMeta,
-} from "./format";
+import { isTrainedRun, MAX_COMPARED } from "../../lib/runs";
+import { runConditions, runDisplayName } from "./format";
 import { AgreementTab } from "./AgreementTab";
 import { CompareTab } from "./CompareTab";
 import { ExportTab } from "./ExportTab";
@@ -29,11 +24,15 @@ import { PhysicsTab } from "./PhysicsTab";
 import { TrainingTab } from "./TrainingTab";
 import { ReconTab } from "./ReconTab";
 import { RunHeader } from "./RunHeader";
+import { buildFamilies } from "./runFamilies";
+import { runCapability } from "./runCapability";
+import { tabBadges } from "./tabBadges";
+import { RunRail } from "./RunRail";
 import { useRunDetail } from "./useRunDetail";
 import { useValidation } from "./useValidation";
 import "./results.css";
 
-/** The run rows carry a name, meta line and a headline metric, so this stage's
+/** The run rows carry a name, its recipe and a ranked metric, so this stage's
  * aside takes a little more than the shell's default. */
 const ASIDE = {
   title: "Results & validation",
@@ -45,43 +44,17 @@ const ASIDE = {
 const RESUME_EXTRA_STEPS = 1500;
 const MAX_STEPS = 20_000;
 
-const DOT_TONE: Record<RunStatus, string> = {
-  running: "live",
-  trained: "ok",
-  failed: "err",
-  empty: "",
-};
-
-/** Arrow keys walk the run list, matching the command palette's listbox. */
-function moveRunFocus(event: KeyboardEvent<HTMLDivElement>) {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-  const options = [
-    ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-      "[role='option']",
-    ),
-  ];
-  const index = options.indexOf(document.activeElement as HTMLButtonElement);
-  if (index === -1) return;
-  event.preventDefault();
-  const next =
-    options[
-      (index + (event.key === "ArrowDown" ? 1 : options.length - 1)) %
-        options.length
-    ];
-  next.focus();
-}
-
 /** The output tabs, in the mockup's reading order. */
 export const RESULT_TABS = [
   { id: "overview", label: "Overview" },
   { id: "recon", label: "Reconstruction" },
   { id: "fields", label: "Fields" },
-  { id: "agreement", label: "Agreement & transfer" },
+  { id: "agreement", label: "Agreement" },
   { id: "physics", label: "Physics" },
   { id: "velocity", label: "Front velocity" },
   { id: "training", label: "Training" },
   { id: "compare", label: "Compare" },
-  { id: "export", label: "Artifacts & export" },
+  { id: "export", label: "Artifacts" },
 ] as const;
 
 export type ResultTabId = (typeof RESULT_TABS)[number]["id"];
@@ -106,6 +79,16 @@ export function ResultsPage({ project }: ResultsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [search] = useSearchParams();
+  // Runs the rail picked alongside the one in the path, for the Compare tab.
+  const comparedWith = useMemo(
+    () =>
+      (search.get("with") ?? "")
+        .split(",")
+        .filter(Boolean)
+        .slice(0, MAX_COMPARED - 1),
+    [search],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -150,7 +133,43 @@ export function ResultsPage({ project }: ResultsPageProps) {
       : "overview";
 
   const { detail } = useRunDetail(selected?.id ?? null);
-  const { validation } = useValidation(selected?.id ?? null);
+  // One answer to "what can this run still show", shared by every tab that
+  // would otherwise ask the checkpoint a question it cannot answer.
+  const capability = useMemo(
+    () => (selected ? runCapability(selected, detail) : null),
+    [selected, detail],
+  );
+  const { validation, loading: validationLoading } = useValidation(
+    selected?.id ?? null,
+  );
+  // Where this run stands in the rail's ranking, carried into the header so the
+  // standing you chose it by is still on screen while you read it.
+  const standing = useMemo(() => {
+    if (!runs || !selected) return null;
+    const families = buildFamilies(runs, { metric: "val" });
+    const family = families.find((entry) =>
+      entry.runs.some((run) => run.id === selected.id),
+    );
+    if (!family?.rank) return null;
+    const ranked = families.filter((entry) => entry.rank != null).length;
+    return family.behind == null
+      ? `rank ${family.rank} of ${ranked} · best val IoU`
+      : `rank ${family.rank} of ${ranked} · −${family.behind.toFixed(3)}`;
+  }, [runs, selected]);
+
+  const badges = useMemo(
+    () =>
+      selected && capability
+        ? tabBadges(
+            selected,
+            capability,
+            validation,
+            (runs ?? []).filter(isTrainedRun).length,
+            datasetLabels.get(selected.dataset ?? "") ?? selected.dataset ?? "",
+          )
+        : {},
+    [selected, capability, validation, runs, datasetLabels],
+  );
 
   // Per-condition panels (viewport, kinematics, fields…) view one condition of
   // a joint run at a time; default to the run's first dataset.
@@ -165,6 +184,15 @@ export function ResultsPage({ project }: ResultsPageProps) {
 
   const openRun = (runId: string) =>
     navigate(`${base}/${encodeURIComponent(runId)}`);
+  /** Open the Compare tab on an explicit set of runs. The picks travel in the
+   * URL like every other selection on this stage, so a comparison is a link. */
+  const openCompare = (ids: string[]) => {
+    const [first, ...rest] = ids;
+    const query = rest.length
+      ? `?with=${rest.map(encodeURIComponent).join(",")}`
+      : "";
+    navigate(`${base}/${encodeURIComponent(first)}/compare${query}`);
+  };
   const openTab = (tab: ResultTabId) => {
     if (selected) navigate(`${base}/${encodeURIComponent(selected.id)}/${tab}`);
   };
@@ -202,54 +230,26 @@ export function ResultsPage({ project }: ResultsPageProps) {
   return (
     <>
       <StageAside {...ASIDE}>
-        <Panel title="Runs" subtitle="this project · outputs/">
-          {runs === null ? (
+        {runs === null ? (
+          <Band icon={StageResultsIcon} label="Runs" hint="outputs/">
             <p className="res-quiet">Loading runs…</p>
-          ) : runs.length === 0 ? (
+          </Band>
+        ) : runs.length === 0 ? (
+          <Band icon={StageResultsIcon} label="Runs" hint="outputs/">
             <div className="res-empty">
               <b>No runs yet</b>
               Launch the first training run from the Solver stage.
             </div>
-          ) : (
-            <div
-              className="runlist"
-              role="listbox"
-              aria-label="Runs of this project"
-              onKeyDown={moveRunFocus}
-            >
-              {runs.map((run) => {
-                const headline = runHeadline(run);
-                return (
-                  <button
-                    key={run.id}
-                    type="button"
-                    role="option"
-                    aria-selected={run.id === selected?.id}
-                    className={
-                      "runrow" + (run.id === selected?.id ? " sel" : "")
-                    }
-                    onClick={() => openRun(run.id)}
-                  >
-                    <span
-                      className={`runrow-dot ${DOT_TONE[run.status]}`}
-                      aria-hidden="true"
-                    />
-                    <span className="runrow-main">
-                      <b>{runDisplayName(run, datasetLabels)}</b>
-                      <span>{runRowMeta(run)}</span>
-                    </span>
-                    {headline && (
-                      <span className="runrow-headline">
-                        {headline.value}
-                        <small>{headline.label}</small>
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </Panel>
+          </Band>
+        ) : (
+          <RunRail
+            runs={runs}
+            datasetLabels={datasetLabels}
+            selectedId={selected?.id ?? null}
+            onOpen={openRun}
+            onCompare={openCompare}
+          />
+        )}
       </StageAside>
 
       <div className="res-main">
@@ -257,6 +257,8 @@ export function ResultsPage({ project }: ResultsPageProps) {
           <RunHeader
             run={selected}
             detail={detail}
+            validationFrames={validation?.validation_frames ?? null}
+            standing={standing}
             datasetLabels={datasetLabels}
             viewDataset={viewDataset}
             onViewDataset={setViewDataset}
@@ -285,22 +287,32 @@ export function ResultsPage({ project }: ResultsPageProps) {
           </ConfirmDeleteDialog>
         )}
         <div className="tabbar" role="tablist" aria-label="Run outputs">
-          {RESULT_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              id={`tab-${tab.id}`}
-              aria-selected={tab.id === activeTab}
-              aria-controls={`panel-${tab.id}`}
-              tabIndex={tab.id === activeTab ? 0 : -1}
-              className="tab"
-              disabled={!selected}
-              onClick={() => openTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {RESULT_TABS.map((tab) => {
+            const badge = badges[tab.id];
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                id={`tab-${tab.id}`}
+                aria-selected={tab.id === activeTab}
+                aria-controls={`panel-${tab.id}`}
+                tabIndex={tab.id === activeTab ? 0 : -1}
+                className="tab"
+                disabled={!selected}
+                title={badge?.title}
+                onClick={() => openTab(tab.id)}
+              >
+                {tab.label}
+                {/* What the tab holds, so finding out costs no click. */}
+                {badge && (
+                  <span className={badge.warn ? "tab-n warn" : "tab-n"}>
+                    {badge.text}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
         <section
           className="stack"
@@ -318,6 +330,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                   run={selected}
                   detail={detail}
                   validation={validation}
+                  validationLoading={validationLoading}
                   datasetLabels={datasetLabels}
                   onOpenTab={openTab}
                 />
@@ -328,6 +341,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                   validation={validation}
                   viewDataset={viewDataset}
                   datasetLabels={datasetLabels}
+                  capability={capability!}
                 />
               ) : activeTab === "fields" ? (
                 <FieldsTab
@@ -339,6 +353,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                       : null
                   }
                   joint={runConditions(selected).all.length > 1}
+                  capability={capability!}
                 />
               ) : activeTab === "agreement" ? (
                 <AgreementTab
@@ -349,6 +364,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                 />
               ) : activeTab === "physics" ? (
                 <PhysicsTab
+                  run={selected}
                   runId={selected.id}
                   frontGeometry={Boolean(
                     (detail?.config as { model?: { front_geometry?: boolean } })
@@ -361,20 +377,28 @@ export function ResultsPage({ project }: ResultsPageProps) {
                       : null
                   }
                   validation={validation}
+                  validationLoading={validationLoading}
                 />
               ) : activeTab === "velocity" ? (
-                <FrontVelocityTab runId={selected.id} dataset={viewDataset} />
+                <FrontVelocityTab
+                  runId={selected.id}
+                  dataset={viewDataset}
+                  capability={capability!}
+                  noseSpeed={validation?.nose_speed_inferred_mm_s ?? null}
+                />
               ) : activeTab === "training" ? (
                 <TrainingTab runId={selected.id} />
               ) : activeTab === "compare" ? (
                 <CompareTab
                   runs={runs ?? []}
                   currentId={selected.id}
+                  alsoCompare={comparedWith}
                   datasetLabels={datasetLabels}
                 />
               ) : (
                 <ExportTab
                   run={selected}
+                  capability={capability!}
                   detail={detail}
                   viewDataset={viewDataset}
                   datasetLabels={datasetLabels}

@@ -77,7 +77,7 @@
 }
 .scard-act.danger:hover {
   background: var(--redsoft);
-  color: var(--redtext);
+  color: var(--danger);
 }
 /* Bare glyph — no plate, no border; the card's border is the only box. */
 .scard-ic {
@@ -330,7 +330,7 @@
 }
 /* The excluded set no longer matches the tensors that were built from it. */
 .fr-stale {
-  color: var(--redtext);
+  color: var(--danger);
   font-weight: 600;
 }
 
@@ -471,7 +471,7 @@
   color: var(--ink3);
 }
 .frm .fld:has(input[aria-invalid]) .fld-why {
-  color: var(--redtext);
+  color: var(--danger);
 }
 .frm .fld:has(input[aria-invalid]) .ug {
   border-color: var(--red);

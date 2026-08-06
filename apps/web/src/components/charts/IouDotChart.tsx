@@ -51,6 +51,21 @@ export function IouDotChart({
     ((v - yMin) / (yMax - yMin)) * (HEIGHT - PAD.top - PAD.bottom);
 
   const hovered = hover ? frames[hover.index] : null;
+  // The frames the model never saw are a SPAN, not a scatter of odd dots: the
+  // tail of the series is where extrapolation happens, and a tinted region with
+  // a boundary says that before any individual value is read.
+  const firstHeld = frames.findIndex(
+    (point) => point.role === "validation" || point.role === "holdout",
+  );
+  const heldSpan =
+    firstHeld >= 0 &&
+    frames.slice(firstHeld).every((p) => p.role !== "supervised")
+      ? {
+          from:
+            x(firstHeld) -
+            (firstHeld > 0 ? (x(firstHeld) - x(firstHeld - 1)) / 2 : 8),
+        }
+      : null;
 
   return (
     <div className="iou-dots-wrap">
@@ -70,6 +85,24 @@ export function IouDotChart({
         aria-label={ariaLabel}
         className="iou-dots"
       >
+        {heldSpan && (
+          <g>
+            <rect
+              x={heldSpan.from}
+              y={PAD.top - 6}
+              width={width - PAD.right - heldSpan.from}
+              height={HEIGHT - PAD.bottom - PAD.top + 6}
+              className="iou-heldband"
+            />
+            <line
+              x1={heldSpan.from}
+              x2={heldSpan.from}
+              y1={PAD.top - 6}
+              y2={HEIGHT - PAD.bottom}
+              className="iou-heldedge"
+            />
+          </g>
+        )}
         {TICKS.filter((t) => t >= yMin).map((t) => (
           <g key={t}>
             <line
@@ -113,14 +146,25 @@ export function IouDotChart({
         <text x={PAD.left} y={12} className="iou-tick iou-caption">
           IoU · axis {yMin.toFixed(2)}–1.00
         </text>
-        <text
-          x={width - PAD.right}
-          y={12}
-          textAnchor="end"
-          className="iou-tick iou-caption"
-        >
-          camera frame →
-        </text>
+        {heldSpan ? (
+          <text
+            x={width - PAD.right}
+            y={12}
+            textAnchor="end"
+            className="iou-tick iou-heldlabel"
+          >
+            never supervised
+          </text>
+        ) : (
+          <text
+            x={width - PAD.right}
+            y={12}
+            textAnchor="end"
+            className="iou-tick iou-caption"
+          >
+            camera frame →
+          </text>
+        )}
         {frames.map((point, i) => (
           <g key={point.frame}>
             <circle
