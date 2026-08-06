@@ -186,7 +186,7 @@ def test_the_root_apex_stays_exactly_on_the_measured_anchor(tmp_path):
         root = geo.root_point(t)
         assert torch.allclose(root[0], torch.tensor(PRIORS["x_root"]), atol=1e-6)
         phi = geo(torch.tensor([[float(root[0]), float(root[1]), t]]))
-        assert abs(float(phi)) < 1e-5, f"interface must pass through the root at t={t}"
+        assert abs(float(phi.detach())) < 1e-5, f"interface must pass through the root at t={t}"
 
 
 def test_the_nose_apex_stays_exactly_the_monotone_nose(tmp_path):
@@ -347,3 +347,84 @@ def test_the_curvature_can_be_trained_through():
     grads = [p.grad for p in geo.cap_net.parameters() if p.grad is not None]
     assert grads, "no gradient reached the cap net through the curvature"
     assert max(float(g.abs().max()) for g in grads) > 0.0
+
+
+# --------------------------------------------------------------------------
+# T6 -- variants: the freedom has to compose with everything already opt-in
+# --------------------------------------------------------------------------
+
+
+def test_free_caps_compose_with_a_pinching_bubble():
+    """`allow_pinch` makes the radius signed, so a cap can VANISH. A vanished cap
+    has no curvature to report, and flooring it would hand the jump condition a
+    huge positive number for a point that is not there."""
+    geo = _loud(_free(41, allow_pinch=True), scale=200.0)
+    front = _front_of(geo, 0.8, n_cap=32)
+
+    assert torch.isfinite(front.kappa_par).all()
+    assert torch.isfinite(front.points).all()
+    assert torch.isfinite(front.normal).all()
+
+
+def test_free_caps_compose_with_an_evolving_width():
+    """Two shape reparameterisations at once: the width travels with elongation
+    while the caps carry their own angular shape."""
+    geo = _loud(_free(43, evolving_width=True))
+    front = _front_of(geo, 0.8, n_cap=32)
+
+    assert torch.isfinite(front.points).all()
+    assert float(front.kappa_par[_nose_cap(front)].std()) > 1e-3
+
+
+def test_free_caps_survive_a_just_nucleated_bubble():
+    """The degenerate frame: a bubble shorter than its own two cap radii, where
+    the joint rescale keeps the caps reaching both apexes. The modulation must
+    not divide by the vanishing spine."""
+    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+
+    torch.manual_seed(47)
+    tight = {**PRIORS, "s0": 0.205, "rate0": 0.0, "w0": 0.2}
+    geo = _loud(GeometricInterface(GeometryPriors(**tight), cap_freedom=True, cap_delta=0.2))
+
+    front = _front_of(geo, 0.0, n_cap=32)
+    assert torch.isfinite(front.points).all()
+    assert torch.isfinite(front.kappa_par).all()
+    assert float(geo(front.points).abs().max()) < 1e-3
+
+
+def test_free_caps_carry_the_dataset_conditioning():
+    """A joint run binds each dataset's own anchors and conditioning row; the cap
+    net takes the row like every other geometry net, so one construction serves
+    every condition."""
+    from naviernet.models.geometry import GeometryContext
+
+    geo = _loud(_free(53, n_cond=3))
+    c = torch.tensor([[0.2, -0.4, 0.9]])
+    front = geo.front(torch.tensor([[0.5]]), n_body=8, n_cap=16, ctx=GeometryContext(c=c))
+
+    assert torch.isfinite(front.points).all()
+    # A different condition is a different shape, or the row is being ignored.
+    other = geo.front(
+        torch.tensor([[0.5]]),
+        n_body=8,
+        n_cap=16,
+        ctx=GeometryContext(c=torch.tensor([[-0.7, 0.5, -0.2]])),
+    )
+    assert not torch.allclose(front.points, other.points, atol=1e-6)
+
+
+def test_a_freed_cap_reloads_as_the_same_shape(tmp_path):
+    """Resume and evaluate rebuild the model from the checkpoint; the cap net has
+    to come back with it or the reloaded bubble is a different one."""
+    from naviernet.training import load_model, train
+
+    cfg, paths = _staged_run(tmp_path, TINY_CAP)
+    train(cfg, paths)
+    model, data, _ = load_model(cfg, paths)
+
+    x = torch.rand(128, 3)
+    x[:, 2] = data.domain.t_min + x[:, 2] * (data.domain.t_max - data.domain.t_min)
+    before = model.nets["phi"](x)
+
+    again, _, _ = load_model(cfg, paths)
+    assert torch.equal(before, again.nets["phi"](x))
