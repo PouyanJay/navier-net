@@ -110,7 +110,7 @@
   margin-top: 1px;
 }
 .callout.error {
-  color: var(--redtext);
+  color: var(--danger);
   border-color: color-mix(in srgb, var(--red) 40%, transparent);
   background: var(--redsoft);
 }
@@ -221,7 +221,7 @@
 }
 .chip[data-tone="red"] {
   background: var(--redsoft);
-  color: var(--redtext);
+  color: var(--danger);
   border-color: transparent;
 }
 /* A chip reporting a state that is actively wrong pulses its lamp. Only the
@@ -331,11 +331,16 @@
 }
 .btn.danger:hover:not(:disabled) {
   background: var(--redsoft);
-  color: var(--redtext);
+  color: var(--danger);
 }
+/* `--danger` is THE danger ink; `--danger-text` is the ink used on the filled
+   danger surface, and on an ordinary ground it reads near-white in the dark
+   theme and near-black in the light one. This button sits in a row of quiet
+   ghost actions, where that made the destructive one the loudest thing on the
+   card. */
 .btn.ghost.danger {
   background: transparent;
-  color: var(--redtext);
+  color: var(--danger);
 }
 .btn.ghost.danger:hover:not(:disabled) {
   background: var(--redsoft);
