@@ -199,7 +199,7 @@ def test_the_nose_apex_stays_exactly_the_monotone_nose(tmp_path):
         tip = free.nose_point(t)
         assert torch.allclose(tip[0], free.nose(tt).reshape(()), atol=1e-6)
         phi = free(torch.tensor([[float(tip[0]), float(tip[1]), t]]))
-        assert abs(float(phi)) < 1e-5
+        assert abs(float(phi.detach())) < 1e-5
 
 
 def test_the_cap_is_no_longer_a_circle(tmp_path):
@@ -245,7 +245,11 @@ def test_every_front_sample_still_lies_on_the_interface(tmp_path):
     for t in (0.2, 0.9):
         front = _front_of(geo, t, n_body=32, n_cap=32)
         phi = geo(front.points)
-        assert float(phi.abs().max()) < 1e-4, f"front sample off the interface at t={t}"
+        # Measured ~3.6e-6, so 1e-5 is a ~3x margin -- the same margin the apex
+        # checks above take. The residual is `forward`'s ABS_SMOOTH floor in the
+        # direction it normalises by, which the front's exact cos/sin does not
+        # share; it is five orders under alpha_eps and must stay there.
+        assert float(phi.abs().max()) < 1e-5, f"front sample off the interface at t={t}"
 
 
 def test_the_freed_cap_still_closes_one_connected_shape(tmp_path):
@@ -336,14 +340,28 @@ def test_the_outward_normal_follows_the_shaped_cap():
     assert float((normal - radial).norm(dim=1).max()) > 1e-2
 
 
-def test_the_curvature_can_be_trained_through():
-    """`create_graph` is load-bearing: if the loss cannot reach the cap net
-    through kappa, the jump condition still cannot bend the nose and the whole
-    change is cosmetic."""
+def test_the_curvature_comes_from_the_shape_and_not_just_the_radius():
+    """The curvature must read the cap's SLOPE and BEND, not only how far out it
+    sits. A gradient check alone cannot prove this: the radius is itself a
+    function of the cap net, so a `kappa` that had lost its r' and r'' terms and
+    collapsed back to 1/r would still be differentiable and still look trained
+    through. So assert the thing that separates the two -- kappa is not 1/r."""
     geo = _loud(_free(37))
-    front = _front_of(geo, 0.5, n_cap=16)
-    front.kappa_par.sum().backward()
+    front = _front_of(geo, 0.5, n_cap=32)
+    frame = geo.frame(torch.tensor([[0.5]]))
 
+    on_cap = _nose_cap(front)
+    centre = torch.cat(
+        [frame.bx, geo.centerline(torch.ones(1, 1), torch.tensor([[0.5]]))], dim=1
+    ).detach()
+    radius = (front.points[on_cap][:, :2] - centre).norm(dim=1, keepdim=True)
+    kappa = front.kappa_par[on_cap]
+
+    # Where the cap is genuinely shaped, its curvature is nowhere near 1/r.
+    assert float((kappa - 1.0 / radius).abs().max()) > 1.0
+
+    # ...and `create_graph` still carries the loss back to the net that set it.
+    kappa.sum().backward()
     grads = [p.grad for p in geo.cap_net.parameters() if p.grad is not None]
     assert grads, "no gradient reached the cap net through the curvature"
     assert max(float(g.abs().max()) for g in grads) > 0.0
@@ -354,13 +372,36 @@ def test_the_curvature_can_be_trained_through():
 # --------------------------------------------------------------------------
 
 
-def test_free_caps_compose_with_a_pinching_bubble():
-    """`allow_pinch` makes the radius signed, so a cap can VANISH. A vanished cap
-    has no curvature to report, and flooring it would hand the jump condition a
-    huge positive number for a point that is not there."""
+def test_a_vanished_cap_reports_no_curvature_at_all():
+    """`allow_pinch` makes the radius SIGNED, so a cap can stop existing. It has
+    no curvature to report, and flooring its radius would hand the jump condition
+    ~1/ABS_SMOOTH -- an enormous capillary pressure for a point that, by this
+    construction's own contract, is not there -- at exactly the pinch the feature
+    exists to make trainable.
+
+    `allow_pinch` acts on the WIDTH net, so driving the cap net is not enough to
+    reach this branch: the width has to go negative for the cap to vanish."""
+    geo = _loud(_free(41, allow_pinch=True), scale=200.0)
+    with torch.no_grad():
+        geo.width_net[-1].bias.fill_(-8.0)  # every station empty: both caps gone
+
+    frame = geo.frame(torch.tensor([[0.8]]))
+    assert float(frame.r_nose.detach()) < 0.0, "the cap must actually have vanished"
+
+    front = _front_of(geo, 0.8, n_cap=32)
+    on_cap = front.on_cap.squeeze(1) > 0
+    assert torch.equal(front.kappa_par[on_cap], torch.zeros_like(front.kappa_par[on_cap]))
+    assert torch.isfinite(front.points).all()
+    assert torch.isfinite(front.normal).all()
+
+
+def test_free_caps_compose_with_a_still_present_pinching_bubble():
+    """The other half of `allow_pinch`: a signed radius that has NOT gone negative
+    is an ordinary cap, and freeing it changes nothing about that."""
     geo = _loud(_free(41, allow_pinch=True), scale=200.0)
     front = _front_of(geo, 0.8, n_cap=32)
 
+    assert float(geo.frame(torch.tensor([[0.8]])).r_nose.detach()) > 0.0
     assert torch.isfinite(front.kappa_par).all()
     assert torch.isfinite(front.points).all()
     assert torch.isfinite(front.normal).all()
