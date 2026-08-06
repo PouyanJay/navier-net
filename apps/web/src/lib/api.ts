@@ -14,6 +14,18 @@ export interface RunSummary {
   heldout_datasets?: string[];
   /** Joint runs' in-distribution (axis-A) validation IoU. */
   val_iou_mean?: number | null;
+  /** In-distribution validation IoU — written by every evaluated run. */
+  iou_val?: number | null;
+  /** Mean IoU over the evaluated frames — likewise. */
+  iou_mean?: number | null;
+  /** How many frames that mean covers; two runs evaluated over different frame
+   * counts are different measurements, not a better and a worse one. */
+  n_frames?: number | null;
+  /** The seed the run recorded (not the one its name claims). */
+  seed?: number | null;
+  /** What the run did differently, in the Solver's own vocabulary. `null` means
+   * the run wrote no config snapshot; `[]` means the recommended recipe. */
+  recipe?: string[] | null;
   /** ISO timestamp of the run directory. */
   date?: string | null;
   /** Live progress while the server is training this run. */

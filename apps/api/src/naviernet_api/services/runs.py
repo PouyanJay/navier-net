@@ -270,6 +270,8 @@ def _summarize_run(
         status = "failed"
     else:
         status = "trained" if paths.checkpoint.is_file() else "empty"
+    config = _read_hydra_config(run_dir)
+    per_frame = metrics.get("iou_per_frame") if metrics else None
     return RunSummary(
         id=run_id,
         dataset=dataset,
@@ -278,10 +280,71 @@ def _summarize_run(
         datasets=spanned,
         heldout_datasets=_heldout_of(run_dir, metrics),
         val_iou_mean=metrics.get("val_iou_mean") if metrics else None,
+        iou_val=metrics.get("iou_val") if metrics else None,
+        iou_mean=metrics.get("iou_mean") if metrics else None,
+        # Written as {frame: iou} by the evaluator and as a bare list by older
+        # runs; both answer "how many frames was this mean taken over".
+        n_frames=len(per_frame) if isinstance(per_frame, (dict, list)) else None,
+        seed=_seed_of(config),
+        recipe=recipe_of(config),
         date=_run_date(run_dir),
         steps_done=live.steps_done if status == "running" else None,
         steps_total=live.steps_total if status == "running" else None,
     )
+
+
+def _seed_of(config: dict | None) -> int | None:
+    """The seed the run actually trained with.
+
+    Worth reading rather than parsing off the id: only sweep children are named
+    by the machine (``<sweep_id>-s<seed>``). A hand-named run's ``-s2`` suffix is
+    a label someone typed, and several in this repository disagree with the seed
+    their own config recorded.
+    """
+    seed = (config or {}).get("training", {}).get("seed")
+    return int(seed) if isinstance(seed, (int, float)) else None
+
+
+# What a run did differently, in the vocabulary the Solver's rail uses. The
+# interface treatment comes first (it is the run's formulation, and every run has
+# one), then the opt-in extras, each named only when it is actually on. A run at
+# the recommended recipe therefore reads as one chip, not eight.
+_EXTRAS: tuple[tuple[str, str, str], ...] = (
+    ("model", "hard_pin", "pin"),
+    ("model", "allow_pinch", "pinch"),
+    ("model", "evolving_width", "evwidth"),
+    ("training", "causal_weighting", "causal"),
+    ("training", "adaptive_collocation", "adaptive"),
+    ("training", "kinematics", "kinematics"),
+    ("training", "front_velocity", "front-v"),
+)
+
+
+def recipe_of(config: dict | None) -> list[str] | None:
+    """The short recipe chips for a run, or None when it recorded no config.
+
+    None is not the same as ``[]``: an empty list says "the recommended recipe,
+    exactly", while None says the run predates the config snapshot and the UI
+    must not guess at what it ran.
+    """
+    if not config:
+        return None
+    model = config.get("model") or {}
+    training = config.get("training") or {}
+    if model.get("sharp_interface"):
+        chips = ["sharp"]
+    elif model.get("front_geometry"):
+        chips = ["front"]
+    else:
+        chips = ["diffuse"]
+    chips += [
+        label
+        for group, key, label in _EXTRAS
+        if (model if group == "model" else training).get(key)
+    ]
+    if training.get("weighting") not in (None, "gradnorm"):
+        chips.append(str(training["weighting"]).upper())
+    return chips
 
 
 def read_dataset_and_metrics(

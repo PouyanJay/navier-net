@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { StageAside } from "../../app/StageAside";
 import { Callout, ConfirmDeleteDialog, Panel } from "../../components";
@@ -9,16 +9,10 @@ import {
   api,
   type DatasetSummary,
   type ProjectSummary,
-  type RunStatus,
   type RunSummary,
 } from "../../lib/api";
-import { isTrainedRun } from "../../lib/runs";
-import {
-  runConditions,
-  runDisplayName,
-  runHeadline,
-  runRowMeta,
-} from "./format";
+import { isTrainedRun, MAX_COMPARED } from "../../lib/runs";
+import { runConditions, runDisplayName } from "./format";
 import { AgreementTab } from "./AgreementTab";
 import { CompareTab } from "./CompareTab";
 import { ExportTab } from "./ExportTab";
@@ -29,11 +23,12 @@ import { PhysicsTab } from "./PhysicsTab";
 import { TrainingTab } from "./TrainingTab";
 import { ReconTab } from "./ReconTab";
 import { RunHeader } from "./RunHeader";
+import { RunRail } from "./RunRail";
 import { useRunDetail } from "./useRunDetail";
 import { useValidation } from "./useValidation";
 import "./results.css";
 
-/** The run rows carry a name, meta line and a headline metric, so this stage's
+/** The run rows carry a name, its recipe and a ranked metric, so this stage's
  * aside takes a little more than the shell's default. */
 const ASIDE = {
   title: "Results & validation",
@@ -44,32 +39,6 @@ const ASIDE = {
 /** How many further optimisation steps a header "Resume training" asks for. */
 const RESUME_EXTRA_STEPS = 1500;
 const MAX_STEPS = 20_000;
-
-const DOT_TONE: Record<RunStatus, string> = {
-  running: "live",
-  trained: "ok",
-  failed: "err",
-  empty: "",
-};
-
-/** Arrow keys walk the run list, matching the command palette's listbox. */
-function moveRunFocus(event: KeyboardEvent<HTMLDivElement>) {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-  const options = [
-    ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-      "[role='option']",
-    ),
-  ];
-  const index = options.indexOf(document.activeElement as HTMLButtonElement);
-  if (index === -1) return;
-  event.preventDefault();
-  const next =
-    options[
-      (index + (event.key === "ArrowDown" ? 1 : options.length - 1)) %
-        options.length
-    ];
-  next.focus();
-}
 
 /** The output tabs, in the mockup's reading order. */
 export const RESULT_TABS = [
@@ -106,6 +75,16 @@ export function ResultsPage({ project }: ResultsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [search] = useSearchParams();
+  // Runs the rail picked alongside the one in the path, for the Compare tab.
+  const comparedWith = useMemo(
+    () =>
+      (search.get("with") ?? "")
+        .split(",")
+        .filter(Boolean)
+        .slice(0, MAX_COMPARED - 1),
+    [search],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -165,6 +144,15 @@ export function ResultsPage({ project }: ResultsPageProps) {
 
   const openRun = (runId: string) =>
     navigate(`${base}/${encodeURIComponent(runId)}`);
+  /** Open the Compare tab on an explicit set of runs. The picks travel in the
+   * URL like every other selection on this stage, so a comparison is a link. */
+  const openCompare = (ids: string[]) => {
+    const [first, ...rest] = ids;
+    const query = rest.length
+      ? `?with=${rest.map(encodeURIComponent).join(",")}`
+      : "";
+    navigate(`${base}/${encodeURIComponent(first)}/compare${query}`);
+  };
   const openTab = (tab: ResultTabId) => {
     if (selected) navigate(`${base}/${encodeURIComponent(selected.id)}/${tab}`);
   };
@@ -202,54 +190,26 @@ export function ResultsPage({ project }: ResultsPageProps) {
   return (
     <>
       <StageAside {...ASIDE}>
-        <Panel title="Runs" subtitle="this project · outputs/">
-          {runs === null ? (
+        {runs === null ? (
+          <Panel title="Runs" subtitle="this project · outputs/">
             <p className="res-quiet">Loading runs…</p>
-          ) : runs.length === 0 ? (
+          </Panel>
+        ) : runs.length === 0 ? (
+          <Panel title="Runs" subtitle="this project · outputs/">
             <div className="res-empty">
               <b>No runs yet</b>
               Launch the first training run from the Solver stage.
             </div>
-          ) : (
-            <div
-              className="runlist"
-              role="listbox"
-              aria-label="Runs of this project"
-              onKeyDown={moveRunFocus}
-            >
-              {runs.map((run) => {
-                const headline = runHeadline(run);
-                return (
-                  <button
-                    key={run.id}
-                    type="button"
-                    role="option"
-                    aria-selected={run.id === selected?.id}
-                    className={
-                      "runrow" + (run.id === selected?.id ? " sel" : "")
-                    }
-                    onClick={() => openRun(run.id)}
-                  >
-                    <span
-                      className={`runrow-dot ${DOT_TONE[run.status]}`}
-                      aria-hidden="true"
-                    />
-                    <span className="runrow-main">
-                      <b>{runDisplayName(run, datasetLabels)}</b>
-                      <span>{runRowMeta(run)}</span>
-                    </span>
-                    {headline && (
-                      <span className="runrow-headline">
-                        {headline.value}
-                        <small>{headline.label}</small>
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </Panel>
+          </Panel>
+        ) : (
+          <RunRail
+            runs={runs}
+            datasetLabels={datasetLabels}
+            selectedId={selected?.id ?? null}
+            onOpen={openRun}
+            onCompare={openCompare}
+          />
+        )}
       </StageAside>
 
       <div className="res-main">
@@ -370,6 +330,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                 <CompareTab
                   runs={runs ?? []}
                   currentId={selected.id}
+                  alsoCompare={comparedWith}
                   datasetLabels={datasetLabels}
                 />
               ) : (

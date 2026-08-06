@@ -12,11 +12,8 @@ import {
   type RunMetrics,
   type RunSummary,
 } from "../../lib/api";
-import { isTrainedRun } from "../../lib/runs";
+import { isTrainedRun, MAX_COMPARED } from "../../lib/runs";
 import { fmtIou, runDisplayName } from "./format";
-
-/** Comparing more runs than chart series colors would un-name the lines. */
-const MAX_COMPARED = 4;
 
 interface RunFacts {
   metrics: RunMetrics | null;
@@ -27,6 +24,8 @@ interface CompareTabProps {
   runs: RunSummary[];
   /** The run open in the page; preselected. */
   currentId: string;
+  /** Further runs the rail picked, preselected alongside `currentId`. */
+  alsoCompare?: string[];
   datasetLabels: Map<string, string>;
 }
 
@@ -80,13 +79,25 @@ const ROWS: MetricRow[] = [
 export function CompareTab({
   runs,
   currentId,
+  alsoCompare,
   datasetLabels,
 }: CompareTabProps) {
   const trained = runs.filter(isTrainedRun);
   const [picked, setPicked] = useState<Set<string>>(() => {
     const first = trained.find((run) => run.id === currentId) ?? trained[0];
-    const second = trained.find((run) => run.id !== first?.id);
-    return new Set([first?.id, second?.id].filter(Boolean) as string[]);
+    // A comparison assembled in the rail arrives whole; otherwise the tab opens
+    // on the run being read plus whichever other one is at hand.
+    const rest = (alsoCompare ?? []).filter((id) =>
+      trained.some((run) => run.id === id && run.id !== first?.id),
+    );
+    const fallback = rest.length
+      ? []
+      : [trained.find((run) => run.id !== first?.id)?.id];
+    return new Set(
+      [first?.id, ...rest, ...fallback]
+        .filter(Boolean)
+        .slice(0, MAX_COMPARED) as string[],
+    );
   });
   const [facts, setFacts] = useState<Map<string, RunFacts>>(new Map());
 

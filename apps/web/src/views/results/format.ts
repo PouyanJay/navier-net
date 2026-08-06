@@ -16,7 +16,27 @@ export function formatRunDate(iso: string | null | undefined): string | null {
   return `${day} · ${time}`;
 }
 
-/** The one number a run's list row leads with, and what to call it. */
+/**
+ * The metric a row leads with, in the order of what it actually says about the
+ * run: a score on frames the model never saw beats one on frames it did.
+ *
+ * The rungs matter as much as the order. `iou_holdout` belongs to the retired
+ * single-frame holdout and `val_iou_mean` only to joint runs, so leading with
+ * those two alone left every ordinary run showing no number at all — while the
+ * `iou_val` and `iou_mean` sitting in the same metrics.json went unread.
+ */
+const METRIC_LADDER: {
+  key: "val_iou_mean" | "iou_val" | "iou_mean" | "iou_holdout";
+  label: string;
+}[] = [
+  { key: "val_iou_mean", label: "val IoU" },
+  { key: "iou_val", label: "val IoU" },
+  { key: "iou_mean", label: "mean IoU" },
+  { key: "iou_holdout", label: "holdout" },
+];
+
+/** The one number a run's list row leads with, and what to call it. A number
+ * with the wrong label is worse than no number, so the rung is always named. */
 export function runHeadline(
   run: RunSummary,
 ): { value: string; label: string } | null {
@@ -26,29 +46,55 @@ export function runHeadline(
       total > 0 ? Math.round(((run.steps_done ?? 0) / total) * 100) : 0;
     return { value: `${pct}%`, label: "progress" };
   }
-  if (run.val_iou_mean != null)
-    return { value: run.val_iou_mean.toFixed(3), label: "val IoU" };
-  if (run.iou_holdout != null)
-    return { value: run.iou_holdout.toFixed(3), label: "holdout" };
+  for (const rung of METRIC_LADDER) {
+    const value = run[rung.key];
+    if (value != null) return { value: value.toFixed(3), label: rung.label };
+  }
   return null;
 }
 
-/** "26 Jul · 09:14 · 3 cond · 1 held out" — the row's one-line pedigree. */
-export function runRowMeta(run: RunSummary): string {
-  const conditions = run.datasets?.length
-    ? run.datasets.length
-    : run.dataset
-      ? 1
-      : 0;
-  const parts = [
-    formatRunDate(run.date)?.split(" · ")[0],
-    conditions > 0 ? `${conditions} cond` : null,
-    run.heldout_datasets?.length
-      ? `${run.heldout_datasets.length} held out`
-      : null,
-    run.status === "failed" ? "failed" : null,
-  ];
-  return parts.filter(Boolean).join(" · ") || run.status;
+/** The metrics a run may be ranked by, and how to read one off a summary. */
+export const RANK_METRICS = [
+  {
+    id: "val",
+    label: "val IoU",
+    of: (run: RunSummary) => run.val_iou_mean ?? run.iou_val ?? null,
+  },
+  {
+    id: "mean",
+    label: "mean IoU",
+    of: (run: RunSummary) => run.iou_mean ?? null,
+  },
+  // Ordering by date changes the ORDER, not the number: a row still leads with
+  // the best score that run recorded, so a chronological list is not a list of
+  // dashes.
+  {
+    id: "date",
+    label: "newest",
+    of: (run: RunSummary) => run.val_iou_mean ?? run.iou_val ?? null,
+  },
+] as const;
+
+export type RankMetricId = (typeof RANK_METRICS)[number]["id"];
+
+export const rankMetric = (id: RankMetricId) =>
+  RANK_METRICS.find((metric) => metric.id === id) ?? RANK_METRICS[0];
+
+/**
+ * The provenance chips a row carries beyond its recipe: how many conditions the
+ * run spans, and how many of them it was never shown.
+ *
+ * Only the distinguishing ones. Every run in a single-series project spans one
+ * condition, so saying "1 cond" fourteen times told nobody anything; a joint run
+ * and a held-out condition are worth the space precisely because they are rare.
+ */
+export function runProvenance(run: RunSummary): string[] {
+  const conditions = run.datasets?.length ?? (run.dataset ? 1 : 0);
+  const heldout = run.heldout_datasets?.length ?? 0;
+  return [
+    conditions > 1 ? `${conditions} cond` : null,
+    heldout > 0 ? `${heldout} held out` : null,
+  ].filter((chip): chip is string => chip !== null);
 }
 
 /** The datasets a run trained on and the ones held out (axis B). */
