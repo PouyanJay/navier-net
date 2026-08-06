@@ -1,5 +1,8 @@
+import { useState } from "react";
+
 import { Button, Chip } from "../../components";
 import { SelectField } from "../../components/Field";
+import { errorMessage } from "../../lib/errors";
 import type { RunDetail, RunStatus, RunSummary } from "../../lib/api";
 import {
   formatRunDate,
@@ -7,6 +10,9 @@ import {
   runDisplayName,
   toYamlish,
 } from "./format";
+
+/** Matches the API's `MAX_LABEL_LEN`, so the field stops before the 422 does. */
+const MAX_LABEL_LEN = 80;
 
 const STATUS_CHIP: Record<
   RunStatus,
@@ -32,6 +38,8 @@ interface RunHeaderProps {
   onViewDataset: (dataset: string) => void;
   onResume: () => void;
   resuming: boolean;
+  /** Save the run's display name; a blank string clears it back to the id. */
+  onRename: (label: string) => Promise<void>;
   /** Open the delete-confirmation for this run. */
   onDelete: () => void;
 }
@@ -59,10 +67,44 @@ export function RunHeader({
   onViewDataset,
   onResume,
   resuming,
+  onRename,
   onDelete,
 }: RunHeaderProps) {
   const status = STATUS_CHIP[run.status];
   const displayName = runDisplayName(run, datasetLabels);
+  // The draft starts from the stored label, not from the displayed name: with no
+  // label the field is empty and the id shows as the placeholder, so saving an
+  // untouched field is the no-op it looks like rather than pinning the id as a
+  // label. Keyed on the run id below, so switching runs resets the editor.
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(run.label ?? "");
+  const [savingName, setSavingName] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  function openRename() {
+    setDraft(run.label ?? "");
+    setRenameError(null);
+    setRenaming(true);
+  }
+
+  async function submitRename(event: React.FormEvent) {
+    event.preventDefault();
+    const cleaned = draft.trim().replace(/\s+/g, " ");
+    if (cleaned === (run.label ?? "")) {
+      setRenaming(false); // nothing changed
+      return;
+    }
+    setSavingName(true);
+    setRenameError(null);
+    try {
+      await onRename(cleaned);
+      setRenaming(false);
+    } catch (err) {
+      setRenameError(`Could not rename the run: ${errorMessage(err)}`);
+    } finally {
+      setSavingName(false);
+    }
+  }
   const { all, heldout } = runConditions(run);
   const labelOf = (id: string) => datasetLabels.get(id) ?? id;
   const training = detail?.config?.["training"] as
@@ -82,14 +124,55 @@ export function RunHeader({
   return (
     <div className="card run-header" data-testid="run-header">
       <div className="run-header-top">
-        <span
-          className="run-header-id"
-          title={
-            displayName !== run.id ? `stored in outputs/${run.id}` : undefined
-          }
-        >
-          {displayName}
-        </span>
+        {renaming ? (
+          <form className="run-rename" onSubmit={submitRename}>
+            <input
+              className="run-rename-input"
+              type="text"
+              value={draft}
+              autoFocus
+              maxLength={MAX_LABEL_LEN}
+              placeholder={run.id}
+              aria-label="Run name"
+              aria-invalid={renameError ? true : undefined}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setRenaming(false);
+              }}
+            />
+            <Button
+              type="submit"
+              size="sm"
+              variant="primary"
+              disabled={savingName}
+            >
+              {savingName ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={savingName}
+              onClick={() => setRenaming(false)}
+            >
+              Cancel
+            </Button>
+            {/* Blank is a real, reachable state, so say what it does. */}
+            <span className="run-rename-hint">
+              blank restores <code>{run.id}</code>
+            </span>
+          </form>
+        ) : (
+          <>
+            <span className="run-header-id">{displayName}</span>
+            <Button
+              size="sm"
+              onClick={openRename}
+              title="Rename this run; its id and output directory never change"
+            >
+              Rename
+            </Button>
+          </>
+        )}
         <Chip tone={status.tone}>{status.label}</Chip>
         {/* The series a run trained on is part of its identity, so it reads on
             the same line rather than opening a row of its own. */}
@@ -129,7 +212,17 @@ export function RunHeader({
         </Button>
       </div>
 
+      {renameError && (
+        <p className="run-rename-error" role="alert">
+          {renameError}
+        </p>
+      )}
+
       <div className="run-meta">
+        {/* Once a name replaces it, the id is only visible if the pedigree says
+            it: it is the output directory, the resume target and every artifact
+            URL, so a renamed run must not hide where it lives. */}
+        {displayName !== run.id && <Meta label="id" value={run.id} />}
         {steps != null && <Meta label="steps" value={steps.toLocaleString()} />}
         <Meta label="validated on" value={valSplit} />
         <Meta label="seed" value={seed ?? "not recorded"} />

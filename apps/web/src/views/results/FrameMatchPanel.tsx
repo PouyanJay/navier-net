@@ -1,6 +1,13 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 
-import { Callout, Chip, Panel } from "../../components";
+import {
+  Callout,
+  Chip,
+  Panel,
+  ScrollBar,
+  useScrollExtent,
+  useWheelToHorizontal,
+} from "../../components";
 import { ArtifactImage } from "../../components/ArtifactImage";
 import {
   api,
@@ -111,6 +118,8 @@ export function FrameMatchPanel({
   );
   const [selected, setSelected] = useState(0);
   const [layers, setLayers] = useState({ camera: true, det: true, pinn: true });
+  const strip = useRef<HTMLDivElement>(null);
+  const stripId = useId();
 
   const detail = detailQ.data;
   const frames = useMemo(
@@ -124,6 +133,8 @@ export function FrameMatchPanel({
     [metrics, validation, dataset, detail],
   );
   const current = frames[Math.min(selected, Math.max(frames.length - 1, 0))];
+  const extent = useScrollExtent(strip, frames.length);
+  useWheelToHorizontal(strip);
 
   const geo: FrameGeometry | null =
     qcQ.data && detail?.frame_px && detail.um_per_px != null
@@ -307,7 +318,13 @@ export function FrameMatchPanel({
             </div>
           </div>
 
-          <div className="fm-strip" role="group" aria-label="Camera frames">
+          <div
+            ref={strip}
+            id={stripId}
+            className="fm-strip"
+            role="group"
+            aria-label={`${frames.length} camera frames`}
+          >
             {frames.map((entry, index) => (
               <button
                 key={entry.frame}
@@ -328,6 +345,12 @@ export function FrameMatchPanel({
               </button>
             ))}
           </div>
+          <ScrollBar
+            target={strip}
+            extent={extent}
+            controls={stripId}
+            label="Scroll the frame strip"
+          />
 
           <p className="figcap">
             <b>Figure 2.</b> The three layers of evidence per camera instant:

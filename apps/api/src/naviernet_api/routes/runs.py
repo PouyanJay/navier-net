@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from naviernet_api.models import (
+    LabelUpdate,
     PhysicsValidation,
     RunDetail,
     RunJobStatus,
@@ -101,6 +102,35 @@ def get_run(run_id: str, settings: Settings = Depends(get_settings)) -> RunDetai
     detail = runs_service.get_run(settings, run_id)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+    return detail
+
+
+@router.put("/{run_id}/label", response_model=RunDetail)
+def set_run_label(
+    run_id: str,
+    payload: LabelUpdate,
+    settings: Settings = Depends(get_settings),
+) -> RunDetail:
+    """Set (or, with a blank label, clear) the run's editable display name.
+
+    The id is immutable -- it names the output directory, the checkpoint and every
+    artifact URL -- so this renames only what the UI shows. A run that is still
+    training may be renamed: the label is a sidecar no training step writes.
+    """
+    try:
+        runs_service.save_run_label(settings, run_id, payload.label)
+    except runs_service.RunLabelError as exc:
+        # Only an unknown/invalid id reaches here as "not found"; a too-long label
+        # is already rejected by the request model, so this stays a 404.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"could not rename run {run_id!r}: {exc}"
+        ) from exc
+
+    detail = runs_service.get_run(settings, run_id)
+    if detail is None:  # saved but not found; should not happen
+        raise HTTPException(status_code=500, detail="label saved but run not found")
     return detail
 
 

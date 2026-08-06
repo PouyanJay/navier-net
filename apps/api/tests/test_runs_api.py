@@ -259,3 +259,98 @@ def test_summary_reflects_live_job_state(client, repo_root: Path):
     assert rows["live_run"]["steps_done"] == 40
     assert rows["live_run"]["steps_total"] == 200
     assert rows["dead_run"]["status"] == "failed"
+
+
+def test_rename_run_sets_a_label_the_listing_and_detail_both_report(client):
+    """A run's display name is editable; the id it is stored under is not."""
+    response = client.put("/api/runs/demo_run/label", json={"label": "front + causal"})
+
+    assert response.status_code == 200
+    assert response.json()["label"] == "front + causal"
+    assert response.json()["id"] == "demo_run", "the id is untouched by a rename"
+
+    assert client.get("/api/runs/demo_run").json()["label"] == "front + causal"
+    rows = {run["id"]: run for run in client.get("/api/runs").json()}
+    assert rows["demo_run"]["label"] == "front + causal"
+
+
+def test_rename_run_leaves_the_output_directory_where_it_was(client, repo_root: Path):
+    """The label is a sidecar: the directory, its checkpoint and its artifacts stay
+    exactly where every artifact URL expects them."""
+    client.put("/api/runs/demo_run/label", json={"label": "renamed"})
+
+    run_dir = repo_root / "outputs" / "demo_run"
+    assert run_dir.is_dir()
+    assert (run_dir / "checkpoints" / "ckpt.pt").exists()
+    assert (run_dir / "label.json").is_file()
+    assert not (repo_root / "outputs" / "renamed").exists()
+
+
+def test_blank_label_clears_the_run_back_to_its_id(client, repo_root: Path):
+    client.put("/api/runs/demo_run/label", json={"label": "temporary"})
+
+    response = client.put("/api/runs/demo_run/label", json={"label": "   "})
+
+    assert response.status_code == 200
+    assert response.json()["label"] is None
+    assert not (repo_root / "outputs" / "demo_run" / "label.json").exists()
+
+
+def test_label_whitespace_is_trimmed_and_collapsed(client):
+    response = client.put("/api/runs/demo_run/label", json={"label": "  sharp \n\t front  "})
+    assert response.json()["label"] == "sharp front"
+
+
+def test_an_unlabelled_run_reports_a_null_label(client):
+    assert client.get("/api/runs/demo_run").json()["label"] is None
+    rows = {run["id"]: run for run in client.get("/api/runs").json()}
+    assert rows["demo_run"]["label"] is None
+
+
+def test_renaming_an_unknown_run_is_404(client):
+    assert client.put("/api/runs/no-such-run/label", json={"label": "x"}).status_code == 404
+
+
+def test_rename_rejects_a_bad_id(client):
+    """An id that is not a valid run directory reaches the handler and is a 404. The
+    traversal shapes are covered at the service level below -- the router normalises
+    them away before the handler ever sees them."""
+    assert client.put("/api/runs/a~b/label", json={"label": "x"}).status_code == 404
+
+
+def test_rename_is_confined_to_outputs(repo_root: Path, tmp_path: Path):
+    """A label write never escapes outputs/ (SECURITY.md §3): the same `_safe_run_dir`
+    guard every other run path uses rejects the id before anything is written."""
+    settings = Settings(repo_root=repo_root)
+    outside = tmp_path / "secret"
+    outside.mkdir(exist_ok=True)
+
+    for evil in ("../secret", "..", ".", "foo/bar", "with space"):
+        with pytest.raises(runs_service.RunLabelError):
+            runs_service.save_run_label(settings, evil, "pwned")
+
+    assert not (outside / "label.json").exists()
+    assert not (repo_root / "outputs" / "label.json").exists()
+
+
+def test_an_over_long_label_is_rejected_by_the_request_model(client, repo_root: Path):
+    response = client.put("/api/runs/demo_run/label", json={"label": "x" * 81})
+
+    assert response.status_code == 422
+    assert not (repo_root / "outputs" / "demo_run" / "label.json").exists()
+
+
+def test_a_corrupt_label_sidecar_degrades_to_the_id(client, repo_root: Path):
+    """A hand-edited or truncated sidecar must not take the run's detail down with it."""
+    (repo_root / "outputs" / "demo_run" / "label.json").write_text("{not json")
+
+    response = client.get("/api/runs/demo_run")
+
+    assert response.status_code == 200
+    assert response.json()["label"] is None
+
+
+def test_a_non_string_label_in_the_sidecar_is_ignored(client, repo_root: Path):
+    (repo_root / "outputs" / "demo_run" / "label.json").write_text(json.dumps({"label": 7}))
+
+    assert client.get("/api/runs/demo_run").json()["label"] is None

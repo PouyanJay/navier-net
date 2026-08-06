@@ -363,7 +363,12 @@
   grid-column: 2;
   grid-row: 2;
   overflow-y: auto;
-  padding: var(--s6) var(--s7);
+  /* Block padding belongs to `.page`, not here: this is the scrollport, and a
+     sticky child's `top: 0` lands below a scrollport's top padding, leaving a
+     band where the content behind it scrolls in full view. Moving the same
+     space inside keeps the resting layout identical and gives the Results tab
+     bar a top edge to pin flush against. */
+  padding-inline: var(--s7);
 }
 
 /* Secondary rail: the stage's own selection and settings, in a fixed column
@@ -511,6 +516,7 @@
 .workspace .page {
   max-width: 1220px;
   margin: 0 auto;
+  padding-block: var(--s6);
 }
 .pagehead {
   margin-bottom: var(--s5);

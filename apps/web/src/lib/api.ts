@@ -4,6 +4,8 @@ export type RunStatus = "running" | "trained" | "failed" | "empty";
 
 export interface RunSummary {
   id: string;
+  /** Editable display name; null falls back to the id, which stays the key. */
+  label?: string | null;
   dataset: string | null;
   status: RunStatus;
   steps: number | null;
@@ -106,6 +108,7 @@ export function headlineIou(
 
 export interface RunDetail {
   id: string;
+  label?: string | null;
   dataset: string | null;
   status: "trained" | "empty";
   steps: number | null;
@@ -787,6 +790,9 @@ export const api = {
         : "/api/runs",
     ),
   getRun: (id: string) => getJson<RunDetail>(runPath(id)),
+  /** Rename a run. Blank clears the label back to the id, which never changes. */
+  setRunLabel: (id: string, label: string) =>
+    sendJson<RunDetail>(`${runPath(id)}/label`, "PUT", { label }),
   /** Delete a run and everything under its output directory. Rejected (409) while the
    * run is training. */
   deleteRun: (id: string) => send<void>(runPath(id), "DELETE"),

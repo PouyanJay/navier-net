@@ -93,6 +93,7 @@ describe("RunHeader delete action", () => {
       onViewDataset={() => {}}
       onResume={() => {}}
       resuming={false}
+      onRename={async () => {}}
       onDelete={onDelete}
     />
   );

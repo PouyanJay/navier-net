@@ -36,6 +36,8 @@ class RunSummary(BaseModel):
     """One row in the runs list."""
 
     id: str
+    # Editable display name; None = show the id. The id stays the immutable key.
+    label: str | None = None
     dataset: str | None = None
     status: str  # "running" | "trained" | "failed" | "empty"
     steps: int | None = None  # completed training steps, if known
@@ -85,6 +87,7 @@ class RunDetail(BaseModel):
     """Full detail for a single run."""
 
     id: str
+    label: str | None = None  # editable display name; None = show the id
     dataset: str | None = None
     status: str
     steps: int | None = None
@@ -273,7 +276,8 @@ MAX_LABEL_LEN = 80
 
 
 class LabelUpdate(BaseModel):
-    """A series' editable display name. Blank clears it back to the id."""
+    """An editable display name for a series or a run. Blank clears it back to
+    the id, which stays the immutable key in both cases."""
 
     label: str = Field(default="", max_length=MAX_LABEL_LEN)
 

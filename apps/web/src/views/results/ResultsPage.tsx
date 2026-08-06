@@ -220,6 +220,16 @@ export function ResultsPage({ project }: ResultsPageProps) {
       .finally(() => setResuming(false));
   };
 
+  /** Rename the selected run. The list is refetched rather than patched locally
+   * so the rail, the compare picker and the header all read one answer — the
+   * server's. Errors propagate to the header, which owns the editor's state. */
+  const renameSelected = async (label: string) => {
+    if (!selected) return;
+    const renamed = await api.setRunLabel(selected.id, label);
+    setRuns(await api.listRuns(project.id));
+    toast("Run renamed", renamed.label ?? selected.id, "ok");
+  };
+
   if (error)
     return (
       <Callout tone="error" title="Runs unavailable">
@@ -255,6 +265,8 @@ export function ResultsPage({ project }: ResultsPageProps) {
       <div className="res-main">
         {selected && (
           <RunHeader
+            // Remounting on selection drops any half-finished rename with it.
+            key={selected.id}
             run={selected}
             detail={detail}
             validationFrames={validation?.validation_frames ?? null}
@@ -264,6 +276,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
             onViewDataset={setViewDataset}
             onResume={resumeSelected}
             resuming={resuming}
+            onRename={renameSelected}
             onDelete={() => setConfirmingDelete(true)}
           />
         )}

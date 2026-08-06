@@ -476,6 +476,112 @@ describe("results routing", () => {
     ).toBeInTheDocument();
   });
 
+  it("renames the selected run and shows the new name in the header and the rail", async () => {
+    mockApi();
+    const base = globalThis.fetch as typeof fetch;
+    let sentLabel: string | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, opts?: RequestInit) => {
+        const u = String(url);
+        if (opts?.method === "PUT" && /\/api\/runs\/demo_run\/label$/.test(u)) {
+          sentLabel = JSON.parse(String(opts.body)).label;
+          return json({ id: "demo_run", label: sentLabel, status: "trained" });
+        }
+        // The listing carries the label back, as the server's would.
+        if (/\/api\/runs(\?|$)/.test(u)) {
+          return json(
+            RUNS.map((r) =>
+              r.id === "demo_run" && sentLabel ? { ...r, label: sentLabel } : r,
+            ),
+          );
+        }
+        return base(url as never, opts);
+      }),
+    );
+
+    renderAt(`/projects/${PID}/results/demo_run`);
+    const header = await screen.findByTestId("run-header");
+    expect(within(header).getByText("demo_run")).toBeInTheDocument();
+
+    fireEvent.click(within(header).getByRole("button", { name: /^rename$/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /run name/i }), {
+      target: { value: "front + causal" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(sentLabel).toBe("front + causal"));
+    // The name replaces the id everywhere it is shown...
+    expect(
+      await screen.findByRole("option", { name: /front \+ causal/i }),
+    ).toBeInTheDocument();
+    // ...but the id stays visible, because it is still the output directory.
+    expect(
+      within(screen.getByTestId("run-header")).getByText("demo_run"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the run's id when a rename is cancelled, and sends nothing", async () => {
+    mockApi();
+    const base = globalThis.fetch as typeof fetch;
+    let labelCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, opts?: RequestInit) => {
+        if (opts?.method === "PUT" && /\/label$/.test(String(url)))
+          labelCalls += 1;
+        return base(url as never, opts);
+      }),
+    );
+
+    renderAt(`/projects/${PID}/results/demo_run`);
+    const header = await screen.findByTestId("run-header");
+
+    fireEvent.click(within(header).getByRole("button", { name: /^rename$/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /run name/i }), {
+      target: { value: "discarded" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(labelCalls).toBe(0);
+    expect(
+      within(screen.getByTestId("run-header")).getByText("demo_run"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the editor open and states why when the rename is rejected", async () => {
+    mockApi();
+    const base = globalThis.fetch as typeof fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, opts?: RequestInit) => {
+        if (opts?.method === "PUT" && /\/label$/.test(String(url)))
+          return new Response(JSON.stringify({ detail: "run not found" }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        return base(url as never, opts);
+      }),
+    );
+
+    renderAt(`/projects/${PID}/results/demo_run`);
+    const header = await screen.findByTestId("run-header");
+
+    fireEvent.click(within(header).getByRole("button", { name: /^rename$/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /run name/i }), {
+      target: { value: "doomed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /could not rename the run/i,
+    );
+    // The typed name survives the failure, so the work isn't lost.
+    expect(screen.getByRole("textbox", { name: /run name/i })).toHaveValue(
+      "doomed",
+    );
+  });
+
   it("renders the project-scoped results page with run browser and tabs", async () => {
     const calls = mockApi();
     renderAt(`/projects/${PID}/results`);
@@ -811,11 +917,9 @@ describe("results routing", () => {
     expect(row).toHaveAttribute("aria-selected", "true");
     const header = await screen.findByTestId("run-header");
     expect(header).toHaveTextContent("series-1");
-    expect(header).not.toHaveTextContent("outputs/highest_t");
-    // …while the immutable id stays discoverable as hover provenance.
-    expect(
-      within(header).getByTitle(/stored in outputs\/highest_t/i),
-    ).toBeInTheDocument();
+    // …while the immutable id stays on the page, in the run's pedigree line: it
+    // is the output directory and the resume target, not a hover detail.
+    expect(header).toHaveTextContent(/id\s*highest_t/);
   });
 
   it("deep-links a run and tab from the URL", async () => {

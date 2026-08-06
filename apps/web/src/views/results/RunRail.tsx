@@ -241,12 +241,14 @@ function FamilyRow({
       {daySeparator && <p className="rail-day">{daySeparator}</p>}
       <div className={holds ? "famrow sel" : "famrow"}>
         {/* The picker is its own control: ticking a run for comparison must not
-            also navigate away from the one being read. */}
+            also navigate away from the one being read. It is named after what
+            the row actually reads, so a renamed run's checkbox does not
+            announce an id the user never sees. */}
         <button
           type="button"
           role="checkbox"
           aria-checked={isPicked}
-          aria-label={`Compare ${family.name}`}
+          aria-label={`Compare ${runDisplayName(lead, datasetLabels)}`}
           className={isPicked ? "famrow-pick on" : "famrow-pick"}
           disabled={representative === null}
           onClick={() => representative && onPick(representative.id)}
@@ -357,7 +359,9 @@ function FamilyRow({
                   className={run.id === selectedId ? "kid sel" : "kid"}
                   onClick={() => onOpen(run.id)}
                 >
-                  <span className="kid-nm mono">{run.id}</span>
+                  <span className="kid-nm mono">
+                    {runDisplayName(run, datasetLabels)}
+                  </span>
                   {run.seed != null && (
                     <span className="kid-seed mono">seed {run.seed}</span>
                   )}

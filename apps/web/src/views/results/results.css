@@ -331,12 +331,17 @@
 
 /* ---------- redesigned results page (run browser + tabbed outputs) ---------- */
 
+/* A column, not a grid: `.tabbar` below is sticky, and a sticky GRID item is
+   confined to its own grid area -- one row exactly its own height, so it has
+   nowhere to travel and never pins. A sticky flex item is positioned against
+   the flex container instead, which is the whole canvas column. */
 .res-main {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--s4);
   min-width: 0;
 }
-/* A grid item's min-width is auto, so one unwrappable child sets the whole
+/* A flex item's min-width is auto, so one unwrappable child sets the whole
    column's width: the config snapshot's <pre> is 1 656px of YAML, and it was
    pushing the entire canvas past the viewport instead of scrolling inside its
    own box. */
@@ -702,6 +707,9 @@
   }
 }
 
+/* The tab bar pins to the top of the canvas so the outputs stay reachable from
+   anywhere in a long tab. `top: 0` is the scrollport's own top edge, which is
+   why `.workspace` carries no block padding -- see appshell.css. */
 .tabbar {
   display: flex;
   gap: 2px;
@@ -710,7 +718,6 @@
   overflow-x: auto;
   overscroll-behavior-x: contain;
   border-bottom: 1px solid var(--line-strong);
-  overflow-x: auto;
   position: sticky;
   top: 0;
   background: var(--shell);
@@ -785,6 +792,54 @@
   font-family: var(--mono);
   font-size: 15px;
   font-weight: 700;
+}
+
+/* Renaming happens in place: the name is the thing being edited, so the editor
+   takes its seat on the header's first line rather than opening a dialog. */
+.run-rename {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.run-rename-input {
+  min-width: 0;
+  width: 26ch;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--panel2);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 5px 9px;
+}
+
+.run-rename-input::placeholder {
+  font-weight: 400;
+  color: var(--ink3);
+}
+
+.run-rename-input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
+.run-rename-hint {
+  font-size: 11px;
+  color: var(--ink3);
+}
+
+.run-rename-hint code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.run-rename-error {
+  margin: var(--s2) 0 0;
+  font-size: 12px;
+  color: var(--red);
 }
 
 .run-header-date {
@@ -1031,16 +1086,30 @@
   cursor: not-allowed;
 }
 
+/* Frame strip: the thumbnails overflow well before the last frame, so the
+   overflow has to be both discoverable and drivable. Snapping lands a frame
+   flush rather than cut in half. */
 .fm-strip {
   display: flex;
   gap: var(--s2);
   overflow-x: auto;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: var(--s2);
   padding: var(--s3) 0 var(--s1);
+  /* The native bar is hidden in favour of the `ScrollBar` control below: on
+     macOS it is an overlay that vanishes at rest, so the strip would give no
+     sign that more frames exist. Ours is visible whenever the strip overflows. */
+  scrollbar-width: none;
+}
+.fm-strip::-webkit-scrollbar {
+  display: none;
 }
 
 .fm-thumb {
   flex: none;
   width: 96px;
+  scroll-snap-align: start;
   border: 1px solid var(--viewline);
   border-radius: 6px;
   overflow: hidden;

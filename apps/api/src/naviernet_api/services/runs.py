@@ -3,8 +3,9 @@
 A "run" is a directory under `outputs/` that the pipeline produced. This module
 locates its artifacts through the reused `RunPaths` layout (constructed directly,
 no Hydra composition needed) and reads the JSON the pipeline already writes. It
-performs no training; the only run it mutates is one it deletes wholesale
-(:func:`delete_run`).
+performs no training; the runs it mutates are one it deletes wholesale
+(:func:`delete_run`) and one it renames (:func:`save_run_label`, which writes
+only its own sidecar and never a pipeline artifact).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
-from naviernet_api.models import ArtifactFlags, RunDetail, RunSummary
+from naviernet_api.models import MAX_LABEL_LEN, ArtifactFlags, RunDetail, RunSummary
 from naviernet_api.settings import Settings
 
 if TYPE_CHECKING:
@@ -33,6 +34,15 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # Directory names under outputs/ that are not individual runs.
 _NON_RUN_DIRS = {"multirun"}
+
+# An optional human-readable display name for the run, in a sidecar of its own
+# under the run directory. The run id stays the immutable filesystem key
+# (`outputs/<id>`, the checkpoint path, every artifact URL and the resume
+# target), so renaming may never touch it -- this is purely what the UI shows.
+# A sidecar rather than a key in metrics.json because that file belongs to the
+# pipeline's evaluator, which rewrites it wholesale on every evaluate.
+_LABEL_FILE = "label.json"
+_LABEL_KEY = "label"
 
 # Served figure files must be PNG names inside the run's figures dir, at most
 # one dataset subdirectory deep (joint runs render per-dataset figures).
@@ -94,6 +104,47 @@ def _read_json(path: Path) -> dict | None:
         # A corrupt artifact must not masquerade as an absent one silently.
         log.warning("could not read %s: %s", path, exc)
         return None
+
+
+class RunLabelError(ValueError):
+    """A run's display name could not be saved."""
+
+
+def read_run_label(run_dir: Path) -> str | None:
+    """The run's editable display name, or None when none is set (so the UI falls
+    back to the id). A blank or non-string saved value degrades to None."""
+    label = (_read_json(run_dir / _LABEL_FILE) or {}).get(_LABEL_KEY)
+    if label is None:
+        return None
+    if not isinstance(label, str):
+        log.warning("ignoring non-string label for %s: %r", run_dir.name, label)
+        return None
+    return " ".join(label.split()) or None
+
+
+def save_run_label(settings: Settings, run_id: str, label: str) -> str | None:
+    """Set (or, with a blank string, clear) the run's display name. Returns the
+    stored label, or None when cleared.
+
+    The id is never touched: it is the output directory's name and the key every
+    artifact URL is built from. Confined to `outputs/` (SECURITY.md §3).
+    """
+    run_dir = _safe_run_dir(settings, run_id)
+    if run_dir is None:
+        raise RunLabelError(f"run {run_id!r} not found")
+    if len(label) > MAX_LABEL_LEN:  # defence for direct callers; the API also bounds it
+        raise RunLabelError(f"label must be at most {MAX_LABEL_LEN} characters")
+
+    label = " ".join(label.split())  # trim + collapse internal whitespace/newlines
+    path = run_dir / _LABEL_FILE
+    if label:
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({_LABEL_KEY: label}, indent=2))
+        tmp.replace(path)  # atomic, so a crashed write cannot leave a truncated name
+    else:
+        path.unlink(missing_ok=True)  # blank clears it, back to the id
+    log.info("saved label for run %s: %r", run_id, label or None)
+    return label or None
 
 
 def _read_hydra_config(run_dir: Path) -> dict | None:
@@ -274,6 +325,7 @@ def _summarize_run(
     per_frame = metrics.get("iou_per_frame") if metrics else None
     return RunSummary(
         id=run_id,
+        label=read_run_label(run_dir),
         dataset=dataset,
         status=status,
         iou_holdout=metrics.get("iou_holdout") if metrics else None,
@@ -395,6 +447,7 @@ def get_run(settings: Settings, run_id: str) -> RunDetail | None:
 
     return RunDetail(
         id=run_id,
+        label=read_run_label(run_dir),
         dataset=dataset,
         status="trained" if artifacts.checkpoint else "empty",
         steps=_checkpoint_steps(paths.checkpoint),
