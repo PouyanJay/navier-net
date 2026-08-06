@@ -379,12 +379,18 @@ def get_run(settings: Settings, run_id: str) -> RunDetail | None:
         if paths.figures_dir.is_dir()
         else []
     )
+    config = _read_hydra_config(run_dir)
     artifacts = ArtifactFlags(
         checkpoint=paths.checkpoint.is_file(),
         metrics=metrics is not None,
         groups=paths.groups_json.is_file(),
         video=paths.video.is_file(),
         figures=figures,
+        # Single-run and joint (per-dataset) reports live side by side, named
+        # the same way their trajectories are.
+        front_velocity=paths.front_velocity_json.is_file()
+        or any(run_dir.glob("front_velocity_*.json")),
+        config=config is not None,
     )
 
     return RunDetail(
@@ -393,7 +399,7 @@ def get_run(settings: Settings, run_id: str) -> RunDetail | None:
         status="trained" if artifacts.checkpoint else "empty",
         steps=_checkpoint_steps(paths.checkpoint),
         metrics=metrics,
-        config=_read_hydra_config(run_dir),
+        config=config,
         artifacts=artifacts,
     )
 

@@ -527,23 +527,47 @@ describe("results routing", () => {
     // Axis A — in-distribution validation IoU of the trained conditions
     // (waits: the validation fetch resolves after first paint).
     await waitFor(() => expect(panel).toHaveTextContent("0.941"));
-    expect(panel).toHaveTextContent(/in-distribution/i);
+    expect(panel).toHaveTextContent(/validation iou/i);
     // Axis B — transfer to the held-out condition.
-    expect(panel).toHaveTextContent("0.903");
-    expect(panel).toHaveTextContent(/transfer/i);
+    await waitFor(() =>
+      expect(screen.getByText(/transfer iou/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("0.903")).toBeInTheDocument();
 
     // The verdict narrative states what the numbers argue.
     expect(
       screen.getByText(/learned physics, not footage/i),
     ).toBeInTheDocument();
+  });
 
-    // At-a-glance chips jump to their tab.
-    fireEvent.click(screen.getByRole("button", { name: /field maps/i }));
+  it("names what an unmeasured axis would take, instead of printing a dash", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/demo_run/overview`);
+
+    // demo_run is a single condition with no transfer and no measured nose
+    // speed: three of the old scorecard's four slots were em dashes.
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: /fields/i })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      ),
+      expect(
+        screen.getByText(/hold one out in the solver/i),
+      ).toBeInTheDocument(),
+    );
+    // And nothing in the scorecard is an em dash: every slot it keeps is a
+    // measurement, every slot it drops is an action.
+    expect(screen.getByTestId("overview-scorecard")).not.toHaveTextContent("—");
+  });
+
+  it("leads the overview with the evidence, and opens the worst frame", async () => {
+    mockApi();
+    renderAt(`/projects/${PID}/results/demo_run/overview`);
+
+    // The per-frame agreement is the answer to this stage's question, so it is
+    // on the landing tab rather than one click away.
+    const worst = await screen.findByRole("button", { name: /Frame 6/ });
+    fireEvent.click(worst);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("tab", { name: /reconstruction/i }),
+      ).toHaveAttribute("aria-selected", "true"),
     );
   });
 
@@ -639,7 +663,13 @@ describe("results routing", () => {
     expect(
       await screen.findByText(/nose-speed agreement/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/mass closure · open/i)).toBeInTheDocument();
+    // The method's own open question is stated once, as a note — not failed as
+    // a per-run check on every run ever trained.
+    expect(
+      screen.getByText(/global mass closure is not yet quantitative/i),
+    ).toBeInTheDocument();
+    // And every measured check states the tolerance it is read against.
+    expect(screen.getByText(/tol 10 %/)).toBeInTheDocument();
     // Group tiles from the condition's own groups endpoint.
     expect(await screen.findByText("320")).toBeInTheDocument();
 
@@ -748,7 +778,11 @@ describe("results routing", () => {
     // Pedigree comes from the config snapshot the run actually recorded
     // (waits: the detail fetch resolves after first paint).
     await waitFor(() => expect(header).toHaveTextContent("1234")); // seed
-    expect(header).toHaveTextContent(/20\s?% · tail/); // val split
+    // What the run was actually scored on, from the frames the evaluator wrote
+    // — the config's val_fraction says how many were meant to be held, not which.
+    expect(header).toHaveTextContent(/validated on/i);
+    // And where it stands in the ranking it was selected from.
+    expect(header).toHaveTextContent(/rank \d+ of \d+/);
 
     // The reproducibility affordance: the resolved config, openable in place.
     fireEvent.click(screen.getByText(/config snapshot/i));

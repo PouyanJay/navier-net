@@ -2,6 +2,8 @@ import { Chip, Panel } from "../../components";
 import { useToast } from "../../components/Toast";
 import { artifactUrl, type RunDetail, type RunSummary } from "../../lib/api";
 import { formatRunDate, runConditions, runDisplayName } from "./format";
+import type { RunCapability } from "./runCapability";
+import { StateNote } from "./StateNote";
 
 const exportUrl = {
   iou: (id: string) => `/api/runs/${encodeURIComponent(id)}/export/iou.csv`,
@@ -41,6 +43,7 @@ function Row({ name, detail, href, action }: RowProps) {
 
 interface ExportTabProps {
   run: RunSummary;
+  capability: RunCapability;
   detail: RunDetail | null;
   viewDataset: string | null;
   datasetLabels: Map<string, string>;
@@ -50,6 +53,7 @@ interface ExportTabProps {
  * all regenerable from raw data plus the run's config snapshot. */
 export function ExportTab({
   run,
+  capability,
   detail,
   viewDataset,
   datasetLabels,
@@ -113,9 +117,9 @@ export function ExportTab({
                 detail={
                   joint
                     ? "not generated for joint runs yet · planned"
-                    : "render this run (render=true) to produce them"
+                    : "no figures were rendered for this run · re-run the render stage"
                 }
-                action={<Chip>planned</Chip>}
+                action={<Chip>none</Chip>}
               />
             )}
             {artifacts.video && (
@@ -143,10 +147,21 @@ export function ExportTab({
           detail={`series, t_ms, nose_um, area_um2${joint && viewDataset ? ` · ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
           href={exportUrl.trajectory(run.id, joint ? viewDataset : null)}
         />
+        {/* Offered only when the report exists: the download 404s otherwise,
+            and a link that fails is worse than one that is absent. */}
         <Row
           name="Front velocity"
-          detail={`series, t_ms, s, v_um_per_ms, v_m_per_s, heldout${joint && viewDataset ? ` · ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`}
-          href={exportUrl.frontVelocity(run.id, joint ? viewDataset : null)}
+          detail={
+            capability.hasFrontVelocity
+              ? `series, t_ms, s, v_um_per_ms, v_m_per_s, heldout${joint && viewDataset ? ` · ${datasetLabels.get(viewDataset) ?? viewDataset}` : ""}`
+              : "this run measured no front velocity"
+          }
+          href={
+            capability.hasFrontVelocity
+              ? exportUrl.frontVelocity(run.id, joint ? viewDataset : null)
+              : undefined
+          }
+          action={capability.hasFrontVelocity ? undefined : <Chip>none</Chip>}
         />
         <Row
           name="Loss history"
@@ -167,10 +182,22 @@ export function ExportTab({
           detail="bundled HTML/PDF of this page · planned (follow-up feature)"
           action={<Chip>planned</Chip>}
         />
-        <p className="note">
-          <b>Everything regenerable.</b> Any export can be rebuilt from the raw
-          TIFFs plus this run's config snapshot; nothing here is hand-edited.
-        </p>
+        {capability.replayable ? (
+          <p className="note">
+            <b>Everything regenerable.</b> Any export can be rebuilt from the
+            raw TIFFs plus this run&apos;s config snapshot; nothing here is
+            hand-edited.
+          </p>
+        ) : (
+          <StateNote
+            tone="caution"
+            title="This run cannot be reproduced exactly."
+          >
+            It recorded no config snapshot, so the exact configuration that
+            produced these numbers is not on disk. The measurements below are
+            still exactly what it wrote.
+          </StateNote>
+        )}
       </Panel>
     </>
   );

@@ -4,7 +4,13 @@ import {
   type DimensionlessGroups,
   type PhysicsValidation,
 } from "../../lib/api";
-import { fmtIou, noseSpeedTone } from "./format";
+import type { RunSummary } from "../../lib/api";
+import {
+  physicsVerdict,
+  type PhysicsCheck,
+  type UnrunCheck,
+} from "./physicsChecks";
+import { StateNote } from "./StateNote";
 import { InterfacePhysicsPanel } from "./InterfacePhysicsPanel";
 import { useApiResource } from "./useApiResource";
 
@@ -32,27 +38,46 @@ function fmtGroup(value: number): string {
   return value.toPrecision(3);
 }
 
-interface CheckProps {
-  ok: boolean;
-  title: string;
-  detail: string;
-}
-
-function CheckRow({ ok, title, detail }: CheckProps) {
+/** One measured check: what it compared, the number, and the tolerance it is
+ * read against — a check without a stated tolerance is an assertion. */
+function CheckRow({ check }: { check: PhysicsCheck }) {
   return (
-    <div className="check-row">
-      <span className={"check-ic" + (ok ? " ok" : " open")} aria-hidden="true">
-        {ok ? "✓" : "!"}
+    <div className="check-row" data-ok={check.ok}>
+      <span
+        className={"check-ic" + (check.ok ? " ok" : " open")}
+        aria-hidden="true"
+      >
+        {check.ok ? "✓" : "!"}
       </span>
       <div>
-        <b>{title}</b>
-        <span>{detail}</span>
+        <b>{check.name}</b>
+        <span>{check.detail}</span>
       </div>
+      <span className={check.ok ? "check-v" : "check-v flag"}>
+        {check.value}
+        <small>{check.against}</small>
+      </span>
+    </div>
+  );
+}
+
+/** A check that could not run. Not a failure: an input the series never
+ * recorded, and what would supply it. */
+function UnrunRow({ check }: { check: UnrunCheck }) {
+  return (
+    <div className="check-row unrun">
+      <span className="check-ic none" aria-hidden="true" />
+      <div>
+        <b>{check.name}</b>
+        <span>{check.reason}</span>
+      </div>
+      <span className="check-v quiet">—</span>
     </div>
   );
 }
 
 interface PhysicsTabProps {
+  run: RunSummary;
   runId: string;
   /** Whether the run was trained with an explicit front; decides which empty
    * state the interface-physics panel shows. */
@@ -67,6 +92,7 @@ interface PhysicsTabProps {
 /** The checks that hold independently of training, and the dimensionless
  * groups the physics (and the conditioning vector) derive from. */
 export function PhysicsTab({
+  run,
   runId,
   frontGeometry,
   dataset,
@@ -79,7 +105,8 @@ export function PhysicsTab({
     { nullOn404: true },
   );
 
-  const noseErr = validation?.nose_speed_error_pct ?? null;
+  const seriesName = datasetName ?? dataset ?? runId;
+  const verdict = physicsVerdict(run, validation, seriesName);
   const film = validation?.bretherton_film_um ?? null;
   const groups = groupsQ.data;
 
@@ -108,50 +135,57 @@ export function PhysicsTab({
                 unit="mm·s⁻¹"
                 hint={
                   validation?.nose_speed_measured_mm_s == null
-                    ? "no measured reference for these conditions"
+                    ? `not recorded for ${seriesName}`
                     : undefined
                 }
               />
               <Stat
-                label="Error"
-                value={noseErr != null ? noseErr.toFixed(1) : "—"}
-                unit={noseErr != null ? "%" : undefined}
-                tone={noseSpeedTone(noseErr)}
+                label="Flags"
+                value={verdict.flags.length}
+                tone={verdict.flags.length > 0 ? "amber" : "green"}
+                hint={`of ${verdict.measured.length} measured checks`}
               />
             </div>
-            {noseErr != null ? (
-              <CheckRow
-                ok={noseSpeedTone(noseErr) === "green"}
-                title="Nose-speed agreement"
-                detail={`inferred vs measured within ${noseErr.toFixed(1)} %, and neither quantity was ever given to the model`}
-              />
-            ) : (
-              <CheckRow
-                ok={false}
-                title="Nose-speed agreement · no reference"
-                detail="record a measured nose speed for this condition to close the check"
-              />
+
+            <p className="check-band">Measured</p>
+            {verdict.measured.length === 0 && (
+              <p className="state-note">
+                This run recorded no physics diagnostics; re-run the evaluate
+                stage to measure them.
+              </p>
             )}
+            {verdict.measured.map((check) => (
+              <CheckRow key={check.id} check={check} />
+            ))}
             {film != null && (
               <CheckRow
-                ok
-                title="Bretherton film regime"
-                detail={`1.34·Ca^⅔·(H/2) → ${film.toFixed(1)} µm lubrication film`}
+                check={{
+                  id: "film",
+                  name: "Bretherton film regime",
+                  detail:
+                    "1.34·Ca^⅔·(H/2), the lubrication film the sides ride on",
+                  value: `${film.toFixed(1)} µm`,
+                  against: "regime check",
+                  ok: true,
+                }}
               />
             )}
-            <CheckRow
-              ok={false}
-              title="Global mass closure · open"
-              detail="the free dilatation source is not yet quantitative; closes with the Stage-B evaporation coupling"
-            />
-            <CheckRow
-              ok={
-                validation?.iou_holdout != null ||
-                validation?.val_iou_mean != null
-              }
-              title="Unsupervised agreement exists"
-              detail={`holdout/validation IoU ${fmtIou(validation?.iou_holdout ?? validation?.val_iou_mean)} · the generalization evidence`}
-            />
+
+            {verdict.notRun.length > 0 && (
+              <>
+                <p className="check-band">Not run</p>
+                {verdict.notRun.map((check) => (
+                  <UnrunRow key={check.id} check={check} />
+                ))}
+              </>
+            )}
+
+            <StateNote title="Global mass closure is not yet quantitative.">
+              The free dilatation source closes with the Stage-B evaporation
+              coupling. That is a property of the method rather than a verdict
+              on this run, which is why it is stated here once instead of
+              failing a check on every run ever trained.
+            </StateNote>
           </div>
           <div>
             <h3 className="env-title">

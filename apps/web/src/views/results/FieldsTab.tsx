@@ -4,6 +4,8 @@ import { Callout, Panel } from "../../components";
 import { ChartFrame } from "../../components/ChartFrame";
 import { api, ApiError, type FieldMap } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
+import type { RunCapability } from "./runCapability";
+import { NotReplayable } from "./StateNote";
 import { cmap, cssGradient, type ColormapName } from "./fieldColormaps";
 
 interface FieldDef {
@@ -305,6 +307,9 @@ interface FieldsTabProps {
   /** The series' display label (ids stay in URLs; labels in copy). */
   datasetName: string | null;
   joint: boolean;
+  /** What this run can still answer. Fields need the network rebuilt, so a run
+   * without a config snapshot is refused here rather than asked and erroring. */
+  capability: RunCapability;
 }
 
 /**
@@ -317,12 +322,17 @@ export function FieldsTab({
   dataset,
   datasetName,
   joint,
+  capability,
 }: FieldsTabProps) {
   const [field, setField] = useState<FieldDef>(FIELD_DEFS[1]);
   const [tRatio, setTRatio] = useState(0.34);
   const [playing, setPlaying] = useState(false);
   const [map, setMap] = useState<FieldMap | null>(null);
-  const [available, setAvailable] = useState<string[] | null>(null);
+  // Seeded from the field set the run recorded, so the picker is right on the
+  // first paint rather than after a round trip.
+  const [available, setAvailable] = useState<string[] | null>(
+    capability.fields.length > 0 ? capability.fields : null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -330,6 +340,7 @@ export function FieldsTab({
   const scopedDataset = joint ? (dataset ?? undefined) : undefined;
 
   useEffect(() => {
+    if (!capability.replayable) return;
     let alive = true;
     clearTimeout(debounce.current);
     debounce.current = setTimeout(() => {
@@ -360,7 +371,7 @@ export function FieldsTab({
     // `map` is deliberately not a dependency: it only supplies the time span
     // for the ratio→t* mapping, and refetching on every payload would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, scopedDataset, field, tRatio]);
+  }, [runId, scopedDataset, field, tRatio, capability.replayable]);
 
   // Playback: step the scrubber; the fetch effect above follows each step
   // (the server caches per rounded t, so a second loop replays instantly).
@@ -385,6 +396,23 @@ export function FieldsTab({
     map != null
       ? `t* ${map.t_star.toFixed(2)} of ${map.t_max_star.toFixed(2)}`
       : "…";
+
+  if (!capability.replayable) {
+    return (
+      <Panel
+        title="Predicted fields"
+        subtitle={`${datasetName ?? dataset ?? "run"} · needs the network rebuilt`}
+      >
+        <NotReplayable runId={runId} />
+        <p className="state-note">
+          A field map asks the checkpoint for values at points the camera never
+          sampled, so it needs the architecture the snapshot records — unlike
+          the agreement, kinematics and physics this run measured, which all
+          still read.
+        </p>
+      </Panel>
+    );
+  }
 
   return (
     <>
@@ -435,7 +463,8 @@ export function FieldsTab({
         )}
         {unavailable && (
           <p className="state-note">
-            No trained model to evaluate; train this run in the Solver first.
+            This run has no checkpoint to evaluate; train it in the Solver
+            first.
           </p>
         )}
         {!error && !unavailable && map && (

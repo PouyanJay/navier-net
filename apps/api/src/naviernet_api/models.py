@@ -71,6 +71,14 @@ class ArtifactFlags(BaseModel):
     groups: bool = False
     video: bool = False
     figures: list[str] = []
+    # Whether the evaluate stage wrote a front-velocity report. Without it the
+    # UI could only find out by asking for the report and reading a 404, so the
+    # tab that holds it looked identical to one with six panels of content.
+    front_velocity: bool = False
+    # Whether the run kept the config snapshot its architecture is rebuilt from.
+    # A run without one keeps every measurement it made and can never be
+    # replayed, which is a different thing from a run that failed.
+    config: bool = False
 
 
 class RunDetail(BaseModel):

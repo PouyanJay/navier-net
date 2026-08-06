@@ -39,6 +39,10 @@ export interface ArtifactFlags {
   groups: boolean;
   video: boolean;
   figures: string[];
+  /** The evaluate stage wrote a front-velocity report. */
+  front_velocity?: boolean;
+  /** The run kept the config snapshot its architecture is rebuilt from. */
+  config?: boolean;
 }
 
 /** A joint run's held-out transfer scores (metrics.json v2). */

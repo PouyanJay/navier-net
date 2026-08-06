@@ -21,6 +21,10 @@ const STATUS_CHIP: Record<
 interface RunHeaderProps {
   run: RunSummary;
   detail: RunDetail | null;
+  /** The frames the evaluator held out, from metrics.json. */
+  validationFrames: number[] | null;
+  /** Where this run stands in the rail's current ranking, if it is ranked. */
+  standing: string | null;
   /** Dataset id → display label (series labels are editable). */
   datasetLabels: Map<string, string>;
   /** The condition per-condition panels are viewing (joint runs). */
@@ -48,6 +52,8 @@ function Meta({ label, value }: { label: string; value: string | number }) {
 export function RunHeader({
   run,
   detail,
+  validationFrames,
+  standing,
   datasetLabels,
   viewDataset,
   onViewDataset,
@@ -61,13 +67,17 @@ export function RunHeader({
   const labelOf = (id: string) => datasetLabels.get(id) ?? id;
   const training = detail?.config?.["training"] as
     Record<string, unknown> | undefined;
-  const valFraction =
-    typeof training?.val_fraction === "number" ? training.val_fraction : null;
-  const valSplit =
-    valFraction != null && valFraction > 0
-      ? `${Math.round(valFraction * 100)} % · ${String(training?.val_strategy ?? "tail")}`
-      : "holdout frame only";
+  // What the run was ACTUALLY scored on, from the frames the evaluator wrote —
+  // not from a config fraction, and never from the "holdout frame only" fallback
+  // this used to print, which contradicted the scorecard directly below it on
+  // every run since the single-frame holdout was retired.
+  const frames = validationFrames ?? [];
+  const valSplit = frames.length
+    ? `frames ${frames.join(", ")} · never supervised`
+    : "none · every frame supervised";
   const steps = detail?.steps ?? run.steps;
+  const seed =
+    run.seed ?? (typeof training?.seed === "number" ? training.seed : null);
 
   return (
     <div className="card run-header" data-testid="run-header">
@@ -81,6 +91,7 @@ export function RunHeader({
           {displayName}
         </span>
         <Chip tone={status.tone}>{status.label}</Chip>
+        {standing && <span className="run-header-rank">{standing}</span>}
         <span className="run-header-date">{formatRunDate(run.date)}</span>
         <span className="run-header-spacer" />
         {all.length > 1 && viewDataset && (
@@ -119,22 +130,28 @@ export function RunHeader({
         ))}
       </div>
 
-      {detail && (
-        <div className="run-meta">
-          {steps != null && (
-            <Meta label="steps" value={steps.toLocaleString()} />
-          )}
-          {typeof training?.seed === "number" && (
-            <Meta label="seed" value={training.seed} />
-          )}
-          <Meta label="val split" value={valSplit} />
-          {typeof training?.device === "string" && (
-            <Meta label="device" value={training.device} />
-          )}
-        </div>
-      )}
+      <div className="run-meta">
+        {steps != null && <Meta label="steps" value={steps.toLocaleString()} />}
+        <Meta label="validated on" value={valSplit} />
+        <Meta label="seed" value={seed ?? "not recorded"} />
+        {/* The recipe the run RAN, read from its own config: the ids are typed
+            by hand and several in this repository disagree with it. */}
+        <Meta
+          label="recipe"
+          value={
+            run.recipe == null
+              ? "config not recorded"
+              : run.recipe.length === 0
+                ? "recommended"
+                : run.recipe.join(" · ")
+          }
+        />
+        {typeof training?.device === "string" && (
+          <Meta label="device" value={training.device} />
+        )}
+      </div>
 
-      {detail?.config && (
+      {detail?.config ? (
         <details className="cfgsnap">
           <summary>
             Config snapshot · .hydra/config.yaml{" "}
@@ -142,6 +159,11 @@ export function RunHeader({
           </summary>
           <pre>{toYamlish(detail.config)}</pre>
         </details>
+      ) : (
+        <p className="cfgsnap-missing">
+          No config snapshot — this run cannot be reproduced exactly, and its
+          network cannot be rebuilt to replay.
+        </p>
       )}
     </div>
   );

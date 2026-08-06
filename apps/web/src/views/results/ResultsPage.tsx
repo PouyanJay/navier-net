@@ -23,6 +23,9 @@ import { PhysicsTab } from "./PhysicsTab";
 import { TrainingTab } from "./TrainingTab";
 import { ReconTab } from "./ReconTab";
 import { RunHeader } from "./RunHeader";
+import { buildFamilies } from "./runFamilies";
+import { runCapability } from "./runCapability";
+import { tabBadges } from "./tabBadges";
 import { RunRail } from "./RunRail";
 import { useRunDetail } from "./useRunDetail";
 import { useValidation } from "./useValidation";
@@ -45,12 +48,12 @@ export const RESULT_TABS = [
   { id: "overview", label: "Overview" },
   { id: "recon", label: "Reconstruction" },
   { id: "fields", label: "Fields" },
-  { id: "agreement", label: "Agreement & transfer" },
+  { id: "agreement", label: "Agreement" },
   { id: "physics", label: "Physics" },
   { id: "velocity", label: "Front velocity" },
   { id: "training", label: "Training" },
   { id: "compare", label: "Compare" },
-  { id: "export", label: "Artifacts & export" },
+  { id: "export", label: "Artifacts" },
 ] as const;
 
 export type ResultTabId = (typeof RESULT_TABS)[number]["id"];
@@ -129,7 +132,41 @@ export function ResultsPage({ project }: ResultsPageProps) {
       : "overview";
 
   const { detail } = useRunDetail(selected?.id ?? null);
+  // One answer to "what can this run still show", shared by every tab that
+  // would otherwise ask the checkpoint a question it cannot answer.
+  const capability = useMemo(
+    () => (selected ? runCapability(selected, detail) : null),
+    [selected, detail],
+  );
   const { validation } = useValidation(selected?.id ?? null);
+  // Where this run stands in the rail's ranking, carried into the header so the
+  // standing you chose it by is still on screen while you read it.
+  const standing = useMemo(() => {
+    if (!runs || !selected) return null;
+    const families = buildFamilies(runs, { metric: "val" });
+    const family = families.find((entry) =>
+      entry.runs.some((run) => run.id === selected.id),
+    );
+    if (!family?.rank) return null;
+    const ranked = families.filter((entry) => entry.rank != null).length;
+    return family.behind == null
+      ? `rank ${family.rank} of ${ranked} · best val IoU`
+      : `rank ${family.rank} of ${ranked} · −${family.behind.toFixed(3)}`;
+  }, [runs, selected]);
+
+  const badges = useMemo(
+    () =>
+      selected && capability
+        ? tabBadges(
+            selected,
+            capability,
+            validation,
+            (runs ?? []).filter(isTrainedRun).length,
+            datasetLabels.get(selected.dataset ?? "") ?? selected.dataset ?? "",
+          )
+        : {},
+    [selected, capability, validation, runs, datasetLabels],
+  );
 
   // Per-condition panels (viewport, kinematics, fields…) view one condition of
   // a joint run at a time; default to the run's first dataset.
@@ -217,6 +254,8 @@ export function ResultsPage({ project }: ResultsPageProps) {
           <RunHeader
             run={selected}
             detail={detail}
+            validationFrames={validation?.validation_frames ?? null}
+            standing={standing}
             datasetLabels={datasetLabels}
             viewDataset={viewDataset}
             onViewDataset={setViewDataset}
@@ -245,22 +284,32 @@ export function ResultsPage({ project }: ResultsPageProps) {
           </ConfirmDeleteDialog>
         )}
         <div className="tabbar" role="tablist" aria-label="Run outputs">
-          {RESULT_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              id={`tab-${tab.id}`}
-              aria-selected={tab.id === activeTab}
-              aria-controls={`panel-${tab.id}`}
-              tabIndex={tab.id === activeTab ? 0 : -1}
-              className="tab"
-              disabled={!selected}
-              onClick={() => openTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {RESULT_TABS.map((tab) => {
+            const badge = badges[tab.id];
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                id={`tab-${tab.id}`}
+                aria-selected={tab.id === activeTab}
+                aria-controls={`panel-${tab.id}`}
+                tabIndex={tab.id === activeTab ? 0 : -1}
+                className="tab"
+                disabled={!selected}
+                title={badge?.title}
+                onClick={() => openTab(tab.id)}
+              >
+                {tab.label}
+                {/* What the tab holds, so finding out costs no click. */}
+                {badge && (
+                  <span className={badge.warn ? "tab-n warn" : "tab-n"}>
+                    {badge.text}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
         <section
           className="stack"
@@ -288,6 +337,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                   validation={validation}
                   viewDataset={viewDataset}
                   datasetLabels={datasetLabels}
+                  capability={capability!}
                 />
               ) : activeTab === "fields" ? (
                 <FieldsTab
@@ -299,6 +349,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                       : null
                   }
                   joint={runConditions(selected).all.length > 1}
+                  capability={capability!}
                 />
               ) : activeTab === "agreement" ? (
                 <AgreementTab
@@ -309,6 +360,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                 />
               ) : activeTab === "physics" ? (
                 <PhysicsTab
+                  run={selected}
                   runId={selected.id}
                   frontGeometry={Boolean(
                     (detail?.config as { model?: { front_geometry?: boolean } })
@@ -323,7 +375,12 @@ export function ResultsPage({ project }: ResultsPageProps) {
                   validation={validation}
                 />
               ) : activeTab === "velocity" ? (
-                <FrontVelocityTab runId={selected.id} dataset={viewDataset} />
+                <FrontVelocityTab
+                  runId={selected.id}
+                  dataset={viewDataset}
+                  capability={capability!}
+                  noseSpeed={validation?.nose_speed_inferred_mm_s ?? null}
+                />
               ) : activeTab === "training" ? (
                 <TrainingTab runId={selected.id} />
               ) : activeTab === "compare" ? (
@@ -336,6 +393,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
               ) : (
                 <ExportTab
                   run={selected}
+                  capability={capability!}
                   detail={detail}
                   viewDataset={viewDataset}
                   datasetLabels={datasetLabels}

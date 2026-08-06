@@ -667,6 +667,10 @@
 .tabbar {
   display: flex;
   gap: 2px;
+  /* Nine tabs plus their badges outrun a laptop's width: the strip scrolls
+     rather than clipping the last two. */
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
   border-bottom: 1px solid var(--line-strong);
   overflow-x: auto;
   position: sticky;
@@ -1389,12 +1393,53 @@
   margin-bottom: var(--s4);
 }
 
+/* A check is a measurement with a verdict: the mark, what it compared, and the
+   number beside the tolerance it is read against. */
 .check-row {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s3);
   padding: 9px 0;
   border-bottom: 1px solid var(--line);
   font-size: 12.5px;
+}
+.check-v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+.check-v small {
+  display: block;
+  font-size: 9.5px;
+  color: var(--faint);
+}
+.check-v.flag {
+  color: var(--holdout);
+}
+.check-v.quiet {
+  color: var(--muted);
+}
+/* A check that could not run: no mark to earn, so the well is left empty. */
+.check-ic.none {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+}
+.check-row.unrun b {
+  color: var(--muted);
+}
+/* Which band the rows below belong to — measured, or not run. */
+.check-band {
+  margin: var(--s4) 0 var(--s1);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
 }
 
 .check-row:last-child {
@@ -1807,4 +1852,232 @@
 
 .vp-arrowhead {
   fill: var(--series-5);
+}
+
+/* ── The Overview: evidence first ───────────────────────────────────────
+   The landing tab was a scorecard of em dashes over five hundred pixels of
+   empty canvas. The per-frame agreement answers this stage's question, so it
+   takes the wide column and the summary reads beside it. */
+.overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: var(--s4);
+  align-items: start;
+}
+.overview-side {
+  display: grid;
+  gap: var(--s4);
+}
+@media (max-width: 1080px) {
+  .overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Beside the chart, the scorecard is two-up rather than four. */
+.overview .scorecard {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* The frames worth looking at, each opening the reconstruction there — the
+   chart says which frame is worst and used to offer no way to see it. */
+.worst-frames {
+  display: grid;
+  gap: 2px;
+  margin-top: var(--s3);
+}
+.worst-frame {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms var(--ease);
+}
+.worst-frame:hover {
+  background: var(--hover);
+}
+.worst-frame > span {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+.worst-frame small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.worst-frame > b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text);
+}
+.worst-frame.held > b {
+  color: var(--holdout);
+}
+@media (prefers-reduced-motion: reduce) {
+  .worst-frame {
+    transition: none;
+  }
+}
+
+/* An axis this run has no measurement for: what it would take, not a dash. */
+.unmeasured {
+  margin: var(--s3) 0 0;
+  padding: var(--s3);
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.unmeasured b {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 10px;
+  font-weight: 660;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* The physics flags, in brief, each opening the tab that explains it. */
+.checks-brief {
+  display: grid;
+  gap: 2px;
+}
+.check-brief {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.check-brief:hover {
+  background: var(--hover);
+}
+.check-brief > span {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+.check-brief small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--faint);
+  text-wrap: pretty;
+}
+.check-brief > b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--holdout);
+}
+
+/* ── Why a panel shows what it shows ────────────────────────────────────
+   A panel with nothing in it is either broken or configured that way, and the
+   difference matters: an error Callout said the first about the second. */
+.statenote {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: start;
+  margin: var(--s3) 0 0;
+  padding: var(--s3);
+  border-radius: 8px;
+  background: var(--primary-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-soft);
+  text-wrap: pretty;
+}
+.statenote svg {
+  margin-top: 2px;
+  color: var(--primary);
+}
+.statenote b {
+  color: var(--text);
+}
+.statenote.caution {
+  background: var(--holdout-soft);
+}
+.statenote.caution svg {
+  color: var(--holdout);
+}
+
+/* The run whose config was never recorded says so where reproducibility is
+   claimed, rather than simply omitting the snapshot. */
+.cfgsnap-missing {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border: 1px dashed var(--line-strong);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* The header's standing, carried in from the rail's ranking. */
+.run-header-rank {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--hover);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
+/* The term that dominates the objective, named — it used not to be charted. */
+.train-dominant {
+  display: block;
+  margin: var(--s3) 0 0;
+  padding: var(--s3);
+  border-radius: 8px;
+  background: var(--holdout-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-soft);
+  text-wrap: pretty;
+}
+.train-dominant b {
+  color: var(--text);
+}
+
+/* What a tab holds, before it is opened: a count, or a warning that it holds
+   nothing. The strip used to look identical whether a tab had six panels or an
+   empty state, so finding out cost a click every time. */
+.tab-n {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--hover-strong);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.tab[aria-selected="true"] .tab-n {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.tab-n.warn {
+  background: var(--holdout-soft);
+  color: var(--holdout);
 }
