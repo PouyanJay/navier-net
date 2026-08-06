@@ -1,6 +1,7 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
 
-import { Button, Panel } from "../../components";
+import { Band, Button } from "../../components";
+import { StageResultsIcon } from "../../components/icons";
 import type { RunSummary } from "../../lib/api";
 import { isTrainedRun, MAX_COMPARED } from "../../lib/runs";
 import {
@@ -72,81 +73,84 @@ export function RunRail({
       : `${shown} of ${runs.length} runs`;
 
   return (
-    <Panel title="Runs" subtitle={subtitle}>
-      <div className="rail-tools">
-        <input
-          className="rail-search"
-          type="search"
-          value={query}
-          placeholder="Filter by name or recipe"
-          aria-label="Filter runs"
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        {/* The metric a row leads with is also the one it is ranked by, so this
+    <>
+      {/* The rail IS the container: a card inside it drew a second border and a
+          second header around content the aside had already introduced. */}
+      <Band icon={StageResultsIcon} label="Runs" hint={subtitle}>
+        <div className="rail-tools">
+          <input
+            className="rail-search"
+            type="search"
+            value={query}
+            placeholder="Filter by name or recipe"
+            aria-label="Filter runs"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {/* The metric a row leads with is also the one it is ranked by, so this
             is one control doing both jobs — and the rows themselves label the
             number, which is where that label belongs. */}
-        <div
-          className="seg compact rail-lead"
-          role="group"
-          aria-label="Lead and sort runs by"
-        >
-          {RANK_METRICS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className={option.id === metric ? "segb on" : "segb"}
-              aria-pressed={option.id === metric}
-              onClick={() => setMetric(option.id)}
-            >
-              {option.label}
-            </button>
-          ))}
+          <div
+            className="seg compact rail-lead"
+            role="group"
+            aria-label="Lead and sort runs by"
+          >
+            {RANK_METRICS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className={option.id === metric ? "segb on" : "segb"}
+                aria-pressed={option.id === metric}
+                onClick={() => setMetric(option.id)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      {families.length === 0 ? (
-        <p className="res-quiet">
-          No run matches “{query}”. Recipes are searchable too — try “causal”.
-        </p>
-      ) : (
-        <div
-          className="runlist"
-          role="listbox"
-          aria-label="Runs of this project"
-          onKeyDown={moveRunFocus}
-        >
-          {families.map((family, index) => (
-            <FamilyRow
-              key={family.name + (family.recipe ?? []).join()}
-              family={family}
-              metric={metric}
-              datasetLabels={datasetLabels}
-              selectedId={selectedId}
-              picked={picked}
-              open={opened.has(family.name)}
-              // Under a date sort the list is a diary, so each day is ruled off
-              // once instead of every row repeating the date.
-              daySeparator={
-                metric === "date" &&
-                dayOf(family) !== dayOf(families[index - 1])
-                  ? dayOf(family)
-                  : null
-              }
-              onOpen={onOpen}
-              onToggle={() =>
-                setOpened((current) => {
-                  const next = new Set(current);
-                  if (!next.delete(family.name)) next.add(family.name);
-                  return next;
-                })
-              }
-              onPick={togglePick}
-            />
-          ))}
-        </div>
-      )}
-
-      <div className="rail-dock">
+        {families.length === 0 ? (
+          <p className="res-quiet">
+            No run matches “{query}”. Recipes are searchable too — try “causal”.
+          </p>
+        ) : (
+          <div
+            className="runlist"
+            role="listbox"
+            aria-label="Runs of this project"
+            onKeyDown={moveRunFocus}
+          >
+            {families.map((family, index) => (
+              <FamilyRow
+                key={family.name + (family.recipe ?? []).join()}
+                family={family}
+                metric={metric}
+                datasetLabels={datasetLabels}
+                selectedId={selectedId}
+                picked={picked}
+                open={opened.has(family.name)}
+                // Under a date sort the list is a diary, so each day is ruled off
+                // once instead of every row repeating the date.
+                daySeparator={
+                  metric === "date" &&
+                  dayOf(family) !== dayOf(families[index - 1])
+                    ? dayOf(family)
+                    : null
+                }
+                onOpen={onOpen}
+                onToggle={() =>
+                  setOpened((current) => {
+                    const next = new Set(current);
+                    if (!next.delete(family.name)) next.add(family.name);
+                    return next;
+                  })
+                }
+                onPick={togglePick}
+              />
+            ))}
+          </div>
+        )}
+      </Band>
+      <div className="rail-dock aside-actions">
         <p>
           {picked.length === 0
             ? "Tick runs to compare"
@@ -163,7 +167,7 @@ export function RunRail({
           Compare
         </Button>
       </div>
-    </Panel>
+    </>
   );
 }
 

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { StageAside } from "../../app/StageAside";
-import { Callout, ConfirmDeleteDialog, Panel } from "../../components";
+import { Band, Callout, ConfirmDeleteDialog } from "../../components";
+import { StageResultsIcon } from "../../components/icons";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { useToast } from "../../components/Toast";
 import {
@@ -228,16 +229,16 @@ export function ResultsPage({ project }: ResultsPageProps) {
     <>
       <StageAside {...ASIDE}>
         {runs === null ? (
-          <Panel title="Runs" subtitle="this project · outputs/">
+          <Band icon={StageResultsIcon} label="Runs" hint="outputs/">
             <p className="res-quiet">Loading runs…</p>
-          </Panel>
+          </Band>
         ) : runs.length === 0 ? (
-          <Panel title="Runs" subtitle="this project · outputs/">
+          <Band icon={StageResultsIcon} label="Runs" hint="outputs/">
             <div className="res-empty">
               <b>No runs yet</b>
               Launch the first training run from the Solver stage.
             </div>
-          </Panel>
+          </Band>
         ) : (
           <RunRail
             runs={runs}
