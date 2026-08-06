@@ -245,11 +245,15 @@ def test_every_front_sample_still_lies_on_the_interface(tmp_path):
     for t in (0.2, 0.9):
         front = _front_of(geo, t, n_body=32, n_cap=32)
         phi = geo(front.points)
-        # Measured ~3.6e-6, so 1e-5 is a ~3x margin -- the same margin the apex
-        # checks above take. The residual is `forward`'s ABS_SMOOTH floor in the
-        # direction it normalises by, which the front's exact cos/sin does not
-        # share; it is five orders under alpha_eps and must stay there.
-        assert float(phi.abs().max()) < 1e-5, f"front sample off the interface at t={t}"
+        # NOT exactly zero, and the tolerance says how far off it is allowed to
+        # be. `forward` normalises its direction by the ABS_SMOOTH-floored
+        # distance while the front has the angle exactly, so the two evaluate the
+        # modulation at slightly different inputs. Swept over seeds and cap-net
+        # scales from 1x to 2000x, the worst was 2.5e-5 (3-5e-6 at realistic
+        # scales); 5e-5 is 2x that worst case, and still three orders under
+        # alpha_eps = 0.05. A regression that broke the two routes apart measures
+        # ~8e-3 here, so this stays a real check.
+        assert float(phi.abs().max()) < 5e-5, f"front sample off the interface at t={t}"
 
 
 def test_the_freed_cap_still_closes_one_connected_shape(tmp_path):
@@ -393,6 +397,37 @@ def test_a_vanished_cap_reports_no_curvature_at_all():
     assert torch.equal(front.kappa_par[on_cap], torch.zeros_like(front.kappa_par[on_cap]))
     assert torch.isfinite(front.points).all()
     assert torch.isfinite(front.normal).all()
+
+
+@pytest.mark.parametrize("freedom", [False, True])
+def test_a_vanished_caps_normal_still_points_the_way_it_always_did(freedom):
+    """Regression: the cap's normal must not depend on the SIGN of a radius that
+    `allow_pinch` is allowed to take negative.
+
+    The polar normal divides by the curve's length, and an unsigned length flips
+    the direction wherever the radius went negative. That is a point the
+    construction says is not there -- but the kinematic condition and the
+    Bretherton capillary number both read its normal anyway, and this path is
+    reachable with cap freedom OFF, where nothing about the shape changed at all.
+    """
+    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+
+    torch.manual_seed(41)
+    geo = GeometricInterface(
+        GeometryPriors(**PRIORS), allow_pinch=True, cap_freedom=freedom, cap_delta=0.2
+    )
+    with torch.no_grad():
+        geo.width_net[-1].bias.fill_(-8.0)  # drive every radius negative
+    assert float(geo.frame(torch.tensor([[0.8]])).r_nose.detach()) < 0.0
+
+    front = _front_of(geo, 0.8, n_cap=8)
+    on_cap = front.on_cap.squeeze(1) > 0
+    sign = torch.where(front.u[on_cap] < 0.5, -1.0, 1.0)
+    radial = torch.cat(
+        [sign * torch.cos(front.angle[on_cap]), torch.sin(front.angle[on_cap])], dim=1
+    )
+    # The circular construction returned exactly this, for either sign of radius.
+    assert float((front.normal[on_cap].detach() * radial).sum(dim=1).min()) > 0.99
 
 
 def test_free_caps_compose_with_a_still_present_pinching_bubble():

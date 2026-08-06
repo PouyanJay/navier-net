@@ -33,6 +33,7 @@ freedom on; the gate is built to vanish exactly where those guarantees live.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -205,7 +206,7 @@ def _with_context(features: torch.Tensor, c: torch.Tensor | None) -> torch.Tenso
     return torch.cat([features, c[:1].expand(features.shape[0], -1)], dim=-1)
 
 
-def _d_wrt(leaf: torch.Tensor):
+def _d_wrt(leaf: torch.Tensor) -> Callable[[torch.Tensor], torch.Tensor]:
     """Derivative operator with respect to ``leaf``, graph kept.
 
     ``create_graph`` is what lets a SECOND derivative be taken, and what lets the
@@ -489,6 +490,23 @@ class GeometricInterface(nn.Module):
         Even powers throughout, so it is smooth across ``nx = 0`` with no
         ``atan2`` and no ``abs``: a kink at the seam would have fed straight into
         the jump condition as a curvature spike (the KAPPA lesson).
+
+        **How exact the two routes agree.** ``forward`` builds ``(nx, ny)`` by
+        normalising with the ABS_SMOOTH-floored distance; ``_cap_frame`` has the
+        angle itself and uses exact ``cos``/``sin``. The two therefore differ by
+        the factor ``1/sqrt(1 + ABS_SMOOTH^2/d^2)``, and the modulation's VALUE
+        between apex and seam differs with it -- measured, a front sample sits
+        within 2.5e-5 of ``phi = 0`` rather than exactly on it, five orders under
+        ``alpha_eps``. The floor is deliberate: without it the direction's
+        gradient diverges like ``1/|d|`` at the cap centre, straight into the VOF
+        residual, which is the failure the floor exists to prevent.
+
+        What the floor does NOT weaken is the part the guarantees rest on. The
+        gate's ZEROS are structural, not numerical: at the apex ``dy = 0``
+        exactly and on the body/seam ``dx = 0`` exactly (there the spine point
+        shares the query point's x), so the gate is exactly zero at all three
+        whatever the floor is. The root pin, the monotone nose and the untouched
+        body are exact; only the modulation's magnitude in between is approximate.
 
         ``tanh`` bounds the departure to ``cap_delta`` of the local radius, which
         is what stops a cap folding through itself; the net's zero bias means the
@@ -798,10 +816,16 @@ class GeometricInterface(nn.Module):
         # kappa to 1/r -- which is why freeing the cap changes nothing until the
         # cap net moves off its zero bias.
         norm = torch.sqrt(radius**2 + r_psi**2).clamp(min=ABS_SMOOTH)
-        normal = (
-            torch.cat([sign * (radius * cos + r_psi * sin), radius * sin - r_psi * cos], dim=1)
-            / norm
-        )
+        # The normal divides by a SIGNED length, the way `forward` inflates by a
+        # signed radius. Dividing by the unsigned one would flip the normal of a
+        # VANISHED cap (`allow_pinch`, radius < 0) -- a point this construction
+        # says is not there, but whose reported normal the kinematic condition and
+        # the Bretherton capillary number both read. With r' = 0 this is exactly
+        # the radial direction for either sign, which is what the circular
+        # construction returned unconditionally.
+        normal = torch.cat(
+            [sign * (radius * cos + r_psi * sin), radius * sin - r_psi * cos], dim=1
+        ) / torch.copysign(norm, radius)
         # A cap that has VANISHED (a non-positive radius, reachable only under
         # `allow_pinch`) has no curvature to report. Flooring its radius would
         # hand the jump condition ~1/ABS_SMOOTH -- a huge positive curvature for
@@ -809,6 +833,12 @@ class GeometricInterface(nn.Module):
         # that number would flow straight into the Laplace residual at exactly
         # the pinch the feature exists to make trainable. Report zero instead:
         # no interface, no capillary pressure.
+        # Under `cap_freedom` the test is on the MODULATED radius, so within a
+        # band of width cap_delta about the threshold one cap can read "present"
+        # at some angles and "gone" at others in the same frame. Accepted: the
+        # band is ABS_SMOOTH-scaled (~1e-3 of the channel), and a bubble that
+        # close to vanishing has no meaningful capillary pressure to report at
+        # any angle.
         kappa = torch.where(
             radius > ABS_SMOOTH,
             (radius**2 + 2.0 * r_psi**2 - radius * r_psi2) / norm**3,
