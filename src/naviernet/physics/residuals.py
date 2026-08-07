@@ -481,11 +481,50 @@ def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tenso
     """
     t = front.points[:, 2:3]
     kappa = front.kappa_par + gap_curvature(front.normal_speed, groups)
-    # On the body the liquid the meniscus faces is the Bretherton film, not the
-    # bulk the depth-averaged `p` represents (see BubblePINN.film_offset); the
-    # offset is zero on the caps and zero entirely when the feature is off.
-    liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
+    # Deliberately NOT written as `(pressure_implied_curvature(...) - kappa)/We`,
+    # though that is the same equation: the two differ in float32 (a multiply by
+    # We and a divide back do not cancel), and this one TRAINS. A shared helper
+    # is not worth perturbing a residual's arithmetic; the test below pins the
+    # two readings to each other instead.
+    liquid = _liquid_pressure(model, front)
     return model.p_vapor(t) - liquid - kappa / groups["We"]
+
+
+def _liquid_pressure(model, front) -> torch.Tensor:
+    """The liquid pressure the meniscus actually faces.
+
+    On the body that is the Bretherton film, not the bulk the depth-averaged
+    ``p`` represents (see BubblePINN.film_offset); the offset is zero on the caps
+    and zero entirely when the feature is off.
+    """
+    return model.pressure(front.points) + model.film_offset(front.on_cap)
+
+
+def pressure_implied_curvature(
+    model, front, groups: dict[str, float], p_vapor: torch.Tensor | None = None
+) -> torch.Tensor:
+    """The TOTAL curvature the pressure field demands, per front sample ``(N, 1)``::
+
+        kappa_demanded = We (p_v(t) - p_liq(Gamma))
+
+    The same equation :func:`laplace_jump_residual` scores, read the other way
+    round. That residual asks "does this shape satisfy the pressure?"; this asks
+    "what shape would?" -- and the difference is the whole distinction between
+    the physics being a penalty on a learned shape and the physics DETERMINING
+    one. Both callers share this definition so the two can never drift.
+
+    Subtract :func:`gap_curvature` to get the in-plane part a 2-D front can
+    actually carry; the gap-direction half is a property of the channel, not of
+    the curve, and no shape can change it.
+
+    ``p_vapor`` overrides the model's own trained unknown. A front-geometry run
+    that is not sharp has no such unknown to read -- but it is exactly the
+    baseline this quantity exists to compare against, so the caller supplies the
+    estimate rather than being refused an answer.
+    """
+    liquid = _liquid_pressure(model, front)
+    vapour = model.p_vapor(front.points[:, 2:3]) if p_vapor is None else p_vapor
+    return groups["We"] * (vapour - liquid)
 
 
 def stage_b_residuals(

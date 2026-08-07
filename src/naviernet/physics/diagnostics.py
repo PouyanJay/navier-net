@@ -21,7 +21,7 @@ import numpy as np
 import torch
 
 from naviernet.physics.groups import compute_groups
-from naviernet.physics.residuals import gap_curvature
+from naviernet.physics.residuals import gap_curvature, pressure_implied_curvature
 
 # Stations along the bubble the half-width profiles are compared on. Odd, so a
 # station lands exactly mid-bubble where the measured neck sits.
@@ -63,6 +63,12 @@ class InterfaceDiagnostics:
     # varies on. Zero means no station along the bubble is distinguished from any
     # other, so no neck can be selected however long the run trains.
     axial_capillary_gradient: float
+    # Where the shape and the pressure disagree, region by region: RMS of
+    # (curvature the pressure demands - curvature the shape carries), over the
+    # nose cap, the body, and the root cap. The errors above say HOW MUCH the
+    # jump condition is violated; this says WHERE, which is what tells you which
+    # part of the parameterization is binding.
+    curvature_gap: dict[str, float]
     # The model's own neck, and the measured one, on the last evaluated frame.
     neck_model: Neck
     neck_measured: Neck
@@ -177,6 +183,7 @@ def interface_diagnostics(model, data, groups: dict[str, float] | None = None):
         laplace_error_nose=nose_error,
         laplace_error_front=front_error,
         axial_capillary_gradient=_axial_capillary_gradient(front, groups),
+        curvature_gap=_curvature_gap(model, front, groups),
         neck_model=neck_of_profile(model_half_width_profile(geometry, float(data.t[last]))),
         neck_measured=neck_of_profile(measured_half_width_profile(data, last)),
     )
@@ -218,6 +225,45 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
     variation = _rms(capillary.squeeze(1) - capillary.mean())
     front_error = _rms(residual.squeeze(1)) / max(variation, CAPILLARY_FLOOR)
     return nose_error, front_error
+
+
+def _curvature_gap(model, front, groups: dict[str, float]) -> dict[str, float]:
+    """Per region: RMS of (curvature the pressure demands - curvature the shape
+    carries), in-plane.
+
+    The Laplace errors above are one number for the whole front, so a shape that
+    is right everywhere but wrong at one end scores the same as one that is
+    uniformly slightly wrong. This splits it, because those two call for opposite
+    fixes: the first says a REGION of the parameterization cannot express what
+    the physics wants, the second says the physics is being outvoted everywhere.
+
+    In-plane only: the gap term is a property of the channel, and no shape can
+    change it, so including it would credit or blame the curve for a number it
+    does not control.
+    """
+    if "p" not in getattr(model, "fields", ()):
+        return {}  # a Stage-A run has no pressure to demand anything
+    with torch.no_grad():
+        # The same estimated vapour pressure the jump errors use, so a diffuse
+        # front-geometry baseline is measurable by one definition too.
+        demanded = (
+            pressure_implied_curvature(
+                model, front, groups, p_vapor=_vapour_pressure(model, front)
+            )
+            - gap_curvature(front.normal_speed, groups)
+        ).squeeze(1)
+        carried = front.kappa_par.squeeze(1).detach()
+    on_cap, u = front.on_cap.squeeze(1) > 0, front.u.squeeze(1)
+    regions = {
+        "nose_cap": on_cap & (u == 1.0),
+        "body": ~on_cap,
+        "root_cap": on_cap & (u == 0.0),
+    }
+    return {
+        name: _rms((demanded - carried)[sel])
+        for name, sel in regions.items()
+        if bool(sel.any())
+    }
 
 
 def _vapour_pressure(model, front) -> torch.Tensor:
@@ -359,6 +405,7 @@ def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
         "laplace_error_nose": summary.laplace_error_nose,
         "laplace_error_front": summary.laplace_error_front,
         "axial_capillary_gradient": summary.axial_capillary_gradient,
+        "curvature_gap": summary.curvature_gap,
         "neck_depth_model": summary.neck_model.depth,
         "neck_depth_measured": summary.neck_measured.depth,
         "neck_location_model": summary.neck_model.location,
