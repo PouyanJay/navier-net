@@ -385,6 +385,15 @@ class RunLaunchRequest(BaseModel):
     # so pinch-off is expressible. Requires front_geometry -- it relaxes that
     # construction's own guarantees.
     allow_pinch: bool = False
+    # Cap freedom: the end caps stop being circles. Without it the nose is a
+    # constant-curvature arc, which the data cannot fit (a circle cannot comply)
+    # and the jump condition cannot reshape (it is handed 1/r rather than reading
+    # curvature off the curve). The gate vanishes at the apex and the seam, so the
+    # root pin and the monotone nose stay exact. Requires front_geometry.
+    cap_freedom: bool = False
+    # How far a cap may depart from its circle, as a fraction of the local radius.
+    # Bounded on purpose: at 1 the radius reaches zero and the cap self-intersects.
+    cap_delta: float = Field(default=0.2, ge=0.0, lt=1.0)
     # Interface sharpening: anneal alpha_eps down to `alpha_eps_final` over this
     # many steps, so a neck is not the same width as the interface blur.
     alpha_eps_anneal_steps: int = Field(default=0, ge=0, le=1_000_000)
@@ -443,7 +452,13 @@ class RunLaunchRequest(BaseModel):
                 "front_geometry already pins the root exactly by construction; "
                 "it is mutually exclusive with hard_pin -- disable one."
             )
-        for flag in ("sharp_interface", "allow_pinch", "evolving_width", "front_velocity"):
+        for flag in (
+            "sharp_interface",
+            "allow_pinch",
+            "evolving_width",
+            "front_velocity",
+            "cap_freedom",
+        ):
             if getattr(self, flag) and not self.front_geometry:
                 raise ValueError(
                     f"{flag} requires front_geometry -- enable it, or turn {flag} off"

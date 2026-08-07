@@ -135,9 +135,14 @@ def _architecture_record(cfg) -> dict:
     geometry add no detectable state-dict signature for their *configuration*),
     so a later invocation can be checked against how the run was trained."""
     hard_pin = bool(getattr(cfg.model, "hard_pin", False))
+    cap_freedom = bool(getattr(cfg.model, "cap_freedom", False))
     return {
         "hard_pin": hard_pin,
         "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None,
+        "cap_freedom": cap_freedom,
+        # Like pin_d_ref: a VALUE the weights were trained against, so it is only
+        # meaningful (and only checked) when its flag is on.
+        "cap_delta": float(cfg.model.cap_delta) if cap_freedom else None,
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
         "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
         "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
@@ -210,6 +215,28 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         path,
         "The signed radius loads into the same tensors but means a different shape.",
     )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "cap_freedom",
+        path,
+        "Free caps add the cap net and change what the cap radius means.",
+    )
+
+    # The cap's departure bound is a VALUE, not a flag, so it is checked on its
+    # own: the same weights read as a different shape through a different delta.
+    saved_delta = ckpt.get("cap_delta")
+    if (
+        bool(getattr(cfg.model, "cap_freedom", False))
+        and saved_delta is not None
+        and float(saved_delta) != float(cfg.model.cap_delta)
+    ):
+        raise ValueError(
+            f"{path} was trained with model.cap_delta={float(saved_delta)} but this "
+            f"invocation composes model.cap_delta={float(cfg.model.cap_delta)}. The "
+            f"bound scales the cap net's output, so the same weights describe a "
+            f"different cap. Pass the same override the run was trained with."
+        )
 
     # The pin's gate scale is a VALUE, not a flag, so it is checked on its own.
     saved_d_ref = ckpt.get("pin_d_ref")

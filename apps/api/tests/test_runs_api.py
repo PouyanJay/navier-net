@@ -354,3 +354,40 @@ def test_a_non_string_label_in_the_sidecar_is_ignored(client, repo_root: Path):
     (repo_root / "outputs" / "demo_run" / "label.json").write_text(json.dumps({"label": 7}))
 
     assert client.get("/api/runs/demo_run").json()["label"] is None
+
+
+def test_the_recipe_names_free_caps(client, repo_root: Path):
+    """A run's recipe is how the rail tells two experiments apart. A flag that
+    changes the interface but never reaches this vocabulary makes an A/B pair
+    read as the same recipe -- which is what a comparison is FOR."""
+    run = repo_root / "outputs" / "capped_run"
+    (run / ".hydra").mkdir(parents=True)
+    (run / "checkpoints").mkdir(parents=True)
+    (run / ".hydra" / "config.yaml").write_text(
+        "model:\n"
+        "  front_geometry: true\n"
+        "  sharp_interface: true\n"
+        "  cap_freedom: true\n"
+        "training:\n"
+        "  causal_weighting: true\n"
+    )
+
+    row = {r["id"]: r for r in client.get("/api/runs").json()}["capped_run"]
+
+    assert row["recipe"] == ["sharp", "free-caps", "causal"]
+
+
+def test_the_recipe_omits_free_caps_when_they_are_off(client, repo_root: Path):
+    """Each extra is named only when it is on, so the recommended recipe stays
+    one chip rather than eight."""
+    run = repo_root / "outputs" / "plain_run"
+    (run / ".hydra").mkdir(parents=True)
+    (run / "checkpoints").mkdir(parents=True)
+    (run / ".hydra" / "config.yaml").write_text(
+        "model:\n  front_geometry: true\n  sharp_interface: true\n  cap_freedom: false\n"
+        "training:\n  causal_weighting: true\n"
+    )
+
+    row = {r["id"]: r for r in client.get("/api/runs").json()}["plain_run"]
+
+    assert row["recipe"] == ["sharp", "causal"]

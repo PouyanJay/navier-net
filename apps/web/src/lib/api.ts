@@ -454,6 +454,15 @@ export interface RunLaunchRequest {
    * bubble's elongation, so it keeps going past the data instead of relaxing
    * back toward flat. Requires front_geometry. */
   evolving_width: boolean;
+  /** The end caps stop being constant-curvature arcs: their radius gains a
+   * bounded angular shape, so the data can fit a nose a circle cannot and the
+   * Young-Laplace jump reads curvature off the curve instead of being handed
+   * 1/r. The apex is untouched, so the root pin and the monotone nose survive.
+   * Requires front_geometry. */
+  cap_freedom: boolean;
+  /** How far a cap may depart from its circle, as a fraction of the local
+   * radius. Bounded below 1, where the radius would reach zero and fold. */
+  cap_delta: number;
   /** Film pressure: at the bubble's sides the capillary pressure is balanced by
    * the Bretherton film, not the bulk pressure a depth-averaged model carries.
    * One inferred scalar offset on the body. Requires sharp_interface. */

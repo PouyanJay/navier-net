@@ -126,6 +126,8 @@ class BubblePINN(nn.Module):
                     allow_pinch=self.allow_pinch,
                     n_cond=self.n_cond,
                     evolving_width=self.evolving_width,
+                    cap_freedom=self.cap_freedom,
+                    cap_delta=self.cap_delta,
                 )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
@@ -235,10 +237,18 @@ class BubblePINN(nn.Module):
         self.front_geometry = bool(getattr(cfg.model, "front_geometry", False))
         self.allow_pinch = bool(getattr(cfg.model, "allow_pinch", False))
         self.evolving_width = bool(getattr(cfg.model, "evolving_width", False))
+        self.cap_freedom = bool(getattr(cfg.model, "cap_freedom", False))
+        self.cap_delta = float(getattr(cfg.model, "cap_delta", 0.2))
         if self.evolving_width and not self.front_geometry:
             raise ValueError(
                 "model.evolving_width reparameterises the front geometry's width "
                 "profile, so it requires model.front_geometry=true."
+            )
+        if self.cap_freedom and not self.front_geometry:
+            raise ValueError(
+                "model.cap_freedom frees the front geometry's END CAPS, so it "
+                "requires model.front_geometry=true; a free level set has no caps "
+                "to free -- its interface is already unconstrained."
             )
         if self.allow_pinch and not self.front_geometry:
             raise ValueError(

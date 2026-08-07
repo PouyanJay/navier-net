@@ -13,19 +13,27 @@ Structural guarantees (each regression-tested):
 - the interface passes exactly through the root point at every t;
 - the nose never retreats, and extrapolates at its last learned rate;
 - the vapour region is one connected capsule closed at both ends;
-- the caps are CIRCULAR (constant curvature -- the Young-Laplace cap shape),
-  the width is bounded by the channel, and phi is smooth on the spine (the
+- the width is bounded by the channel, and phi is smooth on the spine (the
   matched-floor form; Stage-B curvature differentiates phi twice, the same
   lesson the hard-pin gate learned). At the cap-body seams the u-clamp leaves
   phi C0-but-not-C1: a measured, accepted trade-off (kappa*grad(alpha) stays
   O(10-50) there, far under harmful scale; a C1 blend would require tying the
   boundary radius slope to zero and cost expressivity) -- regression-tested at
   the seam points.
+
+The caps are circular by default -- constant curvature, the STATIC Young-Laplace
+cap shape. ``model.cap_freedom`` drops that assumption (see
+:meth:`GeometricInterface._cap_modulation`): an advancing bubble in a Hele-Shaw
+gap has a flattened nose, and asserting a circle there denies the shape to the
+data (a circle cannot comply) and the curvature to the physics (it is handed
+1/r rather than reading it off the curve). Everything above still holds with the
+freedom on; the gate is built to vanish exactly where those guarantees live.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -198,6 +206,20 @@ def _with_context(features: torch.Tensor, c: torch.Tensor | None) -> torch.Tenso
     return torch.cat([features, c[:1].expand(features.shape[0], -1)], dim=-1)
 
 
+def _d_wrt(leaf: torch.Tensor) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Derivative operator with respect to ``leaf``, graph kept.
+
+    ``create_graph`` is what lets a SECOND derivative be taken, and what lets the
+    loss reach the nets through the curvature -- the shape has to be movable by
+    the term that reads it.
+    """
+
+    def derivative(field: torch.Tensor) -> torch.Tensor:
+        return torch.autograd.grad(field, leaf, torch.ones_like(field), create_graph=True)[0]
+
+    return derivative
+
+
 def _inverse_softplus(value: float) -> float:
     value = max(value, 1e-6)
     return float(torch.log(torch.expm1(torch.tensor(value))))
@@ -228,6 +250,8 @@ class GeometricInterface(nn.Module):
         allow_pinch: bool = False,
         n_cond: int = 0,
         evolving_width: bool = False,
+        cap_freedom: bool = False,
+        cap_delta: float = 0.2,
     ):
         super().__init__()
         # The REFERENCE dataset's anchors. A single-dataset run has only these; a
@@ -240,6 +264,20 @@ class GeometricInterface(nn.Module):
         # radius is strictly positive and the nose strictly non-retreating.
         self.allow_pinch = bool(allow_pinch)
         self.evolving_width = bool(evolving_width)
+        # The end caps stop being circles. Validated here rather than at the call
+        # site because this is the object that owns the bound: at delta >= 1 the
+        # modulation can drive the cap radius to zero or through it, and the cap
+        # folds through itself -- which is not a shape the physics can be scored
+        # on. Checked whatever `cap_freedom` says, so a config that would break
+        # the moment the flag is flipped fails now instead of then.
+        self.cap_freedom = bool(cap_freedom)
+        self.cap_delta = float(cap_delta)
+        if not 0.0 <= self.cap_delta < 1.0:
+            raise ValueError(
+                f"model.cap_delta must be in [0, 1) -- it is the cap's departure from "
+                f"its circle as a FRACTION of the local radius, and at 1 the radius "
+                f"reaches zero and the cap self-intersects. Got {self.cap_delta}."
+            )
         self._y_half = _half_height(priors)
         # The reference dataset's measured start and speed. Every per-dataset
         # quantity below is expressed RELATIVE to these, so one shared set of
@@ -282,6 +320,14 @@ class GeometricInterface(nn.Module):
                 out_bias=start,
             )
         self.center_net = _mlp(2 + self.n_cond, out_bias=0.0)
+        # The cap's departure from its circle, over (cos psi, sin psi, u, t): the
+        # angle enters through its sine and cosine rather than through psi itself,
+        # so there is no atan2 branch in the field and no wrap to reason about.
+        # `u` (0 at the root cap, 1 at the nose) is what lets one net give the two
+        # caps different shapes. Bias 0 -> tanh(0) = 0 -> the construction OPENS as
+        # the circle it replaces and learns its way off it.
+        if self.cap_freedom:
+            self.cap_net = _mlp(4 + self.n_cond, out_bias=0.0)
         # s(t_min) = x_root + softplus(_s0_raw): initialized so the nose starts
         # at the measured first-training-frame front.
         self._s0_raw = nn.Parameter(torch.log(torch.expm1(torch.tensor(self._ref_gap))))
@@ -411,6 +457,67 @@ class GeometricInterface(nn.Module):
         half = _half_height(self._anchors(ctx))
         return half * (2.0 * raw - 1.0 if self.allow_pinch else raw)
 
+    def _cap_modulation(
+        self,
+        nx: torch.Tensor,
+        ny: torch.Tensor,
+        u: torch.Tensor,
+        t: torch.Tensor,
+        ctx: GeometryContext,
+    ) -> torch.Tensor:
+        """The cap's departure from its circle, as a factor on the local radius.
+
+        ``(nx, ny)`` is the unit radial direction from the spine point out to the
+        query point -- the circle's own outward normal. The gate is
+        ``4 nx^2 ny^2``, which is ``sin^2(2 psi)`` in the cap angle, and every
+        property this construction needs is a property of that gate:
+
+        - **Zero at the apex** (``ny = 0``). The tip does not move, so the root
+          stays pinned exactly on the measured anchor and the nose stays exactly
+          the monotone ``s(t)``. Those two are what the R3 win was built on, and
+          a gate that was non-zero here would quietly spend them.
+        - **Zero at the seam, and across the whole body** (``nx = 0``: on the body
+          the spine point shares the query point's x). So the cap still meets the
+          profile, and -- the invariant everything rests on -- ``forward`` and
+          ``front`` keep describing ONE shape. If they diverged, the data term and
+          the sharp-interface residuals would be pulling on two different bubbles.
+        - **Quadratic about the apex** (``b''(0) = 2``), which is the whole point:
+          for a polar curve with ``r'(0) = 0``, ``kappa = (r - r'')/r^2``, so a
+          non-zero ``r''`` at the tip moves the tip curvature off ``1/r``. A
+          flattened nose -- what an advancing bubble in a Hele-Shaw gap actually
+          has -- becomes reachable for the first time.
+
+        Even powers throughout, so it is smooth across ``nx = 0`` with no
+        ``atan2`` and no ``abs``: a kink at the seam would have fed straight into
+        the jump condition as a curvature spike (the KAPPA lesson).
+
+        **How exact the two routes agree.** ``forward`` builds ``(nx, ny)`` by
+        normalising with the ABS_SMOOTH-floored distance; ``_cap_frame`` has the
+        angle itself and uses exact ``cos``/``sin``. The two therefore differ by
+        the factor ``1/sqrt(1 + ABS_SMOOTH^2/d^2)``, and the modulation's VALUE
+        between apex and seam differs with it -- measured, a front sample sits
+        within 2.5e-5 of ``phi = 0`` rather than exactly on it, five orders under
+        ``alpha_eps``. The floor is deliberate: without it the direction's
+        gradient diverges like ``1/|d|`` at the cap centre, straight into the VOF
+        residual, which is the failure the floor exists to prevent.
+
+        What the floor does NOT weaken is the part the guarantees rest on. The
+        gate's ZEROS are structural, not numerical: at the apex ``dy = 0``
+        exactly and on the body/seam ``dx = 0`` exactly (there the spine point
+        shares the query point's x), so the gate is exactly zero at all three
+        whatever the floor is. The root pin, the monotone nose and the untouched
+        body are exact; only the modulation's magnitude in between is approximate.
+
+        ``tanh`` bounds the departure to ``cap_delta`` of the local radius, which
+        is what stops a cap folding through itself; the net's zero bias means the
+        construction OPENS as the circle it replaces and learns its way off it.
+        """
+        if not self.cap_freedom:
+            return torch.ones_like(nx)
+        gate = 4.0 * nx**2 * ny**2
+        features = _with_context(torch.cat([nx, ny, u, t], dim=1), ctx.c)
+        return 1.0 + self.cap_delta * gate * torch.tanh(self.cap_net(features))
+
     def _width_logit(
         self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext
     ) -> torch.Tensor:
@@ -515,7 +622,15 @@ class GeometricInterface(nn.Module):
         radius = self._radius(u, t, ctx) * f.scale
         spine_x = f.ax + u * (f.bx - f.ax)
         spine_y = self.centerline(u, t, ctx)
-        d_sq = (x[:, 0:1] - spine_x) ** 2 + (x[:, 1:2] - spine_y) ** 2
+        dx, dy = x[:, 0:1] - spine_x, x[:, 1:2] - spine_y
+        d_sq = dx**2 + dy**2
+        # Free caps: the radius the field compares against varies with the
+        # direction the query point lies in. The gate is zero on the body (where
+        # `dx` is zero because the spine point shares the point's x), so this is
+        # the same field as before everywhere except inside the two caps.
+        if self.cap_freedom:
+            d = torch.sqrt(d_sq + ABS_SMOOTH**2)
+            radius = radius * self._cap_modulation(dx / d, dy / d, u, t, ctx)
         # Matched floors: phi = 0 exactly where d = R (the interface, incl. both
         # apexes), while staying C-infinity on the spine (the KAPPA lesson).
         # `copysign` carries a negative radius through as a negative phi, so a
@@ -665,10 +780,28 @@ class GeometricInterface(nn.Module):
         simply the radial direction.
         """
         at_root = query.u < 0.5
-        radius = torch.where(at_root, frame.r_root, frame.r_nose)
+        base = torch.where(at_root, frame.r_root, frame.r_nose)
         centre_x = torch.where(at_root, frame.ax, frame.bx)
         sign = torch.where(at_root, -torch.ones_like(query.u), torch.ones_like(query.u))
-        cos, sin = torch.cos(query.angle), torch.sin(query.angle)
+
+        # The cap angle becomes a leaf, so the curve's own derivatives in it are
+        # available by autograd (the same device `_body_frame` uses for u). Without
+        # free caps nothing depends on it and the circle's closed forms are exact
+        # and cheaper, so that path stays byte-for-byte what it was.
+        psi = query.angle.detach().requires_grad_(True) if self.cap_freedom else query.angle
+        cos, sin = torch.cos(psi), torch.sin(psi)
+
+        # The same modulation `forward` applies, read off the same outward radial
+        # direction -- here it is the cap angle itself, since these points ARE the
+        # cap. `sign` carries the root cap's outward direction (-x), so one net
+        # sees a consistent frame at both ends.
+        radius = base * self._cap_modulation(sign * cos, sin, query.u, query.t, ctx)
+
+        r_psi = r_psi2 = torch.zeros_like(radius)
+        if self.cap_freedom:
+            d_psi = _d_wrt(psi)
+            r_psi = d_psi(radius)
+            r_psi2 = d_psi(r_psi)
 
         position = torch.cat(
             [
@@ -677,6 +810,38 @@ class GeometricInterface(nn.Module):
             ],
             dim=1,
         )
+        if not self.cap_freedom:
+            # The circle's own closed forms, evaluated EXACTLY as they were before
+            # the polar branch existed. The general expressions below reduce to
+            # these algebraically but NOT in float32: `radius**2 / |radius|**3` and
+            # `1 / radius` differ in the last bits, and that difference was enough
+            # to move a fitted-jump diagnostic from 0.096 to 0.118 and turn a slow
+            # test red. "The flag-off path is unchanged" has to mean the old
+            # NUMBERS, not merely the old formula.
+            return (
+                position,
+                torch.cat([sign * cos, sin], dim=1),
+                torch.where(
+                    radius > ABS_SMOOTH,
+                    1.0 / radius.clamp(min=ABS_SMOOTH),
+                    torch.zeros_like(radius),
+                ),
+            )
+        # A polar curve r(psi) about the cap centre. Both reduce to the circle's
+        # closed forms when r' = r'' = 0 -- the normal to the radial direction and
+        # kappa to 1/r -- which is why freeing the cap changes nothing until the
+        # cap net moves off its zero bias.
+        norm = torch.sqrt(radius**2 + r_psi**2).clamp(min=ABS_SMOOTH)
+        # The normal divides by a SIGNED length, the way `forward` inflates by a
+        # signed radius. Dividing by the unsigned one would flip the normal of a
+        # VANISHED cap (`allow_pinch`, radius < 0) -- a point this construction
+        # says is not there, but whose reported normal the kinematic condition and
+        # the Bretherton capillary number both read. With r' = 0 this is exactly
+        # the radial direction for either sign, which is what the circular
+        # construction returned unconditionally.
+        normal = torch.cat(
+            [sign * (radius * cos + r_psi * sin), radius * sin - r_psi * cos], dim=1
+        ) / torch.copysign(norm, radius)
         # A cap that has VANISHED (a non-positive radius, reachable only under
         # `allow_pinch`) has no curvature to report. Flooring its radius would
         # hand the jump condition ~1/ABS_SMOOTH -- a huge positive curvature for
@@ -684,12 +849,18 @@ class GeometricInterface(nn.Module):
         # that number would flow straight into the Laplace residual at exactly
         # the pinch the feature exists to make trainable. Report zero instead:
         # no interface, no capillary pressure.
+        # Under `cap_freedom` the test is on the MODULATED radius, so within a
+        # band of width cap_delta about the threshold one cap can read "present"
+        # at some angles and "gone" at others in the same frame. Accepted: the
+        # band is ABS_SMOOTH-scaled (~1e-3 of the channel), and a bubble that
+        # close to vanishing has no meaningful capillary pressure to report at
+        # any angle.
         kappa = torch.where(
             radius > ABS_SMOOTH,
-            1.0 / radius.clamp(min=ABS_SMOOTH),
+            (radius**2 + 2.0 * r_psi**2 - radius * r_psi2) / norm**3,
             torch.zeros_like(radius),
         )
-        return position, torch.cat([sign * cos, sin], dim=1), kappa
+        return position, normal, kappa
 
     def _normal_speed(
         self, position: torch.Tensor, normal: torch.Tensor, t: torch.Tensor
