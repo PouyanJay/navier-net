@@ -64,6 +64,7 @@ def main() -> None:
         f"fields={list(cfg.model.fields)} steps={args.steps} "
         f"rebalance_every={args.rebalance_every} val_fraction={args.val_fraction}"
     )
+    write_config_snapshot(cfg)
 
     pipe = Pipeline(cfg)
     pipe.train(steps=args.steps, on_log=lambda r: None)
@@ -83,6 +84,28 @@ def main() -> None:
         f"validation_frames={metrics.get('validation_frames')}"
     )
     _report_root_drift(cfg, pipe)
+
+
+def write_config_snapshot(cfg) -> pathlib.Path:
+    """Persist the composed config where a Hydra job would, so a bench run is a
+    first-class run in the platform.
+
+    This script drives `Pipeline` directly rather than through Hydra's job
+    machinery, so nothing was writing `.hydra/config.yaml`. Every run it produced
+    therefore arrived in the Results stage with its measurements intact but its
+    NETWORK unrebuildable: no reconstruction player, no field viewer, no resume,
+    because those rebuild the model around the checkpoint and need the
+    architecture the run actually composed. The snapshot is that architecture.
+    """
+    from omegaconf import OmegaConf
+
+    from naviernet.utils.paths import RunPaths
+
+    snapshot = RunPaths.from_config(cfg).output_dir / ".hydra" / "config.yaml"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(cfg, snapshot, resolve=True)
+    print(f"wrote config snapshot: {snapshot}")
+    return snapshot
 
 
 def _perimeter(mask) -> int:
