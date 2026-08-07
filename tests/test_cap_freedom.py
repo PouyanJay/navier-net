@@ -218,7 +218,10 @@ def test_the_cap_is_no_longer_a_circle(tmp_path):
         )
         return (pts[:, :2] - centre).norm(dim=1)
 
-    assert float(cap_radii(plain).std()) < 1e-6, "the baseline cap must be a circle"
+    # Relative, for the same reason as the curvature check above: this is a
+    # float32-noise claim, not a bit-exactness one.
+    plain_r = cap_radii(plain)
+    assert float(plain_r.std() / plain_r.mean()) < 1e-5, "the baseline cap must be a circle"
     assert float(cap_radii(free).std()) > 1e-3, "the freed cap must not be one"
 
 
@@ -289,8 +292,15 @@ def test_the_circular_cap_still_reports_exactly_one_over_r():
     frame = geo.frame(torch.tensor([[0.5]]))
 
     kappa = front.kappa_par[_nose_cap(front)]
-    assert torch.allclose(kappa, 1.0 / frame.r_nose.detach(), atol=1e-6)
-    assert float(kappa.std()) < 1e-6, "a circle has one curvature"
+    circle = 1.0 / frame.r_nose.detach()
+    assert torch.allclose(kappa, circle, rtol=1e-5, atol=0.0)
+    # RELATIVE, and deliberately not bit-exactness. Every sample on this cap
+    # feeds the width net the same row, but identical rows in a batched matmul
+    # are not promised identical results -- the blocking differs between BLAS
+    # builds, and CI measured a spread of 1.1e-7 (float32 epsilon) that this
+    # machine did not. 1e-5 is ~100x that noise and still ~100x under the freed
+    # cap's own spread, so it separates a circle from a shape by a wide margin.
+    assert float(kappa.std() / kappa.mean()) < 1e-5, "a circle has one curvature"
 
 
 def test_the_freed_cap_reports_a_curvature_that_varies_along_it():
