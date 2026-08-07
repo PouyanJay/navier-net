@@ -365,6 +365,7 @@ _EXTRAS: tuple[tuple[str, str, str], ...] = (
     ("model", "hard_pin", "pin"),
     ("model", "allow_pinch", "pinch"),
     ("model", "evolving_width", "evwidth"),
+    ("model", "cap_freedom", "free-caps"),
     ("training", "causal_weighting", "causal"),
     ("training", "adaptive_collocation", "adaptive"),
     ("training", "kinematics", "kinematics"),
