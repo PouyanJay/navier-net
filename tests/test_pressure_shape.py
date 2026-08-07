@@ -172,3 +172,138 @@ def test_the_field_and_its_front_take_the_same_solved_shape():
 
     front = geo.front(torch.tensor([[0.3]]), n_body=32, n_cap=16)
     assert float(geo(front.points).abs().max()) < 1e-4, "a front sample must lie on phi = 0"
+
+
+# --- the solve ----------------------------------------------------------------
+
+
+def _sharp_model(tmp_path, extra=None):
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
+
+    cfg, paths = _staged_run(tmp_path, [*SHARP, *(extra or [])])
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    torch.manual_seed(0)
+    model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
+    return model, data, compute_groups(cfg)
+
+
+def _times(data, n=3):
+    return torch.tensor(data.t[:n], dtype=torch.float32).reshape(-1, 1)
+
+
+def test_the_solve_returns_one_coefficient_set_per_instant(tmp_path):
+    from naviernet.models.geometry import SHAPE_MODES
+    from naviernet.physics.shape_solve import solve_shape_modes
+
+    model, data, groups = _sharp_model(tmp_path, ["model.pressure_shape=true"])
+    times = _times(data)
+
+    coeffs = solve_shape_modes(model, times, groups, n_body=24, n_cap=12)
+
+    assert coeffs.shape == (times.shape[0], SHAPE_MODES)
+    assert torch.isfinite(coeffs).all()
+
+
+def test_the_solve_recovers_a_shape_the_pressure_really_demands(tmp_path):
+    """The positive control, and the only test that says the solve SOLVES.
+
+    Deform the bubble by a known set of modes, read the curvature that shape
+    carries, and hand it back as the demand. One Gauss-Newton step must move
+    toward those coefficients -- otherwise the machinery could return anything
+    and every other test here would still pass.
+    """
+
+    model, data, groups = _sharp_model(tmp_path, ["model.pressure_shape=true"])
+    geometry = model.nets["phi"]
+    times = _times(data, 2)
+    truth = torch.tensor([[0.6, -0.3, 0.0, 0.0], [0.6, -0.3, 0.0, 0.0]])
+
+    # The curvature the true shape carries, in-plane, becomes the demand.
+    from naviernet.physics.residuals import gap_curvature
+
+    geometry.bind_shape(times, truth)
+    front = geometry.front(times, n_body=24, n_cap=12)
+    target = (front.kappa_par + gap_curvature(front.normal_speed, groups)).detach()
+    geometry.bind_shape(None, None)
+
+    # Feed that demand in place of the pressure's, and solve from a flat start.
+    original = model.p_vapor
+    model.p_vapor = lambda t: torch.zeros_like(t)  # type: ignore[assignment]
+    try:
+        solved = _solve_against(model, geometry, times, groups, target).detach()
+    finally:
+        model.p_vapor = original  # type: ignore[assignment]
+
+    moved = torch.sign(solved[:, :2]) == torch.sign(truth[:, :2])
+    assert moved.all(), f"the step must move toward the demanded shape, got {solved}"
+
+
+def _solve_against(model, geometry, times, groups, target):
+    """One Gauss-Newton step against an explicit curvature demand.
+
+    Mirrors `solve_shape_modes` but substitutes the target, so the solver can be
+    checked against a shape that is known to be reachable rather than against a
+    pressure field that may be demanding something impossible.
+    """
+    from naviernet.models.geometry import SHAPE_MODES
+    from naviernet.physics.residuals import gap_curvature
+    from naviernet.physics.shape_solve import (
+        _curvature_jacobian,
+        _instant_index,
+        _normal_equations,
+    )
+
+    zeros = torch.zeros(times.shape[0], SHAPE_MODES)
+    geometry.bind_shape(times, zeros)
+    front = geometry.front(times, n_body=24, n_cap=12)
+    carried = front.kappa_par
+    residual = (target - gap_curvature(front.normal_speed, groups)) - carried
+    jac = _curvature_jacobian(geometry, times, carried.detach(), 24, 12)
+    geometry.bind_shape(None, None)
+
+    instant = _instant_index(front.points[:, 2], times)
+    return _normal_equations(jac, residual, instant, times.shape[0], SHAPE_MODES, 1e-2)
+
+
+def test_the_solve_leaves_no_probe_shape_bound(tmp_path):
+    """The Jacobian is built by binding probe shapes. If one survived the call,
+    every later evaluation would silently use a finite-difference artefact."""
+    from naviernet.physics.shape_solve import solve_shape_modes
+
+    model, data, groups = _sharp_model(tmp_path, ["model.pressure_shape=true"])
+    solve_shape_modes(model, _times(data), groups, n_body=24, n_cap=12)
+
+    assert model.nets["phi"].shape_coeffs is None
+    assert model.nets["phi"].shape_times is None
+
+
+def test_the_pressure_can_be_trained_through_the_solved_shape(tmp_path):
+    """The gradient design: the Jacobian is detached but the RESIDUAL is not, so
+    the data loss reaches the pressure nets through the shape they determine. If
+    it did not, the images could never tell the pressure what shape to imply."""
+    from naviernet.physics.shape_solve import solve_shape_modes
+
+    model, data, groups = _sharp_model(tmp_path, ["model.pressure_shape=true"])
+    coeffs = solve_shape_modes(model, _times(data), groups, n_body=24, n_cap=12)
+    coeffs.sum().backward()
+
+    grads = [p.grad for p in model.nets["p"].parameters() if p.grad is not None]
+    assert grads, "no gradient reached the pressure net through the solved shape"
+    assert max(float(g.abs().max()) for g in grads) > 0.0
+
+
+def test_the_solve_survives_a_front_that_cannot_resolve_every_mode(tmp_path):
+    """A short bubble distinguishes fewer modes than there are, so `J^T J` goes
+    near-singular. Damping must answer with a small coefficient rather than an
+    enormous one in a direction nothing constrained."""
+    from naviernet.physics.shape_solve import solve_shape_modes
+
+    model, data, groups = _sharp_model(tmp_path, ["model.pressure_shape=true"])
+    coeffs = solve_shape_modes(model, _times(data, 1), groups, n_body=4, n_cap=2)
+
+    assert torch.isfinite(coeffs).all()
+    assert float(coeffs.abs().max()) < 1e3
