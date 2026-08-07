@@ -32,6 +32,7 @@ from naviernet.models.geometry import GeometryPriors
 from naviernet.models.pinn import BoundPINN, BubblePINN
 from naviernet.physics import front_velocity, kinematics, registry, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
+from naviernet.physics.shape_solve import bind_solved_shape
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -785,11 +786,13 @@ def _resample_pool(model, data, groups, coll_equations, tcfg, rng) -> torch.Tens
     keeping global coverage. Returned detached (its own fixed points until the next
     resample).
     """
-    candidates = data.sample_collocation(tcfg.n_coll * CANDIDATE_POOL_MULT, rng)
+    candidates = data.sample_collocation(
+        tcfg.n_coll * CANDIDATE_POOL_MULT, rng, tcfg.collocation_time_bins
+    )
     magnitude = _residual_magnitude(
         registry.LossContext(model, candidates, groups=groups), coll_equations
     )
-    base = data.sample_collocation(tcfg.n_coll, rng).detach()
+    base = data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins).detach()
     return rad_resample(
         candidates.detach(), magnitude, base, tcfg.n_coll, tcfg.resample_fraction, rng
     ).detach()
@@ -957,6 +960,7 @@ def train(
     tcfg = cfg.training
     _validate_training_config(cfg)
     rba = tcfg.weighting == "rba"
+    pressure_shape = bool(getattr(cfg.model, "pressure_shape", False))
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
 
@@ -1025,7 +1029,9 @@ def train(
         x_pool = (
             saved_pool.to(device)
             if saved_pool is not None
-            else data.sample_collocation(tcfg.n_coll, np.random.default_rng(tcfg.seed)).detach()
+            else data.sample_collocation(
+                tcfg.n_coll, np.random.default_rng(tcfg.seed), tcfg.collocation_time_bins
+            ).detach()
         )
         attention = _init_attention(state, coll_keys, x_pool.shape[0], device)
         state.setdefault("rba_resamples", 0)
@@ -1056,9 +1062,23 @@ def train(
         x_coll = (
             x_pool.clone().requires_grad_(True)
             if rba
-            else data.sample_collocation(tcfg.n_coll, rng)
+            else data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
+
+        # Pressure-driven shape: solve the width modes at exactly the instants this
+        # step will evaluate, so every point gets its own instant's solved bubble
+        # rather than a neighbour's. Gated on the Stage-B warm-up for the same
+        # reason every Stage-B term is: during the warm-up `p` is untrained, and a
+        # geometry solved from a random pressure field would destroy the interface
+        # the warm-up exists to converge.
+        if pressure_shape and step > tcfg.stage_b_warmup_steps:
+            bind_solved_shape(
+                model,
+                torch.unique(torch.cat([x_data[:, 2], x_coll[:, 2].detach()])).reshape(-1, 1),
+                groups,
+                cfg,
+            )
 
         ctx = registry.LossContext(
             model, x_coll, inlet, walls, u_inlet, groups, front_times=front_times
@@ -1238,7 +1258,7 @@ def _joint_losses(
         # view forwards the same c the raw-model calls passed before).
         view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
-        x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
+        x_coll = cx.data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
 
         ctx = registry.LossContext(
@@ -1483,6 +1503,18 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
     # scoring a sharpened model through its initial blur would measure a
     # different solution than the one that was trained.
     model.eps = float(ckpt.get("alpha_eps", model.eps))
+    # Re-solve the pressure-driven shape at the dataset's own frame instants, so
+    # everything downstream -- IoU, figures, video, the interface diagnostics --
+    # measures the bubble the run TRAINED rather than the learned envelope
+    # underneath it. Derived from the pressure in this checkpoint, which is why it
+    # is re-solved here instead of being carried in the checkpoint and going
+    # stale. A no-op when the feature is off.
+    bind_solved_shape(
+        model,
+        torch.tensor(np.asarray(data.t), dtype=torch.float32, device=device).reshape(-1, 1),
+        compute_groups(cfg),
+        cfg,
+    )
     model.eval()
     return model, data, ckpt["state"]
 

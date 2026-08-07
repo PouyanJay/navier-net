@@ -593,3 +593,40 @@ def test_the_jump_condition_is_not_rebalanced_against_the_data_term(tmp_path):
     # The kinematic condition IS rebalanced: it agrees with the data rather than
     # competing with it, and it converges (measured ratio 0.04).
     assert "kinematic" in registry.rebalanced_terms(equations)
+
+
+def test_the_gap_correction_uses_the_pressure_jump_coefficient(tmp_path):
+    """Park & Homsy's 1.79(3Ca)^{2/3} for the JUMP, not Bretherton's 1.34 for the
+    FILM THICKNESS. Two constants, two different quantities; this condition needs
+    the jump one. The previous 1.29 made the correction 1.39x too small."""
+    import math
+
+    from naviernet.physics.residuals import BRETHERTON_COEFF
+
+    assert pytest.approx(1.79 * 3.0 ** (2.0 / 3.0)) == BRETHERTON_COEFF
+    # At our operating Ca the correction is ~+18%, not ~+13%.
+    assert pytest.approx(0.181, abs=0.005) == BRETHERTON_COEFF * 0.0107 ** (2.0 / 3.0)
+    assert not math.isclose(BRETHERTON_COEFF, 1.29 * 3.0 ** (2.0 / 3.0))
+
+
+def test_the_jump_weights_the_in_plane_curvature_by_pi_over_four(tmp_path):
+    """The depth-averaged condition is `(pi/4) kappa_par + kappa_perp`, not their
+    plain sum. Dropping the pi/4 over-weights the in-plane term by 27% -- and that
+    term is the one that HEALS a waist under Darcy flow, so the error pushed
+    against the necking the model is meant to produce."""
+    import torch
+
+    from naviernet.physics.groups import compute_groups
+    from naviernet.physics.residuals import IN_PLANE_WEIGHT, gap_curvature, total_curvature
+
+    model, data, cfg = _model_and_data(tmp_path)
+    groups = compute_groups(cfg)
+    front = model.nets["phi"].front(torch.tensor([[float(data.t[0])]]), n_body=8, n_cap=8)
+
+    expected = IN_PLANE_WEIGHT * front.kappa_par + gap_curvature(front.normal_speed, groups)
+    assert torch.allclose(total_curvature(front, groups), expected)
+    # And it is genuinely weighted, not a pass-through.
+    assert not torch.allclose(
+        total_curvature(front, groups),
+        front.kappa_par + gap_curvature(front.normal_speed, groups),
+    )

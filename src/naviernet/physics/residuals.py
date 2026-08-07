@@ -35,6 +35,7 @@ replacing the free source ``s``. The property fields ``rho*(alpha)`` and
 
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 import torch
@@ -387,11 +388,27 @@ def darcy_residuals(
     limit of the *3-D* problem, not a special case of the 2-D one: the dominant
     force in a 198 um channel is the wall shear in the GAP direction, which a
     2-D (x, y) formulation does not contain at all -- which is why the 2-D
-    residual has to carry ``hele_shaw`` as a bolted-on stand-in for it. Measured
-    on the R3 baseline, that formulation's in-plane inertia ran at RMS 0.34
-    against the drag's 0.05, so the optimiser spent its effort on terms that are
-    O(eps) in this regime (Ca = 0.011, Bo = 0.073, Re_in = 22) while the actual
-    leading balance sat in the noise.
+    residual has to carry ``hele_shaw`` as a bolted-on stand-in for it.
+
+    CAUTION on the original justification, which was wrong. It read: "in-plane
+    inertia ran at RMS 0.34 against the drag's 0.05, so the optimiser spent its
+    effort on terms that are O(eps)". Those are RESIDUAL norms -- they measure how
+    badly each term was SATISFIED, not how large it is. A large inertia residual
+    is evidence the term was poorly constrained, not evidence it is negligible,
+    so nothing in that measurement supported dropping it.
+
+    The defensible criterion is the ratio of convective inertia to Darcy drag,
+    ``Re_b (b/L) / 12`` with ``Re_b = rho U b / mu``. At our numbers (Re_Dh = 22,
+    b = 150 um) that is ~0.21 over a 1 mm bubble and ~0.7 near the nose, where L
+    collapses -- small, but not the O(eps) the docstring claimed. Unsteady inertia
+    is the larger exposure: Darcy assumes the gap-wise profile is quasi-steady,
+    which needs sqrt(nu T) >> b/2, and that fails for T below ~20 ms. Millisecond
+    growth is inside the violated regime.
+
+    Darcy is still the right LEADING order here. The point is that it is a leading
+    order with a known, quantified error, not an exact statement -- and the places
+    the error concentrates (the nose, the sidewalls, a pinching neck) are exactly
+    the features this model fails to reproduce.
 
     No surface-tension body force. In a sharp-interface formulation capillarity
     is a BOUNDARY CONDITION (:func:`laplace_jump_residual`), not a volumetric
@@ -409,17 +426,43 @@ def darcy_residuals(
     return MomentumResiduals(p_x + drag * u, p_y + drag * v, torch.zeros_like(u))
 
 
-# Bretherton's front-meniscus correction, 1.29 (3 Ca)^{2/3} = 2.68 Ca^{2/3}
-# (Bretherton 1961): the dynamic thickening of the capillary pressure across an
-# advancing meniscus that has laid down a lubrication film behind it. A fixed
-# physical coefficient, not a tunable.
-BRETHERTON_COEFF = 1.29 * 3.0 ** (2.0 / 3.0)
+# Dynamic correction to the gap-direction capillary pressure across an advancing
+# meniscus that has laid down a lubrication film behind it.
+#
+# 1.79 (3 Ca)^{2/3} = 3.72 Ca^{2/3}, the coefficient Park & Homsy (1984, JFM 139,
+# 291) derive for the PRESSURE JUMP. This previously carried 1.29, which is close
+# to Bretherton's FILM-THICKNESS coefficient (1.34) rather than his pressure one,
+# and it made the correction 1.39x too small -- +13.0% instead of +18.1% at our
+# Ca = 0.011. Two different constants belong to two different quantities; the
+# jump condition needs the jump one.
+BRETHERTON_COEFF = 1.79 * 3.0 ** (2.0 / 3.0)
+
+# Park & Homsy's weight on the IN-PLANE curvature in the same depth-averaged jump
+# condition: `dp = gamma[(2/b)(1 + 3.8 Ca^{2/3}) + (pi/4) kappa_par]`. It accounts
+# for how the principal radii vary across the gap for a perfectly wetting liquid,
+# which ours are (contact angles ~5-10 deg). Omitting it over-weighted the
+# in-plane term by 4/pi = 1.27x -- and that term is the one that HEALS a waist in
+# a Darcy flow, so the error pushed directly against the feature we want.
+IN_PLANE_WEIGHT = math.pi / 4.0
+
+
+def total_curvature(front, groups: dict[str, float]) -> torch.Tensor:
+    """The depth-averaged total curvature the jump condition sees, ``(N, 1)``::
+
+        (pi/4) kappa_par + kappa_perp
+
+    One definition, so the residual and every diagnostic weight the two principal
+    curvatures the same way. The ``pi/4`` is Park & Homsy's, and it is not
+    cosmetic: the in-plane term is the one that HEALS a waist under Darcy flow, so
+    over-weighting it pushed against the necking this model is trying to produce.
+    """
+    return IN_PLANE_WEIGHT * front.kappa_par + gap_curvature(front.normal_speed, groups)
 
 
 def gap_curvature(normal_speed: torch.Tensor, groups: dict[str, float]) -> torch.Tensor:
     """Out-of-plane (gap-direction) interface curvature, ``(N, 1)``::
 
-        kappa_perp = (2 / H*) (1 + 2.68 Ca_local^{2/3})
+        kappa_perp = (2 / H*) (1 + 3.72 Ca_local^{2/3})
 
     A depth-averaged model has no z direction, so this curvature cannot be
     computed from the in-plane shape -- it has to be supplied. It matters twice
@@ -480,12 +523,51 @@ def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tenso
     there is nothing left to absorb it.
     """
     t = front.points[:, 2:3]
-    kappa = front.kappa_par + gap_curvature(front.normal_speed, groups)
-    # On the body the liquid the meniscus faces is the Bretherton film, not the
-    # bulk the depth-averaged `p` represents (see BubblePINN.film_offset); the
-    # offset is zero on the caps and zero entirely when the feature is off.
-    liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
+    kappa = total_curvature(front, groups)
+    # Deliberately NOT written as `(pressure_implied_curvature(...) - kappa)/We`,
+    # though that is the same equation: the two differ in float32 (a multiply by
+    # We and a divide back do not cancel), and this one TRAINS. A shared helper
+    # is not worth perturbing a residual's arithmetic; the test below pins the
+    # two readings to each other instead.
+    liquid = _liquid_pressure(model, front)
     return model.p_vapor(t) - liquid - kappa / groups["We"]
+
+
+def _liquid_pressure(model, front) -> torch.Tensor:
+    """The liquid pressure the meniscus actually faces.
+
+    On the body that is the Bretherton film, not the bulk the depth-averaged
+    ``p`` represents (see BubblePINN.film_offset); the offset is zero on the caps
+    and zero entirely when the feature is off.
+    """
+    return model.pressure(front.points) + model.film_offset(front.on_cap)
+
+
+def pressure_implied_curvature(
+    model, front, groups: dict[str, float], p_vapor: torch.Tensor | None = None
+) -> torch.Tensor:
+    """The TOTAL curvature the pressure field demands, per front sample ``(N, 1)``::
+
+        kappa_demanded = We (p_v(t) - p_liq(Gamma))
+
+    The same equation :func:`laplace_jump_residual` scores, read the other way
+    round. That residual asks "does this shape satisfy the pressure?"; this asks
+    "what shape would?" -- and the difference is the whole distinction between
+    the physics being a penalty on a learned shape and the physics DETERMINING
+    one. Both callers share this definition so the two can never drift.
+
+    Subtract :func:`gap_curvature` to get the in-plane part a 2-D front can
+    actually carry; the gap-direction half is a property of the channel, not of
+    the curve, and no shape can change it.
+
+    ``p_vapor`` overrides the model's own trained unknown. A front-geometry run
+    that is not sharp has no such unknown to read -- but it is exactly the
+    baseline this quantity exists to compare against, so the caller supplies the
+    estimate rather than being refused an answer.
+    """
+    liquid = _liquid_pressure(model, front)
+    vapour = model.p_vapor(front.points[:, 2:3]) if p_vapor is None else p_vapor
+    return groups["We"] * (vapour - liquid)
 
 
 def stage_b_residuals(

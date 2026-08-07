@@ -194,6 +194,19 @@ class ModelConfig:
     # How far the cap may depart from its circle, as a fraction of the local
     # radius. Bounded on purpose: unbounded, a cap can fold or self-intersect.
     cap_delta: float = 0.2
+    # Pressure-driven shape: the width profile's low modes are SOLVED from the
+    # Young-Laplace condition rather than learned and then penalised for
+    # disagreeing with it. The soft penalty is measured -- raising
+    # `training.weights.laplace` halves the jump error and costs ~0.015 IoU --
+    # and this exists to find out whether DETERMINING the shape does better than
+    # trading against it. Requires `sharp_interface` (there is no pressure jump to
+    # solve without it). Off by default.
+    pressure_shape: bool = False
+    # How far the solve may move the width profile, as a fraction of the learned
+    # width. The rail that stops a wrong pressure producing a nonsense bubble --
+    # and the depth-averaged pressure is KNOWN to be wrong at the bubble's sides,
+    # which is exactly where it now steers the geometry.
+    shape_delta: float = 0.3
     # Sharp-interface physics (R4): drive the shape with the conditions that hold
     # AT a fluid interface -- the Young-Laplace jump and the kinematic condition,
     # sampled on the explicit front -- instead of a bulk momentum residual a free
@@ -257,6 +270,13 @@ class TrainingConfig:
     n_data: int = MISSING  # supervised points per step
     n_coll: int = MISSING  # PDE collocation points per step
     n_bc: int = MISSING  # boundary points per step
+    # Collapse each collocation batch's TIMES onto this many stratified instants
+    # instead of one per point. A shape rebuilt from a field costs once per
+    # distinct time, so an unbinned batch makes that construction unaffordable.
+    # Stratified, so coverage of the window is kept and the Monte-Carlo estimate's
+    # variance falls rather than its bias rising. 0 = the independent per-point
+    # draw, unchanged.
+    collocation_time_bins: int = 0
 
     # Frame withheld from supervision entirely (0-based) and used as the
     # honest generalisation test. Set to -1 to train on every frame. This is the

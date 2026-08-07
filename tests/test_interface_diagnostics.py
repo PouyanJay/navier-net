@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 import torch
 
+from naviernet.physics.groups import compute_groups
 from tests.conftest import staged_run as _staged_run
 
 TINY_SHARP = ["model=stage_b", "model.front_geometry=true", "model.sharp_interface=true"]
@@ -98,7 +99,21 @@ def test_an_unsatisfied_jump_reads_a_large_error(tmp_path):
 def test_a_satisfied_jump_reads_near_zero_error(tmp_path):
     """Construct the solution the condition asks for -- p_liq = p_v - kappa/We --
     and the diagnostic must agree it is satisfied. Without this the metric could
-    report anything and we would not know."""
+    report anything and we would not know.
+
+    Asserted as a RATIO against this model's own untrained error, not as an
+    absolute threshold. The fitted level is not stable enough to gate on: it is
+    NON-MONOTONE in fitting effort (measured 0.113 at 1500 steps, 0.047 at 3000,
+    0.041 at 4000, 0.107 at 8000) and it moves with the BLAS thread count, so any
+    fixed number near 0.10 sits inside its own noise band. A previous absolute
+    0.10 gate duly went red on CI for a pair of coefficient corrections that were
+    individually fine -- each passed alone, only the combination crossed the line.
+
+    The ratio is what the test is actually for: the metric must RESPOND to a
+    solution that satisfies the condition. Measured, fitting drops it ~9x
+    (0.975 -> 0.11 at the worst budget observed), so 5x carries real margin while
+    still failing hard if the diagnostic went constant or blind.
+    """
     from naviernet.physics.diagnostics import interface_diagnostics
 
     torch.manual_seed(0)
@@ -109,15 +124,22 @@ def test_a_satisfied_jump_reads_near_zero_error(tmp_path):
         tmp_path,
         [*TINY_SHARP, "model.hidden=64", "model.layers=3", "model.fourier_feats=32"],
     )
+    before = interface_diagnostics(model, data).laplace_error_nose
     _fit_pressure_to_the_jump(model, data, steps=1500)
+    after = interface_diagnostics(model, data)
 
-    diag = interface_diagnostics(model, data)
-    assert diag.laplace_error_nose < 0.10, (
-        f"a fitted pressure must satisfy the jump at the nose, got "
-        f"{diag.laplace_error_nose:.3f}"
+    assert before > 0.3, f"the unfitted control must be far off; got {before:.3f}"
+    assert after.laplace_error_nose < before / 5.0, (
+        f"a fitted pressure must satisfy the jump far better than an unfitted one: "
+        f"{before:.3f} -> {after.laplace_error_nose:.3f}"
     )
-    assert diag.laplace_error_front < 0.20, (
-        f"and across the whole front, got {diag.laplace_error_front:.3f}"
+    # An absolute ceiling too, so the ratio cannot be met by a huge `before`.
+    # Worst observed across budgets and thread counts is 0.129.
+    assert after.laplace_error_nose < 0.20, (
+        f"and in absolute terms, got {after.laplace_error_nose:.3f}"
+    )
+    assert after.laplace_error_front < 0.30, (
+        f"and across the whole front, got {after.laplace_error_front:.3f}"
     )
 
 
@@ -294,3 +316,52 @@ def test_convergence_reads_the_warmup_the_run_used_not_the_one_recomposed(tmp_pa
     model, data, _ = load_model(forgetful, paths)
     block = evaluate(forgetful, model, data, paths)["physics"]
     assert block["residual_convergence"] is not None
+
+
+def test_the_two_readings_of_the_jump_agree(tmp_path):
+    """`laplace_jump_residual` asks "does this shape satisfy the pressure?" and
+    `pressure_implied_curvature` asks "what shape would?". They are one equation
+    read two ways, and they are written separately on purpose -- the residual
+    trains, so its arithmetic is not refactored for sharing. This pins them
+    together so the pair cannot drift apart silently."""
+    from naviernet.physics.residuals import (
+        laplace_jump_residual,
+        pressure_implied_curvature,
+        total_curvature,
+    )
+
+    model, data, _ = _model(tmp_path, TINY_SHARP)
+    groups = compute_groups(model.cfg)
+    front = model.nets["phi"].front(
+        torch.tensor([[float(data.t[0])], [float(data.t[-1])]]), n_body=16, n_cap=16
+    )
+    with torch.no_grad():
+        residual = laplace_jump_residual(model, front, groups)
+        demanded = pressure_implied_curvature(model, front, groups)
+        carried = total_curvature(front, groups)
+        rearranged = (demanded - carried) / groups["We"]
+
+    assert torch.allclose(residual, rearranged, atol=1e-5)
+
+
+def test_the_curvature_gap_names_where_the_shape_and_the_pressure_disagree(tmp_path):
+    """One number for the whole front cannot distinguish "one region cannot
+    express what the physics wants" from "the physics is outvoted everywhere",
+    and those call for opposite fixes."""
+    from naviernet.physics.diagnostics import interface_diagnostics
+
+    model, data, _ = _model(tmp_path, TINY_SHARP)
+    diag = interface_diagnostics(model, data)
+
+    assert set(diag.curvature_gap) == {"nose_cap", "body", "root_cap"}
+    assert all(v >= 0.0 and np.isfinite(v) for v in diag.curvature_gap.values())
+
+
+def test_a_run_without_a_pressure_field_reports_no_curvature_gap(tmp_path):
+    """A Stage-A run has no pressure to demand anything, so the gap is absent
+    rather than invented -- the same treatment the jump errors get."""
+    from naviernet.physics.diagnostics import interface_diagnostics
+
+    model, data, _ = _model(tmp_path, ["model.front_geometry=true"])
+    assert "p" not in model.fields
+    assert interface_diagnostics(model, data).curvature_gap == {}
