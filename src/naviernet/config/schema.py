@@ -257,6 +257,13 @@ class TrainingConfig:
     n_data: int = MISSING  # supervised points per step
     n_coll: int = MISSING  # PDE collocation points per step
     n_bc: int = MISSING  # boundary points per step
+    # Collapse each collocation batch's TIMES onto this many stratified instants
+    # instead of one per point. A shape rebuilt from a field costs once per
+    # distinct time, so an unbinned batch makes that construction unaffordable.
+    # Stratified, so coverage of the window is kept and the Monte-Carlo estimate's
+    # variance falls rather than its bias rising. 0 = the independent per-point
+    # draw, unchanged.
+    collocation_time_bins: int = 0
 
     # Frame withheld from supervision entirely (0-based) and used as the
     # honest generalisation test. Set to -1 to train on every frame. This is the

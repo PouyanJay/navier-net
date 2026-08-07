@@ -785,11 +785,13 @@ def _resample_pool(model, data, groups, coll_equations, tcfg, rng) -> torch.Tens
     keeping global coverage. Returned detached (its own fixed points until the next
     resample).
     """
-    candidates = data.sample_collocation(tcfg.n_coll * CANDIDATE_POOL_MULT, rng)
+    candidates = data.sample_collocation(
+        tcfg.n_coll * CANDIDATE_POOL_MULT, rng, tcfg.collocation_time_bins
+    )
     magnitude = _residual_magnitude(
         registry.LossContext(model, candidates, groups=groups), coll_equations
     )
-    base = data.sample_collocation(tcfg.n_coll, rng).detach()
+    base = data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins).detach()
     return rad_resample(
         candidates.detach(), magnitude, base, tcfg.n_coll, tcfg.resample_fraction, rng
     ).detach()
@@ -1025,7 +1027,9 @@ def train(
         x_pool = (
             saved_pool.to(device)
             if saved_pool is not None
-            else data.sample_collocation(tcfg.n_coll, np.random.default_rng(tcfg.seed)).detach()
+            else data.sample_collocation(
+                tcfg.n_coll, np.random.default_rng(tcfg.seed), tcfg.collocation_time_bins
+            ).detach()
         )
         attention = _init_attention(state, coll_keys, x_pool.shape[0], device)
         state.setdefault("rba_resamples", 0)
@@ -1056,7 +1060,7 @@ def train(
         x_coll = (
             x_pool.clone().requires_grad_(True)
             if rba
-            else data.sample_collocation(tcfg.n_coll, rng)
+            else data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
 
@@ -1238,7 +1242,7 @@ def _joint_losses(
         # view forwards the same c the raw-model calls passed before).
         view = model.bound(cx.c, pin=cx.pin, geometry=cx.geometry)
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
-        x_coll = cx.data.sample_collocation(tcfg.n_coll, rng)
+        x_coll = cx.data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
 
         ctx = registry.LossContext(

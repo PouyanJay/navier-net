@@ -422,8 +422,37 @@ class BubbleDataset:
             torch.tensor(target[:, None].astype(np.float32), device=self.device),
         )
 
-    def sample_collocation(self, n: int, rng) -> torch.Tensor:
-        """PDE points: half uniform over the domain, half jittered off the interface."""
+    def sample_collocation(self, n: int, rng, time_bins: int = 0) -> torch.Tensor:
+        """PDE points: half uniform over the domain, half jittered off the interface.
+
+        ``time_bins`` collapses the batch's TIMES onto that many stratified
+        instants instead of one per point. A construction that has to rebuild the
+        interface from a field -- the pressure-driven shape -- pays that cost once
+        per distinct time, so an unbinned batch of 3072 independent times makes it
+        unaffordable and a binned one makes it routine.
+
+        Stratified, not clustered: one instant drawn inside each equal stratum, so
+        the window stays covered and the Monte-Carlo estimate's variance goes DOWN
+        rather than its bias going up. Times are SNAPPED to the nearest bin rather
+        than overwritten, which is what keeps the near-interface half near the
+        interface -- those points were chosen at a frame, and reassigning them an
+        arbitrary instant would move them off the very thing they sample.
+
+        ``0`` (the default) is the independent per-point draw, unchanged.
+        """
+        points = self._sample_collocation_points(n, rng)
+        if time_bins > 0:
+            points[:, 2] = self._snap_to_bins(points[:, 2], rng, time_bins)
+        return torch.tensor(points, device=self.device, requires_grad=True)
+
+    def _snap_to_bins(self, times: np.ndarray, rng, time_bins: int) -> np.ndarray:
+        """Each time replaced by the nearest of ``time_bins`` stratified instants."""
+        d = self.domain
+        edges = np.linspace(d.t_min, d.t_max, time_bins + 1)
+        instants = rng.uniform(edges[:-1], edges[1:]).astype(np.float32)
+        return instants[np.abs(times[:, None] - instants[None, :]).argmin(axis=1)]
+
+    def _sample_collocation_points(self, n: int, rng) -> np.ndarray:
         d = self.domain
         n_uniform = n // 2
         uniform = np.stack(
@@ -441,8 +470,7 @@ class BubbleDataset:
         near_interface = self._coords(idx)
         near_interface += rng.normal(0, 0.01, near_interface.shape).astype(np.float32)
 
-        points = np.concatenate([uniform, near_interface], axis=0)
-        return torch.tensor(points, device=self.device, requires_grad=True)
+        return np.concatenate([uniform, near_interface], axis=0)
 
     def sample_boundary(self, n: int, rng) -> tuple[torch.Tensor, torch.Tensor]:
         """Inlet points (``x*=0``) and side-wall points (``y*=y_min`` or ``y_max``)."""
