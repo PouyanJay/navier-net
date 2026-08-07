@@ -21,7 +21,11 @@ import numpy as np
 import torch
 
 from naviernet.physics.groups import compute_groups
-from naviernet.physics.residuals import gap_curvature, pressure_implied_curvature
+from naviernet.physics.residuals import (
+    gap_curvature,
+    pressure_implied_curvature,
+    total_curvature,
+)
 
 # Stations along the bubble the half-width profiles are compared on. Odd, so a
 # station lands exactly mid-bubble where the measured neck sits.
@@ -210,9 +214,7 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
         # shape diagnostics below are pure geometry and stay measurable.
         return float("nan"), float("nan")
     with torch.no_grad():
-        capillary = (
-            (front.kappa_par + gap_curvature(front.normal_speed, groups)) / groups["We"]
-        ).detach()
+        capillary = (total_curvature(front, groups) / groups["We"]).detach()
         liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
         residual = (_vapour_pressure(model, front) - liquid - capillary).abs()
 

@@ -18,7 +18,11 @@ from __future__ import annotations
 import torch
 
 from naviernet.models.geometry import SHAPE_MODES
-from naviernet.physics.residuals import gap_curvature, pressure_implied_curvature
+from naviernet.physics.residuals import (
+    IN_PLANE_WEIGHT,
+    gap_curvature,
+    pressure_implied_curvature,
+)
 
 # Finite-difference step for the Jacobian, in coefficient units. The modulation is
 # `tanh` of a sum of modes, so its curvature response is smooth and O(1) here;
@@ -66,10 +70,13 @@ def solve_shape_modes(
         carried = front.kappa_par
         # In-plane only: the gap term is the channel's, and no shape can change it,
         # so asking the modes to account for it would be asking the impossible.
+        # Both sides in the SAME units the jump condition uses: the demanded total
+        # curvature less the gap part leaves what the in-plane term must supply,
+        # and the in-plane term enters the condition weighted by pi/4.
         demanded = pressure_implied_curvature(model, front, groups) - gap_curvature(
             front.normal_speed, groups
         )
-        residual = demanded - carried
+        residual = demanded - IN_PLANE_WEIGHT * carried
 
         jacobian = _curvature_jacobian(geometry, times, carried.detach(), n_body, n_cap)
     finally:
