@@ -66,6 +66,25 @@ ABS_SMOOTH = 1e-3
 # dataset whose front never moved (rate0 = 0) cannot produce a division by zero.
 ANCHOR_FLOOR = 1e-3
 
+# How many modes the pressure gets to set on the width profile. Deliberately few:
+# each one is a degree of freedom the pressure has to determine from a field that
+# is itself being learned, and the low-DOF envelope is what the R3 win was built
+# on. Four resolves a head, a waist and a foot; more re-admits the wiggles the
+# representation exists to forbid.
+SHAPE_MODES = 4
+
+
+def shape_modes(u: torch.Tensor, n: int = SHAPE_MODES) -> torch.Tensor:
+    """The width profile's mode basis at spine parameter ``u``, ``(N, n)``.
+
+    ``cos(k pi u)`` for ``k = 1..n``: smooth, low-frequency, and non-zero at both
+    ends -- the ends are where the caps are, and a basis that vanished there could
+    not move a head or a foot at all. Fixed, not learned: the pressure SOLVES for
+    the coefficients, so the basis has to be something it can solve against.
+    """
+    k = torch.arange(1, n + 1, dtype=u.dtype, device=u.device)
+    return torch.cos(k * math.pi * u)
+
 
 class CapsuleFrame(NamedTuple):
     """The capsule's per-time scalars: the nose, the two cap centres and radii,
@@ -252,6 +271,8 @@ class GeometricInterface(nn.Module):
         evolving_width: bool = False,
         cap_freedom: bool = False,
         cap_delta: float = 0.2,
+        pressure_shape: bool = False,
+        shape_delta: float = 0.3,
     ):
         super().__init__()
         # The REFERENCE dataset's anchors. A single-dataset run has only these; a
@@ -277,6 +298,25 @@ class GeometricInterface(nn.Module):
                 f"model.cap_delta must be in [0, 1) -- it is the cap's departure from "
                 f"its circle as a FRACTION of the local radius, and at 1 the radius "
                 f"reaches zero and the cap self-intersects. Got {self.cap_delta}."
+            )
+        # Pressure-driven shape: the width profile's modes are SOLVED from the
+        # Young-Laplace condition rather than learned, with a bounded learned
+        # correction on top. `shape_delta` is how far the solve may move the
+        # profile, as a fraction of the learned width -- the rail that keeps a
+        # wrong pressure from producing a nonsense bubble, and the reason the
+        # depth-averaged model's known defect at the bubble's sides cannot run
+        # away with the geometry.
+        self.pressure_shape = bool(pressure_shape)
+        self.shape_delta = float(shape_delta)
+        # Bound per step by the trainer (see `bind_shape`); None means "not solved",
+        # which every call outside the training loop is.
+        self.shape_times: torch.Tensor | None = None
+        self.shape_coeffs: torch.Tensor | None = None
+        if not 0.0 <= self.shape_delta < 1.0:
+            raise ValueError(
+                f"model.shape_delta must be in [0, 1) -- it is the pressure's licence "
+                f"to move the width profile as a FRACTION of the learned width, and at "
+                f"1 the profile can reach zero width. Got {self.shape_delta}."
             )
         self._y_half = _half_height(priors)
         # The reference dataset's measured start and speed. Every per-dataset
@@ -455,7 +495,50 @@ class GeometricInterface(nn.Module):
         ctx = ctx or GeometryContext()
         raw = torch.sigmoid(self._width_logit(u, t, ctx))
         half = _half_height(self._anchors(ctx))
-        return half * (2.0 * raw - 1.0 if self.allow_pinch else raw)
+        radius = half * (2.0 * raw - 1.0 if self.allow_pinch else raw)
+        return radius * self._shape_factor(u, t, ctx)
+
+    def bind_shape(self, times: torch.Tensor | None, coeffs: torch.Tensor | None) -> None:
+        """Bind the solved width modes for this step, or clear them with ``None``.
+
+        Per-STEP state on the module rather than a per-call argument, for the same
+        reason `model.eps` is: the solve happens once a step and applies to every
+        call within it -- data, collocation and boundary alike -- and threading it
+        through every signature would put a solver's output in the shape's
+        constructor arguments. Not a buffer: it is derived from the pressure at
+        this step, so a checkpoint that carried it would restore a stale bubble.
+        """
+        self.shape_times, self.shape_coeffs = times, coeffs
+
+    def _shape_factor(
+        self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext
+    ) -> torch.Tensor:
+        """The pressure's licence on the width profile, as a factor on it.
+
+        ``1 + shape_delta * tanh(sum_k a_k(t) m_k(u))``, where the ``a_k`` were
+        SOLVED from the Young-Laplace condition rather than learned. Applied here,
+        in ``_radius``, because that is the single place every consumer reads the
+        shape from -- ``forward`` builds phi with it, ``frame`` places the cap
+        centres with it, ``front`` samples the interface with it. Applying it
+        anywhere else would let the field and its front describe different bubbles.
+
+        Exactly ``1`` when the feature is off OR no coefficients are bound, which
+        is what makes an unsolved call the construction it always was: the solve
+        happens once per step in the trainer, and every call outside that window
+        has to keep working.
+        """
+        if not self.pressure_shape or self.shape_coeffs is None:
+            return torch.ones_like(u)
+        # A LOOKUP, not an interpolation: the coefficients were solved at specific
+        # instants, and a time between two of them has no solved shape.
+        # Collocation is binned onto exactly those instants
+        # (`training.collocation_time_bins`), so an exact match is the normal
+        # case; anything else takes the nearest rather than inventing a shape
+        # between two solutions.
+        nearest = (t.reshape(-1, 1) - self.shape_times.reshape(1, -1)).abs().argmin(dim=1)
+        coeffs = self.shape_coeffs[nearest]
+        amplitude = (shape_modes(u, coeffs.shape[-1]) * coeffs).sum(dim=-1, keepdim=True)
+        return 1.0 + self.shape_delta * torch.tanh(amplitude)
 
     def _cap_modulation(
         self,

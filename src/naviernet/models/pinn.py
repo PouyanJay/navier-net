@@ -115,6 +115,7 @@ class BubblePINN(nn.Module):
         names = list(fields if fields is not None else cfg.model.fields)
         self._validate_front_geometry(cfg, geometry)
         self._validate_sharp_interface(cfg, names)
+        self._validate_pressure_shape(cfg)
         self._validate_film_pressure(cfg)
         self._init_hard_pin(cfg, pin)
 
@@ -128,6 +129,8 @@ class BubblePINN(nn.Module):
                     evolving_width=self.evolving_width,
                     cap_freedom=self.cap_freedom,
                     cap_delta=self.cap_delta,
+                    pressure_shape=self.pressure_shape,
+                    shape_delta=self.shape_delta,
                 )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
@@ -155,6 +158,17 @@ class BubblePINN(nn.Module):
                 "model.sharp_interface reads the liquid pressure at the interface, so "
                 "it requires the 'p' field in model.fields (the Stage-B field set); "
                 f"this model has {names}."
+            )
+
+    def _validate_pressure_shape(self, cfg) -> None:
+        """The pressure cannot determine a shape it is not being compared against:
+        without the sharp-interface conditions there is no Young-Laplace jump on
+        the front, and so nothing to solve the width modes from."""
+        if self.pressure_shape and not self.sharp_interface:
+            raise ValueError(
+                "model.pressure_shape solves the width modes FROM the Young-Laplace "
+                "jump, which only exists under model.sharp_interface=true -- enable "
+                "it, or turn model.pressure_shape off."
             )
 
     def _validate_film_pressure(self, cfg) -> None:
@@ -239,10 +253,18 @@ class BubblePINN(nn.Module):
         self.evolving_width = bool(getattr(cfg.model, "evolving_width", False))
         self.cap_freedom = bool(getattr(cfg.model, "cap_freedom", False))
         self.cap_delta = float(getattr(cfg.model, "cap_delta", 0.2))
+        self.pressure_shape = bool(getattr(cfg.model, "pressure_shape", False))
+        self.shape_delta = float(getattr(cfg.model, "shape_delta", 0.3))
         if self.evolving_width and not self.front_geometry:
             raise ValueError(
                 "model.evolving_width reparameterises the front geometry's width "
                 "profile, so it requires model.front_geometry=true."
+            )
+        if self.pressure_shape and not self.front_geometry:
+            raise ValueError(
+                "model.pressure_shape solves the front geometry's own width modes "
+                "from the pressure, so it requires model.front_geometry=true; a free "
+                "level set has no modes to solve for."
             )
         if self.cap_freedom and not self.front_geometry:
             raise ValueError(
