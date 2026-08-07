@@ -797,12 +797,11 @@ class GeometricInterface(nn.Module):
         # sees a consistent frame at both ends.
         radius = base * self._cap_modulation(sign * cos, sin, query.u, query.t, ctx)
 
+        r_psi = r_psi2 = torch.zeros_like(radius)
         if self.cap_freedom:
             d_psi = _d_wrt(psi)
             r_psi = d_psi(radius)
             r_psi2 = d_psi(r_psi)
-        else:
-            r_psi = r_psi2 = torch.zeros_like(radius)
 
         position = torch.cat(
             [
@@ -811,6 +810,23 @@ class GeometricInterface(nn.Module):
             ],
             dim=1,
         )
+        if not self.cap_freedom:
+            # The circle's own closed forms, evaluated EXACTLY as they were before
+            # the polar branch existed. The general expressions below reduce to
+            # these algebraically but NOT in float32: `radius**2 / |radius|**3` and
+            # `1 / radius` differ in the last bits, and that difference was enough
+            # to move a fitted-jump diagnostic from 0.096 to 0.118 and turn a slow
+            # test red. "The flag-off path is unchanged" has to mean the old
+            # NUMBERS, not merely the old formula.
+            return (
+                position,
+                torch.cat([sign * cos, sin], dim=1),
+                torch.where(
+                    radius > ABS_SMOOTH,
+                    1.0 / radius.clamp(min=ABS_SMOOTH),
+                    torch.zeros_like(radius),
+                ),
+            )
         # A polar curve r(psi) about the cap centre. Both reduce to the circle's
         # closed forms when r' = r'' = 0 -- the normal to the radial direction and
         # kappa to 1/r -- which is why freeing the cap changes nothing until the

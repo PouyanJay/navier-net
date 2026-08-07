@@ -504,3 +504,23 @@ def test_a_freed_cap_reloads_as_the_same_shape(tmp_path):
 
     again, _, _ = load_model(cfg, paths)
     assert torch.equal(before, again.nets["phi"](x))
+
+
+def test_flag_off_leaves_the_front_samples_bit_identical_too():
+    """The byte-identical test above covers `forward`; this covers `front`.
+
+    They are different code paths, and only the second one regressed: the polar
+    branch's `radius**2 / |radius|**3` equals the circle's `1 / radius`
+    algebraically but not in float32, and those last bits moved a fitted-jump
+    diagnostic from 0.096 to 0.118 -- turning a `slow` test red on main, which
+    the fast suite never ran. `torch.equal`, not `allclose`: the claim is that
+    nothing changed, and "nearly" is what let it through the first time.
+    """
+    off, plain = _geo(11, cap_freedom=False), _geo(11)
+    a = off.front(torch.tensor([[0.3], [0.8]]), n_body=16, n_cap=17)
+    b = plain.front(torch.tensor([[0.3], [0.8]]), n_body=16, n_cap=17)
+
+    for name in ("points", "kappa_par", "normal", "normal_speed"):
+        assert torch.equal(getattr(a, name), getattr(b, name)), (
+            f"{name} changed with the flag OFF"
+        )
