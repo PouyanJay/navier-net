@@ -147,9 +147,10 @@ def test_solved_coefficients_change_the_width_within_their_bound():
     solved = geo._radius(u, t)
     ratio = (solved / base).squeeze(1)
 
-    assert float((ratio - 1.0).abs().max()) > 1e-2, "the pressure must be able to move it"
-    assert float((ratio - 1.0).abs().max()) <= delta + 1e-6, "and no further than its licence"
-    assert float(solved.min()) > 0.0, "a bounded licence cannot close the bubble"
+    departure = float((ratio - 1.0).abs().max().detach())
+    assert departure > 1e-2, "the pressure must be able to move it"
+    assert departure <= delta + 1e-6, "and no further than its licence"
+    assert float(solved.min().detach()) > 0.0, "a bounded licence cannot close the bubble"
 
 
 def test_each_time_takes_its_own_solved_shape():
@@ -307,3 +308,105 @@ def test_the_solve_survives_a_front_that_cannot_resolve_every_mode(tmp_path):
 
     assert torch.isfinite(coeffs).all()
     assert float(coeffs.abs().max()) < 1e3
+
+
+# --- the trainer, and the shape that survives it ------------------------------
+
+
+TRAIN = [*SHARP, "model.pressure_shape=true", "training.collocation_time_bins=4"]
+
+
+def test_a_run_trains_end_to_end_with_a_solved_shape(tmp_path):
+    """The walking skeleton for the loop: solve, bind, train, checkpoint, reload."""
+    from naviernet.training import load_model, train
+
+    cfg, paths = _staged_run(tmp_path, TRAIN)
+    train(cfg, paths)
+    model, _, _ = load_model(cfg, paths)
+
+    assert model.nets["phi"].pressure_shape is True
+
+
+def test_what_is_evaluated_is_what_was_trained(tmp_path):
+    """The failure this feature could have hidden behind.
+
+    Training uses the SOLVED shape. If `load_model` handed back the learned
+    envelope underneath it, every IoU, figure and diagnostic would describe a
+    bubble the run never trained -- and the numbers would look like an honest
+    result. So a reloaded model must come back with modes bound.
+    """
+    from naviernet.training import load_model, train
+
+    cfg, paths = _staged_run(tmp_path, TRAIN)
+    train(cfg, paths)
+    model, data, _ = load_model(cfg, paths)
+
+    geometry = model.nets["phi"]
+    assert geometry.shape_coeffs is not None, "the evaluated model has no solved shape"
+    assert geometry.shape_coeffs.shape[0] == len(data.t), "one solve per frame instant"
+    assert torch.isfinite(geometry.shape_coeffs).all()
+
+    # And it is a different bubble from the learned envelope, or the solve did
+    # nothing and the whole mechanism is inert.
+    u = torch.linspace(0, 1, 32).reshape(-1, 1)
+    t = torch.full_like(u, float(data.t[len(data.t) // 2]))
+    solved = geometry._radius(u, t)
+    geometry.bind_shape(None, None)
+    assert not torch.allclose(solved, geometry._radius(u, t), atol=1e-5)
+
+
+def test_the_solve_waits_for_the_stage_b_warm_up(tmp_path):
+    """During the warm-up `p` is untrained. A geometry solved from a random
+    pressure field would destroy the very interface the warm-up exists to
+    converge, so the solve is gated exactly like every other Stage-B term."""
+    from naviernet.physics import shape_solve
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(
+        tmp_path, [*TRAIN, "training.steps=4", "training.stage_b_warmup_steps=4"]
+    )
+    calls: list[int] = []
+    original = shape_solve.bind_solved_shape
+
+    def spy(model, times, groups, config):
+        calls.append(times.shape[0])
+        return original(model, times, groups, config)
+
+    shape_solve.bind_solved_shape = spy
+    import naviernet.training as training_module
+
+    training_module.bind_solved_shape = spy
+    try:
+        train(cfg, paths)
+    finally:
+        shape_solve.bind_solved_shape = original
+        training_module.bind_solved_shape = original
+
+    # Every step is inside the warm-up, so the only solve is `load_model`'s -- the
+    # training loop itself must not have solved once.
+    assert calls == [], f"the solve ran {len(calls)} times inside the warm-up"
+
+
+def test_the_solve_runs_once_past_the_warm_up(tmp_path):
+    """The other half: past the warm-up it does engage, once per step."""
+    import naviernet.training as training_module
+    from naviernet.physics import shape_solve
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(
+        tmp_path, [*TRAIN, "training.steps=4", "training.stage_b_warmup_steps=1"]
+    )
+    calls: list[int] = []
+    original = shape_solve.bind_solved_shape
+
+    def spy(model, times, groups, config):
+        calls.append(times.shape[0])
+        return original(model, times, groups, config)
+
+    training_module.bind_solved_shape = spy
+    try:
+        train(cfg, paths)
+    finally:
+        training_module.bind_solved_shape = original
+
+    assert len(calls) == 3, f"expected one solve for steps 2-4, got {len(calls)}"

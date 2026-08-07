@@ -140,3 +140,26 @@ def _normal_equations(
     eye = torch.eye(n_modes, device=device).expand(n_times, n_modes, n_modes)
     damped = normal + damping * scale.reshape(-1, 1, 1) * eye
     return torch.linalg.solve(damped, target.unsqueeze(2)).squeeze(2)
+
+
+def bind_solved_shape(model, times: torch.Tensor, groups: dict[str, float], cfg) -> None:
+    """Solve the width modes at ``times`` and leave them bound on the geometry.
+
+    The single entry point, used by the trainer once a step AND by `load_model`
+    once at load, because those two have to agree. If training used the solved
+    shape and everything downstream fell back to the learned one, every figure,
+    IoU and diagnostic would describe a bubble the model never trained -- the
+    quietest possible way for this feature to look like it worked.
+
+    A no-op unless the feature is on, so callers need no branch of their own.
+    """
+    if not bool(getattr(cfg.model, "pressure_shape", False)):
+        return
+    coeffs = solve_shape_modes(
+        model,
+        times,
+        groups,
+        n_body=int(cfg.model.front_body_samples),
+        n_cap=int(cfg.model.front_cap_samples),
+    )
+    model.nets["phi"].bind_shape(times, coeffs)
