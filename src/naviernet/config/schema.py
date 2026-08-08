@@ -233,6 +233,16 @@ class ModelConfig:
     # discrepancy is a near-constant 1.25-1.48 across every frame and across
     # independently trained runs. Requires `sharp_interface`; off by default.
     film_pressure: bool = False
+    # Liquid film: the thin layer the bubble leaves against the gap walls, as a
+    # 1-D field delta(x, t) evaluated on the explicit front. Deposition follows the
+    # Aussillous-Quere saturating law on the LOCAL normal speed -- deliberately
+    # NOT the boundary-layer sqrt(nu t), which returns nearly the same value for
+    # all four working fluids (their kinematic viscosities almost coincide) and
+    # would build in exactly the fluid-blindness the film exists to remove.
+    # Requires `sharp_interface` (the film is scored on the front the trainer
+    # only samples in sharp mode, and its later stages feed the jump condition).
+    # Off by default -> no film net, no film term, byte-identical.
+    liquid_film: bool = False
     # Front samples per time, per body profile and per end cap, for the interface
     # conditions. Module-level rather than swept: the front is a smooth 1-D curve,
     # so this only has to resolve it, not fit anything.
@@ -259,6 +269,7 @@ class LossWeights:
     darcy: float = 1.0  # R4: depth-averaged momentum (replaces `mom` in sharp mode)
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
+    film: float = 1.0  # liquid film: deposition (and later depletion) on the front
 
 
 @dataclass

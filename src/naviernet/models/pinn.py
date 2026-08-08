@@ -19,12 +19,21 @@ from collections.abc import Sequence
 import torch
 import torch.nn as nn
 
+from naviernet.models.film import LiquidFilm
 from naviernet.models.geometry import (
     GeometricInterface,
     GeometryContext,
     GeometryPriors,
 )
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures
+
+# A deliberate exception to the usual physics -> models dependency direction
+# (the only one): the film net's channel bound and data-anchored start are
+# DERIVED from the config's dimensionless groups, exactly as the trainer
+# derives them -- duplicating that arithmetic here would let the two drift.
+# Neither module imports back into naviernet.models, so no cycle is possible.
+from naviernet.physics.film import deposited_thickness
+from naviernet.physics.groups import compute_groups
 
 # Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
 # one smooth scalar curve in time, and capacity beyond this buys nothing but the
@@ -117,6 +126,7 @@ class BubblePINN(nn.Module):
         self._validate_sharp_interface(cfg, names)
         self._validate_pressure_shape(cfg)
         self._validate_film_pressure(cfg)
+        self._validate_liquid_film(cfg)
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -139,6 +149,10 @@ class BubblePINN(nn.Module):
         )
         self._init_inverse_unknowns(cfg, names)
         self._init_vapor_pressure()
+        # LAST, deliberately: the film net must not consume RNG before any of
+        # the shared fields, so a seeded run with the flag off starts from
+        # bit-identical weights (regression-tested).
+        self._init_liquid_film(cfg)
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -210,6 +224,48 @@ class BubblePINN(nn.Module):
             layers += [nn.Linear(d_in, d_out), nn.Tanh()]
         layers.append(nn.Linear(dims[-1], 1))
         self.vapor_pressure = nn.Sequential(*layers)
+
+    def _validate_liquid_film(self, cfg) -> None:
+        """The film is scored on the explicit front, which the trainer only
+        samples in sharp mode -- and its later stages feed the jump condition,
+        which only exists there."""
+        self.liquid_film = bool(getattr(cfg.model, "liquid_film", False))
+        if self.liquid_film and not self.sharp_interface:
+            raise ValueError(
+                "model.liquid_film rides on the explicit front the sharp-interface "
+                "conditions sample, so it requires model.sharp_interface=true -- "
+                "enable it, or turn model.liquid_film off."
+            )
+
+    def _init_liquid_film(self, cfg) -> None:
+        """``delta(u, t)``: the liquid film's thickness over the front's spine.
+
+        The channel bound and the data-anchored start both come from the
+        dimensionless groups, computed here from the config exactly as the
+        trainer computes them -- the film's geometry is the channel's, not a
+        per-run tunable.
+        """
+        if not self.liquid_film:
+            return
+        groups = compute_groups(cfg)
+        delta_ref = float(deposited_thickness(torch.ones(1, 1), groups))
+        self.film = LiquidFilm(0.5 * groups["H_star"], delta_ref, n_cond=self.n_cond)
+
+    def film_thickness(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
+        """The film thickness at each front sample's axial position, ``(N, 1)``.
+
+        The coordinates are DETACHED: the film field is a record attached to
+        the wall, and no term that reads it through this accessor may move the
+        front by gradient through the film net's inputs. (Terms that need the
+        film's own derivatives -- depletion's ``d delta/dt`` -- build their own
+        leaf tensors and call the net directly.)
+        """
+        if not self.liquid_film:
+            raise RuntimeError(
+                "film_thickness needs the liquid film: this model was built with "
+                "model.liquid_film=false, so there is no film net to evaluate."
+            )
+        return self.film(front.points[:, 0:1].detach(), front.points[:, 2:3].detach(), c)
 
     def film_offset(self, on_cap: torch.Tensor) -> torch.Tensor:
         """The film-to-bulk pressure offset at each front sample.

@@ -40,12 +40,7 @@ from typing import NamedTuple
 import torch
 import torch.nn as nn
 
-# Hidden layout of the three small geometry nets. Deliberately module constants,
-# not config: the nets parameterize low-frequency curves (a rate, a width
-# profile, a centerline), and capacity beyond this re-admits the wiggles the
-# representation exists to forbid.
-GEO_HIDDEN = 32
-GEO_DEPTH = 2
+from naviernet.models.layers import logit, mlp
 
 # Nodes of the fixed time grid the nose rate is integrated on. Dense enough that
 # the piecewise-linear nose resolves the training window; deterministic so
@@ -185,23 +180,6 @@ class GeometryPriors:
     t_max: float
 
 
-def _mlp(in_dim: int, out_bias: float = 0.0) -> nn.Sequential:
-    """A small tanh MLP whose LAST layer starts at zero weights and the given
-    bias: the net begins as the constant ``out_bias`` and learns deviations --
-    the data-anchored initialization the priors provide."""
-    layers: list[nn.Module] = []
-    dims = [in_dim] + [GEO_HIDDEN] * GEO_DEPTH
-    for d_in, d_out in zip(dims[:-1], dims[1:], strict=True):
-        layers += [nn.Linear(d_in, d_out), nn.Tanh()]
-    last = nn.Linear(dims[-1], 1)
-    # Small (not zero: exact zeros would block gradient into the hidden layers)
-    # so the net starts within a hair of the constant and can still learn.
-    nn.init.normal_(last.weight, std=0.01)
-    nn.init.constant_(last.bias, out_bias)
-    layers.append(last)
-    return nn.Sequential(*layers)
-
-
 def _half_height(priors: GeometryPriors) -> float:
     """Half the channel height for this dataset -- the bound the width envelope
     saturates at."""
@@ -242,11 +220,6 @@ def _d_wrt(leaf: torch.Tensor) -> Callable[[torch.Tensor], torch.Tensor]:
 def _inverse_softplus(value: float) -> float:
     value = max(value, 1e-6)
     return float(torch.log(torch.expm1(torch.tensor(value))))
-
-
-def _logit(p: float) -> float:
-    p = min(max(p, 1e-6), 1.0 - 1e-6)
-    return float(torch.logit(torch.tensor(p)))
 
 
 class GeometricInterface(nn.Module):
@@ -332,7 +305,7 @@ class GeometricInterface(nn.Module):
         # Under `allow_pinch` the rate is used raw, so the measured front speed IS
         # the bias; with the softplus it has to be pre-inverted. Getting this wrong
         # starts the nose retreating instead of advancing at the measured rate.
-        self.rate_net = _mlp(
+        self.rate_net = mlp(
             1 + self.n_cond,
             out_bias=priors.rate0 if allow_pinch else _inverse_softplus(priors.rate0),
         )
@@ -345,21 +318,21 @@ class GeometricInterface(nn.Module):
         # a joint run's other conditions start here and the conditioning vector
         # -- which carries the regime -- has to move them.
         fraction = min(priors.w0 / self._y_half, 1.0)
-        start = _logit(0.5 * (1.0 + fraction) if allow_pinch else fraction)
+        start = logit(0.5 * (1.0 + fraction) if allow_pinch else fraction)
         if self.evolving_width:
             # Two nets of u alone: where the profile STARTS, and which way it
             # travels. Time enters only through the scalar elongation below, so
             # the profile cannot decay back to its bias off-data -- it can only
             # keep going the way it was going. The rate starts at zero, so the
             # construction still opens as the measured first-frame capsule.
-            self.width_base = _mlp(1 + self.n_cond, out_bias=start)
-            self.width_rate = _mlp(1 + self.n_cond, out_bias=0.0)
+            self.width_base = mlp(1 + self.n_cond, out_bias=start)
+            self.width_rate = mlp(1 + self.n_cond, out_bias=0.0)
         else:
-            self.width_net = _mlp(
+            self.width_net = mlp(
                 2 + self.n_cond,
                 out_bias=start,
             )
-        self.center_net = _mlp(2 + self.n_cond, out_bias=0.0)
+        self.center_net = mlp(2 + self.n_cond, out_bias=0.0)
         # The cap's departure from its circle, over (cos psi, sin psi, u, t): the
         # angle enters through its sine and cosine rather than through psi itself,
         # so there is no atan2 branch in the field and no wrap to reason about.
@@ -367,7 +340,7 @@ class GeometricInterface(nn.Module):
         # caps different shapes. Bias 0 -> tanh(0) = 0 -> the construction OPENS as
         # the circle it replaces and learns its way off it.
         if self.cap_freedom:
-            self.cap_net = _mlp(4 + self.n_cond, out_bias=0.0)
+            self.cap_net = mlp(4 + self.n_cond, out_bias=0.0)
         # s(t_min) = x_root + softplus(_s0_raw): initialized so the nose starts
         # at the measured first-training-frame front.
         self._s0_raw = nn.Parameter(torch.log(torch.expm1(torch.tensor(self._ref_gap))))
@@ -493,7 +466,7 @@ class GeometricInterface(nn.Module):
         hard the physics pushes for it.
         """
         ctx = ctx or GeometryContext()
-        raw = torch.sigmoid(self._width_logit(u, t, ctx))
+        raw = torch.sigmoid(self._widthlogit(u, t, ctx))
         half = _half_height(self._anchors(ctx))
         radius = half * (2.0 * raw - 1.0 if self.allow_pinch else raw)
         return radius * self._shape_factor(u, t, ctx)
@@ -601,7 +574,7 @@ class GeometricInterface(nn.Module):
         features = _with_context(torch.cat([nx, ny, u, t], dim=1), ctx.c)
         return 1.0 + self.cap_delta * gate * torch.tanh(self.cap_net(features))
 
-    def _width_logit(
+    def _widthlogit(
         self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext
     ) -> torch.Tensor:
         """The pre-sigmoid width profile.

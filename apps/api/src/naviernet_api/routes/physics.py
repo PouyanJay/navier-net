@@ -24,7 +24,8 @@ def _physics_state(settings: Settings, dataset: str) -> PhysicsState:
     cfg = compose_cfg(dataset, overrides=overrides)
     fields = list(cfg.model.fields)
     sharp = bool(getattr(cfg.model, "sharp_interface", False))
-    active = {e.id for e in enabled_equations(fields, sharp_interface=sharp)}
+    film = bool(getattr(cfg.model, "liquid_film", False))
+    active = {e.id for e in enabled_equations(fields, sharp_interface=sharp, liquid_film=film)}
     weights = cfg.training.weights
     equations = [
         EquationState(

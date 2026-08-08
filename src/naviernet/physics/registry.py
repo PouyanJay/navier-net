@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 import torch
 
 from naviernet.models.geometry import FrontSamples
+from naviernet.physics.film import advancing_mask, deposition_residual
 from naviernet.physics.residuals import (
     EnergyResiduals,
     MomentumResiduals,
@@ -205,6 +206,16 @@ def _laplace_term(ctx: LossContext) -> torch.Tensor:
     return (laplace_jump_residual(ctx.model, ctx.front, ctx.groups) ** 2).mean()
 
 
+def _film_term(ctx: LossContext) -> torch.Tensor:
+    # Mean over the ADVANCING samples only -- the ones deposition constrains.
+    # Averaging over the receding rest (zeroed in the residual) would scale the
+    # term by an arbitrary advancing-to-receding ratio that changes as the
+    # bubble evolves.
+    residual = deposition_residual(ctx.model, ctx.front, ctx.groups, ctx.c)
+    anchored = advancing_mask(ctx.front).sum().clamp(min=1.0)
+    return (residual**2).sum() / anchored
+
+
 def _energy_sq(ctx: LossContext) -> torch.Tensor:
     return ctx.energy_res.energy**2
 
@@ -239,6 +250,10 @@ class Equation:
     # imposed on the explicit front. Selecting here keeps the trainer, the API and
     # the UI reading one table instead of each branching on the flag.
     mode: str = "any"
+    # The model flag that opts this equation in, or ``None`` for the mode/field
+    # gating alone. The film term exists only when the film field does; encoding
+    # that here keeps `enabled_equations` the single place activation is decided.
+    flag: str | None = None
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
     # Per-point squared residual (shape ``(n_coll, 1)``, non-negative) for the
     # collocation terms; ``term`` is its mean. ``None`` for boundary terms (bc), which
@@ -360,6 +375,29 @@ REGISTRY: tuple[Equation, ...] = (
         term=_laplace_term,
     ),
     Equation(
+        id="film",
+        stage="B",
+        name="Film deposition",
+        tex=r"\delta(x, t) = \frac{H^*}{2}\,"
+        r"\frac{P\,(3\,\mathrm{Ca}\,v_n)^{2/3}}{1 + P\,Q\,(3\,\mathrm{Ca}\,v_n)^{2/3}}"
+        r" \quad \text{where } v_n > 0",
+        weight_key="film",
+        fields_required=("phi",),
+        # Ca and H_star set the deposited thickness through the local capillary
+        # number, exactly as they set the Bretherton pressure correction.
+        groups=("Ca", "H_star"),
+        mode="sharp",
+        flag="liquid_film",
+        # A condition ON the front, like `kinematic` -- not an interior residual,
+        # so it stays out of the causal/RBA collocation reweighting.
+        on_collocation=False,
+        # NOT rebalanced: the film net's parameters are disjoint from every other
+        # field's, so this term is the ONLY gradient they receive -- parity with
+        # the data term's gradient norm is meaningless for it.
+        rebalanced=False,
+        term=_film_term,
+    ),
+    Equation(
         id="energy",
         stage="B",
         name="Energy + evaporation",
@@ -387,20 +425,27 @@ REGISTRY: tuple[Equation, ...] = (
 )
 
 
-def enabled_equations(fields: Sequence[str], sharp_interface: bool = False) -> list[Equation]:
+def enabled_equations(
+    fields: Sequence[str], sharp_interface: bool = False, liquid_film: bool = False
+) -> list[Equation]:
     """The equations active for a model with the given fields, in registry order.
 
     ``sharp_interface`` selects the interface treatment (``model.sharp_interface``):
     it admits the equations imposed on the explicit front and excludes the ones
-    that only make sense over a smeared alpha. Defaulting to ``False`` keeps every
-    existing call site on the diffuse set, byte-for-byte.
+    that only make sense over a smeared alpha. ``liquid_film`` opts in the film
+    term (``model.liquid_film``), which exists only when the film field does.
+    Both default off, so every existing call site composes byte-for-byte.
     """
     present = set(fields)
     allowed = {"any", "sharp" if sharp_interface else "diffuse"}
+    on = {None} | ({"liquid_film"} if liquid_film else set())
     return [
         e
         for e in REGISTRY
-        if e.implemented and e.mode in allowed and set(e.fields_required) <= present
+        if e.implemented
+        and e.mode in allowed
+        and e.flag in on
+        and set(e.fields_required) <= present
     ]
 
 

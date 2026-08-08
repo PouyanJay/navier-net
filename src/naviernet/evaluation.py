@@ -177,7 +177,9 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
 
     block = diagnostics.physics_report(model, data)
     equations = registry.enabled_equations(
-        cfg.model.fields, bool(getattr(cfg.model, "sharp_interface", False))
+        cfg.model.fields,
+        bool(getattr(cfg.model, "sharp_interface", False)),
+        bool(getattr(cfg.model, "liquid_film", False)),
     )
     ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
     state = ckpt.get("state", {})

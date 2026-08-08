@@ -115,6 +115,11 @@ def _sharp(cfg) -> bool:
     return bool(getattr(cfg.model, "sharp_interface", False))
 
 
+def _film(cfg) -> bool:
+    """Whether this run carries the liquid film delta(u, t) on the front."""
+    return bool(getattr(cfg.model, "liquid_film", False))
+
+
 def _front_times(cfg, data: BubbleDataset, device) -> torch.Tensor | None:
     """The times the interface conditions are sampled at, or ``None`` when the run
     is not sharp-interface.
@@ -149,6 +154,7 @@ def _architecture_record(cfg) -> dict:
         "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
         "evolving_width": bool(getattr(cfg.model, "evolving_width", False)),
         "film_pressure": bool(getattr(cfg.model, "film_pressure", False)),
+        "liquid_film": bool(getattr(cfg.model, "liquid_film", False)),
         "depletable_superheat": bool(getattr(cfg.model, "depletable_superheat", False)),
     }
 
@@ -201,6 +207,13 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         "film_pressure",
         path,
         "The film offset adds a parameter and changes the jump condition.",
+    )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "liquid_film",
+        path,
+        "The liquid film adds the delta(u, t) net and its loss term.",
     )
     _require_matching_flag(
         cfg,
@@ -979,7 +992,7 @@ def train(
     fv_plan = _front_velocity_plan(cfg, data, device)
     front_times = _front_times(cfg, data, device)
 
-    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg))
+    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg), _film(cfg))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -1380,7 +1393,7 @@ def _train_joint(
     model = BubblePINN(cfg, n_cond=N_COND, geometry=contexts[0].geometry).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
-    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg))
+    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg), _film(cfg))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
