@@ -27,6 +27,7 @@ from naviernet.physics.residuals import (
     pressure_implied_curvature,
     total_curvature,
 )
+from naviernet.physics.root import root_report
 
 # Stations along the bubble the half-width profiles are compared on. Odd, so a
 # station lands exactly mid-bubble where the measured neck sits.
@@ -517,4 +518,8 @@ def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
     }
     if getattr(model, "liquid_film", False):
         report["film"] = film_report(model, data, groups)
+    # The root window is measured for EVERY front-geometry run -- the profile
+    # stations above exclude the caps, and a baseline that cannot see the root
+    # cannot be compared against a run that reshapes it.
+    report["root"] = root_report(model, data)
     return report
