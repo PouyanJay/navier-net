@@ -865,6 +865,28 @@ def test_the_root_block_reports_the_trained_dof(tmp_path):
     assert frame["patch_extent"] > 0
 
 
+# --- T7's code gate: every offered fluid composes, validates and trains -------
+#
+# The bench runs on Series-1/FC-72 (the only data), but future series may use
+# any of the five fluids, so the CODE must be correct for all of them from day
+# one -- and a run on extrapolated wetting constants must say so in its output.
+
+
+@pytest.mark.parametrize(("fluid_id", "source", "has_law"), WETTING_EXPECTATIONS)
+def test_the_five_fluid_code_gate(tmp_path, fluid_id, source, has_law):
+    from naviernet.physics.diagnostics import physics_report
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(tmp_path, [*TINY_SHARP_ROOT, f"fluid={fluid_id}"])
+    model, data, _ = train(cfg, paths)  # 2 steps: the whole ladder engages
+    root = physics_report(model, data, compute_groups(cfg))["root"]
+    assert root["wetting_source"] == source
+    assert np.isfinite(root["theta_app_deg"])
+    assert np.isfinite(root["per_frame"][0]["w"])
+
+
 # --- T8: variant coverage -----------------------------------------------------
 
 
