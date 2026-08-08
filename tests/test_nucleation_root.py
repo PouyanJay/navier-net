@@ -521,6 +521,164 @@ def test_a_training_step_leaves_the_bluntness_net_finite(tmp_path):
     assert torch.isfinite(w).all()
 
 
+# --- T4 (R1): the supervision channel -----------------------------------------
+#
+# The DOF ships WITH its channel, in one task: cap_freedom was benched undriven
+# twice, and the diagnosis was that pixel losses scale with mismatch AREA and
+# starve a cap-sized knob. These terms scale with DISTANCE (the mask's signed
+# distance transform at the predicted root contour) and with a per-frame SCALAR
+# (the measured bluntness ratio) -- and the mechanism test here is the R1
+# question in miniature: does a blunt-rooted dataset actually move w(t)?
+
+
+def _blunt_capsule_writer(cut_fraction: float):
+    """A capsule whose root cap is CUT FLAT at ``cut_fraction`` of the cap
+    depth: the analytic blunt-root fixture. SDF of the intersection of two
+    convex sets, exact away from the corner ring."""
+
+    def write(path, n_frames: int = 6) -> None:
+        import json
+
+        from tests.conftest import (
+            CAPSULE_DT,
+            CAPSULE_GROWTH_PER_FRAME,
+            CAPSULE_H_PX,
+            CAPSULE_RADIUS,
+            CAPSULE_S0,
+            CAPSULE_T_REF_MS,
+            CAPSULE_W_PX,
+            CAPSULE_X_MAX,
+            CAPSULE_X_ROOT,
+            CAPSULE_Y_MAX,
+            capsule_sdf,
+        )
+
+        xs = np.linspace(0.0, CAPSULE_X_MAX, CAPSULE_W_PX, dtype=np.float32)
+        ys = np.linspace(0.0, CAPSULE_Y_MAX, CAPSULE_H_PX, dtype=np.float32)
+        cut = CAPSULE_X_ROOT - (1.0 - cut_fraction) * CAPSULE_RADIUS
+        gx, _ = np.meshgrid(xs, ys)
+        sdf = np.stack(
+            [
+                np.maximum(
+                    capsule_sdf(xs, ys, CAPSULE_S0 + k * CAPSULE_GROWTH_PER_FRAME),
+                    cut - gx,
+                )
+                for k in range(n_frames)
+            ]
+        )
+        alpha = (sdf < 0).astype(np.float32)
+        meta = {
+            "x_pin_star": cut,
+            "t_ref_ms": CAPSULE_T_REF_MS,
+            "n_frames_usable": n_frames,
+            "n_frames_event": n_frames,
+            "frame_numbers": list(range(1, n_frames + 1)),
+        }
+        np.savez_compressed(
+            path,
+            alpha=alpha,
+            sdf=sdf.astype(np.float32),
+            valid=np.ones_like(alpha, dtype=np.uint8),
+            masks_camera=(alpha > 0.5).astype(np.uint8),
+            x_star=xs,
+            y_star=ys,
+            t_star=(np.arange(n_frames) * CAPSULE_DT).astype(np.float32),
+            meta=json.dumps(meta),
+        )
+
+    return write
+
+
+ROOT_TRAIN = [
+    "model.front_geometry=true",
+    "model.nucleation_root=true",
+    "training.root_supervision=true",
+    "training.steps=120",
+    "training.lr=0.01",
+]
+
+
+def test_root_supervision_requires_the_nucleation_root(tmp_path):
+    from naviernet.models.pinn import BubblePINN
+    from tests.conftest import staged_run
+
+    cfg, _ = staged_run(
+        tmp_path, ["model.front_geometry=true", "training.root_supervision=true"]
+    )
+    from naviernet.training import _validate_training_config
+
+    with pytest.raises(ValueError, match="nucleation_root"):
+        _validate_training_config(cfg)
+    del BubblePINN  # imported for parity with sibling tests; the check is config-level
+
+
+def test_the_root_plan_excludes_held_out_frames(tmp_path):
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.physics import root_supervision
+    from naviernet.utils.paths import RunPaths
+    from tests.conftest import staged_capsule_run
+
+    cfg, _ = staged_capsule_run(
+        tmp_path, ["training.val_fraction=0.2", "training.val_strategy=tail"]
+    )
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    plan = root_supervision.build_plan(data, cfg, "cpu")
+    assert set(plan.rows).isdisjoint(data.validation_rows)
+    assert bool(np.isfinite(plan.bluntness.numpy()).all())
+    assert bool((plan.depth > 0).all())
+
+
+def test_the_supervision_drives_w_toward_a_blunt_root(tmp_path):
+    """The R1 mechanism question in miniature: a dataset whose root is cut flat
+    must pull w(t) POSITIVE (blunter), while the circular capsule leaves it
+    near zero. This is the undriven-knob trap's regression test."""
+    import torch
+
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_run
+
+    def trained_w(root, overrides):
+        cfg, paths = staged_run(root, overrides, write=_blunt_capsule_writer(1.0))
+        train(cfg, paths)
+        model, _, _ = load_model(cfg, paths)
+        with torch.no_grad():
+            w = model.nets["phi"].root_bluntness(torch.tensor([[0.25]]))
+        return float(w)
+
+    w = trained_w(tmp_path / "blunt", ROOT_TRAIN)
+    assert w > 0.05, f"the supervision left w(t) undriven: {w}"
+
+
+def test_a_circular_root_leaves_w_near_zero(tmp_path):
+    """The control: on data whose root IS a circle the same supervision must
+    not invent bluntness."""
+    import torch
+
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(tmp_path, ROOT_TRAIN)
+    train(cfg, paths)
+    model, _, _ = load_model(cfg, paths)
+    with torch.no_grad():
+        w = model.nets["phi"].root_bluntness(torch.tensor([[0.25]]))
+    assert abs(float(w)) < 0.08, f"supervision invented bluntness on a circle: {float(w)}"
+
+
+def test_joint_runs_reject_the_nucleation_root_for_now(tmp_path):
+    """The supervision plan is single-dataset; a joint w(t) with no channel
+    would be exactly the undriven knob. Explicit rejection until it is
+    threaded through the joint contexts."""
+    from naviernet.training import train
+    from tests.conftest import staged_joint_run
+
+    cfg, paths = staged_joint_run(
+        tmp_path, ["model.front_geometry=true", "model.nucleation_root=true"]
+    )
+    with pytest.raises(NotImplementedError, match="nucleation_root"):
+        train(cfg, paths)
+
+
 # --- Series-1: the measurement this journey is built on -----------------------
 
 

@@ -767,16 +767,49 @@ class GeometricInterface(nn.Module):
         """
         x_c = x[:, 0:1] - f.ax
         r_abs = radius.abs().clamp(min=ABS_SMOOTH)
-        w = self.root_bluntness(t, ctx)
-        xi = (x_c / r_abs).clamp(min=-1.0, max=0.0)
-        # The SQUARED width, floored inside the one sqrt. An intermediate
-        # `sqrt(width_sq)` reaches exactly zero at the apex column, where its
-        # gradient is infinite and `0 * inf` fed NaN into the bluntness net on
-        # the first training step -- the matched-floor lesson, relearned.
-        width_sq = r_abs**2 * (1.0 - xi**2) * (1.0 + w**2) / (1.0 + 2.0 * w * xi + w**2)
+        width_sq = self._root_width_sq(x_c, r_abs, t, ctx)
         excess = (-x_c - r_abs).clamp(min=0.0)
         inflated = torch.copysign(torch.sqrt(width_sq + ABS_SMOOTH**2), radius)
         return inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
+
+    def _root_width_sq(
+        self,
+        x_c: torch.Tensor,
+        r_abs: torch.Tensor,
+        t: torch.Tensor,
+        ctx: GeometryContext | None,
+    ) -> torch.Tensor:
+        """The Hugelschaffer root cap's SQUARED half-width at signed offset
+        ``x_c`` from the cap centre (clamped onto the cap's own span).
+
+        Squared, deliberately: consumers put the floor inside their one sqrt.
+        An intermediate ``sqrt(width_sq)`` reaches exactly zero at the apex
+        column, where its gradient is infinite and ``0 * inf`` fed NaN into
+        the bluntness net on the first training step -- the matched-floor
+        lesson, relearned.
+        """
+        w = self.root_bluntness(t, ctx)
+        xi = (x_c / r_abs).clamp(min=-1.0, max=0.0)
+        return r_abs**2 * (1.0 - xi**2) * (1.0 + w**2) / (1.0 + 2.0 * w * xi + w**2)
+
+    def root_half_width(
+        self, x: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
+    ) -> torch.Tensor:
+        """The bubble's half-width at ABSOLUTE axial position ``x`` near the
+        root: the Hugelschaffer cap inside the cap's span, the body profile
+        beyond it -- exactly the width the rendered mask carries at that
+        column, which is what the measured bluntness targets are ratios of.
+
+        Differentiable in the bluntness (and the rest of the construction);
+        works with the feature off too (w = 0 reads the circular cap).
+        """
+        ctx = ctx or GeometryContext()
+        f = self.frame(t, ctx)
+        x_c = x - f.ax
+        r_abs = f.r_root.abs().clamp(min=ABS_SMOOTH)
+        cap = torch.sqrt(self._root_width_sq(x_c, r_abs, t, ctx) + ABS_SMOOTH**2)
+        u = (x_c / (f.bx - f.ax)).clamp(0.0, 1.0)
+        return torch.where(x_c < 0, cap, self.half_width(u, t, ctx))
 
     def front(
         self, t: torch.Tensor, n_body: int, n_cap: int, ctx: GeometryContext | None = None

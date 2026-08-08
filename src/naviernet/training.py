@@ -30,7 +30,7 @@ from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.geometry import GeometryPriors
 from naviernet.models.pinn import BoundPINN, BubblePINN
-from naviernet.physics import front_velocity, kinematics, registry, weighting
+from naviernet.physics import front_velocity, kinematics, registry, root_supervision, weighting
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
 from naviernet.physics.shape_solve import bind_solved_shape
 from naviernet.utils.logging import get_logger
@@ -304,7 +304,36 @@ def _validate_training_config(cfg) -> None:
     _validate_weighting(tcfg)
     _validate_kinematics(tcfg, cfg.model.fields)
     _validate_front_velocity(tcfg, cfg.model)
+    _validate_root_supervision(tcfg, cfg.model)
     _validate_sharpening(tcfg, cfg.model.alpha_eps)
+
+
+def _validate_root_supervision(tcfg, model_cfg) -> None:
+    """Reject a root-supervision config that cannot drive anything, loudly and
+    before any measurement is taken."""
+    if not getattr(tcfg, "root_supervision", False):
+        return
+    if not bool(getattr(model_cfg, "nucleation_root", False)):
+        raise ValueError(
+            "training.root_supervision drives the Hugelschaffer bluntness w(t), "
+            "which only exists under model.nucleation_root=true. Enable it, or "
+            "turn training.root_supervision off."
+        )
+    for key in ("root_sdf_weight", "root_bluntness_weight"):
+        if getattr(tcfg, key) < 0:
+            raise ValueError(f"training.{key}={getattr(tcfg, key)} must be >= 0")
+    if tcfg.root_sdf_weight == 0 and tcfg.root_bluntness_weight == 0:
+        raise ValueError(
+            "training.root_supervision=true with both training.root_sdf_weight and "
+            "training.root_bluntness_weight at 0 supervises nothing -- an undriven "
+            "knob wearing a supervision flag. Give one of them a weight, or turn "
+            "training.root_supervision off."
+        )
+    if tcfg.root_cap_samples < 2:
+        raise ValueError(
+            f"training.root_cap_samples={tcfg.root_cap_samples} must be >= 2 "
+            f"(a cap is an arc, not a point)."
+        )
 
 
 def _validate_front_velocity(tcfg, model_cfg) -> None:
@@ -474,6 +503,23 @@ def _front_velocity_plan(
             "across an excluded frame)",
             [data.frame_numbers[row] for row in skipped],
         )
+    return plan
+
+
+def _root_plan(cfg, data: BubbleDataset, device) -> root_supervision.RootPlan | None:
+    """The run's measured root targets when the supervision is on, else ``None``.
+    Measured once (deterministic, no RNG), the front-velocity pattern."""
+    if not getattr(cfg.training, "root_supervision", False):
+        return None
+    plan = root_supervision.build_plan(data, cfg, device)
+    log.info(
+        "root supervision on: %d frames %s, bluntness targets %.3f -> %.3f, %d cap samples",
+        len(plan.rows),
+        [data.frame_numbers[r] for r in plan.rows],
+        float(plan.bluntness[0]),
+        float(plan.bluntness[-1]),
+        int(cfg.training.root_cap_samples),
+    )
     return plan
 
 
@@ -1016,6 +1062,7 @@ def train(
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
     fv_plan = _front_velocity_plan(cfg, data, device)
+    root_plan = _root_plan(cfg, data, device)
     front_times = _front_times(cfg, data, device)
 
     equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg), _film(cfg))
@@ -1167,6 +1214,13 @@ def train(
                 front_velocity.FrontVelocityContext(model, tcfg), fv_plan
             )
             total = total + fv_total
+        root_record: dict[str, float] = {}
+        if root_plan is not None:
+            # Outside the causal gate, RBA and the rebalancer, same reason.
+            root_total, root_record = root_supervision.root_losses(
+                root_supervision.RootContext(model, tcfg), root_plan
+            )
+            total = total + root_total
         total.backward()
         opt.step()
 
@@ -1174,6 +1228,7 @@ def train(
             record = {name: float(loss.detach()) for name, loss in losses.items()}
             record.update(kin_record)
             record.update(fv_record)
+            record.update(root_record)
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
@@ -1396,6 +1451,16 @@ def _train_joint(
         raise NotImplementedError(
             "training.weighting='rba' is not yet supported for joint (multi-dataset) "
             "runs; use weighting='gradnorm' for joint runs for now."
+        )
+    if bool(getattr(cfg.model, "nucleation_root", False)):
+        # The root supervision plan is per dataset (like the front-velocity one)
+        # and is not yet threaded through the joint contexts; an unsupervised
+        # joint w(t) would be exactly the undriven knob this feature exists to
+        # avoid. Raise rather than silently train it blind.
+        raise NotImplementedError(
+            "model.nucleation_root is not yet supported for joint (multi-dataset) "
+            "runs: its supervision channel is single-dataset. Run it on one "
+            "dataset, or turn it off for the joint run."
         )
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)

@@ -487,6 +487,28 @@ class TrainingConfig:
     # interface is not shifted.
     fv_smooth_px: float = 1.5
 
+    # Root-window supervision (nucleation-root R1): drive the Hugelschaffer
+    # bluntness w(t) with the measured mask's signed-distance transform sampled
+    # AT the predicted root-cap contour, plus the per-frame scalar bluntness
+    # target. Distance- and ratio-based, never pixel-only: the root's mismatch
+    # band is thinner than the interface blur and cap pixels are a sliver of
+    # the batch, which is how cap_freedom starved twice (the undriven-knob
+    # trap). Requires `model.nucleation_root` (nothing else reads the signal).
+    # Off by default -> the objective is unchanged.
+    root_supervision: bool = False
+    # Like fv_weight, these sit outside the rebalancer, so nothing corrects a
+    # weight too small to act -- a flag whose default makes it inert is a
+    # switch that does nothing (the front-velocity lesson). 10 matches the
+    # fv precedent for a front functional; the bluntness term's differences
+    # are O(0.1) so its square needs the larger factor to register. The R0/R1
+    # probe's mechanism gate (w(t) budget use) is what validates these.
+    root_sdf_weight: float = 10.0
+    root_bluntness_weight: float = 25.0
+    # The root sampling budget: cap samples per frame for the supervision's own
+    # front call -- denser than the physics' front_cap_samples, because these
+    # samples are the only place the root signal enters.
+    root_cap_samples: int = 48
+
     seed: int = 0
     device: str = "cpu"
     log_every: int = 200
