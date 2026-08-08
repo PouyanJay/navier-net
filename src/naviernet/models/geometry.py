@@ -40,7 +40,7 @@ from typing import NamedTuple
 import torch
 import torch.nn as nn
 
-from naviernet.models.layers import logit, mlp
+from naviernet.models.layers import inverse_softplus, logit, mlp
 
 # Nodes of the fixed time grid the nose rate is integrated on. Dense enough that
 # the piecewise-linear nose resolves the training window; deterministic so
@@ -146,6 +146,21 @@ class GeometryContext(NamedTuple):
     priors: GeometryPriors | None = None
 
 
+class RootCapQuery(NamedTuple):
+    """Where the root cap is being asked about: the signed axial offset from
+    the cap centre, the (signed, under ``allow_pinch``) cap radius, and the
+    time. One bundle, because the three always travel together and every
+    Hugelschaffer helper reads the same derived ``r_abs``."""
+
+    x_c: torch.Tensor  # x - ax, negative inside the cap region
+    radius: torch.Tensor  # the cap radius, sign carried through to phi
+    t: torch.Tensor
+
+    @property
+    def r_abs(self) -> torch.Tensor:
+        return self.radius.abs().clamp(min=ABS_SMOOTH)
+
+
 class FrontQuery(NamedTuple):
     """The per-sample parameters that locate one point on the contour.
 
@@ -215,11 +230,6 @@ def _d_wrt(leaf: torch.Tensor) -> Callable[[torch.Tensor], torch.Tensor]:
         return torch.autograd.grad(field, leaf, torch.ones_like(field), create_graph=True)[0]
 
     return derivative
-
-
-def _inverse_softplus(value: float) -> float:
-    value = max(value, 1e-6)
-    return float(torch.log(torch.expm1(torch.tensor(value))))
 
 
 class GeometricInterface(nn.Module):
@@ -328,7 +338,7 @@ class GeometricInterface(nn.Module):
         # starts the nose retreating instead of advancing at the measured rate.
         self.rate_net = mlp(
             1 + self.n_cond,
-            out_bias=priors.rate0 if allow_pinch else _inverse_softplus(priors.rate0),
+            out_bias=priors.rate0 if allow_pinch else inverse_softplus(priors.rate0),
         )
         # The signed radius spans (-y_half, y_half), so the same measured w0 sits
         # at a different point of the sigmoid; without this the construction would
@@ -740,47 +750,35 @@ class GeometricInterface(nn.Module):
         phi = inflated - torch.sqrt(d_sq + ABS_SMOOTH**2)
         if not self.nucleation_root:
             return phi
-        return torch.where(x[:, 0:1] < f.ax, self._root_cap_phi(x, f, radius, dy, t, ctx), phi)
+        query = RootCapQuery(x_c=x[:, 0:1] - f.ax, radius=radius, t=t)
+        return torch.where(query.x_c < 0, self._root_cap_phi(query, dy, ctx), phi)
 
     def _root_cap_phi(
-        self,
-        x: torch.Tensor,
-        f: CapsuleFrame,
-        radius: torch.Tensor,
-        dy: torch.Tensor,
-        t: torch.Tensor,
-        ctx: GeometryContext,
+        self, query: RootCapQuery, dy: torch.Tensor, ctx: GeometryContext
     ) -> torch.Tensor:
         """The field inside the root-cap region under ``nucleation_root``: the
         radial comparison becomes the Hugelschaffer half-width one.
 
-        In the cap region the spine parameter is clamped to 0, so ``radius`` is
-        the root cap radius and ``dy`` the offset from the centerline. The
-        comparison ``sqrt(W^2 + e^2) - sqrt(dy^2 + excess^2 + e^2)`` keeps the
-        matched-floor exactness: phi = 0 exactly where |dy| = W, INCLUDING the
-        apex (W = 0, dy = 0, excess = 0), so the pin survives for every w.
-        ``excess`` is the overshoot past the apex, where the half-width family
-        is not defined and distance must keep growing -- without it the whole
-        centerline upstream of the apex would read phi = 0. At the region's
-        boundary (x = ax) this expression equals the circular one exactly
-        (W = r there and the circle's dx = 0), so the `where` seam is exact.
+        In the cap region the spine parameter is clamped to 0, so the query's
+        radius is the root cap radius and ``dy`` the offset from the
+        centerline. The comparison ``sqrt(W^2 + e^2) - sqrt(dy^2 + excess^2 +
+        e^2)`` keeps the matched-floor exactness: phi = 0 exactly where
+        |dy| = W, INCLUDING the apex (W = 0, dy = 0, excess = 0), so the pin
+        survives for every w. ``excess`` is the overshoot past the apex, where
+        the half-width family is not defined and distance must keep growing --
+        without it the whole centerline upstream of the apex would read
+        phi = 0. At the region's boundary (x = ax) this expression equals the
+        circular one exactly (W = r there and the circle's dx = 0), so the
+        `where` seam is exact.
         """
-        x_c = x[:, 0:1] - f.ax
-        r_abs = radius.abs().clamp(min=ABS_SMOOTH)
-        width_sq = self._root_width_sq(x_c, r_abs, t, ctx)
-        excess = (-x_c - r_abs).clamp(min=0.0)
-        inflated = torch.copysign(torch.sqrt(width_sq + ABS_SMOOTH**2), radius)
+        width_sq = self._root_width_sq(query, ctx)
+        excess = (-query.x_c - query.r_abs).clamp(min=0.0)
+        inflated = torch.copysign(torch.sqrt(width_sq + ABS_SMOOTH**2), query.radius)
         return inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
 
-    def _root_width_sq(
-        self,
-        x_c: torch.Tensor,
-        r_abs: torch.Tensor,
-        t: torch.Tensor,
-        ctx: GeometryContext | None,
-    ) -> torch.Tensor:
-        """The Hugelschaffer root cap's SQUARED half-width at signed offset
-        ``x_c`` from the cap centre (clamped onto the cap's own span).
+    def _root_width_sq(self, query: RootCapQuery, ctx: GeometryContext | None) -> torch.Tensor:
+        """The Hugelschaffer root cap's SQUARED half-width at the query's
+        signed offset from the cap centre (clamped onto the cap's own span).
 
         Squared, deliberately: consumers put the floor inside their one sqrt.
         An intermediate ``sqrt(width_sq)`` reaches exactly zero at the apex
@@ -788,9 +786,9 @@ class GeometricInterface(nn.Module):
         the bluntness net on the first training step -- the matched-floor
         lesson, relearned.
         """
-        w = self.root_bluntness(t, ctx)
-        xi = (x_c / r_abs).clamp(min=-1.0, max=0.0)
-        return r_abs**2 * (1.0 - xi**2) * (1.0 + w**2) / (1.0 + 2.0 * w * xi + w**2)
+        w = self.root_bluntness(query.t, ctx)
+        xi = (query.x_c / query.r_abs).clamp(min=-1.0, max=0.0)
+        return query.r_abs**2 * (1.0 - xi**2) * (1.0 + w**2) / (1.0 + 2.0 * w * xi + w**2)
 
     def root_half_width(
         self, x: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
@@ -805,11 +803,10 @@ class GeometricInterface(nn.Module):
         """
         ctx = ctx or GeometryContext()
         f = self.frame(t, ctx)
-        x_c = x - f.ax
-        r_abs = f.r_root.abs().clamp(min=ABS_SMOOTH)
-        cap = torch.sqrt(self._root_width_sq(x_c, r_abs, t, ctx) + ABS_SMOOTH**2)
-        u = (x_c / (f.bx - f.ax)).clamp(0.0, 1.0)
-        return torch.where(x_c < 0, cap, self.half_width(u, t, ctx))
+        query = RootCapQuery(x_c=x - f.ax, radius=f.r_root, t=t)
+        cap = torch.sqrt(self._root_width_sq(query, ctx) + ABS_SMOOTH**2)
+        u = (query.x_c / (f.bx - f.ax)).clamp(0.0, 1.0)
+        return torch.where(query.x_c < 0, cap, self.half_width(u, t, ctx))
 
     def front(
         self, t: torch.Tensor, n_body: int, n_cap: int, ctx: GeometryContext | None = None

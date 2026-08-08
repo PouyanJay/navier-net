@@ -35,6 +35,11 @@ FILM_DRYOUT_ROUGHNESS_M = 1e-7
 # a stated assumption like ACCOMMODATION, deliberately not a per-run tunable.
 GIBBS_RIM_SLOPE_DEG = 30.0
 
+# The apparent angle's hard ceiling: at 90 deg the meniscus is vertical in the
+# gap and the attached capillary term (1 + cos theta)/H* has lost its whole
+# wetting contribution -- also the classical departure gate (plan Q4b).
+MAX_CONTACT_ANGLE_DEG = 90.0
+
 # ln(L / l_V) in the Cox-Voinov relation, for our geometry (outer scale the
 # half-gap, inner the Voinov microscale): 7-12; the plan's stated choice is 10
 # (Janecek & Nikolayev PRE 88:060404R, 2013; Bures & Sato JFM 916:A53, 2021).
@@ -213,18 +218,23 @@ def compute_groups(cfg) -> dict[str, float]:
             theta_ev = float(fluid.theta_ev_coeff) * groups["dT_ref"] ** float(
                 fluid.theta_ev_exp
             )
+            init = theta_ev
         else:
+            # No measured law (water's path): the hysteresis window is the
+            # closure. Gibbs pinning holds up to the ADVANCING angle plus the
+            # rim slope, and the equilibrium angle is the honest resting init.
             theta_ev = float(fluid.theta_adv_deg)
-        upper = min(90.0, theta_ev + GIBBS_RIM_SLOPE_DEG)
+            init = float(fluid.theta_e_deg)
+        upper = min(MAX_CONTACT_ANGLE_DEG, theta_ev + GIBBS_RIM_SLOPE_DEG)
         lower = float(fluid.theta_rec_deg)
         groups["theta_app_min_deg"] = lower
         groups["theta_app_max_deg"] = upper
-        groups["theta_app_init_deg"] = min(max(theta_ev, lower), upper)
+        groups["theta_app_init_deg"] = min(max(init, lower), upper)
         # The film-entrainment threshold Ca_crit ~ theta_V^3 / (9 ln(L/l_V))
         # (Bures & Sato eq. 2.6): above it a receding edge deposits film
         # instead of keeping its contact line -- the guard on where an
         # attachment field may exist at all.
-        voinov = math.radians(min(theta_ev, 90.0))
+        voinov = math.radians(min(theta_ev, MAX_CONTACT_ANGLE_DEG))
         groups["wetting_ca_crit"] = voinov**3 / (9.0 * COX_VOINOV_LOG)
 
     return groups

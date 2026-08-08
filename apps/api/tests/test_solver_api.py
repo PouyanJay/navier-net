@@ -777,10 +777,9 @@ def test_liquid_film_reaches_the_run_it_launched(client, repo_root):
     assert cfg["model"]["sharp_interface"] is True
 
 
-def test_launch_rejects_invalid_nucleation_root_combinations(client):
-    """The root ladder's dependency tree, mirrored at the API boundary as 422s
-    so an invalid ask fails with the reason, not deep in the worker."""
-    cases = [
+@pytest.mark.parametrize(
+    ("extra", "needle"),
+    [
         ({"root_attachment": True}, "nucleation_root"),
         ({"nucleation_root": True, "cap_freedom": True}, "cap_freedom"),
         (
@@ -792,11 +791,14 @@ def test_launch_rejects_invalid_nucleation_root_combinations(client):
             {"nucleation_root": True, "datasets": ["highest_t", "other"]},
             "single-dataset",
         ),
-    ]
-    for extra, needle in cases:
-        r = client.post("/api/runs", json={**TINY_RUN, **extra})
-        assert r.status_code == 422, extra
-        assert needle in r.text, (extra, r.text)
+    ],
+)
+def test_launch_rejects_invalid_nucleation_root_combinations(client, extra, needle):
+    """The root ladder's dependency tree, mirrored at the API boundary as 422s
+    so an invalid ask fails with the reason, not deep in the worker."""
+    r = client.post("/api/runs", json={**TINY_RUN, **extra})
+    assert r.status_code == 422, extra
+    assert needle in r.text, (extra, r.text)
 
 
 def test_nucleation_root_launch_couples_its_supervision(client, repo_root):

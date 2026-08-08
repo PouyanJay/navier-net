@@ -36,7 +36,7 @@ import torch
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.geometry import ANCHOR_FLOOR
 from naviernet.physics.front_velocity import time_index
-from naviernet.physics.root import measured_root_fit
+from naviernet.physics.root import BLUNTNESS_DEPTH_FRACTION, measured_root_fit
 
 
 @dataclass(frozen=True)
@@ -98,7 +98,9 @@ def build_plan(data: BubbleDataset, cfg, device) -> RootPlan:
         )
     x_root, _ = data.pin_anchor
     return RootPlan(
-        times=torch.tensor([[float(data.t[r])] for r in rows], device=device),
+        times=torch.tensor(
+            [[float(data.t[r])] for r in rows], dtype=torch.float32, device=device
+        ),
         sdf=torch.tensor(
             np.stack([data.sdf[r] for r in rows]), dtype=torch.float32, device=device
         ),
@@ -141,7 +143,13 @@ def _sample_sdf(plan: RootPlan, points: torch.Tensor, frame_of: torch.Tensor) ->
     DIFFERENTIABLE in the point positions: the gradient of a distance field is
     its unit direction toward the measured interface, which is exactly the
     direction the loss must push the contour. Clamped to the grid -- a root cap
-    sits well inside the imaged domain."""
+    sits well inside the imaged domain.
+
+    One of three bilinear samplers, each with different gradient semantics:
+    :meth:`naviernet.physics.root.Raster.sample` (numpy, diagnostics) and
+    :func:`naviernet.physics.front_velocity.sample_measured` (torch, DETACHED
+    -- a velocity raster's bilinear gradient is staircase noise, where a
+    distance field's is the true direction). Do not merge them blindly."""
     _, height, width = plan.sdf.shape
     col = ((points[:, 0] - plan.origin[0]) / plan.spacing[0]).clamp(0.0, width - 1.0)
     row = ((points[:, 1] - plan.origin[1]) / plan.spacing[1]).clamp(0.0, height - 1.0)
@@ -164,7 +172,9 @@ def _bluntness_loss(ctx: RootContext, plan: RootPlan) -> torch.Tensor:
     """Squared error between the model's half-width ratio and the measured one,
     both at the measured window's own quarter- and full-depth stations."""
     geometry = ctx.model.nets["phi"] if hasattr(ctx.model, "nets") else ctx.model
-    shallow = geometry.root_half_width(plan.x_root + 0.25 * plan.depth, plan.times)
+    shallow = geometry.root_half_width(
+        plan.x_root + BLUNTNESS_DEPTH_FRACTION * plan.depth, plan.times
+    )
     deep = geometry.root_half_width(plan.x_root + plan.depth, plan.times)
     model_ratio = shallow / deep.clamp(min=ANCHOR_FLOOR)
     return ((model_ratio - plan.bluntness) ** 2).mean()

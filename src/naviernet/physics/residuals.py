@@ -470,21 +470,6 @@ BRETHERTON_RECEDING_COEFF = 1.13 * 3.0 ** (2.0 / 3.0)
 IN_PLANE_WEIGHT = math.pi / 4.0
 
 
-def total_curvature(front, groups: dict[str, float], receding: bool = False) -> torch.Tensor:
-    """The depth-averaged total curvature the jump condition sees, ``(N, 1)``::
-
-        (pi/4) kappa_par + kappa_perp
-
-    One definition, so the residual and every diagnostic weight the two principal
-    curvatures the same way. The ``pi/4`` is Park & Homsy's, and it is not
-    cosmetic: the in-plane term is the one that HEALS a waist under Darcy flow, so
-    over-weighting it pushed against the necking this model is trying to produce.
-    """
-    return IN_PLANE_WEIGHT * front.kappa_par + gap_curvature(
-        front.normal_speed, groups, receding
-    )
-
-
 def gap_curvature(
     normal_speed: torch.Tensor, groups: dict[str, float], receding: bool = False
 ) -> torch.Tensor:

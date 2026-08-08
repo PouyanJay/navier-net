@@ -23,7 +23,6 @@ import torch
 from naviernet.physics.film import film_surface_pressure
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.residuals import (
-    gap_curvature,
     jump_gap_curvature,
     jump_total_curvature,
     pressure_implied_curvature,
@@ -189,9 +188,7 @@ def interface_diagnostics(model, data, groups: dict[str, float] | None = None):
     return InterfaceDiagnostics(
         laplace_error_nose=nose_error,
         laplace_error_front=front_error,
-        axial_capillary_gradient=_axial_capillary_gradient(
-            front, groups, getattr(model, "receding_cap", False)
-        ),
+        axial_capillary_gradient=_axial_capillary_gradient(model, front, groups),
         curvature_gap=_curvature_gap(model, front, groups),
         neck_model=neck_of_profile(model_half_width_profile(geometry, float(data.t[last]))),
         neck_measured=neck_of_profile(measured_half_width_profile(data, last)),
@@ -309,7 +306,7 @@ def _vapour_pressure(model, front) -> torch.Tensor:
 BODY_INTERIOR = (0.1, 0.9)
 
 
-def _axial_capillary_gradient(front, groups: dict[str, float], receding: bool = False) -> float:
+def _axial_capillary_gradient(model, front, groups: dict[str, float]) -> float:
     """Mean axial gradient of the capillary pressure across the body's interior:
     its range divided by the length it varies over, averaged across times.
 
@@ -325,7 +322,7 @@ def _axial_capillary_gradient(front, groups: dict[str, float], receding: bool = 
     fact perfectly straight where it matters.
     """
     lo, hi = BODY_INTERIOR
-    total = front.kappa_par + gap_curvature(front.normal_speed, groups, receding)
+    total = front.kappa_par + jump_gap_curvature(model, front, groups)
     u = front.u.squeeze(1)
     body = (front.on_cap.squeeze(1) == 0) & (front.side.squeeze(1) > 0) & (u >= lo) & (u <= hi)
     x = front.points[body, 0].detach()

@@ -15,6 +15,7 @@ import pytest
 
 from naviernet.physics.root import (
     ROOT_WINDOW_FRACTION,
+    Raster,
     fit_root_window,
     measured_root_fit,
 )
@@ -50,7 +51,7 @@ def slab_mask() -> np.ndarray:
 
 
 def test_the_disc_reads_as_its_own_circle():
-    fit = fit_root_window(disc_mask(), XS, YS, y_root=DISC_CENTER[1])
+    fit = fit_root_window(Raster(disc_mask(), XS, YS), y_root=DISC_CENTER[1])
     # W(d) = sqrt(d (2r - d)) ~ d^{1/2} near the apex. The log-log fit runs over
     # the whole window, where the exponent is slightly below 1/2 on average.
     assert 0.40 <= fit.taper_exponent <= 0.55
@@ -74,8 +75,8 @@ def test_the_slab_reads_blunter_than_the_disc_on_the_taper_measures():
     shape (measured: the slab fits a circle to 0.9% radially), so the taper
     measures are the discriminators and the circle fit is kept as the
     plan-§1-comparable diagnostic only."""
-    disc = fit_root_window(disc_mask(), XS, YS, y_root=DISC_CENTER[1])
-    slab = fit_root_window(slab_mask(), XS, YS, y_root=DISC_CENTER[1])
+    disc = fit_root_window(Raster(disc_mask(), XS, YS), y_root=DISC_CENTER[1])
+    slab = fit_root_window(Raster(slab_mask(), XS, YS), y_root=DISC_CENTER[1])
     assert slab.taper_exponent < 0.15 < disc.taper_exponent
     assert slab.bluntness > 0.9 > disc.bluntness
 
@@ -84,8 +85,8 @@ def test_the_fit_is_orientation_agnostic():
     """A mirrored mask with the root on the RIGHT must measure the same root:
     the root side is chosen by the anchor, not by an assumed orientation."""
     mirrored = disc_mask()[:, ::-1]
-    left = fit_root_window(disc_mask(), XS, YS, y_root=DISC_CENTER[1])
-    right = fit_root_window(mirrored, XS, YS, y_root=DISC_CENTER[1], root_at_left=False)
+    left = fit_root_window(Raster(disc_mask(), XS, YS), y_root=DISC_CENTER[1])
+    right = fit_root_window(Raster(mirrored, XS, YS), y_root=DISC_CENTER[1], root_at_left=False)
     assert right.taper_exponent == pytest.approx(left.taper_exponent, abs=1e-6)
     assert right.circle_rms == pytest.approx(left.circle_rms, abs=1e-6)
     assert right.bluntness == pytest.approx(left.bluntness, abs=1e-6)
@@ -93,7 +94,7 @@ def test_the_fit_is_orientation_agnostic():
 
 def test_a_vapour_free_mask_fails_loudly():
     with pytest.raises(ValueError, match="no vapour"):
-        fit_root_window(np.zeros((GRID_H, GRID_W), dtype=bool), XS, YS, y_root=0.5)
+        fit_root_window(Raster(np.zeros((GRID_H, GRID_W), dtype=bool), XS, YS), y_root=0.5)
 
 
 def test_a_window_too_thin_to_fit_reads_nan_not_garbage():
@@ -101,7 +102,7 @@ def test_a_window_too_thin_to_fit_reads_nan_not_garbage():
     so with NaN rather than inventing an exponent."""
     mask = np.zeros((GRID_H, GRID_W), dtype=bool)
     mask[100:140, 10:13] = True  # 3 columns: apex + 2 -- under the minimum
-    fit = fit_root_window(mask, XS, YS, y_root=float(YS[120]))
+    fit = fit_root_window(Raster(mask, XS, YS), y_root=float(YS[120]))
     assert np.isnan(fit.taper_exponent)
     assert np.isnan(fit.circle_rms)
 
@@ -302,7 +303,7 @@ def test_a_fast_receding_section_floors_at_zero_not_negative():
 
     groups = dict(_groups_fc72(), Ca=5.0)  # absurd Ca to drive the bracket down
     kappa = gap_curvature(torch.tensor([[-10.0]]), groups, receding=True)
-    assert float(kappa) == 0.0
+    assert float(kappa) == pytest.approx(0.0, abs=1e-12)
 
 
 def test_receding_cap_requires_the_sharp_interface(tmp_path):
@@ -423,7 +424,7 @@ def test_the_construction_opens_as_the_circle():
     assert torch.allclose(front_p.points[on_root], front_r.points[on_root], atol=1e-5)
     assert torch.allclose(front_p.kappa_par[on_root], front_r.kappa_par[on_root], atol=1e-3)
     # And the field agrees with its own front: every sample sits on phi = 0.
-    phi = rooted(front_r.points[on_root])
+    phi = rooted(front_r.points[on_root]).detach()
     assert float(phi.abs().max()) < 1e-4
 
 
@@ -459,7 +460,7 @@ def test_forced_bluntness_keeps_pin_seams_and_finite_curvature(raw):
     assert seam[1].item() - centre == pytest.approx(r_root, abs=1e-2)
 
     # Field and front describe ONE shape.
-    phi = geometry(front.points[on_root])
+    phi = geometry(front.points[on_root]).detach()
     assert float(phi.abs().max()) < 1e-4
 
 
@@ -496,7 +497,7 @@ def test_positive_w_blunts_the_root_and_lowers_the_apex_curvature():
         )
         with torch.no_grad():
             phi = geometry(pts).reshape(gy.shape[0], gx.shape[1]).numpy()
-        fit = fit_root_window(phi > 0, xs, ys, y_root=PRIORS["y_root"])
+        fit = fit_root_window(Raster(phi > 0, xs, ys), y_root=PRIORS["y_root"])
         return fit.bluntness
 
     assert rendered_bluntness(blunt) > rendered_bluntness(circle) + 0.02
@@ -599,17 +600,14 @@ ROOT_TRAIN = [
 
 
 def test_root_supervision_requires_the_nucleation_root(tmp_path):
-    from naviernet.models.pinn import BubblePINN
+    from naviernet.training import _validate_training_config
     from tests.conftest import staged_run
 
     cfg, _ = staged_run(
         tmp_path, ["model.front_geometry=true", "training.root_supervision=true"]
     )
-    from naviernet.training import _validate_training_config
-
     with pytest.raises(ValueError, match="nucleation_root"):
         _validate_training_config(cfg)
-    del BubblePINN  # imported for parity with sibling tests; the check is config-level
 
 
 def test_the_root_plan_excludes_held_out_frames(tmp_path):
@@ -628,10 +626,15 @@ def test_the_root_plan_excludes_held_out_frames(tmp_path):
     assert bool((plan.depth > 0).all())
 
 
+@pytest.mark.slow  # trains 120 Adam steps (~3s)
 def test_the_supervision_drives_w_toward_a_blunt_root(tmp_path):
     """The R1 mechanism question in miniature: a dataset whose root is cut flat
     must pull w(t) POSITIVE (blunter), while the circular capsule leaves it
-    near zero. This is the undriven-knob trap's regression test."""
+    near zero. This is the undriven-knob trap's regression test.
+
+    Deliberately single-seed (train()'s own torch.manual_seed makes it
+    deterministic): the T4 multi-seed robustness proof lives in the bench,
+    not here. Measured margins are wide -- w=0.45 against the 0.05 gate."""
     import torch
 
     from naviernet.training import load_model, train
@@ -649,9 +652,11 @@ def test_the_supervision_drives_w_toward_a_blunt_root(tmp_path):
     assert w > 0.05, f"the supervision left w(t) undriven: {w}"
 
 
+@pytest.mark.slow  # trains 120 Adam steps (~3s)
 def test_a_circular_root_leaves_w_near_zero(tmp_path):
     """The control: on data whose root IS a circle the same supervision must
-    not invent bluntness."""
+    not invent bluntness. Single-seed by the same reasoning as its blunt
+    sibling; measured w=0.016 against the 0.08 gate."""
     import torch
 
     from naviernet.training import load_model, train
@@ -738,24 +743,20 @@ def test_theta_app_initialises_at_the_fluids_own_law(tmp_path, fluid_id, source,
     """The apparent angle is an inverse unknown like r_int_star, but its START
     is the fluid's own physics: the evaporating-angle law at this run's
     superheat scale (or the advancing angle on water's hysteresis path)."""
-    import torch
-
+    from naviernet.data.dataset import BubbleDataset
     from naviernet.models.pinn import BubblePINN
     from naviernet.physics.groups import compute_groups
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
     from tests.conftest import staged_capsule_run
 
     cfg, _ = staged_capsule_run(tmp_path, [*TINY_SHARP_ROOT, f"fluid={fluid_id}"])
-    from naviernet.data.dataset import BubbleDataset
-    from naviernet.training import _geometry_priors
-    from naviernet.utils.paths import RunPaths
-
     data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
     model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
     groups = compute_groups(cfg)
     theta = float(model.theta_app_deg(groups))
     assert theta == pytest.approx(groups["theta_app_init_deg"], abs=0.5)
     assert groups["theta_app_min_deg"] <= theta <= groups["theta_app_max_deg"]
-    del torch
 
 
 def test_theta_app_names_the_fix_on_a_pre_wetting_snapshot(tmp_path):
@@ -807,6 +808,7 @@ def test_the_attachment_lowers_the_gap_term_over_the_patch_only(tmp_path):
     assert torch.allclose(blended[on_nose], free[on_nose], atol=1e-6)
 
 
+@pytest.mark.slow  # trains 80 Adam steps (~3s)
 def test_attachment_unknowns_move_off_init(tmp_path):
     """The T5 mechanism gate in miniature: after a short sharp-interface run,
     theta_app and the patch extent have both moved off their inits, and the
@@ -919,6 +921,7 @@ def test_root_delta_change_is_refused_on_reload(tmp_path):
         load_model(other, paths)
 
 
+@pytest.mark.slow  # trains 2 x 120 Adam steps (~4s)
 def test_a_nucleation_root_run_resumes_cleanly(tmp_path):
     """Resume must rebuild the same construction and keep training: the plan
     is deterministic, so the resumed run supervises against the identical

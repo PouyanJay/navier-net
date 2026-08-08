@@ -184,6 +184,29 @@ def _require_matching_flag(cfg, ckpt: dict, key: str, path, why: str) -> None:
         )
 
 
+def _require_matching_value(
+    cfg, ckpt: dict, flag_key: str, value_key: str, path, why: str
+) -> None:
+    """Refuse a checkpoint whose recorded VALUE ``value_key`` disagrees with the
+    composed config while its owning flag is on.
+
+    ``_require_matching_flag``'s sibling for the scale bounds (pin_d_ref,
+    cap_delta, root_delta): each scales what its net's weights mean, so the
+    same weights read as a different shape through a different value. Values
+    absent from the record predate it and pass unchecked.
+    """
+    saved = ckpt.get(value_key)
+    if saved is None or not bool(getattr(cfg.model, flag_key, False)):
+        return
+    current = float(getattr(cfg.model, value_key))
+    if float(saved) != current:
+        raise ValueError(
+            f"{path} was trained with model.{value_key}={float(saved)} but this "
+            f"invocation composes model.{value_key}={current}. {why} Pass the same "
+            f"override the run was trained with."
+        )
+
+
 def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
     """Refuse to consume a checkpoint whose recorded architecture disagrees with
     the composed config."""
@@ -255,49 +278,32 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         "The attachment adds theta_app and the patch unknowns and changes the jump.",
     )
 
-    # The bluntness bound is a VALUE, like cap_delta: the same w(t) weights
-    # describe a different root through a different bound.
-    saved_root_delta = ckpt.get("root_delta")
-    if (
-        bool(getattr(cfg.model, "nucleation_root", False))
-        and saved_root_delta is not None
-        and float(saved_root_delta) != float(cfg.model.root_delta)
-    ):
-        raise ValueError(
-            f"{path} was trained with model.root_delta={float(saved_root_delta)} but "
-            f"this invocation composes model.root_delta={float(cfg.model.root_delta)}. "
-            f"The bound scales the bluntness net's output, so the same weights "
-            f"describe a different root. Pass the same override the run was trained "
-            f"with."
-        )
+    _require_matching_value(
+        cfg,
+        ckpt,
+        "nucleation_root",
+        "root_delta",
+        path,
+        "The bound scales the bluntness net's output, so the same weights describe "
+        "a different root.",
+    )
 
-    # The cap's departure bound is a VALUE, not a flag, so it is checked on its
-    # own: the same weights read as a different shape through a different delta.
-    saved_delta = ckpt.get("cap_delta")
-    if (
-        bool(getattr(cfg.model, "cap_freedom", False))
-        and saved_delta is not None
-        and float(saved_delta) != float(cfg.model.cap_delta)
-    ):
-        raise ValueError(
-            f"{path} was trained with model.cap_delta={float(saved_delta)} but this "
-            f"invocation composes model.cap_delta={float(cfg.model.cap_delta)}. The "
-            f"bound scales the cap net's output, so the same weights describe a "
-            f"different cap. Pass the same override the run was trained with."
-        )
-
-    # The pin's gate scale is a VALUE, not a flag, so it is checked on its own.
-    saved_d_ref = ckpt.get("pin_d_ref")
-    if (
-        bool(getattr(cfg.model, "hard_pin", False))
-        and saved_d_ref is not None
-        and float(saved_d_ref) != float(cfg.model.pin_d_ref)
-    ):
-        raise ValueError(
-            f"{path} was trained with model.pin_d_ref={saved_d_ref} but this invocation "
-            f"composes model.pin_d_ref={float(cfg.model.pin_d_ref)}; pass the value the "
-            f"run was trained with."
-        )
+    _require_matching_value(
+        cfg,
+        ckpt,
+        "cap_freedom",
+        "cap_delta",
+        path,
+        "The bound scales the cap net's output, so the same weights describe a different cap.",
+    )
+    _require_matching_value(
+        cfg,
+        ckpt,
+        "hard_pin",
+        "pin_d_ref",
+        path,
+        "The gate scale sets where the pin releases the field.",
+    )
 
 
 def _validate_training_config(cfg) -> None:

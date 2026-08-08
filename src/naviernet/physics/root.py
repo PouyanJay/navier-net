@@ -30,6 +30,7 @@ coordinates only, so it runs identically on the data masks and (through
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -52,6 +53,45 @@ MIN_FIT_COLUMNS = 4
 DEFAULT_ALPHA_LEVEL = 0.5
 
 
+class Raster(NamedTuple):
+    """A ``(H, W)`` pixel field with its physical axes -- the one bundle every
+    raster consumer here reads, so a values/axes mismatch cannot be passed."""
+
+    values: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+
+    def mirrored(self) -> Raster:
+        """The raster flipped in x, axes re-anchored so distances from the new
+        left edge equal distances from the old right edge."""
+        return Raster(self.values[:, ::-1], (self.x[-1] + self.x[0]) - self.x[::-1], self.y)
+
+    def sample(self, px: np.ndarray, py: np.ndarray) -> np.ndarray:
+        """Bilinear samples at points ``(px, py)``, clamped to the grid -- a
+        root cap sits well inside the imaged domain, so clamping is a guard,
+        not a distortion.
+
+        The numpy sibling of the two torch bilinear samplers
+        (:func:`naviernet.physics.front_velocity.sample_measured`, detached;
+        :func:`naviernet.physics.root_supervision._sample_sdf`,
+        differentiable) -- three backends because their consumers need
+        different gradient semantics, kept cross-referenced so a fourth copy
+        does not appear.
+        """
+        x, y, raster = self.x, self.y, self.values
+        col = np.clip((px - x[0]) / (x[1] - x[0]), 0, x.size - 1)
+        row = np.clip((py - y[0]) / (y[1] - y[0]), 0, y.size - 1)
+        col_lo = np.clip(np.floor(col).astype(int), 0, x.size - 2)
+        row_lo = np.clip(np.floor(row).astype(int), 0, y.size - 2)
+        fx, fy = col - col_lo, row - row_lo
+        return (
+            raster[row_lo, col_lo] * (1 - fx) * (1 - fy)
+            + raster[row_lo, col_lo + 1] * fx * (1 - fy)
+            + raster[row_lo + 1, col_lo] * (1 - fx) * fy
+            + raster[row_lo + 1, col_lo + 1] * fx * fy
+        )
+
+
 @dataclass(frozen=True)
 class RootWindowFit:
     """One frame's root-window measurement. Distances in the dataset's own
@@ -67,47 +107,33 @@ class RootWindowFit:
 
 
 def fit_root_window(
-    vapour: np.ndarray,
-    x: np.ndarray,
-    y: np.ndarray,
+    vapour: Raster,
     y_root: float,
     window: float = ROOT_WINDOW_FRACTION,
     root_at_left: bool = True,
 ) -> RootWindowFit:
-    """Fit the root window of one vapour mask.
+    """Fit the root window of one vapour-mask raster.
 
-    ``vapour`` is ``(H, W)`` boolean over coordinates ``y`` (rows) and ``x``
-    (columns); ``y_root`` anchors the up/down bias. ``root_at_left`` says which
-    x-extent edge is the root -- the caller decides from the measured pin
-    anchor, so a flipped series needs no special-casing here.
+    ``y_root`` anchors the up/down bias. ``root_at_left`` says which x-extent
+    edge is the root -- the caller decides from the measured pin anchor, so a
+    flipped series needs no special-casing here.
     """
-    if root_at_left is False:
-        # Mirror so the root is at the left edge; x distances are preserved
-        # because only distances FROM the root edge enter any fit.
-        vapour = vapour[:, ::-1]
-        x = (x[-1] + x[0]) - x[::-1]
+    if not root_at_left:
+        vapour = vapour.mirrored()
 
-    columns = np.nonzero(vapour.any(axis=0))[0]
+    columns = np.nonzero(vapour.values.any(axis=0))[0]
     if columns.size == 0:
         raise ValueError("the mask has no vapour to fit a root window on")
 
-    extent = float(x[columns[-1]] - x[columns[0]])
+    extent = float(vapour.x[columns[-1]] - vapour.x[columns[0]])
     depth = window * extent
-    x_root_edge = float(x[columns[0]])
-    in_window = columns[(x[columns] - x_root_edge) <= depth]
+    x_root_edge = float(vapour.x[columns[0]])
+    in_window = columns[(vapour.x[columns] - x_root_edge) <= depth]
 
-    distance, half_width, midline = _window_profiles(vapour, x, y, in_window, x_root_edge)
+    distance, half_width, midline = _window_profiles(vapour, in_window, x_root_edge)
     tapered = (distance > 0) & (half_width > 0)
     if int(tapered.sum()) < MIN_FIT_COLUMNS:
-        return RootWindowFit(
-            taper_exponent=float("nan"),
-            circle_rms=float("nan"),
-            bluntness=float("nan"),
-            updown_bias=float("nan"),
-            tilt=float("nan"),
-            window_depth=depth,
-            n_columns=int(tapered.sum()),
-        )
+        return _thin_window_fit(depth, int(tapered.sum()))
 
     slope, _ = np.polyfit(np.log(distance[tapered]), np.log(half_width[tapered]), 1)
     tilt, _ = np.polyfit(distance, midline, 1)
@@ -122,22 +148,24 @@ def fit_root_window(
     )
 
 
+def _thin_window_fit(depth: float, n_columns: int) -> RootWindowFit:
+    """A window too thin to fit says so with NaN rather than inventing shape."""
+    nan = float("nan")
+    return RootWindowFit(nan, nan, nan, nan, nan, window_depth=depth, n_columns=n_columns)
+
+
 def _window_profiles(
-    vapour: np.ndarray,
-    x: np.ndarray,
-    y: np.ndarray,
-    columns: np.ndarray,
-    x_root_edge: float,
+    vapour: Raster, columns: np.ndarray, x_root_edge: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Per window column: distance inward from the root edge, half-width, and
     midline height. Columns whose vapour vanished (a hole) are dropped."""
     distance, half_width, midline = [], [], []
     for column in columns:
-        rows = np.nonzero(vapour[:, column])[0]
+        rows = np.nonzero(vapour.values[:, column])[0]
         if rows.size == 0:
             continue
-        top, bottom = float(y[rows[-1]]), float(y[rows[0]])
-        distance.append(float(x[column]) - x_root_edge)
+        top, bottom = float(vapour.y[rows[-1]]), float(vapour.y[rows[0]])
+        distance.append(float(vapour.x[column]) - x_root_edge)
         half_width.append(0.5 * (top - bottom))
         midline.append(0.5 * (top + bottom))
     return np.asarray(distance), np.asarray(half_width), np.asarray(midline)
@@ -178,8 +206,8 @@ def measured_root_fit(
     same orientation rule ``pin_anchor`` itself uses, so a flipped series
     measures its actual root.
     """
-    vapour = (data.alpha[row] > alpha_level) & (data.valid[row] > 0)
-    columns = np.nonzero(vapour.any(axis=0))[0]
+    mask = (data.alpha[row] > alpha_level) & (data.valid[row] > 0)
+    columns = np.nonzero(mask.any(axis=0))[0]
     if columns.size == 0:
         raise ValueError(
             f"dataset row {row} has no vapour (alpha > {alpha_level}) to fit a "
@@ -190,7 +218,7 @@ def measured_root_fit(
         float(data.x[columns[-1]]) - x_pin
     )
     return fit_root_window(
-        vapour, data.x, data.y, y_root=y_root, window=window, root_at_left=root_at_left
+        Raster(mask, data.x, data.y), y_root=y_root, window=window, root_at_left=root_at_left
     )
 
 
@@ -211,8 +239,7 @@ def model_root_window_rms(model, data, row: int) -> float:
     the mask's own circle residual and can go no lower.
     """
     geometry = model.nets["phi"]
-    device = next(geometry.parameters(), torch.empty(0)).device
-    t = torch.tensor([[float(data.t[row])]], dtype=torch.float32, device=device)
+    t = _frame_time(geometry, data, row)
     # NOT under no_grad: the front's own curvature and speed are autograd
     # derivatives, so the graph must exist even though only detached positions
     # are read here.
@@ -223,27 +250,16 @@ def model_root_window_rms(model, data, row: int) -> float:
     points = front.points[on_root].detach().cpu().numpy()
     if points.size == 0 or radius <= 0:
         return float("nan")
-    distances = _sample_raster(data.sdf[row], data.x, data.y, points[:, 0], points[:, 1])
+    distances = Raster(data.sdf[row], data.x, data.y).sample(points[:, 0], points[:, 1])
     return float(np.sqrt(np.mean(distances**2)) / radius)
 
 
-def _sample_raster(
-    raster: np.ndarray, x: np.ndarray, y: np.ndarray, px: np.ndarray, py: np.ndarray
-) -> np.ndarray:
-    """Bilinear samples of a ``(H, W)`` raster at points ``(px, py)``, clamped to
-    the grid -- a root cap sits well inside the imaged domain, so clamping is a
-    guard, not a distortion."""
-    col = np.clip((px - x[0]) / (x[1] - x[0]), 0, x.size - 1)
-    row = np.clip((py - y[0]) / (y[1] - y[0]), 0, y.size - 1)
-    col_lo = np.clip(np.floor(col).astype(int), 0, x.size - 2)
-    row_lo = np.clip(np.floor(row).astype(int), 0, y.size - 2)
-    fx, fy = col - col_lo, row - row_lo
-    return (
-        raster[row_lo, col_lo] * (1 - fx) * (1 - fy)
-        + raster[row_lo, col_lo + 1] * fx * (1 - fy)
-        + raster[row_lo + 1, col_lo] * (1 - fx) * fy
-        + raster[row_lo + 1, col_lo + 1] * fx * fy
-    )
+def _frame_time(geometry, data, row: int) -> torch.Tensor:
+    """One frame's time as a ``(1, 1)`` tensor ON THE MODEL'S DEVICE -- every
+    geometry call here runs a real forward pass, and a CPU-defaulted tensor
+    would crash the first GPU diagnostic (invisible to the CPU-only suite)."""
+    device = next(geometry.parameters(), torch.empty(0)).device
+    return torch.tensor([[float(data.t[row])]], dtype=torch.float32, device=device)
 
 
 def root_report(model, data, groups: dict[str, float] | None = None) -> dict:
@@ -257,30 +273,10 @@ def root_report(model, data, groups: dict[str, float] | None = None) -> dict:
     a baseline that cannot see the root cannot be compared against a run that
     reshapes it.
     """
-    geometry = model.nets["phi"]
-    rooted = bool(getattr(geometry, "nucleation_root", False))
-    attached = bool(getattr(model, "root_attachment", False))
-    per_frame = []
-    for row, frame in enumerate(data.frame_numbers):
-        fit = measured_root_fit(data, row)
-        entry = {
-            "frame": int(frame),
-            "taper_exponent": fit.taper_exponent,
-            "circle_rms": fit.circle_rms,
-            "bluntness": fit.bluntness,
-            "updown_bias": fit.updown_bias,
-            "tilt": fit.tilt,
-            "model_root_rms": model_root_window_rms(model, data, row),
-        }
-        t = torch.tensor([[float(data.t[row])]])
-        if rooted:
-            with torch.no_grad():
-                entry["w"] = float(geometry.root_bluntness(t))
-        if attached:
-            with torch.no_grad():
-                entry["patch_extent"] = float(model.patch_extent(t))
-        per_frame.append(entry)
-
+    per_frame = [
+        _root_frame_entry(model, data, row, frame)
+        for row, frame in enumerate(data.frame_numbers)
+    ]
     report = {
         "window_fraction": ROOT_WINDOW_FRACTION,
         "bluntness_depth_fraction": BLUNTNESS_DEPTH_FRACTION,
@@ -290,23 +286,59 @@ def root_report(model, data, groups: dict[str, float] | None = None) -> dict:
         "model_root_rms_last": per_frame[-1]["model_root_rms"],
         "per_frame": per_frame,
     }
-    if rooted:
-        budget = float(getattr(geometry, "root_delta", 0.0))
-        peak = max(abs(f["w"]) for f in per_frame)
-        report["root_delta"] = budget
-        report["w_budget_use"] = peak / budget if budget > 0 else 0.0
-        report["wetting_source"] = _wetting_source(model)
-    if attached and groups is not None:
-        with torch.no_grad():
-            report["theta_app_deg"] = float(model.theta_app_deg(groups))
+    report.update(_trained_root_summary(model, per_frame, groups))
     return report
+
+
+def _root_frame_entry(model, data, row: int, frame: int) -> dict:
+    """One frame's measured fit plus, on a rooted/attached run, its trained
+    DOF readouts at that frame's own time."""
+    geometry = model.nets["phi"]
+    fit = measured_root_fit(data, row)
+    entry = {
+        "frame": int(frame),
+        "taper_exponent": fit.taper_exponent,
+        "circle_rms": fit.circle_rms,
+        "bluntness": fit.bluntness,
+        "updown_bias": fit.updown_bias,
+        "tilt": fit.tilt,
+        "model_root_rms": model_root_window_rms(model, data, row),
+    }
+    t = _frame_time(geometry, data, row)
+    with torch.no_grad():
+        if getattr(geometry, "nucleation_root", False):
+            entry["w"] = float(geometry.root_bluntness(t))
+        if getattr(model, "root_attachment", False):
+            entry["patch_extent"] = float(model.patch_extent(t))
+    return entry
+
+
+def _trained_root_summary(model, per_frame: list[dict], groups: dict | None) -> dict:
+    """The rooted run's summary fields: the bluntness budget and its use, the
+    wetting provenance, and (on an attached run with groups) theta_app."""
+    geometry = model.nets["phi"]
+    if not getattr(geometry, "nucleation_root", False):
+        return {}
+    budget = float(getattr(geometry, "root_delta", 0.0))
+    peak = max(abs(f["w"]) for f in per_frame)
+    summary = {
+        "root_delta": budget,
+        "w_budget_use": peak / budget if budget > 0 else 0.0,
+        "wetting_source": _wetting_source(model),
+    }
+    if getattr(model, "root_attachment", False) and groups is not None:
+        with torch.no_grad():
+            summary["theta_app_deg"] = float(model.theta_app_deg(groups))
+    return summary
 
 
 def _wetting_source(model) -> str:
     """The provenance of the wetting constants this run's closures read --
     ``unknown`` on a config predating the field, so old snapshots keep
     composing while a conclusion drawn from them still says so."""
+    from omegaconf.errors import MissingMandatoryValue
+
     try:
         return str(model.cfg.fluid.wetting_source)
-    except Exception:  # MISSING / absent field on a pre-wetting snapshot
+    except (AttributeError, MissingMandatoryValue):
         return "unknown"

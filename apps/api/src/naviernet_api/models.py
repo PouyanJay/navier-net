@@ -508,6 +508,18 @@ class RunLaunchRequest(BaseModel):
                 "conditions sample, so it requires sharp_interface -- enable it, "
                 "or turn liquid_film off"
             )
+        if self.alpha_eps_anneal_steps and not self.alpha_eps_final:
+            raise ValueError(
+                "alpha_eps_anneal_steps needs alpha_eps_final: a target of 0 would "
+                "divide phi by zero rather than sharpen the interface"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_root_ladder(self) -> RunLaunchRequest:
+        # The nucleation-root dependency tree, mirrored from the trainer's own
+        # guards (its own validator, so the monolithic combo check stops
+        # growing -- the pinn.py _validate_* decomposition, at the API boundary).
         if self.nucleation_root and self.cap_freedom:
             raise ValueError(
                 "nucleation_root and cap_freedom are two shape systems on the same "
@@ -533,11 +545,6 @@ class RunLaunchRequest(BaseModel):
                 "receding_cap extends the gap curvature the Young-Laplace jump "
                 "consumes, so it requires sharp_interface -- enable it, or turn "
                 "receding_cap off"
-            )
-        if self.alpha_eps_anneal_steps and not self.alpha_eps_final:
-            raise ValueError(
-                "alpha_eps_anneal_steps needs alpha_eps_final: a target of 0 would "
-                "divide phi by zero rather than sharpen the interface"
             )
         return self
 

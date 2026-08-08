@@ -24,9 +24,8 @@ from naviernet.models.geometry import (
     GeometricInterface,
     GeometryContext,
     GeometryPriors,
-    _inverse_softplus,
 )
-from naviernet.models.layers import AdaptiveTanh, FourierFeatures, logit
+from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softplus, logit
 
 # A deliberate exception to the usual physics -> models dependency direction
 # (the only one): the film net's channel bound and data-anchored start are
@@ -380,7 +379,7 @@ class BubblePINN(nn.Module):
             )
         geometry = self.nets["phi"]
         rate = torch.nn.functional.softplus(
-            self._patch_rate_raw + _inverse_softplus(self.PATCH_RATE_INIT)
+            self._patch_rate_raw + inverse_softplus(self.PATCH_RATE_INIT)
         )
         grown = (t - float(geometry.priors.t_min)).clamp(min=0.0) * rate
         fraction = torch.sigmoid(logit(self.PATCH_FRAC_INIT) + self._patch_frac_raw + grown)
