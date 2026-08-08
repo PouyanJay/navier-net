@@ -453,6 +453,14 @@ def darcy_residuals(
 # jump condition needs the jump one.
 BRETHERTON_COEFF = 1.79 * 3.0 ** (2.0 / 3.0)
 
+# The RECEDING branch of the same correction (`model.receding_cap`): a rear
+# meniscus is FLATTER than static, kappa R = 1 + beta (3 Ca)^{2/3} with
+# beta_rear = -1.13 (Bretherton 1961; Balestra, Zhu & Gallaire 2018; the
+# receding coefficient as quoted by Lu, Glasner, Bertozzi & Kim 2007). Without
+# it a receding section is clamped TO static -- an O(10%) overstatement at our
+# Ca on exactly the receding root body.
+BRETHERTON_RECEDING_COEFF = 1.13 * 3.0 ** (2.0 / 3.0)
+
 # Park & Homsy's weight on the IN-PLANE curvature in the same depth-averaged jump
 # condition: `dp = gamma[(2/b)(1 + 3.8 Ca^{2/3}) + (pi/4) kappa_par]`. It accounts
 # for how the principal radii vary across the gap for a perfectly wetting liquid,
@@ -462,7 +470,7 @@ BRETHERTON_COEFF = 1.79 * 3.0 ** (2.0 / 3.0)
 IN_PLANE_WEIGHT = math.pi / 4.0
 
 
-def total_curvature(front, groups: dict[str, float]) -> torch.Tensor:
+def total_curvature(front, groups: dict[str, float], receding: bool = False) -> torch.Tensor:
     """The depth-averaged total curvature the jump condition sees, ``(N, 1)``::
 
         (pi/4) kappa_par + kappa_perp
@@ -472,10 +480,14 @@ def total_curvature(front, groups: dict[str, float]) -> torch.Tensor:
     cosmetic: the in-plane term is the one that HEALS a waist under Darcy flow, so
     over-weighting it pushed against the necking this model is trying to produce.
     """
-    return IN_PLANE_WEIGHT * front.kappa_par + gap_curvature(front.normal_speed, groups)
+    return IN_PLANE_WEIGHT * front.kappa_par + gap_curvature(
+        front.normal_speed, groups, receding
+    )
 
 
-def gap_curvature(normal_speed: torch.Tensor, groups: dict[str, float]) -> torch.Tensor:
+def gap_curvature(
+    normal_speed: torch.Tensor, groups: dict[str, float], receding: bool = False
+) -> torch.Tensor:
     """Out-of-plane (gap-direction) interface curvature, ``(N, 1)``::
 
         kappa_perp = (2 / H*) (1 + 3.72 Ca_local^{2/3})
@@ -495,10 +507,18 @@ def gap_curvature(normal_speed: torch.Tensor, groups: dict[str, float]) -> torch
 
     Only an ADVANCING front deposits a film, so a receding section takes the
     static ``2/H*`` (and a negative capillary number never reaches the 2/3
-    power).
+    power) -- unless ``receding`` (`model.receding_cap`) admits the rear
+    branch, where a receding meniscus reads FLATTER than static with the
+    receding coefficient, floored at zero: a curvature is a shape property and
+    cannot go negative however fast the section retreats.
     """
     capillary = (groups["Ca"] * normal_speed).clamp(min=0.0)
-    return (2.0 / groups["H_star"]) * (1.0 + BRETHERTON_COEFF * capillary ** (2.0 / 3.0))
+    advancing = (2.0 / groups["H_star"]) * (1.0 + BRETHERTON_COEFF * capillary ** (2.0 / 3.0))
+    if not receding:
+        return advancing
+    rear = (groups["Ca"] * (-normal_speed)).clamp(min=0.0)
+    reduction = (2.0 / groups["H_star"]) * BRETHERTON_RECEDING_COEFF * rear ** (2.0 / 3.0)
+    return (advancing - reduction).clamp(min=0.0)
 
 
 def kinematic_residual(model, front, c: torch.Tensor | None = None) -> torch.Tensor:
@@ -539,7 +559,7 @@ def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tenso
     there is nothing left to absorb it.
     """
     t = front.points[:, 2:3]
-    kappa = total_curvature(front, groups)
+    kappa = total_curvature(front, groups, getattr(model, "receding_cap", False))
     # Deliberately NOT written as `(pressure_implied_curvature(...) - kappa)/We`,
     # though that is the same equation: the two differ in float32 (a multiply by
     # We and a divide back do not cancel), and this one TRAINS. A shared helper

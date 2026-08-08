@@ -258,6 +258,16 @@ class ModelConfig:
     # discrepancy is a near-constant 1.25-1.48 across every frame and across
     # independently trained runs. Requires `sharp_interface`; off by default.
     film_pressure: bool = False
+    # Receding Bretherton branch (nucleation-root R0): a receding meniscus's cap
+    # is FLATTER than static -- kappa R = 1 + beta (3Ca)^{2/3} with beta_rear =
+    # -1.13 -- and without this flag every receding section is clamped TO the
+    # static 2/H*, an O(10%) curvature overstatement on exactly the receding
+    # root body (the trained capsule recedes at essentially every station; only
+    # the nose advances). One term on an existing function, benchable alone
+    # (the pi/4-fix precedent). Requires `sharp_interface` (the jump condition
+    # is what consumes the gap curvature in training); off by default -> the
+    # advancing-only correction is byte-for-byte what it was.
+    receding_cap: bool = False
     # Liquid film: the thin layer the bubble leaves against the gap walls, as a
     # 1-D field delta(x, t) evaluated on the explicit front. Deposition follows the
     # Aussillous-Quere saturating law on the LOCAL normal speed -- deliberately

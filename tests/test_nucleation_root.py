@@ -254,6 +254,65 @@ def test_wetting_groups_tolerate_a_pre_wetting_config_snapshot():
     assert groups["Ca"] > 0  # the rest of the groups are untouched
 
 
+# --- T2 (R0): the receding Bretherton branch ----------------------------------
+#
+# A rear/receding cap is FLATTER than static -- kappa R = 1 + beta (3Ca)^{2/3}
+# with beta_rear = -1.13 (Bretherton 1961; Balestra, Zhu & Gallaire 2018; the
+# coefficient as quoted by Lu et al. 2007) -- and until now the model clamped
+# every receding section to the static 2/H*. At our Ca that is an O(10%)
+# curvature overstatement on exactly the receding root body.
+
+
+def _groups_fc72() -> dict:
+    from naviernet.physics.groups import compute_groups
+
+    return compute_groups(make_config(["dataset=Series-1"]))
+
+
+def test_receding_cap_is_off_by_default(cfg):
+    assert cfg.model.receding_cap is False
+
+
+def test_receding_sections_read_below_static_advancing_unchanged():
+    import torch
+
+    from naviernet.physics.residuals import gap_curvature
+
+    groups = _groups_fc72()
+    static = 2.0 / groups["H_star"]
+    speeds = torch.tensor([[-1.0], [-0.3], [0.0], [0.5], [1.0]])
+
+    off = gap_curvature(speeds, groups)
+    on = gap_curvature(speeds, groups, receding=True)
+
+    # Advancing and stationary samples: bit-identical to the flag-off branch.
+    assert torch.equal(on[2:], off[2:])
+    # Receding samples: strictly below static, monotone in the receding speed.
+    assert float(off[0]) == pytest.approx(static)  # the old clamp-to-static
+    assert float(on[0]) < float(on[1]) < static
+    # The predicted magnitude at our regime: ~10% below static at v_n = -1
+    # (1.13 * (3 * 0.0107)^{2/3} = 0.114).
+    assert 0.05 < 1.0 - float(on[0]) / static < 0.20
+
+
+def test_a_fast_receding_section_floors_at_zero_not_negative():
+    import torch
+
+    from naviernet.physics.residuals import gap_curvature
+
+    groups = dict(_groups_fc72(), Ca=5.0)  # absurd Ca to drive the bracket down
+    kappa = gap_curvature(torch.tensor([[-10.0]]), groups, receding=True)
+    assert float(kappa) == 0.0
+
+
+def test_receding_cap_requires_the_sharp_interface(tmp_path):
+    from naviernet.models.pinn import BubblePINN
+
+    cfg = make_config(["model=stage_b", "model.receding_cap=true"])
+    with pytest.raises(ValueError, match="receding_cap"):
+        BubblePINN(cfg)
+
+
 # --- Series-1: the measurement this journey is built on -----------------------
 
 

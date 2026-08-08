@@ -74,7 +74,7 @@ def solve_shape_modes(
         # curvature less the gap part leaves what the in-plane term must supply,
         # and the in-plane term enters the condition weighted by pi/4.
         demanded = pressure_implied_curvature(model, front, groups) - gap_curvature(
-            front.normal_speed, groups
+            front.normal_speed, groups, getattr(model, "receding_cap", False)
         )
         residual = demanded - IN_PLANE_WEIGHT * carried
 

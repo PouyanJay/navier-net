@@ -124,6 +124,7 @@ class BubblePINN(nn.Module):
         names = list(fields if fields is not None else cfg.model.fields)
         self._validate_front_geometry(cfg, geometry)
         self._validate_sharp_interface(cfg, names)
+        self._validate_receding_cap(cfg)
         self._validate_pressure_shape(cfg)
         self._validate_film_pressure(cfg)
         self._validate_liquid_film(cfg, names)
@@ -172,6 +173,19 @@ class BubblePINN(nn.Module):
                 "model.sharp_interface reads the liquid pressure at the interface, so "
                 "it requires the 'p' field in model.fields (the Stage-B field set); "
                 f"this model has {names}."
+            )
+
+    def _validate_receding_cap(self, cfg) -> None:
+        """The receding Bretherton branch modifies the gap curvature the jump
+        condition consumes; without the sharp-interface conditions nothing in
+        training reads it, and a flag that silently did nothing would be the
+        undriven-knob trap wearing a different hat."""
+        self.receding_cap = bool(getattr(cfg.model, "receding_cap", False))
+        if self.receding_cap and not self.sharp_interface:
+            raise ValueError(
+                "model.receding_cap extends the gap curvature the Young-Laplace "
+                "jump consumes, so it requires model.sharp_interface=true -- "
+                "enable it, or turn model.receding_cap off."
             )
 
     def _validate_pressure_shape(self, cfg) -> None:
