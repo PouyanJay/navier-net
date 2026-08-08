@@ -579,8 +579,8 @@ def test_the_film_distribution_differs_from_the_grad_alpha_one(tmp_path):
     vapour = alpha.detach().squeeze(1)
     old = theta * grad_mag  # the old closure's spatial shape
 
-    new = film_source_target(model, pts, groups).squeeze(1)
-    assert float(new.sum().detach()) > 0.0, "the film source must put mass somewhere"
+    new = film_source_target(model, pts, groups).squeeze(1).detach()
+    assert float(new.sum()) > 0.0, "the film source must put mass somewhere"
 
     # Normalize to equal totals, then compare the interior's share of the mass.
     old = old / old.sum().clamp(min=1e-12)
@@ -640,7 +640,7 @@ def test_src_penalty_moves_to_the_liquid_under_the_film(tmp_path):
     # Probe points from the model's own capsule: mid-spine at the root height
     # is interior; far downstream of the nose is liquid.
     x0, y0 = model.film_root()
-    nose = float(model.apex(torch.tensor([[0.5]]))[0, 0])
+    nose = float(model.apex(torch.tensor([[0.5]]))[0, 0].detach())
     inside = torch.tensor([[0.5 * (x0 + nose), y0, 0.5]])
     outside = torch.tensor([[nose + 2.0, y0, 0.5]])
     pts = torch.cat([inside, outside]).requires_grad_(True)
@@ -649,7 +649,7 @@ def test_src_penalty_moves_to_the_liquid_under_the_film(tmp_path):
     assert float(alpha[0]) > 0.95 and float(alpha[1]) < 0.05, "probe points must bracket"
 
     ctx = registry.LossContext(model, pts, groups=groups)
-    penalty = registry._src_sq(ctx).squeeze(1)
+    penalty = registry._src_sq(ctx).detach().squeeze(1)
     with torch.no_grad():
         source_sq = (model.source(pts) ** 2).squeeze(1)
     weight = penalty / source_sq.clamp(min=1e-18)

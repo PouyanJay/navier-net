@@ -465,8 +465,8 @@ def film_report(model, data, groups: dict[str, float]) -> dict:
     return {
         "stations": [float(v) for v in quad.fractions],
         "r_gamma_um": groups["R_gamma_star"] * length_um,
-        "r_gamma_effective_um": float(model.film_resistance(groups)) * length_um,
-        "resistance_scale": float(torch.exp(model._log_film_resistance)),
+        "r_gamma_effective_um": float(model.film_resistance(groups).detach()) * length_um,
+        "resistance_scale": float(torch.exp(model._log_film_resistance).detach()),
         "dry_fraction": last["dry_fraction"],
         "film_evaporation_fraction": last["film_evaporation_fraction"],
         "film_pressure_peak_fraction": last["film_pressure_peak_fraction"],
