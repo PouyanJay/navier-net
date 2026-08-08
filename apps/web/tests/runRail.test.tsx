@@ -5,7 +5,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { RunSummary } from "../src/lib/api";
-import { runHeadline, runProvenance } from "../src/views/results/format";
+import { RANK_METRICS, runHeadline, runProvenance } from "../src/views/results/format";
 import { buildFamilies } from "../src/views/results/runFamilies";
 import { RunRail } from "../src/views/results/RunRail";
 
@@ -267,5 +267,24 @@ describe("RunRail", () => {
       target: { value: "zzz" },
     });
     expect(screen.getByText(/No run matches/)).toBeInTheDocument();
+  });
+});
+
+describe("the newest sort's number", () => {
+  it("falls through the same ladder as the label, so a mean-only run is not a dash", () => {
+    // A run evaluated without a validation split has only iou_mean. Under the
+    // date sort the row's label comes from runHeadline ("mean IoU"), so the
+    // value must come from the same ladder -- a dash under that label was a
+    // value and a label from two different ladders.
+    const meanOnly = run({ id: "m", iou_mean: 0.9318 });
+    const dateMetric = RANK_METRICS.find((option) => option.id === "date");
+    expect(dateMetric?.of(meanOnly)).toBeCloseTo(0.9318);
+    expect(runHeadline(meanOnly)?.label).toBe("mean IoU");
+  });
+
+  it("still prefers the val rungs when they exist", () => {
+    const both = run({ id: "b", iou_val: 0.879, iou_mean: 0.94 });
+    const dateMetric = RANK_METRICS.find((option) => option.id === "date");
+    expect(dateMetric?.of(both)).toBeCloseTo(0.879);
   });
 });

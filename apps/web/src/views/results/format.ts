@@ -67,11 +67,13 @@ export const RANK_METRICS = [
   },
   // Ordering by date changes the ORDER, not the number: a row still leads with
   // the best score that run recorded, so a chronological list is not a list of
-  // dashes.
+  // dashes. The fallback runs the SAME ladder the row's label does
+  // (runHeadline) -- with only the val rungs here, a mean-only run showed a
+  // dash labelled "mean IoU": a value and a label from two different ladders.
   {
     id: "date",
     label: "newest",
-    of: (run: RunSummary) => run.val_iou_mean ?? run.iou_val ?? null,
+    of: (run: RunSummary) => run.val_iou_mean ?? run.iou_val ?? run.iou_mean ?? null,
   },
 ] as const;
 
