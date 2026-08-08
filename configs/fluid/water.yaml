@@ -26,3 +26,17 @@ sigma: 5.89e-2 # N/m
 h_lv: 2.257e6 # J/kg
 
 molar_mass: 0.018015 # kg/mol
+
+# Wetting: PARTIALLY wetting and substrate-dependent -- a different REGIME
+# from the dielectrics, not a parameter change. No evaporating-angle power law
+# exists; the closure is the hysteresis window itself. The values below sit
+# mid-span of the pairs in published flow-boiling force balances (theta_adv
+# 45-90.6 deg, theta_rec 8-36 deg: Klausner et al., IJHMT 36:651, 1993 fits;
+# Sugrue & Buongiorno measurements) -- the REAL heater's values are UNMEASURED,
+# and any conclusion drawn from these must say so (wetting_source below).
+theta_e_deg: 45.0
+theta_adv_deg: 68.0
+theta_rec_deg: 22.0
+theta_ev_coeff: null
+theta_ev_exp: null
+wetting_source: hysteresis

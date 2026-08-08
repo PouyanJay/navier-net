@@ -79,6 +79,27 @@ class FluidConfig:
     # evaporation scales as sqrt(R_universal / molar_mass); without it the film
     # flux q = k dT / delta diverges as the film thins.
     molar_mass: float = MISSING
+    # Wetting conditions (the nucleation root's closures). This is where the
+    # offered fluids genuinely diverge -- their kinematic viscosities nearly
+    # coincide while their contact-angle physics does not -- so every attachment
+    # closure reads these, never an FC-72 literal in code. Angles in degrees.
+    # Static equilibrium angle, and the hysteresis window it sits in. For the
+    # perfectly wetting dielectrics the window is degrees-wide at most; for
+    # water it spans tens of degrees and IS the closure (see wetting_source).
+    theta_e_deg: float = MISSING
+    theta_adv_deg: float = MISSING
+    theta_rec_deg: float = MISSING
+    # Evaporating-angle law theta_ev[deg] = coeff * dT^exp (dT in K). Null =
+    # no law is measured for this fluid; the hysteresis window carries the
+    # closure instead -- which is water's path, not a degraded default.
+    theta_ev_coeff: Optional[float] = None  # noqa: UP045 -- OmegaConf needs Optional
+    theta_ev_exp: Optional[float] = None  # noqa: UP045
+    # Provenance of the values above: "measured" (a published fit for THIS
+    # fluid), "partial" (measured in a neighbouring regime, anchor only),
+    # "extrapolated" (wetting-class transfer from a sibling fluid), or
+    # "hysteresis" (no law; the window is the closure). Recorded in every
+    # run's diagnostics so a conclusion drawn on extrapolated constants says so.
+    wetting_source: str = MISSING
 
 
 @dataclass

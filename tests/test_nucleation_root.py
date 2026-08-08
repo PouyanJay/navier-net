@@ -85,9 +85,7 @@ def test_the_fit_is_orientation_agnostic():
     the root side is chosen by the anchor, not by an assumed orientation."""
     mirrored = disc_mask()[:, ::-1]
     left = fit_root_window(disc_mask(), XS, YS, y_root=DISC_CENTER[1])
-    right = fit_root_window(
-        mirrored, XS, YS, y_root=DISC_CENTER[1], root_at_left=False
-    )
+    right = fit_root_window(mirrored, XS, YS, y_root=DISC_CENTER[1], root_at_left=False)
     assert right.taper_exponent == pytest.approx(left.taper_exponent, abs=1e-6)
     assert right.circle_rms == pytest.approx(left.circle_rms, abs=1e-6)
     assert right.bluntness == pytest.approx(left.bluntness, abs=1e-6)
@@ -161,6 +159,99 @@ def test_physics_report_carries_the_root_block(tmp_path):
     # The capsule model opens circular AND the capsule data is circular at the
     # root, so the model-vs-mask distance is small but honest (init mismatch).
     assert root["model_root_rms_last"] >= 0.0
+
+
+# --- T1: per-fluid wetting conditions (plan §2.9) -----------------------------
+#
+# Wetting is where the five offered fluids genuinely diverge -- their kinematic
+# viscosities nearly coincide, their contact-angle physics does not, and water
+# is a different REGIME, not a parameter change. Every closure reads per-fluid
+# config; nothing may be an FC-72 literal in code.
+
+# (fluid id, wetting_source, has an evaporating-angle law)
+WETTING_EXPECTATIONS = [
+    ("fc72", "measured", True),
+    ("fc77", "extrapolated", True),
+    ("hfe7100", "partial", True),
+    ("novec649", "extrapolated", True),
+    ("water", "hysteresis", False),
+]
+
+
+@pytest.mark.parametrize(("fluid_id", "source", "has_law"), WETTING_EXPECTATIONS)
+def test_every_fluid_carries_cited_or_flagged_wetting_conditions(fluid_id, source, has_law):
+    cfg = make_config([f"fluid={fluid_id}"])
+    fluid = cfg.fluid
+    assert fluid.wetting_source == source
+    assert 0.0 <= fluid.theta_rec_deg <= fluid.theta_adv_deg < 91.0
+    assert 0.0 <= fluid.theta_e_deg < 91.0
+    if has_law:
+        assert fluid.theta_ev_coeff > 0
+        assert fluid.theta_ev_exp >= 0
+    else:
+        # Water's path: no power law exists; the hysteresis window carries it.
+        assert fluid.theta_ev_coeff is None
+        assert fluid.theta_ev_exp is None
+
+
+@pytest.mark.parametrize(("fluid_id", "source", "has_law"), WETTING_EXPECTATIONS)
+def test_wetting_groups_are_finite_ordered_and_in_range_for_every_fluid(
+    fluid_id, source, has_law
+):
+    from naviernet.physics.groups import compute_groups
+
+    groups = compute_groups(make_config([f"fluid={fluid_id}"]))
+    lo = groups["theta_app_min_deg"]
+    init = groups["theta_app_init_deg"]
+    hi = groups["theta_app_max_deg"]
+    assert np.isfinite([lo, init, hi]).all(), fluid_id
+    assert 0.0 <= lo <= init <= hi <= 90.0, (fluid_id, lo, init, hi)
+    # The bounds must leave the unknown ROOM: a collapsed window cannot train.
+    assert hi - lo > 1.0, (fluid_id, lo, hi)
+    assert groups["wetting_ca_crit"] > 0.0
+    assert np.isfinite(groups["wetting_ca_crit"])
+
+
+def test_water_is_a_regime_change_not_a_parameter_change():
+    """Wide hysteresis window and an order-of-magnitude lower Ca: the two facts
+    that make water's root physics categorically different (plan §2.9)."""
+    from naviernet.physics.groups import compute_groups
+
+    water = make_config(["fluid=water"])
+    fc72 = make_config(["fluid=fc72"])
+    # The dielectrics' hysteresis window is degrees-wide at most; water's is
+    # tens of degrees.
+    assert water.fluid.theta_adv_deg - water.fluid.theta_rec_deg > 20.0
+    assert fc72.fluid.theta_adv_deg - fc72.fluid.theta_rec_deg < 5.0
+    assert compute_groups(water)["Ca"] < 0.2 * compute_groups(fc72)["Ca"]
+
+
+def test_wetting_groups_tolerate_a_pre_wetting_config_snapshot():
+    """Run snapshots written before the wetting fields existed must keep
+    composing (the molar_mass lesson, PR #52): the wetting groups are OMITTED,
+    never defaulted, and nothing else in the groups is disturbed."""
+    from omegaconf import OmegaConf
+
+    from naviernet.config.schema import Config
+    from naviernet.physics.groups import compute_groups
+
+    # Composed the way the API composes an OLD run's snapshot: recorded values
+    # merged over the structured schema, wetting fields absent -> MISSING.
+    snapshot = OmegaConf.to_container(make_config([]), resolve=True)
+    for key in (
+        "theta_e_deg",
+        "theta_adv_deg",
+        "theta_rec_deg",
+        "theta_ev_coeff",
+        "theta_ev_exp",
+        "wetting_source",
+    ):
+        del snapshot["fluid"][key]
+    cfg = OmegaConf.merge(OmegaConf.structured(Config), OmegaConf.create(snapshot))
+    groups = compute_groups(cfg)
+    assert "theta_app_init_deg" not in groups
+    assert "wetting_ca_crit" not in groups
+    assert groups["Ca"] > 0  # the rest of the groups are untouched
 
 
 # --- Series-1: the measurement this journey is built on -----------------------

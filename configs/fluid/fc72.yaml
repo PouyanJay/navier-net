@@ -24,3 +24,15 @@ sigma: 8.35e-3 # N/m
 h_lv: 84.5e3 # J/kg
 
 molar_mass: 0.338 # kg/mol (C6F14; 3M datasheet)
+
+# Wetting: perfectly wetting dielectric, and the ONE fluid whose evaporating
+# contact angle is measured: theta_mr[deg] = 9.37 dT^0.54 (Raj, Kunkelmann,
+# Plawsky, Stephan & Kim, IJHMT 55:2664, 2012; copper, dT <= 14 K; refit band
+# 6.54 dT^0.65 .. 13.7 dT^0.42 in Bures & Sato, JFM 916:A53, 2021). Weak
+# Hamaker sensitivity, so the law transfers across substrates.
+theta_e_deg: 1.0 # static, 0-2 deg on engineering surfaces
+theta_adv_deg: 1.0
+theta_rec_deg: 0.0
+theta_ev_coeff: 9.37
+theta_ev_exp: 0.54
+wetting_source: measured
