@@ -865,6 +865,79 @@ def test_the_root_block_reports_the_trained_dof(tmp_path):
     assert frame["patch_extent"] > 0
 
 
+# --- T8: variant coverage -----------------------------------------------------
+
+
+def test_checkpoint_refuses_a_nucleation_root_mismatch(tmp_path):
+    """The flag changes what the weights MEAN (a root net exists and the cap
+    is a different family), so a mismatched invocation must fail loudly."""
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(
+        tmp_path, ["model.front_geometry=true", "model.nucleation_root=true"]
+    )
+    train(cfg, paths)
+    plain, _ = staged_capsule_run(tmp_path, ["model.front_geometry=true"])
+    with pytest.raises(ValueError, match="nucleation_root"):
+        load_model(plain, paths)
+
+
+def test_root_delta_change_is_refused_on_reload(tmp_path):
+    """The bound scales the bluntness net's output: the same weights describe a
+    different root through a different delta -- like cap_delta."""
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_capsule_run
+
+    on = ["model.front_geometry=true", "model.nucleation_root=true"]
+    cfg, paths = staged_capsule_run(tmp_path, [*on, "model.root_delta=0.6"])
+    train(cfg, paths)
+    other, _ = staged_capsule_run(tmp_path, [*on, "model.root_delta=0.3"])
+    with pytest.raises(ValueError, match="root_delta"):
+        load_model(other, paths)
+
+
+def test_a_nucleation_root_run_resumes_cleanly(tmp_path):
+    """Resume must rebuild the same construction and keep training: the plan
+    is deterministic, so the resumed run supervises against the identical
+    measurement."""
+    from naviernet.training import train
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(
+        tmp_path, ROOT_TRAIN, write=_blunt_capsule_writer(1.0)
+    )
+    train(cfg, paths)
+    _, _, state = train(cfg, paths)  # resumes from the checkpoint
+    assert state["done"] == 2 * cfg.training.steps
+
+
+def test_evaluate_writes_the_root_block_for_a_rooted_run(tmp_path):
+    """The artifact, end-to-end: a trained nucleation-root run's metrics.json
+    carries physics.root with the trained w(t) -- what the bench reads."""
+    import json
+
+    from naviernet.evaluation import evaluate
+    from naviernet.training import train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(
+        tmp_path,
+        [
+            "model.front_geometry=true",
+            "model.nucleation_root=true",
+            "training.root_supervision=true",
+        ],
+    )
+    model, data, _ = train(cfg, paths)
+    evaluate(cfg, model, data, paths)
+    metrics = json.loads(paths.metrics_json.read_text())
+    root = metrics["physics"]["root"]
+    assert "w" in root["per_frame"][0]
+    assert "w_budget_use" in root
+    assert root["wetting_source"] == "measured"
+
+
 # --- Series-1: the measurement this journey is built on -----------------------
 
 
