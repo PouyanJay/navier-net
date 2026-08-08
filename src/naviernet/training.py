@@ -142,6 +142,7 @@ def _architecture_record(cfg) -> dict:
     so a later invocation can be checked against how the run was trained."""
     hard_pin = bool(getattr(cfg.model, "hard_pin", False))
     cap_freedom = bool(getattr(cfg.model, "cap_freedom", False))
+    nucleation_root = bool(getattr(cfg.model, "nucleation_root", False))
     return {
         "hard_pin": hard_pin,
         "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None,
@@ -149,6 +150,8 @@ def _architecture_record(cfg) -> dict:
         # Like pin_d_ref: a VALUE the weights were trained against, so it is only
         # meaningful (and only checked) when its flag is on.
         "cap_delta": float(cfg.model.cap_delta) if cap_freedom else None,
+        "nucleation_root": nucleation_root,
+        "root_delta": float(cfg.model.root_delta) if nucleation_root else None,
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
         "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
         "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
@@ -236,6 +239,29 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         path,
         "Free caps add the cap net and change what the cap radius means.",
     )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "nucleation_root",
+        path,
+        "The Hugelschaffer root adds the w(t) net and reshapes the root cap.",
+    )
+
+    # The bluntness bound is a VALUE, like cap_delta: the same w(t) weights
+    # describe a different root through a different bound.
+    saved_root_delta = ckpt.get("root_delta")
+    if (
+        bool(getattr(cfg.model, "nucleation_root", False))
+        and saved_root_delta is not None
+        and float(saved_root_delta) != float(cfg.model.root_delta)
+    ):
+        raise ValueError(
+            f"{path} was trained with model.root_delta={float(saved_root_delta)} but "
+            f"this invocation composes model.root_delta={float(cfg.model.root_delta)}. "
+            f"The bound scales the bluntness net's output, so the same weights "
+            f"describe a different root. Pass the same override the run was trained "
+            f"with."
+        )
 
     # The cap's departure bound is a VALUE, not a flag, so it is checked on its
     # own: the same weights read as a different shape through a different delta.

@@ -258,6 +258,25 @@ class ModelConfig:
     # discrepancy is a near-constant 1.25-1.48 across every frame and across
     # independently trained runs. Requires `sharp_interface`; off by default.
     film_pressure: bool = False
+    # The nucleation root: replace the ROOT cap's enforced circle with the
+    # Hugelschaffer half-oval carrying ONE trained, time-varying, bounded
+    # bluntness parameter w(t). The circle is the one region of the interface
+    # measured beyond the model's reach: the masks disagree with it more and
+    # more as the event runs (circle residual 12% -> 32%, taper drifting
+    # blunter), the deviation is driven and time-varying (a static family
+    # cannot follow it), and the attachment physics predicts exactly its sign
+    # (a dry patch on the heated plate lowers the demanded curvature over the
+    # root). w = 0 IS the circle, the apex crossing is exact for every w (the
+    # pin survives structurally), the seams keep meeting the body, and the
+    # nose cap stays circular -- freedom is spent only where the signal is.
+    # Requires `front_geometry`; mutually exclusive with `cap_freedom` (two
+    # shape systems on one cap). Off by default -> byte-identical.
+    nucleation_root: bool = False
+    # Bound on the Hugelschaffer bluntness |w| as a fraction of the root cap
+    # radius. Must stay inside 1: at |w| = r the family's denominator reaches
+    # zero at the apex and the curvature diverges. 0.6 spans apex radii from
+    # 0.53 r (sharpened) to 8.5 r (blunted) -- well past the measured drift.
+    root_delta: float = 0.6
     # Receding Bretherton branch (nucleation-root R0): a receding meniscus's cap
     # is FLATTER than static -- kappa R = 1 + beta (3Ca)^{2/3} with beta_rear =
     # -1.13 -- and without this flag every receding section is clamped TO the

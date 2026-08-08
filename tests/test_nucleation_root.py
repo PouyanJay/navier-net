@@ -313,6 +313,214 @@ def test_receding_cap_requires_the_sharp_interface(tmp_path):
         BubblePINN(cfg)
 
 
+# --- T3: the Hugelschaffer root cap (`model.nucleation_root`) -----------------
+#
+# The capsule's root cap stops asserting a circle: it becomes the Hugelschaffer
+# half-oval with ONE trained, bounded, time-varying bluntness parameter w(t).
+# w = 0 IS the circle, the apex crossing is exact for every w (the pin survives
+# structurally), and the seams keep meeting the body -- so freedom is spent
+# exactly where the masks demand it and nowhere else.
+
+PRIORS = dict(
+    x_root=0.2,
+    y_root=0.25,
+    s0=0.5,
+    w0=0.06,
+    rate0=0.3,
+    y_min=0.0,
+    y_max=0.5,
+    t_min=0.0,
+    t_max=1.0,
+)
+
+
+def _geo(seed: int, **kwargs):
+    import torch
+
+    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+
+    torch.manual_seed(seed)
+    return GeometricInterface(GeometryPriors(**PRIORS), **kwargs)
+
+
+def _force_bluntness(geometry, raw: float) -> None:
+    """Drive the w(t) net to a constant raw output, so the rendered bluntness
+    is ``root_delta * tanh(raw)`` at every time -- the structural guarantees
+    must hold at ARBITRARY bluntness, not just at the trained one."""
+    import torch
+
+    with torch.no_grad():
+        for p in geometry.root_net.parameters():
+            p.zero_()
+        geometry.root_net[-1].bias.fill_(raw)
+
+
+def _root_cap_front(geometry, t: float = 0.3, n_cap: int = 65):
+    # n_cap ODD, so the angle grid contains psi = 0 -- the apex itself -- and
+    # the exact-pin assertion tests the apex, not a neighbour.
+    import torch
+
+    front = geometry.front(torch.tensor([[t]]), n_body=16, n_cap=n_cap)
+    on_root = (front.on_cap.squeeze(1) > 0) & (front.u.squeeze(1) < 0.5)
+    return front, on_root
+
+
+def test_nucleation_root_is_off_by_default(cfg):
+    assert cfg.model.nucleation_root is False
+    assert 0.0 <= cfg.model.root_delta < 1.0
+
+
+def test_flag_off_leaves_every_net_bit_identical():
+    """The RNG-ordering guarantee (the film's lesson): the root net is built
+    LAST, so a seeded flag-off run starts from bit-identical weights."""
+    import torch
+
+    plain = _geo(7)
+    rooted = _geo(7, nucleation_root=True)
+    plain_state = dict(plain.state_dict())
+    rooted_state = dict(rooted.state_dict())
+    root_keys = {k for k in rooted_state if k.startswith("root_net")}
+    assert root_keys, "the flag must add the w(t) net"
+    assert set(rooted_state) - root_keys == set(plain_state)
+    for key in plain_state:
+        assert torch.equal(plain_state[key], rooted_state[key]), key
+
+
+def test_nucleation_root_requires_the_front_geometry(tmp_path):
+    from naviernet.models.pinn import BubblePINN
+    from tests.conftest import staged_run
+
+    cfg, _ = staged_run(tmp_path, ["model.nucleation_root=true"])
+    with pytest.raises(ValueError, match="front_geometry"):
+        BubblePINN(cfg)
+
+
+def test_nucleation_root_rejects_cap_freedom():
+    """Two shape systems on one cap would fight over the same boundary with no
+    way to attribute a bench result to either."""
+    with pytest.raises(ValueError, match="cap_freedom"):
+        _geo(0, nucleation_root=True, cap_freedom=True)
+
+
+@pytest.mark.parametrize("bad", [-0.1, 1.0, 2.5])
+def test_root_delta_outside_its_bound_is_rejected(bad):
+    """At |w| >= r the Hugelschaffer denominator can reach zero and the apex
+    curvature diverges -- checked whatever the flag says, like cap_delta."""
+    with pytest.raises(ValueError, match="root_delta"):
+        _geo(0, root_delta=bad)
+
+
+def test_the_construction_opens_as_the_circle():
+    """Zero-bias net -> w = 0 -> the root cap is the circle it replaces, on
+    both routes: the front samples and the field."""
+    import torch
+
+    plain = _geo(3)
+    rooted = _geo(3, nucleation_root=True)
+    _force_bluntness(rooted, 0.0)  # exactly w = 0, not the init's ~0.01 hair
+    front_p, on_root = _root_cap_front(plain)
+    front_r, _ = _root_cap_front(rooted)
+    assert torch.allclose(front_p.points[on_root], front_r.points[on_root], atol=1e-5)
+    assert torch.allclose(front_p.kappa_par[on_root], front_r.kappa_par[on_root], atol=1e-3)
+    # And the field agrees with its own front: every sample sits on phi = 0.
+    phi = rooted(front_r.points[on_root])
+    assert float(phi.abs().max()) < 1e-4
+
+
+@pytest.mark.parametrize("raw", [-2.0, 2.0])
+def test_forced_bluntness_keeps_pin_seams_and_finite_curvature(raw):
+    """The structural guarantees survive ANY bluntness inside the bound: exact
+    apex, seams meeting the body, finite curvature everywhere, and one shape
+    described by both the field and the front."""
+    import torch
+
+    geometry = _geo(5, nucleation_root=True)
+    _force_bluntness(geometry, raw)
+    t = 0.4
+    front, on_root = _root_cap_front(geometry, t=t)
+
+    # The apex sample (angle 0) sits exactly on the pinned root point.
+    root_pts = front.points[on_root]
+    angles = front.angle[on_root].squeeze(1)
+    apex = root_pts[angles.abs().argmin()]
+    anchor = geometry.root_point(t)
+    assert float((apex - anchor).abs().max()) < 1e-6
+
+    # Curvature is finite on the whole root cap, apex included.
+    kappa = front.kappa_par[on_root]
+    assert torch.isfinite(kappa).all()
+
+    # The seam samples meet the body: the cap's width at |angle| -> pi/2
+    # approaches the body's half-width at u = 0.
+    tt = torch.tensor([[t]])
+    r_root = geometry.frame(tt).r_root.item()
+    seam = root_pts[angles.argmax()]
+    centre = geometry.centerline(torch.zeros(1, 1), tt).item()
+    assert seam[1].item() - centre == pytest.approx(r_root, abs=1e-2)
+
+    # Field and front describe ONE shape.
+    phi = geometry(front.points[on_root])
+    assert float(phi.abs().max()) < 1e-4
+
+
+def test_positive_w_blunts_the_root_and_lowers_the_apex_curvature():
+    """The signed direction the attachment physics predicts: w > 0 inflates the
+    width near the apex (blunter, the measured drift) and lowers the apex
+    curvature below the circle's 1/r; w < 0 sharpens."""
+    import torch
+
+    t = 0.4
+    blunt = _geo(11, nucleation_root=True)
+    _force_bluntness(blunt, 2.0)
+    sharp = _geo(11, nucleation_root=True)
+    _force_bluntness(sharp, -2.0)
+    circle = _geo(11)
+
+    def apex_kappa(geometry):
+        front, on_root = _root_cap_front(geometry, t=t)
+        angles = front.angle[on_root].squeeze(1)
+        return float(front.kappa_par[on_root][angles.abs().argmin()])
+
+    tt = torch.tensor([[t]])
+    inverse_r = 1.0 / float(circle.frame(tt).r_root)
+    assert apex_kappa(blunt) < inverse_r < apex_kappa(sharp)
+
+    # And the RENDERED mask reads blunter through T0's own measurement.
+    def rendered_bluntness(geometry):
+        xs = np.linspace(0.0, 1.0, 400)
+        ys = np.linspace(0.0, 0.5, 200)
+        gx, gy = np.meshgrid(xs, ys)
+        pts = torch.tensor(
+            np.column_stack([gx.ravel(), gy.ravel(), np.full(gx.size, t)]),
+            dtype=torch.float32,
+        )
+        with torch.no_grad():
+            phi = geometry(pts).reshape(gy.shape[0], gx.shape[1]).numpy()
+        fit = fit_root_window(phi > 0, xs, ys, y_root=PRIORS["y_root"])
+        return fit.bluntness
+
+    assert rendered_bluntness(blunt) > rendered_bluntness(circle) + 0.02
+
+
+def test_a_training_step_leaves_the_bluntness_net_finite(tmp_path):
+    """Regression: the field's width comparison must floor INSIDE its one sqrt.
+    An intermediate sqrt(width_sq) reaches exactly zero at the apex column,
+    where its gradient is infinite, and 0 * inf fed NaN into the bluntness net
+    on the very first training step -- the matched-floor lesson, relearned."""
+    import torch
+
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(
+        tmp_path, ["model.front_geometry=true", "model.nucleation_root=true"]
+    )
+    train(cfg, paths)
+    model, _, _ = load_model(cfg, paths)
+    w = model.nets["phi"].root_bluntness(torch.tensor([[0.0], [0.5]]))
+    assert torch.isfinite(w).all()
+
+
 # --- Series-1: the measurement this journey is built on -----------------------
 
 
