@@ -371,6 +371,14 @@ class RunLaunchRequest(BaseModel):
     # the Bretherton film, not the bulk the depth-averaged `p` represents. One
     # inferred scalar offset on the body. Requires sharp_interface.
     film_pressure: bool | None = None
+    # Liquid film delta(x, t): the layer the bubble leaves on the gap walls --
+    # deposited by the advancing meniscus (Aussillous-Quere on the local speed),
+    # thinned by evaporation through the kinetic resistance, drying out at the
+    # roughness scale; its evaporation becomes the mass source and its surface
+    # pressure enters the jump. Opt-in until benched (the merged-default-off
+    # discipline every physics feature ships under). Requires sharp_interface
+    # and the 'T' field.
+    liquid_film: bool = False
     # Let the superheat deplete below the inlet, so evaporation can throttle
     # itself as the bubble blankets the wall. Needs the 'T' field.
     depletable_superheat: bool | None = None
@@ -473,6 +481,12 @@ class RunLaunchRequest(BaseModel):
             raise ValueError(
                 "film_pressure corrects the Young-Laplace jump, so it requires "
                 "sharp_interface -- enable it, or turn film_pressure off"
+            )
+        if self.liquid_film and self.sharp_interface is False:
+            raise ValueError(
+                "liquid_film rides on the explicit front the sharp-interface "
+                "conditions sample, so it requires sharp_interface -- enable it, "
+                "or turn liquid_film off"
             )
         if self.alpha_eps_anneal_steps and not self.alpha_eps_final:
             raise ValueError(

@@ -467,6 +467,11 @@ export interface RunLaunchRequest {
    * the Bretherton film, not the bulk pressure a depth-averaged model carries.
    * One inferred scalar offset on the body. Requires sharp_interface. */
   film_pressure: boolean;
+  /** Liquid film delta(x,t): the layer the bubble leaves on the gap walls --
+   * deposited by the advancing meniscus, thinned by evaporation, drying out at
+   * the roughness scale; its evaporation becomes the mass source and its
+   * surface pressure enters the jump. Requires sharp_interface + the T field. */
+  liquid_film: boolean;
   /** Let the superheat deplete below the inlet, so evaporation can throttle
    * itself as the bubble blankets the wall. Requires the 'T' field. */
   depletable_superheat: boolean;

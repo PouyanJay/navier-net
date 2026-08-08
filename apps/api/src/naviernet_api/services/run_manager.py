@@ -585,9 +585,14 @@ def _resolved_interface_flags(request: RunLaunchRequest, fields: list[str]) -> l
         "model.sharp_interface": _resolve(request.sharp_interface, "p" in fields),
         "model.film_pressure": _resolve(request.film_pressure, "p" in fields),
         "model.depletable_superheat": _resolve(request.depletable_superheat, "T" in fields),
+        # Plain opt-in, not recipe-resolved: the film is unbenched, so `False`
+        # stays `False` whatever the series supports.
+        "model.liquid_film": bool(request.liquid_film),
     }
-    # The film pressure corrects the jump; it cannot outlive it.
+    # The film pressure corrects the jump, and the liquid film rides on the
+    # front the jump is imposed on; neither can outlive sharp mode.
     resolved["model.film_pressure"] &= resolved["model.sharp_interface"]
+    resolved["model.liquid_film"] &= resolved["model.sharp_interface"]
     return [f"{key}={str(value).lower()}" for key, value in resolved.items()]
 
 
@@ -607,6 +612,8 @@ def _interface_overrides(
         ("sharp_interface", "p"),
         ("film_pressure", "p"),
         ("depletable_superheat", "T"),
+        ("liquid_film", "p"),
+        ("liquid_film", "T"),
     ):
         if getattr(request, flag) and needed not in fields:
             raise LaunchRejected(
