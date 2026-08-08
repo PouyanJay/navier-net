@@ -40,6 +40,8 @@ from typing import NamedTuple
 
 import torch
 
+from naviernet.physics.film import film_surface_pressure
+
 
 class StageAResiduals(NamedTuple):
     """Residual fields evaluated at a batch of collocation points."""
@@ -102,6 +104,20 @@ def source_penalty_sq(residuals: StageAResiduals) -> torch.Tensor:
     """Per-point squared dilatation penalty away from the interface, where it is
     unphysical (shape ``(n, 1)``). The registry's ``src`` collocation term reads this."""
     return ((1.0 - residuals.interface_weight) * residuals.source) ** 2
+
+
+def footprint_source_penalty_sq(
+    residuals: StageAResiduals, vapour: torch.Tensor
+) -> torch.Tensor:
+    """Per-point squared dilatation penalty OUTSIDE the bubble, ``(n, 1)``.
+
+    :func:`source_penalty_sq`'s liquid-film sibling: under ``model.liquid_film``
+    the mass legitimately appears across the whole footprint the bubble covers
+    -- the films evaporate there -- so the interface-band rule would penalise
+    exactly where the film's own closure puts the source. ``vapour`` is the
+    detached volume fraction; only the liquid outside the bubble stays forbidden.
+    """
+    return ((1.0 - vapour) * residuals.source) ** 2
 
 
 def source_penalty(residuals: StageAResiduals) -> torch.Tensor:
@@ -549,8 +565,6 @@ def _liquid_pressure(model, front, groups: dict[str, float]) -> torch.Tensor:
     """
     liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
     if getattr(model, "liquid_film", False):
-        from naviernet.physics.film import film_surface_pressure
-
         liquid = liquid + film_surface_pressure(model, front, groups)
     return liquid
 

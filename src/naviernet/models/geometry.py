@@ -610,21 +610,6 @@ class GeometricInterface(nn.Module):
         masks are compared against station by station."""
         return self._radius(u, t, ctx) * self.frame(t, ctx).scale
 
-    def width_at(
-        self, x: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
-    ) -> torch.Tensor:
-        """The bubble's full footprint width at LAB position ``x``, ``(N, 1)``.
-
-        The spine parameter is recovered from the frame and clamped, so a query
-        under a cap reads the cap seam's width -- adequate for the film's flow
-        conductance, where the width enters linearly beside a cubic in the film
-        thickness, and exact taper under the caps would buy noise, not signal.
-        """
-        ctx = ctx or GeometryContext()
-        frame = self.frame(t, ctx)
-        u = ((x - frame.ax) / (frame.bx - frame.ax)).clamp(0.0, 1.0)
-        return 2.0 * self.half_width(u, t, ctx)
-
     def frame(self, t: torch.Tensor, ctx: GeometryContext | None = None) -> CapsuleFrame:
         """The capsule's scalars at times ``t`` of shape ``(N, 1)``.
 

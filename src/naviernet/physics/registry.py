@@ -36,6 +36,7 @@ from naviernet.physics.residuals import (
     boundary_losses,
     darcy_residuals,
     energy_residuals,
+    footprint_source_penalty_sq,
     kinematic_residual,
     laplace_jump_residual,
     momentum_residuals,
@@ -183,15 +184,14 @@ def _div_sq(ctx: LossContext) -> torch.Tensor:
 
 
 def _src_sq(ctx: LossContext) -> torch.Tensor:
-    # Under the liquid film the mass legitimately appears across the whole
-    # FOOTPRINT the bubble covers, not just the interface band -- so the
-    # penalty's "unphysical" region becomes the liquid outside the bubble.
-    # Penalising the interior would fight the film's own source closure.
+    # Which region is forbidden to the source depends on the film: without it,
+    # mass off the interface band is unphysical; with it, the films evaporate
+    # across the whole footprint and only the outside liquid stays forbidden.
     if getattr(ctx.model, "liquid_film", False):
         with torch.no_grad():
             c = None if ctx.c is None else ctx.c.expand(ctx.x_coll.shape[0], -1)
             vapour = ctx.model.alpha(ctx.x_coll, c)
-        return ((1.0 - vapour) * ctx.res_a.source) ** 2
+        return footprint_source_penalty_sq(ctx.res_a, vapour)
     return source_penalty_sq(ctx.res_a)
 
 
@@ -235,8 +235,9 @@ def _film_source_sq(ctx: LossContext) -> torch.Tensor:
 
 
 def _film_depletion_term(ctx: LossContext) -> torch.Tensor:
-    stations = int(ctx.model.cfg.model.film_stations)
-    residual = depletion_residual(ctx.model, ctx.front_times, ctx.groups, stations, ctx.c)
+    residual = depletion_residual(
+        ctx.model, ctx.front_times, ctx.groups, ctx.model.film_stations, ctx.c
+    )
     return (residual**2).mean()
 
 

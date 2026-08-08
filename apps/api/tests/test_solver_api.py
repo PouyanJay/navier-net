@@ -753,3 +753,25 @@ def test_asking_for_the_liquid_film_on_a_stage_a_series_is_rejected(client):
     r = client.post("/api/runs", json={**TINY_RUN, "liquid_film": True})
     assert r.status_code == 422
     assert "liquid_film" in r.text
+
+
+def test_liquid_film_reaches_the_run_it_launched(client, repo_root):
+    """The flag has to travel all the way into the run's own config, or a run
+    trains without the film while the UI says otherwise."""
+    import json
+
+    raw = repo_root / "data" / "raw" / TINY_RUN["dataset"]
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "model.json").write_text(json.dumps({"enabled": ["mom", "energy"]}))
+
+    launched = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "front_geometry": True, "sharp_interface": True, "liquid_film": True},
+    )
+    assert launched.status_code == 202
+    run_id = launched.json()["run_id"]
+    read_stream(client, run_id)  # drain = wait for completion
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["model"]["liquid_film"] is True
+    assert cfg["model"]["sharp_interface"] is True

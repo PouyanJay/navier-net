@@ -259,6 +259,9 @@ class BubblePINN(nn.Module):
         groups = compute_groups(cfg)
         delta_ref = float(deposited_thickness(torch.ones(1, 1), groups))
         self.film = LiquidFilm(0.5 * groups["H_star"], delta_ref, n_cond=self.n_cond)
+        # Cached like `liquid_film` itself, so consumers read a model attribute
+        # instead of chaining through cfg.
+        self.film_stations = int(cfg.model.film_stations)
         # The accommodation coefficient's magnitude is the admitted unknown
         # (measured values span 1e-3 to 1), so the kinetic resistance carries a
         # trained log-scale, `r_int_star`'s film analogue: exp(0) = 1 starts at
@@ -297,23 +300,6 @@ class BubblePINN(nn.Module):
         superheat is read at."""
         priors = self.nets["phi"].priors
         return priors.x_root, priors.y_root
-
-    def film_width(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        c: torch.Tensor | None = None,
-        geometry: GeometryPriors | None = None,
-    ) -> torch.Tensor:
-        """The bubble's footprint width over the film at lab position ``x`` --
-        the width the film's axial conductance flows through. Routed through
-        the model for the same reason as :meth:`front`."""
-        if not self.front_geometry:
-            raise RuntimeError(
-                "film_width needs the explicit front: this model was built with "
-                "model.front_geometry=false."
-            )
-        return self.nets["phi"].width_at(x, t, GeometryContext(c, geometry))
 
     def film_offset(self, on_cap: torch.Tensor) -> torch.Tensor:
         """The film-to-bulk pressure offset at each front sample.
@@ -679,10 +665,6 @@ class BoundPINN:
         if self._geometry is not None:
             return self._geometry.x_root, self._geometry.y_root
         return self._model.film_root()
-
-    def film_width(self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor | None = None):
-        """This dataset's own footprint width -- bound exactly like :meth:`front`."""
-        return self._model.film_width(x, t, c if c is not None else self._c, self._geometry)
 
     def film(self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor | None = None):
         """The film net with this dataset's conditioning row bound: the film

@@ -405,7 +405,9 @@ def test_a_deposited_film_drains_to_dryout_within_the_event():
         delta = delta - dt * film_flux(delta, theta, groups)
         t += dt
     assert t < 100.0, "the film never drained"
-    assert t == pytest.approx(t_dry, rel=0.05)
+    # Measured Euler error at dt=1e-3 is ~0.3%; 2% leaves headroom for a future
+    # dt change without ever letting a sign or prefactor slip through.
+    assert t == pytest.approx(t_dry, rel=0.02)
     # And the event window is ~3.3 t*, so a fresh deposit CAN dry out in-event.
     assert t_dry < 3.3
 
@@ -578,7 +580,7 @@ def test_the_film_distribution_differs_from_the_grad_alpha_one(tmp_path):
     old = theta * grad_mag  # the old closure's spatial shape
 
     new = film_source_target(model, pts, groups).squeeze(1)
-    assert float(new.sum()) > 0.0, "the film source must put mass somewhere"
+    assert float(new.sum().detach()) > 0.0, "the film source must put mass somewhere"
 
     # Normalize to equal totals, then compare the interior's share of the mass.
     old = old / old.sum().clamp(min=1e-12)

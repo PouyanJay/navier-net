@@ -295,8 +295,8 @@ def film_surface_pressure(
     # Mean-free within each time row, over the body samples only.
     times = torch.unique(t)
     row = (t.squeeze(1).reshape(-1, 1) - times.reshape(1, -1)).abs().argmin(dim=1)
-    weight = torch.zeros(times.shape[0]).index_add(0, row, body)
-    total = torch.zeros(times.shape[0]).index_add(0, row, d_xx * body)
+    weight = torch.zeros(times.shape[0], device=t.device).index_add(0, row, body)
+    total = torch.zeros(times.shape[0], device=t.device).index_add(0, row, d_xx * body)
     centred = (d_xx - (total / weight.clamp(min=1.0))[row]) * body
 
     relief = (2.0 / groups["H_star"]) / groups["We"]
