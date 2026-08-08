@@ -833,6 +833,38 @@ def test_attachment_unknowns_move_off_init(tmp_path):
     assert float(extents[2]) >= float(extents[1])
 
 
+# --- T6: the extended physics.root block --------------------------------------
+
+
+def test_the_root_block_reports_the_trained_dof(tmp_path):
+    """A nucleation-root run's metrics carry the mechanism gate's own numbers:
+    w(t) per frame, its budget use, the patch extent, theta_app, and which
+    wetting provenance the closures ran on."""
+    import torch
+
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics.diagnostics import physics_report
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
+    from tests.conftest import staged_capsule_run
+
+    cfg, _ = staged_capsule_run(tmp_path, TINY_SHARP_ROOT)
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    torch.manual_seed(0)
+    model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
+    root = physics_report(model, data, compute_groups(cfg))["root"]
+
+    assert root["root_delta"] == pytest.approx(cfg.model.root_delta)
+    assert 0.0 <= root["w_budget_use"] <= 1.0
+    assert root["wetting_source"] == "measured"  # the default fluid is FC-72
+    assert np.isfinite(root["theta_app_deg"])
+    frame = root["per_frame"][0]
+    assert np.isfinite(frame["w"])
+    assert frame["patch_extent"] > 0
+
+
 # --- Series-1: the measurement this journey is built on -----------------------
 
 

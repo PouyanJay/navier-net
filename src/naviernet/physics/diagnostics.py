@@ -524,5 +524,5 @@ def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
     # The root window is measured for EVERY front-geometry run -- the profile
     # stations above exclude the caps, and a baseline that cannot see the root
     # cannot be compared against a run that reshapes it.
-    report["root"] = root_report(model, data)
+    report["root"] = root_report(model, data, groups)
     return report

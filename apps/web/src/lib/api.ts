@@ -472,6 +472,19 @@ export interface RunLaunchRequest {
    * the roughness scale; its evaporation becomes the mass source and its
    * surface pressure enters the jump. Requires sharp_interface + the T field. */
   liquid_film: boolean;
+  /** The nucleation root: the root cap stops asserting a circle and carries a
+   * trained bluntness w(t); launching it always brings its supervision channel
+   * (an undriven DOF is the measured failure mode). Requires front_geometry;
+   * mutually exclusive with cap_freedom; single-dataset only for now. */
+  nucleation_root: boolean;
+  /** The attachment pressure: over the dry contact patch the jump's gap term
+   * drops to (1 + cos theta_app)/H*, demanding a blunter root. theta_app inits
+   * and bounds from the fluid's own wetting config. Requires nucleation_root +
+   * sharp_interface. */
+  root_attachment: boolean;
+  /** The receding Bretherton branch: a receding meniscus reads FLATTER than
+   * static instead of being clamped to it. Requires sharp_interface. */
+  receding_cap: boolean;
   /** Let the superheat deplete below the inlet, so evaporation can throttle
    * itself as the bubble blankets the wall. Requires the 'T' field. */
   depletable_superheat: boolean;

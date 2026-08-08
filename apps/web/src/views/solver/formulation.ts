@@ -84,6 +84,9 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       evolving_width: false,
       cap_freedom: false,
       front_velocity: false,
+      nucleation_root: false,
+      root_attachment: false,
+      receding_cap: false,
     };
   }
   if (name === "front") {
@@ -93,6 +96,9 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       sharp_interface: false,
       film_pressure: false,
       liquid_film: false,
+      // These live IN the Young-Laplace jump, which this rung does not impose.
+      root_attachment: false,
+      receding_cap: false,
     };
   }
   // The sharp rung comes with its recommended companion: the film-pressure
@@ -116,11 +122,36 @@ export interface Modifier {
     | "evolving_width"
     | "film_pressure"
     | "liquid_film"
-    | "cap_freedom";
+    | "cap_freedom"
+    | "nucleation_root"
+    | "root_attachment"
+    | "receding_cap";
   label: string;
   hint: string;
   /** The rungs that admit it; on any other rung it is not shown at all. */
   on: Treatment[];
+  /** Keys forced ON with this one -- the dependencies the trainer enforces,
+   * applied here so an invalid combination is unreachable in the UI. */
+  requires?: Modifier["key"][];
+  /** Keys forced OFF when this one turns off -- its dependents. */
+  dependents?: Modifier["key"][];
+  /** Keys forced OFF when this one turns ON -- mutual exclusions. */
+  excludes?: Modifier["key"][];
+}
+
+/** The form patch one modifier toggle implies, dependencies included. */
+export function modifierPatch(
+  modifier: Modifier,
+  on: boolean,
+): Partial<SolverFormState> {
+  const patch: Partial<SolverFormState> = { [modifier.key]: on };
+  if (on) {
+    for (const key of modifier.requires ?? []) patch[key] = true;
+    for (const key of modifier.excludes ?? []) patch[key] = false;
+  } else {
+    for (const key of modifier.dependents ?? []) patch[key] = false;
+  }
+  return patch;
 }
 
 export const MODIFIERS: Modifier[] = [
@@ -149,6 +180,29 @@ export const MODIFIERS: Modifier[] = [
     label: "Free the end caps",
     hint: "the nose is shaped, not a circle of fixed curvature",
     on: ["front", "sharp"],
+    // The root DOF and its dependent physics: two shape systems on one cap.
+    excludes: ["nucleation_root", "root_attachment"],
+  },
+  {
+    key: "nucleation_root",
+    label: "Nucleation root w(t)",
+    hint: "the root cap blunts with the data, not a circle · supervised",
+    on: ["front", "sharp"],
+    excludes: ["cap_freedom"],
+    dependents: ["root_attachment"],
+  },
+  {
+    key: "root_attachment",
+    label: "Attachment pressure",
+    hint: "(1 + cos θ)/H* over the dry patch · per-fluid wetting",
+    on: ["sharp"],
+    requires: ["nucleation_root"],
+  },
+  {
+    key: "receding_cap",
+    label: "Receding cap flattening",
+    hint: "the rear Bretherton branch · flatter than static",
+    on: ["sharp"],
   },
   {
     key: "evolving_width",

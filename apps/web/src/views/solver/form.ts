@@ -34,6 +34,9 @@ export interface SolverFormState {
   cap_delta: number;
   film_pressure: boolean;
   liquid_film: boolean;
+  nucleation_root: boolean;
+  root_attachment: boolean;
+  receding_cap: boolean;
   depletable_superheat: boolean;
   evap_closure_two_way: boolean;
   alpha_eps_anneal_steps: number;
@@ -108,6 +111,13 @@ export const FORM_DEFAULTS: SolverFormState = {
   // source, its surface pressure in the jump. Opt-in until benched, like every
   // physics feature before its numbers exist. Sharp-interface-gated.
   liquid_film: false,
+  // The nucleation root and its physics ladder: opt-in until benched, like
+  // every physics feature before its numbers exist. Toggling the root on always
+  // launches its supervision channel too (the API couples them): a DOF without
+  // its driving signal is the measured undriven-knob failure.
+  nucleation_root: false,
+  root_attachment: false,
+  receding_cap: false,
   // A superheat that can be depleted, and a closure that can raise it: without
   // these the temperature field collapses to a constant and evaporation becomes
   // a fixed multiple of interfacial area, which can only grow.

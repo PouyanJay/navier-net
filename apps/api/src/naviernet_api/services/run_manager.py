@@ -534,6 +534,11 @@ def _configure(
         f"model.evolving_width={str(request.evolving_width).lower()}",
         f"model.cap_freedom={str(request.cap_freedom).lower()}",
         f"model.cap_delta={request.cap_delta}",
+        f"model.nucleation_root={str(request.nucleation_root).lower()}",
+        # The supervision channel travels WITH the DOF, always: launching the
+        # root without its driving signal is the measured undriven-knob failure,
+        # so the platform does not offer that combination at all.
+        f"training.root_supervision={str(request.nucleation_root).lower()}",
         f"training.evap_closure_two_way={str(request.evap_closure_two_way).lower()}",
         f"training.alpha_eps_anneal_steps={request.alpha_eps_anneal_steps}",
         f"training.alpha_eps_final={request.alpha_eps_final}",
@@ -588,11 +593,17 @@ def _resolved_interface_flags(request: RunLaunchRequest, fields: list[str]) -> l
         # Plain opt-in, not recipe-resolved: the film is unbenched, so `False`
         # stays `False` whatever the series supports.
         "model.liquid_film": bool(request.liquid_film),
+        # Same convention: unbenched nucleation-root physics stays opt-in.
+        "model.root_attachment": bool(request.root_attachment),
+        "model.receding_cap": bool(request.receding_cap),
     }
     # The film pressure corrects the jump, and the liquid film rides on the
-    # front the jump is imposed on; neither can outlive sharp mode.
+    # front the jump is imposed on; neither can outlive sharp mode -- nor can
+    # the attachment blend or the receding branch, which live IN the jump.
     resolved["model.film_pressure"] &= resolved["model.sharp_interface"]
     resolved["model.liquid_film"] &= resolved["model.sharp_interface"]
+    resolved["model.root_attachment"] &= resolved["model.sharp_interface"]
+    resolved["model.receding_cap"] &= resolved["model.sharp_interface"]
     return [f"{key}={str(value).lower()}" for key, value in resolved.items()]
 
 
@@ -614,6 +625,8 @@ def _interface_overrides(
         ("depletable_superheat", "T"),
         ("liquid_film", "p"),
         ("liquid_film", "T"),
+        ("root_attachment", "p"),
+        ("receding_cap", "p"),
     ):
         if getattr(request, flag) and needed not in fields:
             raise LaunchRejected(

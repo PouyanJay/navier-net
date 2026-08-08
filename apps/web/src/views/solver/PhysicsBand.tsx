@@ -6,6 +6,7 @@ import {
 } from "../../components/icons";
 import { FORM_BOUNDS, type SolverFormState } from "./form";
 import {
+  modifierPatch,
   modifiersFor,
   TREATMENTS,
   treatmentMeta,
@@ -123,7 +124,7 @@ export function PhysicsBand({
           label={modifier.label}
           hint={modifier.hint}
           checked={form[modifier.key]}
-          onChange={(on) => onForm({ [modifier.key]: on })}
+          onChange={(on) => onForm(modifierPatch(modifier, on))}
           disabled={locked}
         >
           {modifier.key === "hard_pin" && (

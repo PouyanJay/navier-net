@@ -246,29 +246,42 @@ def _sample_raster(
     )
 
 
-def root_report(model, data) -> dict:
+def root_report(model, data, groups: dict[str, float] | None = None) -> dict:
     """The ``physics.root`` block of ``metrics.json``: the measured root-window
-    fit and the model-vs-mask root distance, per frame and summarised.
+    fit and the model-vs-mask root distance, per frame and summarised -- plus,
+    for a nucleation-root run, the trained DOF itself: w(t), its budget use
+    (the mechanism gate's own number), the patch extent and apparent angle,
+    and the wetting provenance the closures ran on.
 
     Present for every front-geometry run -- the measurement needs no flag, and
     a baseline that cannot see the root cannot be compared against a run that
     reshapes it.
     """
+    geometry = model.nets["phi"]
+    rooted = bool(getattr(geometry, "nucleation_root", False))
+    attached = bool(getattr(model, "root_attachment", False))
     per_frame = []
     for row, frame in enumerate(data.frame_numbers):
         fit = measured_root_fit(data, row)
-        per_frame.append(
-            {
-                "frame": int(frame),
-                "taper_exponent": fit.taper_exponent,
-                "circle_rms": fit.circle_rms,
-                "bluntness": fit.bluntness,
-                "updown_bias": fit.updown_bias,
-                "tilt": fit.tilt,
-                "model_root_rms": model_root_window_rms(model, data, row),
-            }
-        )
-    return {
+        entry = {
+            "frame": int(frame),
+            "taper_exponent": fit.taper_exponent,
+            "circle_rms": fit.circle_rms,
+            "bluntness": fit.bluntness,
+            "updown_bias": fit.updown_bias,
+            "tilt": fit.tilt,
+            "model_root_rms": model_root_window_rms(model, data, row),
+        }
+        t = torch.tensor([[float(data.t[row])]])
+        if rooted:
+            with torch.no_grad():
+                entry["w"] = float(geometry.root_bluntness(t))
+        if attached:
+            with torch.no_grad():
+                entry["patch_extent"] = float(model.patch_extent(t))
+        per_frame.append(entry)
+
+    report = {
         "window_fraction": ROOT_WINDOW_FRACTION,
         "bluntness_depth_fraction": BLUNTNESS_DEPTH_FRACTION,
         "taper_exponent_first": per_frame[0]["taper_exponent"],
@@ -277,3 +290,23 @@ def root_report(model, data) -> dict:
         "model_root_rms_last": per_frame[-1]["model_root_rms"],
         "per_frame": per_frame,
     }
+    if rooted:
+        budget = float(getattr(geometry, "root_delta", 0.0))
+        peak = max(abs(f["w"]) for f in per_frame)
+        report["root_delta"] = budget
+        report["w_budget_use"] = peak / budget if budget > 0 else 0.0
+        report["wetting_source"] = _wetting_source(model)
+    if attached and groups is not None:
+        with torch.no_grad():
+            report["theta_app_deg"] = float(model.theta_app_deg(groups))
+    return report
+
+
+def _wetting_source(model) -> str:
+    """The provenance of the wetting constants this run's closures read --
+    ``unknown`` on a config predating the field, so old snapshots keep
+    composing while a conclusion drawn from them still says so."""
+    try:
+        return str(model.cfg.fluid.wetting_source)
+    except Exception:  # MISSING / absent field on a pre-wetting snapshot
+        return "unknown"
