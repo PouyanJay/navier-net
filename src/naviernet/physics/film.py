@@ -284,9 +284,13 @@ def film_surface_pressure(
     t = front.points[:, 2:3].detach()
     cx = None if c is None else c.expand(x.shape[0], -1)
 
-    delta = model.film(x, t, cx)
-    d_x = torch.autograd.grad(delta, x, torch.ones_like(delta), create_graph=True)[0]
-    d_xx = torch.autograd.grad(d_x, x, torch.ones_like(d_x))[0].detach().squeeze(1)
+    # The curvature needs autograd on this function's OWN leaf whatever the
+    # caller's grad mode -- diagnostics legitimately evaluate the jump under
+    # no_grad, and the forcing is detached on return either way.
+    with torch.enable_grad():
+        delta = model.film(x, t, cx)
+        d_x = torch.autograd.grad(delta, x, torch.ones_like(delta), create_graph=True)[0]
+        d_xx = torch.autograd.grad(d_x, x, torch.ones_like(d_x))[0].detach().squeeze(1)
 
     # Mean-free within each time row, over the body samples only.
     times = torch.unique(t)

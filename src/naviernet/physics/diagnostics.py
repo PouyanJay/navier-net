@@ -374,6 +374,84 @@ def residual_convergence(history: list[dict], terms: tuple[str, ...], after_step
     return report
 
 
+# Spatial grid the evaporation partition is integrated on, per side. A fixed
+# quadrature like the kinematic constraints use: dense enough to resolve the
+# footprint against the interface band, cheap enough to run per frame.
+PARTITION_GRID = 48
+
+# A film station counts as DRY in the report below twice the roughness scale:
+# the sigmoid-bounded net approaches zero asymptotically, so "exactly at the
+# roughness" would never fire, while 2x is still a film thinner than the wall
+# finish it sits on.
+DRY_REPORT_FACTOR = 2.0
+
+
+def film_report(model, data, groups: dict[str, float]) -> dict:
+    """The liquid film's own block of ``metrics.json``.
+
+    Three measurements, matched to what the film exists to provide: the
+    thickness profile (the fluid-dependent prediction a future multi-fluid
+    series can test), the dry fraction (dryout is the pinch precursor), and
+    the evaporation partition -- the fraction of the mass source coming from
+    the interior footprint, the number the literature puts above 70% in this
+    confinement. The film-pressure peak station is the T3 mechanism's own
+    location measurement, reported per frame so its migration is visible.
+    """
+    from naviernet.physics.film import film_surface_pressure
+
+    cfg = model.cfg
+    length_um = float(cfg.scales.L_ref_um)
+    x_root, _ = model.film_root()
+    dry_threshold = DRY_REPORT_FACTOR * groups["film_dryout_star"]
+    fractions = torch.tensor(_stations(PROFILE_STATIONS * 4), dtype=torch.float32)
+
+    d = data.domain
+    ys = torch.linspace(d.y_min, d.y_max, PARTITION_GRID)
+    xs = torch.linspace(d.x_min, d.x_max, PARTITION_GRID)
+    grid = torch.cartesian_prod(xs, ys)
+
+    per_frame = []
+    for row, frame in enumerate(data.frame_numbers):
+        t_value = float(data.t[row])
+        times = torch.tensor([[t_value]])
+        with torch.no_grad():
+            nose = model.apex(times)[0, 0]
+            x = x_root + (nose - x_root) * fractions.reshape(-1, 1)
+            delta = model.film(x, torch.full_like(x, t_value)).squeeze(1)
+            points = torch.cat([grid, torch.full((grid.shape[0], 1), t_value)], dim=1)
+            alpha = model.alpha(points).squeeze(1)
+            source = model.source(points).squeeze(1).clamp(min=0.0)
+        front = model.front(times, n_body=64, n_cap=8)
+        pressure = film_surface_pressure(model, front, groups).squeeze(1)
+        body = front.on_cap.squeeze(1) == 0
+        peak = int(pressure[body].argmax())
+        peak_x = float(front.points[body, 0].detach()[peak])
+
+        interior = (source * (alpha > 0.95)).sum()
+        total = source.sum().clamp(min=1e-12)
+        per_frame.append(
+            {
+                "frame": int(frame),
+                "delta_um": [float(v) * length_um for v in delta],
+                "dry_fraction": float((delta <= dry_threshold).float().mean()),
+                "film_evaporation_fraction": float(interior / total),
+                "film_pressure_peak_fraction": (peak_x - x_root) / (float(nose) - x_root),
+            }
+        )
+
+    last = per_frame[-1]
+    return {
+        "stations": [float(v) for v in fractions],
+        "r_gamma_um": groups["R_gamma_star"] * length_um,
+        "r_gamma_effective_um": float(model.film_resistance(groups)) * length_um,
+        "resistance_scale": float(torch.exp(model._log_film_resistance)),
+        "dry_fraction": last["dry_fraction"],
+        "film_evaporation_fraction": last["film_evaporation_fraction"],
+        "film_pressure_peak_fraction": last["film_pressure_peak_fraction"],
+        "per_frame": per_frame,
+    }
+
+
 def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
     """The physics block of ``metrics.json``: the interface conditions, the
     drainage drive, and the neck the model holds against the measured one.
@@ -403,7 +481,7 @@ def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
             }
         )
 
-    return {
+    report = {
         "laplace_error_nose": summary.laplace_error_nose,
         "laplace_error_front": summary.laplace_error_front,
         "axial_capillary_gradient": summary.axial_capillary_gradient,
@@ -415,3 +493,6 @@ def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
         "profile_stations": [float(u) for u in _stations(PROFILE_STATIONS)],
         "per_frame": per_frame,
     }
+    if getattr(model, "liquid_film", False):
+        report["film"] = film_report(model, data, groups)
+    return report

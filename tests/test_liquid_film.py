@@ -763,3 +763,61 @@ def test_film_pressure_is_mean_free_and_bounded_by_the_relief_scale(tmp_path):
         assert float(p[row].mean().abs()) < 0.05 * relief, (
             "the per-time mean belongs to film_offset, not this forcing"
         )
+
+
+# --- T4: the film's diagnostics in metrics.json ---------------------------------
+
+
+def test_film_report_measures_profile_dryness_partition_and_peak(tmp_path):
+    """The T4 gate: the three quantities the film exists to provide are
+    MEASURABLE -- the thickness profile (the fluid-dependent prediction), the
+    dry fraction (the pinch precursor), and the evaporation partition (the
+    literature's >70% through the film) -- plus the T3 mechanism's own peak
+    station, per frame."""
+    from naviernet.physics.diagnostics import film_report
+    from naviernet.physics.groups import compute_groups
+
+    model, data, cfg = _model(tmp_path, FILM)
+    groups = compute_groups(cfg)
+    report = film_report(model, data, groups)
+
+    assert len(report["per_frame"]) == len(data.frame_numbers)
+    for frame in report["per_frame"]:
+        assert all(v >= 0.0 for v in frame["delta_um"]), "a film cannot be negative"
+        assert 0.0 <= frame["dry_fraction"] <= 1.0
+        assert 0.0 <= frame["film_evaporation_fraction"] <= 1.0
+        assert 0.0 <= frame["film_pressure_peak_fraction"] <= 1.0
+    assert report["r_gamma_um"] == pytest.approx(1.14, abs=0.15), (
+        "FC-72's kinetic resistance must sit in the plan's 0.54-1.24 um band"
+    )
+    assert report["resistance_scale"] > 0.0
+
+
+def test_physics_report_carries_the_film_block_only_under_the_flag(tmp_path):
+    from naviernet.physics.diagnostics import physics_report
+
+    filmed, data, _ = _model(tmp_path, FILM)
+    assert "film" in physics_report(filmed, data)
+
+    plain, data, _ = _model(tmp_path, SHARP)
+    assert "film" not in physics_report(plain, data)
+
+
+def test_metrics_json_carries_the_film_block(tmp_path):
+    """End to end: train a tiny run, evaluate it, and read the artifact the
+    bench and the UI will read."""
+    import json
+
+    from naviernet.evaluation import evaluate
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(tmp_path, FILM)
+    model, data, _ = train(cfg, paths)
+    evaluate(cfg, model, data, paths)
+
+    metrics = json.loads(paths.metrics_json.read_text())
+    film = metrics["physics"]["film"]
+    assert "film_evaporation_fraction" in film
+    assert "dry_fraction" in film
+    assert "film_pressure_peak_fraction" in film
+    assert len(film["per_frame"][0]["delta_um"]) == len(film["stations"])
