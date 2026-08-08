@@ -904,9 +904,7 @@ def test_a_nucleation_root_run_resumes_cleanly(tmp_path):
     from naviernet.training import train
     from tests.conftest import staged_run
 
-    cfg, paths = staged_run(
-        tmp_path, ROOT_TRAIN, write=_blunt_capsule_writer(1.0)
-    )
+    cfg, paths = staged_run(tmp_path, ROOT_TRAIN, write=_blunt_capsule_writer(1.0))
     train(cfg, paths)
     _, _, state = train(cfg, paths)  # resumes from the checkpoint
     assert state["done"] == 2 * cfg.training.steps
