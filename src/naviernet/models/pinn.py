@@ -298,6 +298,23 @@ class BubblePINN(nn.Module):
         priors = self.nets["phi"].priors
         return priors.x_root, priors.y_root
 
+    def film_width(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        c: torch.Tensor | None = None,
+        geometry: GeometryPriors | None = None,
+    ) -> torch.Tensor:
+        """The bubble's footprint width over the film at lab position ``x`` --
+        the width the film's axial conductance flows through. Routed through
+        the model for the same reason as :meth:`front`."""
+        if not self.front_geometry:
+            raise RuntimeError(
+                "film_width needs the explicit front: this model was built with "
+                "model.front_geometry=false."
+            )
+        return self.nets["phi"].width_at(x, t, GeometryContext(c, geometry))
+
     def film_offset(self, on_cap: torch.Tensor) -> torch.Tensor:
         """The film-to-bulk pressure offset at each front sample.
 
@@ -662,6 +679,17 @@ class BoundPINN:
         if self._geometry is not None:
             return self._geometry.x_root, self._geometry.y_root
         return self._model.film_root()
+
+    def film_width(self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor | None = None):
+        """This dataset's own footprint width -- bound exactly like :meth:`front`."""
+        return self._model.film_width(x, t, c if c is not None else self._c, self._geometry)
+
+    def film(self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor | None = None):
+        """The film net with this dataset's conditioning row bound: the film
+        residuals call the net directly (they need their own leaf tensors for
+        its derivatives), so the bound view must interpose here too or a joint
+        run would evaluate an unconditioned film."""
+        return self._model.film(x, t, c if c is not None else self._ctx(x))
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.source(x, c if c is not None else self._ctx(x))

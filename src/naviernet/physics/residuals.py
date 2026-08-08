@@ -529,18 +529,30 @@ def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tenso
     # We and a divide back do not cancel), and this one TRAINS. A shared helper
     # is not worth perturbing a residual's arithmetic; the test below pins the
     # two readings to each other instead.
-    liquid = _liquid_pressure(model, front)
+    liquid = _liquid_pressure(model, front, groups)
     return model.p_vapor(t) - liquid - kappa / groups["We"]
 
 
-def _liquid_pressure(model, front) -> torch.Tensor:
+def _liquid_pressure(model, front, groups: dict[str, float]) -> torch.Tensor:
     """The liquid pressure the meniscus actually faces.
 
     On the body that is the Bretherton film, not the bulk the depth-averaged
     ``p`` represents (see BubblePINN.film_offset); the offset is zero on the caps
     and zero entirely when the feature is off.
+
+    Under ``model.liquid_film`` the film surface's own capillary pressure
+    perturbation is added on the body: where the film locally thins, its
+    pressure rises toward the vapour's, and that x-VARYING departure -- which
+    the scalar ``film_offset`` structurally cannot carry -- is what lets the
+    jump condition select a station. A detached forcing -- the geometry
+    answers it through the curvature side of the jump.
     """
-    return model.pressure(front.points) + model.film_offset(front.on_cap)
+    liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
+    if getattr(model, "liquid_film", False):
+        from naviernet.physics.film import film_surface_pressure
+
+        liquid = liquid + film_surface_pressure(model, front, groups)
+    return liquid
 
 
 def pressure_implied_curvature(
@@ -565,7 +577,7 @@ def pressure_implied_curvature(
     baseline this quantity exists to compare against, so the caller supplies the
     estimate rather than being refused an answer.
     """
-    liquid = _liquid_pressure(model, front)
+    liquid = _liquid_pressure(model, front, groups)
     vapour = model.p_vapor(front.points[:, 2:3]) if p_vapor is None else p_vapor
     return groups["We"] * (vapour - liquid)
 

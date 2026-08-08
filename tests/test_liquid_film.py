@@ -664,3 +664,102 @@ def test_film_source_trains_end_to_end_and_replaces_evap_in_the_log(tmp_path):
     assert "film_source" in record
     assert "evap" not in record, "the old closure must not be scored under the flag"
     assert record["film_source"] == pytest.approx(record["film_source"])
+
+
+# --- T3: the film surface's capillary pressure enters the jump condition --------
+
+
+class _AnalyticFilm(torch.nn.Module):
+    """A film with a Gaussian thinning patch at a known station -- the
+    controlled input for testing the pressure's station selection. The system
+    under test is film_surface_pressure; only the film field is synthesized,
+    exactly as _speed_profile_front synthesizes the front."""
+
+    def __init__(self, centre: float, width: float = 0.25):
+        super().__init__()
+        self.centre, self.width = centre, width
+
+    def forward(self, x, t, c=None):
+        dip = 0.006 * torch.exp(-((x - self.centre) ** 2) / (2.0 * self.width**2))
+        return 0.012 - dip
+
+
+def test_film_pressure_peaks_where_the_film_thins(tmp_path):
+    """THE T3 mechanism, stated as a measurement: at a local thinning patch
+    (incipient dryout) the film's surface curvature raises its pressure toward
+    the vapour's, and the perturbation the body meniscus faces peaks AT that
+    station -- the jump condition can now select a waist where the film
+    thins, which is Richards & Pegler's pinch-off route."""
+    from naviernet.physics.film import film_surface_pressure
+    from naviernet.physics.groups import compute_groups
+
+    model, data, cfg = _model(tmp_path, FILM)
+    groups = compute_groups(cfg)
+    times = torch.tensor([[0.5]])
+    front = model.nets["phi"].front(times, n_body=48, n_cap=6)
+
+    x0, _ = model.film_root()
+    nose = float(model.apex(times)[0, 0].detach())
+    centre = x0 + 0.45 * (nose - x0)
+    model.film = _AnalyticFilm(centre)
+
+    p = film_surface_pressure(model, front, groups).squeeze(1)
+    body = front.on_cap.squeeze(1) == 0
+    xb = front.points[body, 0].detach()
+    peak_x = float(xb[p[body].argmax()])
+    assert abs(peak_x - centre) < 0.15 * (nose - x0), (
+        f"the pressure must peak at the thinning patch ({centre:.2f}), got {peak_x:.2f}"
+    )
+    assert float(p[body].max()) > 0.0, "a thinning patch must RAISE the film pressure"
+
+
+def test_film_pressure_enters_the_jump_on_the_body_only(tmp_path):
+    """The body meniscus faces the film; the caps face bulk liquid. The
+    forcing must be detached (a computed forcing, like the solved shape
+    coefficients), zero on the caps, and alive on the body."""
+    from naviernet.physics.film import film_surface_pressure
+    from naviernet.physics.groups import compute_groups
+    from naviernet.physics.residuals import laplace_jump_residual
+
+    model, data, cfg = _model(tmp_path, FILM)
+    groups = compute_groups(cfg)
+    front = model.nets["phi"].front(torch.tensor([[0.4], [0.9]]), n_body=16, n_cap=6)
+
+    residual = laplace_jump_residual(model, front, groups)
+    assert residual.requires_grad, "the jump must still train"
+
+    p = film_surface_pressure(model, front, groups)
+    on_cap = front.on_cap.squeeze(1) == 1
+    assert not p.requires_grad, "the film pressure is a detached forcing"
+    assert torch.all(p[on_cap] == 0.0), "caps face bulk liquid, not the film"
+    assert torch.any(p[~on_cap] != 0.0), (
+        "a trained film's curvature must perturb the body's pressure"
+    )
+
+
+def test_film_pressure_is_mean_free_and_bounded_by_the_relief_scale(tmp_path):
+    """Two structural properties: the constant part of the film-to-bulk
+    discrepancy belongs to the scalar film_offset (so this forcing is
+    mean-free per time and cannot shift the whole jump), and pressures beyond
+    the film's own capillary scale deform the film instead of transmitting
+    (the soft cap)."""
+    from naviernet.physics.film import film_surface_pressure
+    from naviernet.physics.groups import compute_groups
+
+    model, data, cfg = _model(tmp_path, FILM)
+    groups = compute_groups(cfg)
+    times = torch.tensor([[0.3], [0.8]])
+    front = model.nets["phi"].front(times, n_body=32, n_cap=8)
+
+    p = film_surface_pressure(model, front, groups).squeeze(1)
+    assert torch.all(torch.isfinite(p))
+    relief = (2.0 / groups["H_star"]) / groups["We"]
+    assert torch.all(p.abs() <= relief + 1e-6)
+
+    body = front.on_cap.squeeze(1) == 0
+    t = front.points[:, 2].detach()
+    for tv in torch.unique(t):
+        row = body & (t == tv)
+        assert float(p[row].mean().abs()) < 0.05 * relief, (
+            "the per-time mean belongs to film_offset, not this forcing"
+        )

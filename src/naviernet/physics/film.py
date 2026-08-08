@@ -240,3 +240,60 @@ def film_source_residual(
     """Per-point closure residual: ``s(x) - film_source_target(x)``, ``(N, 1)``."""
     cx = None if c is None else c.expand(x.shape[0], -1)
     return model.source(x, cx) - film_source_target(model, x, groups, c)
+
+
+def film_surface_pressure(
+    model, front, groups: dict[str, float], c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """The film's capillary pressure perturbation at each front sample,
+    ``(N, 1)``, DETACHED -- the x-varying part of the pressure the BODY
+    meniscus faces.
+
+    Why capillary-static and not an axial-flux solve. The first formulation
+    here WAS the lubrication BVP for the film's axial flux -- and it measured
+    itself out of the model: with g ~ Re delta^3/3 ~ 1e-4, even a
+    well-trained depletion residual (~1e-3) implies pressures ~50x the
+    capillary scale, saturating any physical cap into a constant offset with
+    no spatial selectivity. That stiffness IS the physics: a micron film over
+    a millimetre body is axially SEALED, which is Bretherton's leading order
+    -- the film does not flow, and its pressure is set by its own surface's
+    capillary equilibrium::
+
+        p_film(x, t) = p_v(t) - kappa_surface / We,
+        kappa_surface ~ (gap part) - d^2 delta / dx^2
+
+    The gap part and ``p_v`` are x-uniform (the scalar ``film_offset``'s
+    territory); the term that can SELECT a station is the film-thickness
+    curvature, and the sign does the necking: at a locally THINNING patch
+    (a delta minimum, ``delta_xx > 0`` -- incipient dryout) the film pressure
+    rises toward ``p_v``, the jump the body must satisfy shrinks, and the
+    demanded interface curvature turns concave -- the waist forms where the
+    film thins. Richards & Pegler's route: pinch-off is controlled by the
+    film reaching the wall, with Re and We absent.
+
+    Returned mean-free per time (the constant belongs to ``film_offset``),
+    soft-capped at the film's capillary relief scale ``(2/H*)/We`` (beyond
+    that the film deforms rather than transmitting), zero on the caps (they
+    face bulk liquid), and DETACHED: a computed forcing, like the solved
+    shape coefficients -- the geometry answers through the curvature side of
+    the jump, and gradients back into the film would let the jump rewrite
+    the film to excuse the shape.
+    """
+    body = (1.0 - front.on_cap).squeeze(1)
+    x = front.points[:, 0:1].detach().requires_grad_(True)
+    t = front.points[:, 2:3].detach()
+    cx = None if c is None else c.expand(x.shape[0], -1)
+
+    delta = model.film(x, t, cx)
+    d_x = torch.autograd.grad(delta, x, torch.ones_like(delta), create_graph=True)[0]
+    d_xx = torch.autograd.grad(d_x, x, torch.ones_like(d_x))[0].detach().squeeze(1)
+
+    # Mean-free within each time row, over the body samples only.
+    times = torch.unique(t)
+    row = (t.squeeze(1).reshape(-1, 1) - times.reshape(1, -1)).abs().argmin(dim=1)
+    weight = torch.zeros(times.shape[0]).index_add(0, row, body)
+    total = torch.zeros(times.shape[0]).index_add(0, row, d_xx * body)
+    centred = (d_xx - (total / weight.clamp(min=1.0))[row]) * body
+
+    relief = (2.0 / groups["H_star"]) / groups["We"]
+    return (relief * torch.tanh(centred / groups["We"] / relief)).reshape(-1, 1)
