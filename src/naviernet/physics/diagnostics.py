@@ -24,8 +24,9 @@ from naviernet.physics.film import film_surface_pressure
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.residuals import (
     gap_curvature,
+    jump_gap_curvature,
+    jump_total_curvature,
     pressure_implied_curvature,
-    total_curvature,
 )
 from naviernet.physics.root import root_report
 
@@ -218,9 +219,7 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
         # shape diagnostics below are pure geometry and stay measurable.
         return float("nan"), float("nan")
     with torch.no_grad():
-        capillary = (
-            total_curvature(front, groups, getattr(model, "receding_cap", False)) / groups["We"]
-        ).detach()
+        capillary = (jump_total_curvature(model, front, groups) / groups["We"]).detach()
         liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
         residual = (_vapour_pressure(model, front) - liquid - capillary).abs()
 
@@ -258,7 +257,7 @@ def _curvature_gap(model, front, groups: dict[str, float]) -> dict[str, float]:
             pressure_implied_curvature(
                 model, front, groups, p_vapor=_vapour_pressure(model, front)
             )
-            - gap_curvature(front.normal_speed, groups, getattr(model, "receding_cap", False))
+            - jump_gap_curvature(model, front, groups)
         ).squeeze(1)
         carried = front.kappa_par.squeeze(1).detach()
     on_cap, u = front.on_cap.squeeze(1) > 0, front.u.squeeze(1)

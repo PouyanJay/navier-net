@@ -20,7 +20,7 @@ import torch
 from naviernet.models.geometry import SHAPE_MODES
 from naviernet.physics.residuals import (
     IN_PLANE_WEIGHT,
-    gap_curvature,
+    jump_gap_curvature,
     pressure_implied_curvature,
 )
 
@@ -73,8 +73,8 @@ def solve_shape_modes(
         # Both sides in the SAME units the jump condition uses: the demanded total
         # curvature less the gap part leaves what the in-plane term must supply,
         # and the in-plane term enters the condition weighted by pi/4.
-        demanded = pressure_implied_curvature(model, front, groups) - gap_curvature(
-            front.normal_speed, groups, getattr(model, "receding_cap", False)
+        demanded = pressure_implied_curvature(model, front, groups) - jump_gap_curvature(
+            model, front, groups
         )
         residual = demanded - IN_PLANE_WEIGHT * carried
 

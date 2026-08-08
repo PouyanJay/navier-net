@@ -277,6 +277,19 @@ class ModelConfig:
     # zero at the apex and the curvature diverges. 0.6 spans apex radii from
     # 0.53 r (sharpened) to 8.5 r (blunted) -- well past the measured drift.
     root_delta: float = 0.6
+    # The attachment pressure (nucleation-root R2): over the dry contact patch
+    # on the heated plate the gap-direction capillary term is NOT the
+    # both-plates-wetted 2/H* -- contact-angle cosines ADD across the gap
+    # (Park & Homsy 1984 for the wetted limit; Lu, Glasner, Bertozzi & Kim
+    # 2007 for the contacted one), so the attached side carries
+    # (1 + cos theta_app)/H*: LOWER capillary pressure, demanding a BLUNTER
+    # root -- the measured sign. theta_app is ONE trained scalar whose init
+    # and bounds come from the per-fluid wetting config; the patch footprint
+    # a(x,t) is a trained monotone extent about the anchor (the nose-rate
+    # treatment: it never shrinks while the bubble grows). Requires
+    # `nucleation_root` (the DOF the pressure drives) and `sharp_interface`
+    # (the jump the blend enters). Off by default -> the jump is unchanged.
+    root_attachment: bool = False
     # Receding Bretherton branch (nucleation-root R0): a receding meniscus's cap
     # is FLATTER than static -- kappa R = 1 + beta (3Ca)^{2/3} with beta_rear =
     # -1.13 -- and without this flag every receding section is clamped TO the

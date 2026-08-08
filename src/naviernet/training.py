@@ -152,6 +152,7 @@ def _architecture_record(cfg) -> dict:
         "cap_delta": float(cfg.model.cap_delta) if cap_freedom else None,
         "nucleation_root": nucleation_root,
         "root_delta": float(cfg.model.root_delta) if nucleation_root else None,
+        "root_attachment": bool(getattr(cfg.model, "root_attachment", False)),
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
         "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
         "allow_pinch": bool(getattr(cfg.model, "allow_pinch", False)),
@@ -245,6 +246,13 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         "nucleation_root",
         path,
         "The Hugelschaffer root adds the w(t) net and reshapes the root cap.",
+    )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "root_attachment",
+        path,
+        "The attachment adds theta_app and the patch unknowns and changes the jump.",
     )
 
     # The bluntness bound is a VALUE, like cap_delta: the same w(t) weights

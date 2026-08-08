@@ -679,6 +679,160 @@ def test_joint_runs_reject_the_nucleation_root_for_now(tmp_path):
         train(cfg, paths)
 
 
+# --- T5 (R2): the attachment pressure -----------------------------------------
+#
+# Over the dry contact patch the gap-direction capillary term is NOT the
+# both-plates-wetted 2/H*: contact-angle cosines add across the gap, so the
+# attached side carries (1 + cos theta_app)/H* -- LOWER pressure, demanding a
+# BLUNTER root, the measured sign. theta_app is one trained scalar whose init
+# and bounds come from the per-fluid wetting config (T1); the patch footprint
+# a(x,t) is a trained monotone extent about the anchor.
+
+TINY_SHARP_ROOT = [
+    "model=stage_b",
+    "training=stage_b",
+    "model.front_geometry=true",
+    "model.sharp_interface=true",
+    "model.nucleation_root=true",
+    "model.root_attachment=true",
+    "training.root_supervision=true",
+]
+
+
+def test_root_attachment_is_off_by_default(cfg):
+    assert cfg.model.root_attachment is False
+
+
+def test_root_attachment_requires_its_parents(tmp_path):
+    from naviernet.models.geometry import GeometryPriors
+    from naviernet.models.pinn import BubblePINN
+    from tests.conftest import staged_run
+
+    priors = GeometryPriors(**PRIORS)
+    cfg, _ = staged_run(
+        tmp_path,
+        [
+            "model=stage_b",
+            "model.front_geometry=true",
+            "model.sharp_interface=true",
+            "model.root_attachment=true",
+        ],
+    )
+    with pytest.raises(ValueError, match="nucleation_root"):
+        BubblePINN(cfg, geometry=priors)
+
+    cfg2, _ = staged_run(
+        tmp_path,
+        [
+            "model.front_geometry=true",
+            "model.nucleation_root=true",
+            "model.root_attachment=true",
+        ],
+    )
+    with pytest.raises(ValueError, match="sharp_interface"):
+        BubblePINN(cfg2, geometry=priors)
+
+
+@pytest.mark.parametrize(("fluid_id", "source", "has_law"), WETTING_EXPECTATIONS)
+def test_theta_app_initialises_at_the_fluids_own_law(tmp_path, fluid_id, source, has_law):
+    """The apparent angle is an inverse unknown like r_int_star, but its START
+    is the fluid's own physics: the evaporating-angle law at this run's
+    superheat scale (or the advancing angle on water's hysteresis path)."""
+    import torch
+
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics.groups import compute_groups
+    from tests.conftest import staged_capsule_run
+
+    cfg, _ = staged_capsule_run(tmp_path, [*TINY_SHARP_ROOT, f"fluid={fluid_id}"])
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
+
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
+    groups = compute_groups(cfg)
+    theta = float(model.theta_app_deg(groups))
+    assert theta == pytest.approx(groups["theta_app_init_deg"], abs=0.5)
+    assert groups["theta_app_min_deg"] <= theta <= groups["theta_app_max_deg"]
+    del torch
+
+
+def test_theta_app_names_the_fix_on_a_pre_wetting_snapshot(tmp_path):
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
+    from tests.conftest import staged_capsule_run
+
+    cfg, _ = staged_capsule_run(tmp_path, TINY_SHARP_ROOT)
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
+    groups = compute_groups(cfg)
+    for key in ("theta_app_min_deg", "theta_app_max_deg", "theta_app_init_deg"):
+        groups.pop(key, None)
+    with pytest.raises(ValueError, match="wetting"):
+        model.theta_app_deg(groups)
+
+
+def test_the_attachment_lowers_the_gap_term_over_the_patch_only(tmp_path):
+    """The blend reads (1 + cos theta)/H* over the patch and the free
+    Bretherton branch beyond it: root-adjacent samples BELOW the free value,
+    the nose untouched."""
+    import torch
+
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics.groups import compute_groups
+    from naviernet.physics.residuals import gap_curvature, jump_gap_curvature
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
+    from tests.conftest import staged_capsule_run
+
+    cfg, _ = staged_capsule_run(tmp_path, TINY_SHARP_ROOT)
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    torch.manual_seed(0)
+    model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
+    groups = compute_groups(cfg)
+
+    front = model.front(torch.tensor([[0.2]]), n_body=32, n_cap=17)
+    free = gap_curvature(front.normal_speed, groups)
+    blended = jump_gap_curvature(model, front, groups)
+
+    on_root = (front.on_cap.squeeze(1) > 0) & (front.u.squeeze(1) < 0.5)
+    on_nose = (front.on_cap.squeeze(1) > 0) & (front.u.squeeze(1) > 0.5)
+    apex = front.angle[on_root].squeeze(1).abs().argmin()
+    assert float(blended[on_root][apex]) < float(free[on_root][apex])
+    assert torch.allclose(blended[on_nose], free[on_nose], atol=1e-6)
+
+
+def test_attachment_unknowns_move_off_init(tmp_path):
+    """The T5 mechanism gate in miniature: after a short sharp-interface run,
+    theta_app and the patch extent have both moved off their inits, and the
+    patch extent never shrinks in time (the nose-rate treatment)."""
+    import torch
+
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(
+        tmp_path,
+        [*TINY_SHARP_ROOT, "training.steps=80", "training.lr=0.01"],
+        write=_blunt_capsule_writer(1.0),
+    )
+    train(cfg, paths)
+    model, _, _ = load_model(cfg, paths)
+    assert float(model._theta_app_raw.abs()) > 1e-4
+    assert (
+        float(model._patch_frac_raw.abs()) > 1e-4 or float(model._patch_rate_raw.abs()) > 1e-4
+    )
+    with torch.no_grad():
+        extents = model.patch_extent(torch.tensor([[0.0], [0.25], [0.5]]))
+    assert float(extents[1]) >= float(extents[0])
+    assert float(extents[2]) >= float(extents[1])
+
+
 # --- Series-1: the measurement this journey is built on -----------------------
 
 

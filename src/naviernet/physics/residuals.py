@@ -521,6 +521,38 @@ def gap_curvature(
     return (advancing - reduction).clamp(min=0.0)
 
 
+def jump_gap_curvature(model, front, groups: dict[str, float]) -> torch.Tensor:
+    """The gap-direction curvature the jump condition sees for THIS model,
+    ``(N, 1)``: the free-meniscus branch (receding correction included when
+    trained), blended toward the ATTACHED value over the patch footprint::
+
+        kappa_perp = (1 - a) * kappa_perp_free + a * (1 + cos theta_app)/H*
+
+    Over a dry contact patch the contact-angle cosines ADD across the gap
+    (Park & Homsy's 2/H* is the both-plates-wetted limit; Lu et al. 2007 the
+    both-contacted one; our one-patch-one-film hybrid is bracketed between
+    them, so the free side keeps its Bretherton correction). Lower capillary
+    pressure over the patch -> lower demanded curvature -> a blunter root:
+    the measured sign, delivered through the physics rather than asserted.
+
+    With both flags off this IS :func:`gap_curvature` -- the single definition
+    the residual, the diagnostics and the shape solve all read, so a trained
+    attachment run is scored by the condition it actually trained on.
+    """
+    kappa = gap_curvature(front.normal_speed, groups, getattr(model, "receding_cap", False))
+    if not getattr(model, "root_attachment", False):
+        return kappa
+    attached_fraction = model.attachment_fraction(front.points)
+    theta = torch.deg2rad(model.theta_app_deg(groups))
+    attached = (1.0 + torch.cos(theta)) / groups["H_star"]
+    return kappa + attached_fraction * (attached - kappa)
+
+
+def jump_total_curvature(model, front, groups: dict[str, float]) -> torch.Tensor:
+    """:func:`total_curvature`, with the model's own gap-term treatment."""
+    return IN_PLANE_WEIGHT * front.kappa_par + jump_gap_curvature(model, front, groups)
+
+
 def kinematic_residual(model, front, c: torch.Tensor | None = None) -> torch.Tensor:
     """The kinematic condition on the explicit interface, per sample ``(N, 1)``::
 
@@ -559,7 +591,7 @@ def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tenso
     there is nothing left to absorb it.
     """
     t = front.points[:, 2:3]
-    kappa = total_curvature(front, groups, getattr(model, "receding_cap", False))
+    kappa = jump_total_curvature(model, front, groups)
     # Deliberately NOT written as `(pressure_implied_curvature(...) - kappa)/We`,
     # though that is the same equation: the two differ in float32 (a multiply by
     # We and a divide back do not cancel), and this one TRAINS. A shared helper
