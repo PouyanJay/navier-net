@@ -75,6 +75,10 @@ class FluidConfig:
     cp_v: float = MISSING
     sigma: float = MISSING  # N/m
     h_lv: float = MISSING  # J/kg
+    # kg/mol. The Schrage kinetic resistance closing the liquid film's
+    # evaporation scales as sqrt(R_universal / molar_mass); without it the film
+    # flux q = k dT / delta diverges as the film thins.
+    molar_mass: float = MISSING
 
 
 @dataclass
@@ -243,6 +247,12 @@ class ModelConfig:
     # only samples in sharp mode, and its later stages feed the jump condition).
     # Off by default -> no film net, no film term, byte-identical.
     liquid_film: bool = False
+    # Quadrature stations for the film's depletion ODE, spread between the
+    # measured root and the nose at each front time. Deterministic midpoints,
+    # not a random draw: the film is one smooth 1-D profile per time, so what
+    # matters is covering the footprint, and a fixed grid is reproducible
+    # across resume.
+    film_stations: int = 32
     # Front samples per time, per body profile and per end cap, for the interface
     # conditions. Module-level rather than swept: the front is a smooth 1-D curve,
     # so this only has to resolve it, not fit anything.
@@ -269,7 +279,8 @@ class LossWeights:
     darcy: float = 1.0  # R4: depth-averaged momentum (replaces `mom` in sharp mode)
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
-    film: float = 1.0  # liquid film: deposition (and later depletion) on the front
+    film: float = 1.0  # liquid film: deposition where the meniscus advances
+    film_depletion: float = 1.0  # liquid film: evaporative thinning behind the front
 
 
 @dataclass

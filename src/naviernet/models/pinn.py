@@ -126,7 +126,7 @@ class BubblePINN(nn.Module):
         self._validate_sharp_interface(cfg, names)
         self._validate_pressure_shape(cfg)
         self._validate_film_pressure(cfg)
-        self._validate_liquid_film(cfg)
+        self._validate_liquid_film(cfg, names)
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -225,16 +225,25 @@ class BubblePINN(nn.Module):
         layers.append(nn.Linear(dims[-1], 1))
         self.vapor_pressure = nn.Sequential(*layers)
 
-    def _validate_liquid_film(self, cfg) -> None:
+    def _validate_liquid_film(self, cfg, names: list[str]) -> None:
         """The film is scored on the explicit front, which the trainer only
         samples in sharp mode -- and its later stages feed the jump condition,
-        which only exists there."""
+        which only exists there. Depletion is driven by the local superheat, so
+        the temperature field must exist for the film to have a drive."""
         self.liquid_film = bool(getattr(cfg.model, "liquid_film", False))
-        if self.liquid_film and not self.sharp_interface:
+        if not self.liquid_film:
+            return
+        if not self.sharp_interface:
             raise ValueError(
                 "model.liquid_film rides on the explicit front the sharp-interface "
                 "conditions sample, so it requires model.sharp_interface=true -- "
                 "enable it, or turn model.liquid_film off."
+            )
+        if "T" not in names:
+            raise ValueError(
+                "model.liquid_film depletes by evaporation driven by the local "
+                "superheat, so it requires the 'T' field in model.fields (the "
+                f"Stage-B field set); this model has {names}."
             )
 
     def _init_liquid_film(self, cfg) -> None:
@@ -266,6 +275,13 @@ class BubblePINN(nn.Module):
                 "model.liquid_film=false, so there is no film net to evaluate."
             )
         return self.film(front.points[:, 0:1].detach(), front.points[:, 2:3].detach(), c)
+
+    def film_root(self) -> tuple[float, float]:
+        """The measured root anchor ``(x, y)`` the film's quadrature starts
+        from -- the upstream end of the footprint, and the height the driving
+        superheat is read at."""
+        priors = self.nets["phi"].priors
+        return priors.x_root, priors.y_root
 
     def film_offset(self, on_cap: torch.Tensor) -> torch.Tensor:
         """The film-to-bulk pressure offset at each front sample.
@@ -624,6 +640,13 @@ class BoundPINN:
     def apex(self, t: torch.Tensor):
         """This dataset's own nose apex -- bound exactly like :meth:`front`."""
         return self._model.apex(t, self._c, self._geometry)
+
+    def film_root(self) -> tuple[float, float]:
+        """This dataset's own measured root anchor, never the reference
+        dataset's -- the same binding rule as :meth:`front`."""
+        if self._geometry is not None:
+            return self._geometry.x_root, self._geometry.y_root
+        return self._model.film_root()
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.source(x, c if c is not None else self._ctx(x))

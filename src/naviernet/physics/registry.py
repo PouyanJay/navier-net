@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 import torch
 
 from naviernet.models.geometry import FrontSamples
-from naviernet.physics.film import advancing_mask, deposition_residual
+from naviernet.physics.film import advancing_mask, depletion_residual, deposition_residual
 from naviernet.physics.residuals import (
     EnergyResiduals,
     MomentumResiduals,
@@ -216,6 +216,12 @@ def _film_term(ctx: LossContext) -> torch.Tensor:
     return (residual**2).sum() / anchored
 
 
+def _film_depletion_term(ctx: LossContext) -> torch.Tensor:
+    stations = int(ctx.model.cfg.model.film_stations)
+    residual = depletion_residual(ctx.model, ctx.front_times, ctx.groups, stations, ctx.c)
+    return (residual**2).mean()
+
+
 def _energy_sq(ctx: LossContext) -> torch.Tensor:
     return ctx.energy_res.energy**2
 
@@ -396,6 +402,27 @@ REGISTRY: tuple[Equation, ...] = (
         # the data term's gradient norm is meaningless for it.
         rebalanced=False,
         term=_film_term,
+    ),
+    Equation(
+        id="film_depletion",
+        stage="B",
+        name="Film depletion",
+        tex=r"\frac{\partial \delta}{\partial t}\Big|_{x}"
+        r" = -\frac{E_\text{film}\,\theta}{\delta + R_\gamma^*}"
+        r"\,g(\delta) \quad \text{behind } \Gamma",
+        weight_key="film_depletion",
+        fields_required=("phi", "T"),
+        # E_film = Ja/Pe; the kinetic resistance R_gamma* comes from the fluid.
+        groups=("Ja", "Pe"),
+        mode="sharp",
+        flag="liquid_film",
+        # Evaluated on the film's own footprint quadrature, not x_coll -- like
+        # the front conditions, it stays out of the collocation reweighting.
+        on_collocation=False,
+        # NOT rebalanced, same reason as the deposition term: the film net's
+        # parameters are disjoint from every other field's.
+        rebalanced=False,
+        term=_film_depletion_term,
     ),
     Equation(
         id="energy",

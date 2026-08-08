@@ -27,6 +27,7 @@ def test_physics_lists_the_registry_equations_with_state(client):
         "kinematic",
         "laplace",
         "film",
+        "film_depletion",
     }
     # The sharp-interface equations are listed but inactive: the series does not
     # compose model.sharp_interface, so the diffuse treatment is the active one.

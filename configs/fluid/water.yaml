@@ -24,3 +24,5 @@ cp_v: 2080.0
 
 sigma: 5.89e-2 # N/m
 h_lv: 2.257e6 # J/kg
+
+molar_mass: 0.018015 # kg/mol

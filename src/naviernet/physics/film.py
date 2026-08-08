@@ -59,6 +59,76 @@ def deposited_thickness(normal_speed: torch.Tensor, groups: dict[str, float]) ->
     return 0.5 * groups["H_star"] * aq_term / (1.0 + AQ_Q * aq_term)
 
 
+# Width of the smooth dryout gate, as a fraction of the roughness scale. Small
+# enough that the gate acts only within a hair of dryout (the drain dynamics
+# above it are the ungated law), large enough to keep the transition
+# differentiable for the trainer.
+DRY_GATE_WIDTH = 0.2
+
+
+def film_flux(
+    delta: torch.Tensor, theta: torch.Tensor, groups: dict[str, float]
+) -> torch.Tensor:
+    """The film's evaporative thinning rate, ``(N, 1)``, non-dimensional::
+
+        E_film * theta / (delta + R_gamma*) * gate(delta)
+
+    ``E_film = Ja/Pe`` and ``R_gamma*`` is the Schrage kinetic resistance as an
+    equivalent liquid length (see :mod:`naviernet.physics.groups`). The
+    resistance in series is NOT optional: without it the flux is ``k dT/delta``
+    and DIVERGES as the film thins -- the same pathology the ``|grad alpha|``
+    source has -- while here it is bounded by ``E_film theta / R_gamma*``
+    whatever the film does.
+
+    The gate takes a station smoothly to zero at the wall-roughness scale:
+    a dry station has no continuous liquid left, so it contributes no
+    evaporation -- which is what makes dryout a stable end state instead of a
+    boundary the ODE keeps pushing through.
+    """
+    conduction = groups["film_depletion"] * theta / (delta + groups["R_gamma_star"])
+    dry = groups["film_dryout_star"]
+    return conduction * torch.sigmoid((delta - dry) / (DRY_GATE_WIDTH * dry))
+
+
+def depletion_residual(
+    model,
+    times: torch.Tensor,
+    groups: dict[str, float],
+    stations: int,
+    c: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """The depletion ODE behind the front, per quadrature point ``(M*stations, 1)``::
+
+        d delta/dt |_x  +  film_flux(delta, theta)  =  0
+
+    The time derivative is at FIXED lab position -- the film is attached to the
+    wall -- which is exactly what the ``delta(x, t)`` parameterization makes a
+    plain ``d/dt``: no advection term, no station relabeling.
+
+    Quadrature: ``stations`` midpoints between the measured root and the nose
+    at each of ``times`` -- the film's footprint, deterministic so the term is
+    reproducible across resume. The driving superheat is read at the root
+    height (the centerline's anchor; the centerline swings little), and it is
+    DETACHED, as is the nose: the film reads the temperature and the front,
+    never writes them. Until the coupling stages (mass source, squeezing
+    pressure) deliberately open a channel, the film field is a pure record.
+    """
+    x_root, y_root = model.film_root()
+    nose = model.apex(times)[:, 0:1].detach()
+    fractions = (
+        torch.arange(stations, dtype=times.dtype, device=times.device) + 0.5
+    ) / stations
+    x = (x_root + (nose - x_root) * fractions.reshape(1, -1)).reshape(-1, 1)
+    t = times.repeat_interleave(stations, dim=0).detach().requires_grad_(True)
+    cx = None if c is None else c.expand(x.shape[0], -1)
+
+    delta = model.film(x, t, cx)
+    ddt = torch.autograd.grad(delta, t, torch.ones_like(delta), create_graph=True)[0]
+    points = torch.cat([x, torch.full_like(x, y_root), t.detach()], dim=1)
+    theta = model.temperature(points, cx).detach()
+    return ddt + film_flux(delta, theta, groups)
+
+
 def advancing_mask(front) -> torch.Tensor:
     """1 where the front advances into liquid, 0 elsewhere, ``(N, 1)``, detached.
 
