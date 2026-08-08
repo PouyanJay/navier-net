@@ -259,6 +259,21 @@ class BubblePINN(nn.Module):
         groups = compute_groups(cfg)
         delta_ref = float(deposited_thickness(torch.ones(1, 1), groups))
         self.film = LiquidFilm(0.5 * groups["H_star"], delta_ref, n_cond=self.n_cond)
+        # The accommodation coefficient's magnitude is the admitted unknown
+        # (measured values span 1e-3 to 1), so the kinetic resistance carries a
+        # trained log-scale, `r_int_star`'s film analogue: exp(0) = 1 starts at
+        # the literature value, and the fluid-to-fluid RATIO stays computed.
+        self._log_film_resistance = nn.Parameter(torch.zeros(1))
+
+    def film_resistance(self, groups: dict[str, float]) -> torch.Tensor:
+        """The effective kinetic resistance ``R_gamma* exp(w)``, an inverse
+        unknown scaled off the literature value (see ``_init_liquid_film``)."""
+        if not self.liquid_film:
+            raise RuntimeError(
+                "film_resistance needs the liquid film: this model was built "
+                "with model.liquid_film=false."
+            )
+        return groups["R_gamma_star"] * torch.exp(self._log_film_resistance)
 
     def film_thickness(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
         """The film thickness at each front sample's axial position, ``(N, 1)``.

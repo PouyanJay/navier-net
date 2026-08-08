@@ -1,4 +1,4 @@
-"""The liquid film delta(s,t) between the bubble and the wall (T0: deposition).
+"""The liquid film delta(x,t) between the bubble and the wall.
 
 In a 150 um gap the bubble spans the channel; the liquid it displaces is left
 behind as a thin film against the wall, and our depth-averaged model integrates
@@ -106,8 +106,13 @@ def test_flag_off_leaves_every_other_net_bit_identical(tmp_path):
 
     plain_state = plain.state_dict()
     filmed_state = filmed.state_dict()
-    film_keys = {k for k in filmed_state if k.startswith("film.")}
-    assert film_keys, "the film net must live under the 'film.' namespace"
+    film_keys = {k for k in filmed_state if "film" in k}
+    assert any(k.startswith("film.") for k in film_keys), (
+        "the film net must live under the 'film.' namespace"
+    )
+    assert "_log_film_resistance" in film_keys, (
+        "the trained kinetic-resistance unknown must exist under the flag"
+    )
     assert set(filmed_state) - film_keys == set(plain_state)
     for key, value in plain_state.items():
         assert torch.equal(value, filmed_state[key]), (
@@ -450,7 +455,8 @@ def test_depletion_residual_wiring_matches_finite_differences(tmp_path):
 
 def test_depletion_trains_only_the_film(tmp_path):
     """T1 is still UNCOUPLED: the film reads the temperature and the front,
-    never writes them. The residual's graph must touch the film net alone."""
+    never writes them. The residual's graph must touch the film's own unknowns
+    alone -- the net, and the trained kinetic resistance the flux carries."""
     from naviernet.physics.film import depletion_residual
     from naviernet.physics.groups import compute_groups
 
@@ -463,9 +469,9 @@ def test_depletion_trains_only_the_film(tmp_path):
     outsiders = [
         name
         for name, p in model.named_parameters()
-        if not name.startswith("film.") and p.grad is not None and float(p.grad.abs().max()) > 0
+        if "film" not in name and p.grad is not None and float(p.grad.abs().max()) > 0
     ]
-    assert not outsiders, f"depletion reached beyond the film net: {outsiders}"
+    assert not outsiders, f"depletion reached beyond the film's unknowns: {outsiders}"
     assert any(
         p.grad is not None and float(p.grad.abs().max()) > 0 for p in model.film.parameters()
     ), "the film net itself must receive gradient"
@@ -495,3 +501,166 @@ def test_depletion_trains_end_to_end(tmp_path):
     record = state["hist"][-1]
     assert "film_depletion" in record
     assert record["film_depletion"] == pytest.approx(record["film_depletion"])
+
+
+# --- T2: the film's evaporation becomes the mass source -------------------------
+
+
+def test_the_film_source_replaces_the_grad_alpha_closure(tmp_path):
+    """Under the flag the mass source is closed against the film's evaporation,
+    not the |grad alpha| distribution: one closure per field, or the two would
+    fight over `s` with different distributions."""
+    from naviernet.physics import registry
+
+    cfg, _ = _staged_run(tmp_path, FILM)
+    with_film = [
+        e.id
+        for e in registry.enabled_equations(
+            cfg.model.fields, sharp_interface=True, liquid_film=True
+        )
+    ]
+    assert "film_source" in with_film
+    assert "evap" not in with_film, "the old closure must be REPLACED, not doubled"
+
+    without = [e.id for e in registry.enabled_equations(cfg.model.fields, sharp_interface=True)]
+    assert "evap" in without
+    assert "film_source" not in without
+
+
+def test_film_source_prefactor_conserves_mass():
+    """Algebraic gate on the depth-averaged prefactor: over a footprint of area
+    A, the volume created per time must be (both walls) x (rho_l/rho_v - 1) x
+    (liquid consumed per area) x A. Integrating s over the gap multiplies by
+    H*, so s must carry 2 (rho_ratio - 1) / H* -- a factor-of-two or an H*
+    slip here IS a mass-conservation bug."""
+    from naviernet.physics.film import film_flux, film_source_density
+
+    groups = _groups_for_fluid("fc72")
+    delta = torch.full((5, 1), 0.01)
+    theta = torch.full((5, 1), 0.5)
+
+    flux = film_flux(delta, theta, groups)
+    density = film_source_density(delta, theta, groups)
+    expected = 2.0 * (groups["rho_ratio"] - 1.0) / groups["H_star"] * flux
+    assert torch.allclose(density, expected)
+
+
+def test_the_film_distribution_differs_from_the_grad_alpha_one(tmp_path):
+    """The T2 gate: at EQUAL totals, the two closures put the mass in different
+    places. The discriminator is the bubble's INTERIOR (alpha ~ 1, grad ~ 0):
+    the |grad alpha| closure is structurally ~zero there, while the film
+    evaporates across the whole footprint the bubble covers -- which is exactly
+    the ">70% of heat transfer is the film" physics this task encodes.
+
+    alpha_eps is sharpened so the tiny fixture bubble HAS an interior; at the
+    default 0.05 the blur is comparable to the whole bubble and every vapour
+    point is also 'interface'."""
+    from naviernet.physics.film import film_source_target
+    from naviernet.physics.groups import compute_groups
+    from naviernet.physics.residuals import gradients
+
+    model, data, cfg = _model(tmp_path, [*FILM, "model.alpha_eps=0.005"])
+    groups = compute_groups(cfg)
+
+    n = 4000
+    rng = torch.Generator().manual_seed(11)
+    d = data.domain
+    x = torch.rand(n, 1, generator=rng) * (d.x_max - d.x_min) + d.x_min
+    y = torch.rand(n, 1, generator=rng) * (d.y_max - d.y_min) + d.y_min
+    t = torch.rand(n, 1, generator=rng) * (d.t_max - d.t_min) + d.t_min
+    pts = torch.cat([x, y, t], dim=1).requires_grad_(True)
+
+    alpha = model.alpha(pts)
+    a_x, a_y, _ = gradients(alpha, pts)
+    grad_mag = torch.sqrt(a_x**2 + a_y**2).detach().squeeze(1)
+    theta = model.temperature(pts).detach().squeeze(1)
+    vapour = alpha.detach().squeeze(1)
+    old = theta * grad_mag  # the old closure's spatial shape
+
+    new = film_source_target(model, pts, groups).squeeze(1)
+    assert float(new.sum()) > 0.0, "the film source must put mass somewhere"
+
+    # Normalize to equal totals, then compare the interior's share of the mass.
+    old = old / old.sum().clamp(min=1e-12)
+    new = new / new.sum().clamp(min=1e-12)
+    interior = ((vapour > 0.95) & (grad_mag < 0.05 * grad_mag.max())).float()
+    assert interior.sum() > 20, "fixture must expose a genuine interior"
+    old_interior = float((old * interior).sum())
+    new_interior = float((new * interior).sum())
+    assert old_interior < 0.05, "the |grad alpha| closure is ~zero in the interior"
+    assert new_interior > 5.0 * max(old_interior, 1e-3), (
+        f"the film must put real mass over the interior footprint "
+        f"(old {old_interior:.4f} vs new {new_interior:.4f})"
+    )
+
+
+def test_film_source_target_moves_only_the_resistance_and_is_gated_by_vapour(tmp_path):
+    """One-way in the FIELDS, the same design as the shipped evap closure: the
+    target cannot move the film net, theta, or the interface. Its one live
+    parameter is the trained kinetic resistance -- this closure, where the
+    film's implied growth meets the observed growth, is where the
+    accommodation unknown is identifiable. And outside the bubble there is no
+    film surface, so the target vanishes with alpha."""
+    from naviernet.physics.film import film_source_target
+    from naviernet.physics.groups import compute_groups
+
+    model, data, cfg = _model(tmp_path, FILM)
+    groups = compute_groups(cfg)
+
+    pts = torch.tensor([[1.0, 0.5, 0.5], [10.0, 0.95, 0.5]])  # inside; far outside
+    target = film_source_target(model, pts, groups)
+    target.sum().backward()
+    moved = [
+        name
+        for name, p in model.named_parameters()
+        if p.grad is not None and float(p.grad.abs().max()) > 0
+    ]
+    assert moved == ["_log_film_resistance"], (
+        f"only the resistance unknown may be live in the target, got {moved}"
+    )
+    with torch.no_grad():
+        assert float(target[1]) < 0.05 * float(target[0].clamp(min=1e-12)), (
+            "outside the bubble the target must vanish with alpha"
+        )
+
+
+def test_src_penalty_moves_to_the_liquid_under_the_film(tmp_path):
+    """The shipped src penalty suppresses `s` outside the INTERFACE BAND --
+    which is exactly where the film's source lives (the interior footprint).
+    Under the flag the penalty's forbidden region becomes the liquid outside
+    the bubble, or the two terms would fight over every interior point."""
+    from naviernet.physics import registry
+    from naviernet.physics.groups import compute_groups
+
+    model, data, cfg = _model(tmp_path, [*FILM, "model.alpha_eps=0.005"])
+    groups = compute_groups(cfg)
+
+    # Probe points from the model's own capsule: mid-spine at the root height
+    # is interior; far downstream of the nose is liquid.
+    x0, y0 = model.film_root()
+    nose = float(model.apex(torch.tensor([[0.5]]))[0, 0])
+    inside = torch.tensor([[0.5 * (x0 + nose), y0, 0.5]])
+    outside = torch.tensor([[nose + 2.0, y0, 0.5]])
+    pts = torch.cat([inside, outside]).requires_grad_(True)
+    with torch.no_grad():
+        alpha = model.alpha(pts)
+    assert float(alpha[0]) > 0.95 and float(alpha[1]) < 0.05, "probe points must bracket"
+
+    ctx = registry.LossContext(model, pts, groups=groups)
+    penalty = registry._src_sq(ctx).squeeze(1)
+    with torch.no_grad():
+        source_sq = (model.source(pts) ** 2).squeeze(1)
+    weight = penalty / source_sq.clamp(min=1e-18)
+    assert float(weight[0]) < 0.01, "the interior must be free for the film's mass"
+    assert float(weight[1]) > 0.81, "the outside liquid stays penalised"
+
+
+def test_film_source_trains_end_to_end_and_replaces_evap_in_the_log(tmp_path):
+    from naviernet.training import train
+
+    cfg, paths = _staged_run(tmp_path, FILM)
+    _, _, state = train(cfg, paths)
+    record = state["hist"][-1]
+    assert "film_source" in record
+    assert "evap" not in record, "the old closure must not be scored under the flag"
+    assert record["film_source"] == pytest.approx(record["film_source"])

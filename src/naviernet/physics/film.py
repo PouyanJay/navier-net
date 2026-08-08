@@ -67,25 +67,38 @@ DRY_GATE_WIDTH = 0.2
 
 
 def film_flux(
-    delta: torch.Tensor, theta: torch.Tensor, groups: dict[str, float]
+    delta: torch.Tensor,
+    theta: torch.Tensor,
+    groups: dict[str, float],
+    resistance: torch.Tensor | float | None = None,
 ) -> torch.Tensor:
     """The film's evaporative thinning rate, ``(N, 1)``, non-dimensional::
 
-        E_film * theta / (delta + R_gamma*) * gate(delta)
+        E_film * theta / (delta + R_gamma) * gate(delta)
 
-    ``E_film = Ja/Pe`` and ``R_gamma*`` is the Schrage kinetic resistance as an
-    equivalent liquid length (see :mod:`naviernet.physics.groups`). The
-    resistance in series is NOT optional: without it the flux is ``k dT/delta``
-    and DIVERGES as the film thins -- the same pathology the ``|grad alpha|``
-    source has -- while here it is bounded by ``E_film theta / R_gamma*``
-    whatever the film does.
+    ``E_film = Ja/Pe`` and the default ``R_gamma`` is the Schrage kinetic
+    resistance as an equivalent liquid length (see
+    :mod:`naviernet.physics.groups`). The resistance in series is NOT optional:
+    without it the flux is ``k dT/delta`` and DIVERGES as the film thins -- the
+    same pathology the ``|grad alpha|`` source has -- while here it is bounded
+    by ``E_film theta / R_gamma`` whatever the film does.
+
+    ``resistance`` overrides the literature value: the trainer passes the
+    model's own :meth:`~naviernet.models.pinn.BubblePINN.film_resistance`, the
+    literature value scaled by the trained accommodation unknown. Measured
+    accommodation coefficients span 1e-3 to 1 (Marek & Straub 2001) -- the
+    largest single uncertainty in any thermal closure -- so its magnitude is an
+    inverse unknown exactly like ``r_int_star``, while the fluid-to-fluid
+    RATIO stays the computed physics.
 
     The gate takes a station smoothly to zero at the wall-roughness scale:
     a dry station has no continuous liquid left, so it contributes no
     evaporation -- which is what makes dryout a stable end state instead of a
     boundary the ODE keeps pushing through.
     """
-    conduction = groups["film_depletion"] * theta / (delta + groups["R_gamma_star"])
+    if resistance is None:
+        resistance = groups["R_gamma_star"]
+    conduction = groups["film_depletion"] * theta / (delta + resistance)
     dry = groups["film_dryout_star"]
     return conduction * torch.sigmoid((delta - dry) / (DRY_GATE_WIDTH * dry))
 
@@ -126,7 +139,7 @@ def depletion_residual(
     ddt = torch.autograd.grad(delta, t, torch.ones_like(delta), create_graph=True)[0]
     points = torch.cat([x, torch.full_like(x, y_root), t.detach()], dim=1)
     theta = model.temperature(points, cx).detach()
-    return ddt + film_flux(delta, theta, groups)
+    return ddt + film_flux(delta, theta, groups, model.film_resistance(groups))
 
 
 def advancing_mask(front) -> torch.Tensor:
@@ -159,3 +172,71 @@ def deposition_residual(
     target = deposited_thickness(front.normal_speed, groups).detach()
     cx = None if c is None else c.expand(front.points.shape[0], -1)
     return advancing_mask(front) * (model.film_thickness(front, cx) - target)
+
+
+# The bubble deposits a film on BOTH gap walls, and both evaporate. The
+# deposition law's delta is per wall, so every volume budget carries the two.
+BOTH_WALLS = 2.0
+
+
+def film_source_density(
+    delta: torch.Tensor,
+    theta: torch.Tensor,
+    groups: dict[str, float],
+    resistance: torch.Tensor | float | None = None,
+) -> torch.Tensor:
+    """The depth-averaged dilatation the films' evaporation creates, ``(N, 1)``::
+
+        s = (2 / H*) (rho_ratio - 1) film_flux(delta, theta)
+
+    Derivation, and why each factor is a mass-conservation statement: each wall's
+    film thins at ``film_flux`` (liquid volume per footprint area per time), and
+    there are two walls; each unit of liquid volume becomes ``rho_l/rho_v`` of
+    vapour, for a NET volume creation of ``(rho_ratio - 1)`` per unit consumed;
+    and continuity integrates ``div(u)`` across the gap, so a per-area volume
+    rate becomes a dilatation by ``1/H*``. Drop any factor and the source no
+    longer creates the volume the films actually give up.
+    """
+    return (
+        BOTH_WALLS
+        * (groups["rho_ratio"] - 1.0)
+        / groups["H_star"]
+        * film_flux(delta, theta, groups, resistance)
+    )
+
+
+def film_source_target(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """What the mass source should be at bulk points ``x``, per the film, ``(N, 1)``.
+
+    The film's evaporation happens across the whole FOOTPRINT -- wherever the
+    bubble covers the walls -- so the density is gated by the vapour fraction,
+    not by ``|grad alpha|``: this is exactly the distribution change the film
+    exists to make. The old closure put the mass where the interface is
+    sharpest; this one puts it where the film is present and thin (the flux
+    RISES as the film thins, until dryout shuts the station off).
+
+    The FIELDS are detached -- the closure is one-way in them, the same design
+    as the shipped evap closure and for the same reason: ``s`` learns from the
+    film, and nothing can flatten the interface, cool the superheat, or rewrite
+    the film to satisfy the source it observes. The one live parameter is the
+    model's trained kinetic resistance: the accommodation coefficient is the
+    admitted unknown, and this closure -- where the film's implied growth meets
+    the growth the data actually shows -- is exactly where it is identifiable.
+    ``r_int_star`` plays the same role in the closure this one replaces.
+    """
+    cx = None if c is None else c.expand(x.shape[0], -1)
+    with torch.no_grad():
+        delta = model.film(x[:, 0:1], x[:, 2:3], cx)
+        theta = model.temperature(x, cx)
+        alpha = model.alpha(x, cx)
+    return film_source_density(delta, theta, groups, model.film_resistance(groups)) * alpha
+
+
+def film_source_residual(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """Per-point closure residual: ``s(x) - film_source_target(x)``, ``(N, 1)``."""
+    cx = None if c is None else c.expand(x.shape[0], -1)
+    return model.source(x, cx) - film_source_target(model, x, groups, c)

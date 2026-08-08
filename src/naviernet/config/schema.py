@@ -281,6 +281,7 @@ class LossWeights:
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
     film: float = 1.0  # liquid film: deposition where the meniscus advances
     film_depletion: float = 1.0  # liquid film: evaporative thinning behind the front
+    film_source: float = 1.0  # liquid film: its evaporation as the mass source
 
 
 @dataclass

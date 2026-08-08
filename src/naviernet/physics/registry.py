@@ -22,7 +22,12 @@ from dataclasses import dataclass, field
 import torch
 
 from naviernet.models.geometry import FrontSamples
-from naviernet.physics.film import advancing_mask, depletion_residual, deposition_residual
+from naviernet.physics.film import (
+    advancing_mask,
+    depletion_residual,
+    deposition_residual,
+    film_source_residual,
+)
 from naviernet.physics.residuals import (
     EnergyResiduals,
     MomentumResiduals,
@@ -178,6 +183,15 @@ def _div_sq(ctx: LossContext) -> torch.Tensor:
 
 
 def _src_sq(ctx: LossContext) -> torch.Tensor:
+    # Under the liquid film the mass legitimately appears across the whole
+    # FOOTPRINT the bubble covers, not just the interface band -- so the
+    # penalty's "unphysical" region becomes the liquid outside the bubble.
+    # Penalising the interior would fight the film's own source closure.
+    if getattr(ctx.model, "liquid_film", False):
+        with torch.no_grad():
+            c = None if ctx.c is None else ctx.c.expand(ctx.x_coll.shape[0], -1)
+            vapour = ctx.model.alpha(ctx.x_coll, c)
+        return ((1.0 - vapour) * ctx.res_a.source) ** 2
     return source_penalty_sq(ctx.res_a)
 
 
@@ -214,6 +228,10 @@ def _film_term(ctx: LossContext) -> torch.Tensor:
     residual = deposition_residual(ctx.model, ctx.front, ctx.groups, ctx.c)
     anchored = advancing_mask(ctx.front).sum().clamp(min=1.0)
     return (residual**2).sum() / anchored
+
+
+def _film_source_sq(ctx: LossContext) -> torch.Tensor:
+    return film_source_residual(ctx.model, ctx.x_coll, ctx.groups, ctx.c) ** 2
 
 
 def _film_depletion_term(ctx: LossContext) -> torch.Tensor:
@@ -260,6 +278,10 @@ class Equation:
     # gating alone. The film term exists only when the film field does; encoding
     # that here keeps `enabled_equations` the single place activation is decided.
     flag: str | None = None
+    # The model flag that opts this equation OUT: the film's source closure
+    # REPLACES the |grad alpha| one, and two closures on the same field with
+    # different distributions would fight. ``None`` = never displaced.
+    unless_flag: str | None = None
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
     # Per-point squared residual (shape ``(n_coll, 1)``, non-negative) for the
     # collocation terms; ``term`` is its mean. ``None`` for boundary terms (bc), which
@@ -446,8 +468,27 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("s", "T"),
         groups=("Ja",),
         rebalanced=False,  # a soft consistency penalty, ramped by the curriculum
+        # Displaced by the film's source closure: same field, different
+        # distribution, and the distribution is the point of the film.
+        unless_flag="liquid_film",
         pointwise=_evap_sq,
         term=_mean(_evap_sq),
+    ),
+    Equation(
+        id="film_source",
+        stage="B",
+        name="Film evaporation source",
+        tex=r"s = \frac{2\,(\rho_\ell/\rho_v - 1)}{H^*}\,"
+        r"\frac{E_\text{film}\,\theta}{\delta + R_\gamma^*}\,g(\delta)\,\alpha",
+        weight_key="film_source",
+        fields_required=("s", "T"),
+        groups=("Ja", "Pe", "rho_ratio"),
+        mode="sharp",
+        flag="liquid_film",
+        # A soft consistency penalty on `s`, like the closure it replaces.
+        rebalanced=False,
+        pointwise=_film_source_sq,
+        term=_mean(_film_source_sq),
     ),
 )
 
@@ -466,12 +507,14 @@ def enabled_equations(
     present = set(fields)
     allowed = {"any", "sharp" if sharp_interface else "diffuse"}
     on = {None} | ({"liquid_film"} if liquid_film else set())
+    off = {"liquid_film"} if liquid_film else set()
     return [
         e
         for e in REGISTRY
         if e.implemented
         and e.mode in allowed
         and e.flag in on
+        and e.unless_flag not in off
         and set(e.fields_required) <= present
     ]
 
