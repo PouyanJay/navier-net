@@ -26,3 +26,5 @@ cp_v: 895.0
 
 sigma: 8.0e-3 # N/m
 h_lv: 89.0e3 # J/kg  (latent heat at the boiling point)
+
+molar_mass: 0.415 # kg/mol (3M datasheet; FC-77 is a mixture, average MW)

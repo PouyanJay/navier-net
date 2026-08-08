@@ -22,3 +22,5 @@ cp_v: 885.0
 
 sigma: 8.35e-3 # N/m
 h_lv: 84.5e3 # J/kg
+
+molar_mass: 0.338 # kg/mol (C6F14; 3M datasheet)

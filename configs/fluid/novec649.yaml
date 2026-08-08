@@ -25,3 +25,5 @@ cp_v: 891.0
 
 sigma: 1.08e-2 # N/m
 h_lv: 88.0e3 # J/kg  (latent heat at the boiling point)
+
+molar_mass: 0.316 # kg/mol (C6F12O; 3M datasheet)

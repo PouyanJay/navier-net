@@ -26,3 +26,5 @@ cp_v: 892.0
 
 sigma: 1.02e-2 # N/m
 h_lv: 112.0e3 # J/kg  (latent heat at the boiling point)
+
+molar_mass: 0.250 # kg/mol (C4F9OCH3; 3M datasheet)

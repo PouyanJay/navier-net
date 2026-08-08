@@ -79,6 +79,7 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       front_geometry: false,
       sharp_interface: false,
       film_pressure: false,
+      liquid_film: false,
       allow_pinch: false,
       evolving_width: false,
       cap_freedom: false,
@@ -91,11 +92,14 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       hard_pin: false,
       sharp_interface: false,
       film_pressure: false,
+      liquid_film: false,
     };
   }
   // The sharp rung comes with its recommended companion: the film-pressure
   // correction is part of that recipe (and is the platform default), so
   // choosing the treatment chooses the recipe. It stays switchable below.
+  // The liquid film is NOT switched on with the rung: it is opt-in until
+  // benched, so choosing sharp does not silently change the reproducible recipe.
   return {
     front_geometry: true,
     hard_pin: false,
@@ -111,6 +115,7 @@ export interface Modifier {
     | "allow_pinch"
     | "evolving_width"
     | "film_pressure"
+    | "liquid_film"
     | "cap_freedom";
   label: string;
   hint: string;
@@ -129,6 +134,12 @@ export const MODIFIERS: Modifier[] = [
     key: "film_pressure",
     label: "Film pressure",
     hint: "Bretherton film offset on the bubble's sides",
+    on: ["sharp"],
+  },
+  {
+    key: "liquid_film",
+    label: "Liquid film δ(x,t)",
+    hint: "deposited · evaporating · dryout · its source and its pressure",
     on: ["sharp"],
   },
   {

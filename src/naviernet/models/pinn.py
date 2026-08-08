@@ -19,12 +19,21 @@ from collections.abc import Sequence
 import torch
 import torch.nn as nn
 
+from naviernet.models.film import LiquidFilm
 from naviernet.models.geometry import (
     GeometricInterface,
     GeometryContext,
     GeometryPriors,
 )
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures
+
+# A deliberate exception to the usual physics -> models dependency direction
+# (the only one): the film net's channel bound and data-anchored start are
+# DERIVED from the config's dimensionless groups, exactly as the trainer
+# derives them -- duplicating that arithmetic here would let the two drift.
+# Neither module imports back into naviernet.models, so no cycle is possible.
+from naviernet.physics.film import deposited_thickness
+from naviernet.physics.groups import compute_groups
 
 # Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
 # one smooth scalar curve in time, and capacity beyond this buys nothing but the
@@ -117,6 +126,7 @@ class BubblePINN(nn.Module):
         self._validate_sharp_interface(cfg, names)
         self._validate_pressure_shape(cfg)
         self._validate_film_pressure(cfg)
+        self._validate_liquid_film(cfg, names)
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -139,6 +149,10 @@ class BubblePINN(nn.Module):
         )
         self._init_inverse_unknowns(cfg, names)
         self._init_vapor_pressure()
+        # LAST, deliberately: the film net must not consume RNG before any of
+        # the shared fields, so a seeded run with the flag off starts from
+        # bit-identical weights (regression-tested).
+        self._init_liquid_film(cfg)
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -210,6 +224,88 @@ class BubblePINN(nn.Module):
             layers += [nn.Linear(d_in, d_out), nn.Tanh()]
         layers.append(nn.Linear(dims[-1], 1))
         self.vapor_pressure = nn.Sequential(*layers)
+
+    def _validate_liquid_film(self, cfg, names: list[str]) -> None:
+        """The film is scored on the explicit front, which the trainer only
+        samples in sharp mode -- and its later stages feed the jump condition,
+        which only exists there. Depletion is driven by the local superheat, so
+        the temperature field must exist for the film to have a drive."""
+        self.liquid_film = bool(getattr(cfg.model, "liquid_film", False))
+        if not self.liquid_film:
+            return
+        if not self.sharp_interface:
+            raise ValueError(
+                "model.liquid_film rides on the explicit front the sharp-interface "
+                "conditions sample, so it requires model.sharp_interface=true -- "
+                "enable it, or turn model.liquid_film off."
+            )
+        if "T" not in names:
+            raise ValueError(
+                "model.liquid_film depletes by evaporation driven by the local "
+                "superheat, so it requires the 'T' field in model.fields (the "
+                f"Stage-B field set); this model has {names}."
+            )
+
+    def _init_liquid_film(self, cfg) -> None:
+        """``delta(u, t)``: the liquid film's thickness over the front's spine.
+
+        The channel bound and the data-anchored start both come from the
+        dimensionless groups, computed here from the config exactly as the
+        trainer computes them -- the film's geometry is the channel's, not a
+        per-run tunable.
+        """
+        if not self.liquid_film:
+            return
+        groups = compute_groups(cfg)
+        if "R_gamma_star" not in groups:
+            raise ValueError(
+                "model.liquid_film needs fluid.molar_mass (the Schrage kinetic "
+                "resistance is computed from it); this config predates the field "
+                "-- add molar_mass to the fluid config, as configs/fluid/*.yaml do."
+            )
+        delta_ref = float(deposited_thickness(torch.ones(1, 1), groups))
+        self.film = LiquidFilm(0.5 * groups["H_star"], delta_ref, n_cond=self.n_cond)
+        # Cached like `liquid_film` itself, so consumers read a model attribute
+        # instead of chaining through cfg.
+        self.film_stations = int(cfg.model.film_stations)
+        # The accommodation coefficient's magnitude is the admitted unknown
+        # (measured values span 1e-3 to 1), so the kinetic resistance carries a
+        # trained log-scale, `r_int_star`'s film analogue: exp(0) = 1 starts at
+        # the literature value, and the fluid-to-fluid RATIO stays computed.
+        self._log_film_resistance = nn.Parameter(torch.zeros(1))
+
+    def film_resistance(self, groups: dict[str, float]) -> torch.Tensor:
+        """The effective kinetic resistance ``R_gamma* exp(w)``, an inverse
+        unknown scaled off the literature value (see ``_init_liquid_film``)."""
+        if not self.liquid_film:
+            raise RuntimeError(
+                "film_resistance needs the liquid film: this model was built "
+                "with model.liquid_film=false."
+            )
+        return groups["R_gamma_star"] * torch.exp(self._log_film_resistance)
+
+    def film_thickness(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
+        """The film thickness at each front sample's axial position, ``(N, 1)``.
+
+        The coordinates are DETACHED: the film field is a record attached to
+        the wall, and no term that reads it through this accessor may move the
+        front by gradient through the film net's inputs. (Terms that need the
+        film's own derivatives -- depletion's ``d delta/dt`` -- build their own
+        leaf tensors and call the net directly.)
+        """
+        if not self.liquid_film:
+            raise RuntimeError(
+                "film_thickness needs the liquid film: this model was built with "
+                "model.liquid_film=false, so there is no film net to evaluate."
+            )
+        return self.film(front.points[:, 0:1].detach(), front.points[:, 2:3].detach(), c)
+
+    def film_root(self) -> tuple[float, float]:
+        """The measured root anchor ``(x, y)`` the film's quadrature starts
+        from -- the upstream end of the footprint, and the height the driving
+        superheat is read at."""
+        priors = self.nets["phi"].priors
+        return priors.x_root, priors.y_root
 
     def film_offset(self, on_cap: torch.Tensor) -> torch.Tensor:
         """The film-to-bulk pressure offset at each front sample.
@@ -568,6 +664,20 @@ class BoundPINN:
     def apex(self, t: torch.Tensor):
         """This dataset's own nose apex -- bound exactly like :meth:`front`."""
         return self._model.apex(t, self._c, self._geometry)
+
+    def film_root(self) -> tuple[float, float]:
+        """This dataset's own measured root anchor, never the reference
+        dataset's -- the same binding rule as :meth:`front`."""
+        if self._geometry is not None:
+            return self._geometry.x_root, self._geometry.y_root
+        return self._model.film_root()
+
+    def film(self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor | None = None):
+        """The film net with this dataset's conditioning row bound: the film
+        residuals call the net directly (they need their own leaf tensors for
+        its derivatives), so the bound view must interpose here too or a joint
+        run would evaluate an unconditioned film."""
+        return self._model.film(x, t, c if c is not None else self._ctx(x))
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.source(x, c if c is not None else self._ctx(x))

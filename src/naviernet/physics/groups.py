@@ -11,7 +11,22 @@ import json
 import math
 from pathlib import Path
 
+from omegaconf.errors import MissingMandatoryValue
+
 GRAVITY = 9.81  # m/s^2
+
+R_UNIVERSAL = 8.314  # J/mol/K
+
+# Accommodation coefficient in the Schrage kinetic resistance, boiling-calibrated
+# (Marek & Straub 2001 survey: measured values span 1e-3 to 1, with boiling data
+# clustering near this). The single largest uncertainty in any thermal closure --
+# a stated literature choice, deliberately not a per-run tunable.
+ACCOMMODATION = 0.035
+
+# Wall roughness below which a film station counts as DRY: the film has merged
+# into the surface finish and there is no continuous liquid layer left to
+# evaporate. Typical microchannel wall finish, ~0.1 um.
+FILM_DRYOUT_ROUGHNESS_M = 1e-7
 
 # The dimensionless groups a joint (transfer-learning) model is conditioned on:
 # the regime descriptors that distinguish one dataset's heat-flux condition from
@@ -138,7 +153,47 @@ def compute_groups(cfg) -> dict[str, float]:
     # Bretherton lubrication film left behind an advancing meniscus.
     groups["bretherton_film_um"] = 1.34 * groups["Ca"] ** (2.0 / 3.0) * (h / 2) * 1e6
 
+    # Liquid-film closures (model.liquid_film).
+    # The Schrage kinetic resistance at the film's surface, expressed as the
+    # EQUIVALENT LIQUID LENGTH k_l * R_i and non-dimensionalised on L_ref. In
+    # series with the film's own conduction it is what keeps the evaporative
+    # flux bounded as delta -> 0 -- the current |grad alpha| source has no such
+    # bound -- and it is genuinely fluid-dependent (~1.1 um FC-72, ~2.4 um
+    # water), unlike the kinematic viscosity.
+    # Omitted (not defaulted -- there is no honest default for a fluid
+    # property) when the config predates `fluid.molar_mass`: run snapshots
+    # written before the film existed leave it MISSING after the schema merge,
+    # and those runs never trained the film -- measured, requiring it here
+    # 500'd the reconstruction view of every pre-film run. The one consumer
+    # that genuinely needs it (model.liquid_film) checks for the key and names
+    # the fix.
+    molar_mass = _optional_molar_mass(fluid)
+    if molar_mass is not None:
+        t_sat_k = fluid.T_sat_C + 273.15
+        r_specific = R_UNIVERSAL / molar_mass
+        r_interface = (
+            (2.0 - ACCOMMODATION)
+            / (2.0 * ACCOMMODATION)
+            * t_sat_k
+            * math.sqrt(2.0 * math.pi * r_specific * t_sat_k)
+            / (fluid.rho_v * fluid.h_lv**2)
+        )
+        groups["R_gamma_star"] = fluid.k_l * r_interface / length
+    # The depletion number: d(delta*)/dt* = -film_depletion * theta / (delta* +
+    # R_gamma*). Algebraically exactly Ja/Pe -- conduction across the film per
+    # latent heat, on the convective clock.
+    groups["film_depletion"] = groups["Ja"] / groups["Pe"]
+    groups["film_dryout_star"] = FILM_DRYOUT_ROUGHNESS_M / length
+
     return groups
+
+
+def _optional_molar_mass(fluid) -> float | None:
+    """The vapour's molar mass, or ``None`` on a config that predates the field."""
+    try:
+        return float(fluid.molar_mass)
+    except (AttributeError, MissingMandatoryValue):
+        return None
 
 
 def save_groups(cfg, destination: Path) -> dict[str, float]:

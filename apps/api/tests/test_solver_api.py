@@ -708,3 +708,70 @@ def test_cap_freedom_reaches_the_run_it_launched(client: TestClient):
     cfg = client.get(f"/api/runs/{run_id}").json()["config"]
     assert cfg["model"]["cap_freedom"] is True
     assert cfg["model"]["cap_delta"] == pytest.approx(0.3)
+
+
+def test_launch_rejects_liquid_film_without_the_sharp_interface(client):
+    """The film rides on the explicit front the sharp-interface conditions
+    sample; without them there is nothing to ride on."""
+    r = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "sharp_interface": False, "liquid_film": True},
+    )
+    assert r.status_code == 422
+    assert "sharp_interface" in r.text
+
+
+def test_liquid_film_is_opt_in_and_travels_when_asked(client, repo_root):
+    """Unbenched physics stays OUT of the default recipe -- the resolved flags
+    carry liquid_film=false untouched -- and an explicit ask on a series that
+    supports it composes the override."""
+    import json
+
+    from naviernet_api.models import RunLaunchRequest
+    from naviernet_api.services.run_manager import _interface_overrides
+    from naviernet_api.settings import Settings
+
+    raw = repo_root / "data" / "raw" / TINY_RUN["dataset"]
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "model.json").write_text(json.dumps({"enabled": ["mom", "energy"]}))
+    settings = Settings(repo_root=repo_root)
+
+    silent = _interface_overrides(settings, TINY_RUN["dataset"], RunLaunchRequest(**TINY_RUN))
+    assert "model.liquid_film=false" in silent, "opt-in: the recipe must not adopt it"
+
+    asked = _interface_overrides(
+        settings,
+        TINY_RUN["dataset"],
+        RunLaunchRequest(**{**TINY_RUN, "liquid_film": True}),
+    )
+    assert "model.liquid_film=true" in asked
+    assert "model.sharp_interface=true" in asked
+
+
+def test_asking_for_the_liquid_film_on_a_stage_a_series_is_rejected(client):
+    """It needs the temperature field to deplete by; a Stage-A series has none."""
+    r = client.post("/api/runs", json={**TINY_RUN, "liquid_film": True})
+    assert r.status_code == 422
+    assert "liquid_film" in r.text
+
+
+def test_liquid_film_reaches_the_run_it_launched(client, repo_root):
+    """The flag has to travel all the way into the run's own config, or a run
+    trains without the film while the UI says otherwise."""
+    import json
+
+    raw = repo_root / "data" / "raw" / TINY_RUN["dataset"]
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "model.json").write_text(json.dumps({"enabled": ["mom", "energy"]}))
+
+    launched = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "front_geometry": True, "sharp_interface": True, "liquid_film": True},
+    )
+    assert launched.status_code == 202
+    run_id = launched.json()["run_id"]
+    read_stream(client, run_id)  # drain = wait for completion
+
+    cfg = client.get(f"/api/runs/{run_id}").json()["config"]
+    assert cfg["model"]["liquid_film"] is True
+    assert cfg["model"]["sharp_interface"] is True

@@ -33,6 +33,7 @@ export interface SolverFormState {
   cap_freedom: boolean;
   cap_delta: number;
   film_pressure: boolean;
+  liquid_film: boolean;
   depletable_superheat: boolean;
   evap_closure_two_way: boolean;
   alpha_eps_anneal_steps: number;
@@ -103,6 +104,10 @@ export const FORM_DEFAULTS: SolverFormState = {
   // Film pressure: the offset the depth-averaged pressure cannot carry at the
   // bubble's sides. Also sharp-interface-gated.
   film_pressure: true,
+  // Liquid film delta(x,t): deposition, dryout, its evaporation as the mass
+  // source, its surface pressure in the jump. Opt-in until benched, like every
+  // physics feature before its numbers exist. Sharp-interface-gated.
+  liquid_film: false,
   // A superheat that can be depleted, and a closure that can raise it: without
   // these the temperature field collapses to a constant and evaporation becomes
   // a fixed multiple of interfacial area, which can only grow.

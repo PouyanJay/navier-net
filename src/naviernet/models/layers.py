@@ -53,3 +53,35 @@ class AdaptiveTanh(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.tanh(self.a * x)
+
+
+# Hidden layout of the small nets that parameterize low-frequency curves -- a
+# rate, a width profile, a centerline, a film thickness. Deliberately module
+# constants, not config: those nets exist to represent smooth 1-D functions,
+# and capacity beyond this re-admits the wiggles their representations forbid.
+CURVE_HIDDEN = 32
+CURVE_DEPTH = 2
+
+
+def mlp(in_dim: int, out_bias: float = 0.0) -> nn.Sequential:
+    """A small tanh MLP whose LAST layer starts at zero weights and the given
+    bias: the net begins as the constant ``out_bias`` and learns deviations --
+    the data-anchored initialization the curve nets' priors provide."""
+    layers: list[nn.Module] = []
+    dims = [in_dim] + [CURVE_HIDDEN] * CURVE_DEPTH
+    for d_in, d_out in zip(dims[:-1], dims[1:], strict=True):
+        layers += [nn.Linear(d_in, d_out), nn.Tanh()]
+    last = nn.Linear(dims[-1], 1)
+    # Small (not zero: exact zeros would block gradient into the hidden layers)
+    # so the net starts within a hair of the constant and can still learn.
+    nn.init.normal_(last.weight, std=0.01)
+    nn.init.constant_(last.bias, out_bias)
+    layers.append(last)
+    return nn.Sequential(*layers)
+
+
+def logit(p: float) -> float:
+    """The pre-sigmoid value landing exactly on ``p``, clamped away from 0/1 --
+    how a curve net's output bias is anchored at a measured starting value."""
+    p = min(max(p, 1e-6), 1.0 - 1e-6)
+    return float(torch.logit(torch.tensor(p)))
