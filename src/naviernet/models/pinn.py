@@ -257,6 +257,12 @@ class BubblePINN(nn.Module):
         if not self.liquid_film:
             return
         groups = compute_groups(cfg)
+        if "R_gamma_star" not in groups:
+            raise ValueError(
+                "model.liquid_film needs fluid.molar_mass (the Schrage kinetic "
+                "resistance is computed from it); this config predates the field "
+                "-- add molar_mass to the fluid config, as configs/fluid/*.yaml do."
+            )
         delta_ref = float(deposited_thickness(torch.ones(1, 1), groups))
         self.film = LiquidFilm(0.5 * groups["H_star"], delta_ref, n_cond=self.n_cond)
         # Cached like `liquid_film` itself, so consumers read a model attribute

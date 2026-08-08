@@ -823,3 +823,52 @@ def test_metrics_json_carries_the_film_block(tmp_path):
     assert "dry_fraction" in film
     assert "film_pressure_peak_fraction" in film
     assert len(film["per_frame"][0]["delta_um"]) == len(film["stations"])
+
+
+# --- Pre-film config snapshots (the API composes old runs' own snapshots) -------
+
+
+def _pre_film_snapshot_cfg(extra: dict | None = None):
+    """A config composed the way the API composes an OLD run's snapshot: the
+    recorded values merged over the structured schema, with fluid.molar_mass
+    absent (the run predates the field), so it lands MISSING."""
+    from omegaconf import OmegaConf
+
+    from naviernet.config.schema import Config
+
+    base = ["model=stage_b"] if extra else []
+    snapshot = OmegaConf.to_container(make_config(base), resolve=True)
+    del snapshot["fluid"]["molar_mass"]
+    for key, value in (extra or {}).items():
+        snapshot["model"][key] = value
+    return OmegaConf.merge(OmegaConf.structured(Config), OmegaConf.create(snapshot))
+
+
+def test_groups_tolerate_a_pre_film_config_snapshot():
+    """Run snapshots written before the film existed have no molar_mass, and
+    those runs never trained the film -- so the groups OMIT the kinetic
+    resistance instead of raising. Measured before this guard: the
+    reconstruction endpoint 500'd on every pre-film run."""
+    from naviernet.physics.groups import compute_groups
+
+    groups = compute_groups(_pre_film_snapshot_cfg())
+    assert "R_gamma_star" not in groups
+    assert "film_depletion" in groups, "molar-mass-free film groups still compute"
+    assert groups["Re"] > 0
+
+
+def test_liquid_film_refuses_a_config_without_molar_mass(tmp_path):
+    """The one consumer that genuinely needs the resistance fails loudly and
+    names the fix, instead of a KeyError deep in the flux."""
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.training import _geometry_priors
+    from naviernet.utils.paths import RunPaths
+
+    staged, _ = _staged_run(tmp_path, FILM)
+    data = BubbleDataset(staged, RunPaths.from_config(staged), device="cpu")
+    cfg = _pre_film_snapshot_cfg(
+        {"front_geometry": True, "sharp_interface": True, "liquid_film": True}
+    )
+    with pytest.raises(ValueError, match="molar_mass"):
+        BubblePINN(cfg, geometry=_geometry_priors(staged, data))
