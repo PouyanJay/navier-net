@@ -73,7 +73,7 @@ class Raster(NamedTuple):
 
         The numpy sibling of the two torch bilinear samplers
         (:func:`naviernet.physics.front_velocity.sample_measured`, detached;
-        :func:`naviernet.physics.root_supervision.sample_sdf`,
+        :func:`naviernet.physics.cap_supervision.sample_sdf`,
         differentiable) -- three backends because their consumers need
         different gradient semantics, kept cross-referenced so a fourth copy
         does not appear.
@@ -194,6 +194,22 @@ def _bluntness(distance: np.ndarray, half_width: np.ndarray, depth: float) -> fl
     return shallow / deep
 
 
+def vapour_columns(
+    data, row: int, alpha_level: float, end: str = "root"
+) -> tuple[np.ndarray, np.ndarray]:
+    """One dataset row's vapour mask and its occupied columns -- shared by the
+    root and nose dataset wrappers, so the two ends cannot disagree on what
+    the mask is. ``end`` only names the caller in the error."""
+    mask = (data.alpha[row] > alpha_level) & (data.valid[row] > 0)
+    columns = np.nonzero(mask.any(axis=0))[0]
+    if columns.size == 0:
+        raise ValueError(
+            f"dataset row {row} has no vapour (alpha > {alpha_level}) to fit a "
+            f"{end} window on -- check the dataset's masks."
+        )
+    return mask, columns
+
+
 def measured_root_fit(
     data,
     row: int,
@@ -206,13 +222,7 @@ def measured_root_fit(
     same orientation rule ``pin_anchor`` itself uses, so a flipped series
     measures its actual root.
     """
-    mask = (data.alpha[row] > alpha_level) & (data.valid[row] > 0)
-    columns = np.nonzero(mask.any(axis=0))[0]
-    if columns.size == 0:
-        raise ValueError(
-            f"dataset row {row} has no vapour (alpha > {alpha_level}) to fit a "
-            f"root window on -- check the dataset's masks."
-        )
+    mask, columns = vapour_columns(data, row, alpha_level)
     x_pin, y_root = data.pin_anchor
     root_at_left = abs(float(data.x[columns[0]]) - x_pin) <= abs(
         float(data.x[columns[-1]]) - x_pin

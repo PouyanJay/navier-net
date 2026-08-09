@@ -146,14 +146,14 @@ class GeometryContext(NamedTuple):
     priors: GeometryPriors | None = None
 
 
-class RootCapQuery(NamedTuple):
+class CapQuery(NamedTuple):
     """Where an END CAP is being asked about: the signed axial offset from
     the cap centre (negative inside the ROOT cap region, positive inside the
     NOSE one), the (signed, under ``allow_pinch``) cap radius, and the time.
     One bundle, because the three always travel together and every
     Hugelschaffer helper reads the same derived ``r_abs``."""
 
-    x_c: torch.Tensor  # x - ax, negative inside the cap region
+    x_c: torch.Tensor  # x - ax at the root, x - bx at the nose
     radius: torch.Tensor  # the cap radius, sign carried through to phi
     t: torch.Tensor
 
@@ -798,15 +798,15 @@ class GeometricInterface(nn.Module):
         # independent and the composition `nucleation_root x nose_shape` is
         # exactly both applied.
         if self.nucleation_root:
-            query = RootCapQuery(x_c=x[:, 0:1] - f.ax, radius=radius, t=t)
+            query = CapQuery(x_c=x[:, 0:1] - f.ax, radius=radius, t=t)
             phi = torch.where(query.x_c < 0, self._root_cap_phi(query, dy, ctx), phi)
         if self.nose_shape:
-            query = RootCapQuery(x_c=x[:, 0:1] - f.bx, radius=radius, t=t)
+            query = CapQuery(x_c=x[:, 0:1] - f.bx, radius=radius, t=t)
             phi = torch.where(query.x_c > 0, self._nose_cap_phi(query, dy, ctx), phi)
         return phi
 
     def _root_cap_phi(
-        self, query: RootCapQuery, dy: torch.Tensor, ctx: GeometryContext
+        self, query: CapQuery, dy: torch.Tensor, ctx: GeometryContext
     ) -> torch.Tensor:
         """The field inside the root-cap region under ``nucleation_root``: the
         radial comparison becomes the Hugelschaffer half-width one.
@@ -829,7 +829,7 @@ class GeometricInterface(nn.Module):
         return inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
 
     def _nose_cap_phi(
-        self, query: RootCapQuery, dy: torch.Tensor, ctx: GeometryContext
+        self, query: CapQuery, dy: torch.Tensor, ctx: GeometryContext
     ) -> torch.Tensor:
         """The field inside the nose-cap region under ``nose_shape`` --
         ``_root_cap_phi`` mirrored: the same matched-floor width comparison,
@@ -860,13 +860,13 @@ class GeometricInterface(nn.Module):
         """
         return r_abs**2 * (1.0 - xi**2) * (1.0 + w**2) / (1.0 + 2.0 * w * xi + w**2)
 
-    def _root_width_sq(self, query: RootCapQuery, ctx: GeometryContext | None) -> torch.Tensor:
+    def _root_width_sq(self, query: CapQuery, ctx: GeometryContext | None) -> torch.Tensor:
         """The root cap's squared half-width at the query's signed offset from
         the cap centre (clamped onto the cap's own span)."""
         xi = (query.x_c / query.r_abs).clamp(min=-1.0, max=0.0)
         return self._hugelschaffer_width_sq(xi, query.r_abs, self.root_bluntness(query.t, ctx))
 
-    def _nose_width_sq(self, query: RootCapQuery, ctx: GeometryContext | None) -> torch.Tensor:
+    def _nose_width_sq(self, query: CapQuery, ctx: GeometryContext | None) -> torch.Tensor:
         """The nose cap's squared half-width: the same family MIRRORED -- the
         nose's positive in-cap offset maps onto the shared ``xi`` axis by a
         sign, which is the entire root/nose difference in the field."""
@@ -886,7 +886,7 @@ class GeometricInterface(nn.Module):
         """
         ctx = ctx or GeometryContext()
         f = self.frame(t, ctx)
-        query = RootCapQuery(x_c=x - f.ax, radius=f.r_root, t=t)
+        query = CapQuery(x_c=x - f.ax, radius=f.r_root, t=t)
         cap = torch.sqrt(self._root_width_sq(query, ctx) + ABS_SMOOTH**2)
         u = (query.x_c / (f.bx - f.ax)).clamp(0.0, 1.0)
         return torch.where(query.x_c < 0, cap, self.half_width(u, t, ctx))
@@ -905,7 +905,7 @@ class GeometricInterface(nn.Module):
         """
         ctx = ctx or GeometryContext()
         f = self.frame(t, ctx)
-        query = RootCapQuery(x_c=x - f.bx, radius=f.r_nose, t=t)
+        query = CapQuery(x_c=x - f.bx, radius=f.r_nose, t=t)
         cap = torch.sqrt(self._nose_width_sq(query, ctx) + ABS_SMOOTH**2)
         u = ((x - f.ax) / (f.bx - f.ax)).clamp(0.0, 1.0)
         return torch.where(query.x_c > 0, cap, self.half_width(u, t, ctx))

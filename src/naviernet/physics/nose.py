@@ -34,20 +34,8 @@ from naviernet.physics.root import (
     RootWindowFit,
     fit_root_window,
     frame_time,
+    vapour_columns,
 )
-
-
-def _vapour_columns(data, row: int, alpha_level: float) -> tuple[np.ndarray, np.ndarray]:
-    """One dataset row's vapour mask and its occupied columns, shared by the
-    fit wrapper and the edge reader so the two cannot disagree on the mask."""
-    mask = (data.alpha[row] > alpha_level) & (data.valid[row] > 0)
-    columns = np.nonzero(mask.any(axis=0))[0]
-    if columns.size == 0:
-        raise ValueError(
-            f"dataset row {row} has no vapour (alpha > {alpha_level}) to fit a "
-            f"nose window on -- check the dataset's masks."
-        )
-    return mask, columns
 
 
 def _nose_at_left(data, columns: np.ndarray) -> bool:
@@ -67,7 +55,7 @@ def measured_nose_fit(
     """The nose-window fit of one dataset row's measured mask: the root fit
     read from the opposite edge. Bluntness legitimately exceeds 1 here (the
     overhang) -- nothing downstream may assume ratios <= 1."""
-    mask, columns = _vapour_columns(data, row, alpha_level)
+    mask, columns = vapour_columns(data, row, alpha_level, end="nose")
     _, y_root = data.pin_anchor
     return fit_root_window(
         Raster(mask, data.x, data.y),
@@ -81,7 +69,7 @@ def measured_nose_edge(data, row: int, alpha_level: float = DEFAULT_ALPHA_LEVEL)
     """The measured nose edge's x position -- the moving anchor the nose
     window is measured inward from. The root's counterpart is the fixed pin;
     the nose ADVANCES, so its window anchor is per frame."""
-    _, columns = _vapour_columns(data, row, alpha_level)
+    _, columns = vapour_columns(data, row, alpha_level, end="nose")
     edge = columns[0] if _nose_at_left(data, columns) else columns[-1]
     return float(data.x[edge])
 
@@ -150,6 +138,7 @@ def _nose_frame_entry(model, data, row: int, frame: int) -> dict:
         "updown_bias": fit.updown_bias,
         "tilt": fit.tilt,
         "x_edge": measured_nose_edge(data, row),
+        "model_bluntness": _model_bluntness(geometry, data, row, fit.window_depth),
         "model_nose_rms": model_nose_window_rms(model, data, row),
     }
     if getattr(geometry, "nose_shape", False):
@@ -157,6 +146,20 @@ def _nose_frame_entry(model, data, row: int, frame: int) -> dict:
         with torch.no_grad():
             entry["w"] = float(geometry.nose_bluntness(t))
     return entry
+
+
+def _model_bluntness(geometry, data, row: int, depth: float) -> float:
+    """The model's own quarter-vs-full half-width ratio at the measured
+    window's depths, anchored at its own apex -- the RENDERED counterpart of
+    the measured bluntness, per frame. This is the trend gate's number: the
+    parameter w is a coordinate (its sign can invert while the shape blunts,
+    the root bench's measured lesson), so the gate reads the shape."""
+    t = frame_time(geometry, data, row)
+    with torch.no_grad():
+        anchor = geometry.nose(t)
+        shallow = geometry.nose_half_width(anchor - BLUNTNESS_DEPTH_FRACTION * depth, t)
+        deep = geometry.nose_half_width(anchor - depth, t)
+    return float(shallow / deep)
 
 
 def _trained_nose_summary(model, per_frame: list[dict]) -> dict:

@@ -528,10 +528,11 @@ class RunLaunchRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _check_root_ladder(self) -> RunLaunchRequest:
-        # The nucleation-root dependency tree, mirrored from the trainer's own
-        # guards (its own validator, so the monolithic combo check stops
-        # growing -- the pinn.py _validate_* decomposition, at the API boundary).
+    def _check_cap_ladder(self) -> RunLaunchRequest:
+        # The per-cap shape DOFs' dependency tree -- the nucleation-root ladder
+        # and the nose beside it -- mirrored from the trainer's own guards (its
+        # own validator, so the monolithic combo check stops growing -- the
+        # pinn.py _validate_* decomposition, at the API boundary).
         if self.nucleation_root and self.cap_freedom:
             raise ValueError(
                 "nucleation_root and cap_freedom are two shape systems on the same "

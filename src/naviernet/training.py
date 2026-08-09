@@ -31,6 +31,7 @@ from naviernet.data.dataset import BubbleDataset
 from naviernet.models.geometry import GeometryPriors
 from naviernet.models.pinn import BoundPINN, BubblePINN
 from naviernet.physics import (
+    cap_supervision,
     front_velocity,
     kinematics,
     nose_supervision,
@@ -592,7 +593,7 @@ def _root_plan(cfg, data: BubbleDataset, device) -> root_supervision.RootPlan | 
     return plan
 
 
-def _nose_plan(cfg, data: BubbleDataset, device) -> nose_supervision.NosePlan | None:
+def _nose_plan(cfg, data: BubbleDataset, device) -> cap_supervision.WindowPlan | None:
     """The run's measured nose targets when the supervision is on, else ``None``.
     Measured once (deterministic, no RNG), the root/front-velocity pattern."""
     if not getattr(cfg.training, "nose_supervision", False):
@@ -1306,14 +1307,14 @@ def train(
         if root_plan is not None:
             # Outside the causal gate, RBA and the rebalancer, same reason.
             root_total, root_record = root_supervision.root_losses(
-                root_supervision.RootContext(model, tcfg), root_plan
+                cap_supervision.SupervisionContext(model, tcfg), root_plan
             )
             total = total + root_total
         nose_record: dict[str, float] = {}
         if nose_plan is not None:
             # Outside the causal gate, RBA and the rebalancer, same reason.
             nose_total, nose_record = nose_supervision.nose_losses(
-                nose_supervision.NoseContext(model, tcfg), nose_plan
+                cap_supervision.SupervisionContext(model, tcfg), nose_plan
             )
             total = total + nose_total
         total.backward()

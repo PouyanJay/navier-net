@@ -228,7 +228,13 @@ def test_physics_report_carries_the_nose_block(tmp_path):
     assert nose["window_fraction"] == ROOT_WINDOW_FRACTION
     assert len(nose["per_frame"]) == len(data.t)
     frame = nose["per_frame"][0]
-    for key in ("taper_exponent", "circle_rms", "bluntness", "model_nose_rms"):
+    for key in (
+        "taper_exponent",
+        "circle_rms",
+        "bluntness",
+        "model_bluntness",
+        "model_nose_rms",
+    ):
         assert np.isfinite(frame[key]), key
     assert nose["model_nose_rms_last"] >= 0.0
     # The summary carries the drift's endpoints -- the bench gate's numbers.
@@ -458,7 +464,7 @@ def test_forced_nose_bluntness_keeps_apex_seams_and_finite_curvature(raw):
     angles = front.angle[on_nose].squeeze(1)
     apex = nose_pts[angles.abs().argmin()]
     anchor = geometry.nose_point(t)
-    assert float((apex - anchor).abs().max()) < 1e-6
+    assert float((apex - anchor).detach().abs().max()) < 1e-6
 
     # Curvature is finite on the whole nose cap, apex included.
     assert torch.isfinite(front.kappa_par[on_nose]).all()
@@ -526,10 +532,10 @@ def test_root_and_nose_compose_on_their_own_caps():
 
     root_angles = front.angle[on_root].squeeze(1)
     root_apex = front.points[on_root][root_angles.abs().argmin()]
-    assert float((root_apex - geometry.root_point(t)).abs().max()) < 1e-6
+    assert float((root_apex - geometry.root_point(t)).detach().abs().max()) < 1e-6
     nose_angles = front.angle[on_nose].squeeze(1)
     nose_apex = front.points[on_nose][nose_angles.abs().argmin()]
-    assert float((nose_apex - geometry.nose_point(t)).abs().max()) < 1e-6
+    assert float((nose_apex - geometry.nose_point(t)).detach().abs().max()) < 1e-6
 
     on_caps = front.on_cap.squeeze(1) > 0
     phi = geometry(front.points[on_caps]).detach()

@@ -445,7 +445,7 @@ def test_forced_bluntness_keeps_pin_seams_and_finite_curvature(raw):
     angles = front.angle[on_root].squeeze(1)
     apex = root_pts[angles.abs().argmin()]
     anchor = geometry.root_point(t)
-    assert float((apex - anchor).abs().max()) < 1e-6
+    assert float((apex - anchor).detach().abs().max()) < 1e-6
 
     # Curvature is finite on the whole root cap, apex included.
     kappa = front.kappa_par[on_root]
