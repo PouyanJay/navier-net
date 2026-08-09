@@ -294,3 +294,246 @@ class TestSeries1NoseDrift:
                 ]
                 assert fits[-1].bluntness > fits[0].bluntness + 0.3, (level, window)
                 assert fits[-1].bluntness > 1.0, (level, window)
+
+
+# --- T1: the Hugelschaffer nose cap (`model.nose_shape`) ----------------------
+#
+# The nose cap stops asserting a circle: the same Hugelschaffer half-oval that
+# freed the root, mirrored (sign +1, centre bx), with its OWN trained, bounded,
+# time-varying bluntness w_nose(t). The family already expresses the overhang:
+# for w > 0 the width's maximum sits INTERIOR to the seam, so the rendered
+# bluntness exceeds 1 -- precisely the measured f9-f11 regime. No new
+# mathematics; the root/nose difference is a sign and a centre.
+
+PRIORS = dict(
+    x_root=0.2,
+    y_root=0.25,
+    s0=0.5,
+    w0=0.06,
+    rate0=0.3,
+    y_min=0.0,
+    y_max=0.5,
+    t_min=0.0,
+    t_max=1.0,
+)
+
+
+def _geo(seed: int, **kwargs):
+    import torch
+
+    from naviernet.models.geometry import GeometricInterface, GeometryPriors
+
+    torch.manual_seed(seed)
+    return GeometricInterface(GeometryPriors(**PRIORS), **kwargs)
+
+
+def _force_nose_bluntness(geometry, raw: float) -> None:
+    """Drive the w_nose(t) net to a constant raw output, so the rendered
+    bluntness is ``nose_delta * tanh(raw)`` at every time -- the structural
+    guarantees must hold at ARBITRARY bluntness, not just the trained one."""
+    import torch
+
+    with torch.no_grad():
+        for p in geometry.nose_net.parameters():
+            p.zero_()
+        geometry.nose_net[-1].bias.fill_(raw)
+
+
+def _nose_cap_front(geometry, t: float = 0.4, n_cap: int = 65):
+    # n_cap ODD, so the angle grid contains psi = 0 -- the apex itself -- and
+    # the exact-apex assertion tests the apex, not a neighbour.
+    import torch
+
+    front = geometry.front(torch.tensor([[t]]), n_body=16, n_cap=n_cap)
+    on_nose = (front.on_cap.squeeze(1) > 0) & (front.u.squeeze(1) > 0.5)
+    return front, on_nose
+
+
+def test_nose_shape_is_off_by_default(cfg):
+    assert cfg.model.nose_shape is False
+    assert 0.0 <= cfg.model.nose_delta < 1.0
+
+
+def test_flag_off_leaves_every_net_bit_identical():
+    """The RNG-ordering guarantee (the film's and the root's lesson): the nose
+    net is built LAST -- after the root net -- so a seeded flag-off run starts
+    from bit-identical weights, INCLUDING a rooted run gaining the nose."""
+    import torch
+
+    plain = _geo(7)
+    nosed = _geo(7, nose_shape=True)
+    plain_state = dict(plain.state_dict())
+    nosed_state = dict(nosed.state_dict())
+    nose_keys = {k for k in nosed_state if k.startswith("nose_net")}
+    assert nose_keys, "the flag must add the w_nose(t) net"
+    assert set(nosed_state) - nose_keys == set(plain_state)
+    for key in plain_state:
+        assert torch.equal(plain_state[key], nosed_state[key]), key
+
+    # And the intended composition: root + nose adds ONLY the nose net on top
+    # of the rooted construction, every shared weight bit-identical.
+    rooted = _geo(7, nucleation_root=True)
+    both = _geo(7, nucleation_root=True, nose_shape=True)
+    rooted_state, both_state = dict(rooted.state_dict()), dict(both.state_dict())
+    assert set(both_state) - {k for k in both_state if k.startswith("nose_net")} == set(
+        rooted_state
+    )
+    for key in rooted_state:
+        assert torch.equal(rooted_state[key], both_state[key]), key
+
+
+def test_nose_shape_requires_the_front_geometry(tmp_path):
+    from naviernet.models.pinn import BubblePINN
+    from tests.conftest import staged_run
+
+    cfg, _ = staged_run(tmp_path, ["model.nose_shape=true"])
+    with pytest.raises(ValueError, match="front_geometry"):
+        BubblePINN(cfg)
+
+
+def test_nose_shape_rejects_cap_freedom():
+    """Two shape systems on one cap: no bench could attribute a result to
+    either. cap_freedom itself is untouched -- it stays, exclusive with both
+    root and nose."""
+    with pytest.raises(ValueError, match="cap_freedom"):
+        _geo(0, nose_shape=True, cap_freedom=True)
+
+
+@pytest.mark.parametrize("bad", [-0.1, 1.0, 2.5])
+def test_nose_delta_outside_its_bound_is_rejected(bad):
+    """At |w| >= r the Hugelschaffer denominator can reach zero and the apex
+    curvature diverges -- checked whatever the flag says, like root_delta."""
+    with pytest.raises(ValueError, match="nose_delta"):
+        _geo(0, nose_delta=bad)
+
+
+def test_the_construction_opens_as_the_circle():
+    """Zero-bias net -> w_nose = 0 -> the nose cap is the circle it replaces,
+    on both routes: the front samples and the field."""
+    import torch
+
+    plain = _geo(3)
+    nosed = _geo(3, nose_shape=True)
+    _force_nose_bluntness(nosed, 0.0)  # exactly w = 0, not the init's ~0.01 hair
+    front_p, on_nose = _nose_cap_front(plain)
+    front_n, _ = _nose_cap_front(nosed)
+    assert torch.allclose(front_p.points[on_nose], front_n.points[on_nose], atol=1e-5)
+    assert torch.allclose(front_p.kappa_par[on_nose], front_n.kappa_par[on_nose], atol=1e-3)
+    phi = nosed(front_n.points[on_nose]).detach()
+    assert float(phi.abs().max()) < 1e-4
+
+
+@pytest.mark.parametrize("raw", [-2.0, 2.0])
+def test_forced_nose_bluntness_keeps_apex_seams_and_finite_curvature(raw):
+    """The structural guarantees survive ANY bluntness inside the bound: the
+    apex stays EXACTLY the monotone s(t) (which is why fv_apex composes
+    unchanged), seams keep meeting the body, curvature stays finite, and the
+    field and the front describe ONE shape."""
+    import torch
+
+    geometry = _geo(5, nose_shape=True)
+    _force_nose_bluntness(geometry, raw)
+    t = 0.4
+    front, on_nose = _nose_cap_front(geometry, t=t)
+
+    # The apex sample (angle 0) sits exactly on the monotone nose point.
+    nose_pts = front.points[on_nose]
+    angles = front.angle[on_nose].squeeze(1)
+    apex = nose_pts[angles.abs().argmin()]
+    anchor = geometry.nose_point(t)
+    assert float((apex - anchor).abs().max()) < 1e-6
+
+    # Curvature is finite on the whole nose cap, apex included.
+    assert torch.isfinite(front.kappa_par[on_nose]).all()
+
+    # The seam samples meet the body: the cap's half-width at |angle| -> pi/2
+    # approaches the body's half-width at u = 1.
+    tt = torch.tensor([[t]])
+    r_nose = geometry.frame(tt).r_nose.item()
+    seam = nose_pts[angles.argmax()]
+    centre = geometry.centerline(torch.ones(1, 1), tt).item()
+    assert seam[1].item() - centre == pytest.approx(r_nose, abs=1e-2)
+
+    # Field and front describe ONE shape.
+    phi = geometry(front.points[on_nose]).detach()
+    assert float(phi.abs().max()) < 1e-4
+
+
+def _rendered_nose_bluntness(geometry, t: float = 0.4) -> float:
+    """The RENDERED mask's nose bluntness through T0's own measurement -- the
+    negative-w lesson: every gate reads the shape, never the parameter."""
+    import torch
+
+    xs = np.linspace(0.0, 1.0, 400)
+    ys = np.linspace(0.0, 0.5, 200)
+    gx, gy = np.meshgrid(xs, ys)
+    pts = torch.tensor(
+        np.column_stack([gx.ravel(), gy.ravel(), np.full(gx.size, t)]),
+        dtype=torch.float32,
+    )
+    with torch.no_grad():
+        phi = geometry(pts).reshape(gy.shape[0], gx.shape[1]).numpy()
+    fit = fit_root_window(Raster(phi > 0, xs, ys), y_root=PRIORS["y_root"], root_at_left=False)
+    return fit.bluntness
+
+
+def test_positive_w_nose_renders_the_overhang():
+    """The reachable regime the journey exists for: forced w_nose > 0 makes
+    the RENDERED nose bluntness cross 1 -- the mushroomed head -- through T0's
+    own fit, while the circle stays below it."""
+    blunt = _geo(11, nose_shape=True)
+    _force_nose_bluntness(blunt, 2.0)
+    circle = _geo(11)
+    b_blunt, b_circle = _rendered_nose_bluntness(blunt), _rendered_nose_bluntness(circle)
+    assert b_circle < 1.0
+    assert b_blunt > 1.0, f"forced w > 0 must render an overhang, got {b_blunt}"
+    assert b_blunt > b_circle + 0.05
+
+
+def test_root_and_nose_compose_on_their_own_caps():
+    """The intended recipe: nucleation_root and nose_shape own DIFFERENT caps,
+    so forcing both leaves the root apex pinned, the nose apex monotone, and
+    the field agreeing with the front on both caps at once."""
+    import torch
+
+    geometry = _geo(9, nucleation_root=True, nose_shape=True)
+    with torch.no_grad():
+        for p in geometry.root_net.parameters():
+            p.zero_()
+        geometry.root_net[-1].bias.fill_(2.0)
+    _force_nose_bluntness(geometry, 2.0)
+
+    t = 0.4
+    front, on_nose = _nose_cap_front(geometry, t=t)
+    on_root = (front.on_cap.squeeze(1) > 0) & (front.u.squeeze(1) < 0.5)
+
+    root_angles = front.angle[on_root].squeeze(1)
+    root_apex = front.points[on_root][root_angles.abs().argmin()]
+    assert float((root_apex - geometry.root_point(t)).abs().max()) < 1e-6
+    nose_angles = front.angle[on_nose].squeeze(1)
+    nose_apex = front.points[on_nose][nose_angles.abs().argmin()]
+    assert float((nose_apex - geometry.nose_point(t)).abs().max()) < 1e-6
+
+    on_caps = front.on_cap.squeeze(1) > 0
+    phi = geometry(front.points[on_caps]).detach()
+    assert float(phi.abs().max()) < 1e-4
+    assert torch.isfinite(front.kappa_par).all()
+
+
+def test_a_training_step_leaves_the_nose_net_finite(tmp_path):
+    """Regression, mirrored from the root: the field's width comparison must
+    floor INSIDE its one sqrt -- an intermediate sqrt(width_sq) is exactly
+    zero at the apex column, where its gradient is infinite, and 0 * inf fed
+    NaN into the bluntness net on the first training step."""
+    import torch
+
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(
+        tmp_path, ["model.front_geometry=true", "model.nose_shape=true"]
+    )
+    train(cfg, paths)
+    model, _, _ = load_model(cfg, paths)
+    w = model.nets["phi"].nose_bluntness(torch.tensor([[0.0], [0.5]]))
+    assert torch.isfinite(w).all()

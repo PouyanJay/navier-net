@@ -277,6 +277,25 @@ class ModelConfig:
     # zero at the apex and the curvature diverges. 0.6 spans apex radii from
     # 0.53 r (sharpened) to 8.5 r (blunted) -- well past the measured drift.
     root_delta: float = 0.6
+    # The nose shape: replace the NOSE cap's enforced circle with the same
+    # Hugelschaffer half-oval that freed the root, mirrored, carrying its OWN
+    # trained, time-varying, bounded bluntness w_nose(t). The measured head is
+    # non-circular and only late (nose-window bluntness 0.61 -> 1.83 through
+    # the event, CROSSING 1 -- an overhanging, mushroomed head no circle can
+    # draw), the model's nose error appears exactly there (RMS 0.02 -> 0.19),
+    # and the trained pressure already demands a non-circular nose (curvature
+    # gap 0.94 at the nose cap vs 0.23 on the body) -- a physics drive the
+    # root never had. The family already expresses the overhang: for w > 0
+    # the width's maximum sits interior to the seam. w = 0 IS the circle, the
+    # apex crossing is exact for every w (the monotone nose survives
+    # structurally, so fv_apex composes unchanged), and the seams keep
+    # meeting the body. Requires `front_geometry`; COMPOSABLE with
+    # `nucleation_root` (different caps); mutually exclusive with
+    # `cap_freedom` (the same cap). Off by default -> byte-identical.
+    nose_shape: bool = False
+    # Bound on the Hugelschaffer nose bluntness |w_nose| as a fraction of the
+    # nose cap radius; the same rationale (and value) as root_delta.
+    nose_delta: float = 0.6
     # The attachment pressure (nucleation-root R2): over the dry contact patch
     # on the heated plate the gap-direction capillary term is NOT the
     # both-plates-wetted 2/H* -- contact-angle cosines ADD across the gap
