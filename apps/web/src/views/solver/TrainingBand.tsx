@@ -146,6 +146,7 @@ export function TrainingBand({
       <SwitchRow
         label="Causal weighting"
         hint="learn the early times first, and only then let the late ones count"
+        verdict={{ tone: "positive" }}
         checked={form.causal_weighting}
         onChange={(causal_weighting) => onForm({ causal_weighting })}
         disabled={fixed || rba}
@@ -168,6 +169,7 @@ export function TrainingBand({
       <SwitchRow
         label="Adaptive collocation"
         hint="refresh the point pool toward the highest residual"
+        verdict={{ tone: "inert" }}
         checked={form.adaptive_collocation}
         onChange={(adaptive_collocation) => onForm({ adaptive_collocation })}
         disabled={fixed || !rba}

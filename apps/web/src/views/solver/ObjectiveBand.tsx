@@ -122,6 +122,7 @@ export function ObjectiveBand({ form, onForm, locked }: ObjectiveBandProps) {
       <SwitchRow
         label="Growth constraints"
         hint="hold the late-window volume budget to a monotone, source-balanced rate"
+        verdict={{ tone: "inert" }}
         checked={form.kinematics}
         onChange={(kinematics) => onForm({ kinematics })}
         disabled={locked}
@@ -169,6 +170,7 @@ export function ObjectiveBand({ form, onForm, locked }: ObjectiveBandProps) {
       <SwitchRow
         label="Measured front velocity"
         hint="supervise the front's rate against the velocity measured from consecutive masks"
+        verdict={{ tone: "inert" }}
         checked={form.front_velocity}
         onChange={(front_velocity) => onForm({ front_velocity })}
         disabled={locked || !explicitFront}

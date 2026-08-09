@@ -123,6 +123,7 @@ export function PhysicsBand({
           key={modifier.key}
           label={modifier.label}
           hint={modifier.hint}
+          verdict={modifier.verdict}
           checked={form[modifier.key]}
           onChange={(on) => onForm(modifierPatch(modifier, on))}
           disabled={locked}
@@ -146,6 +147,7 @@ export function PhysicsBand({
       <SwitchRow
         label="Sharpen the interface"
         hint="narrow the blur during training, so a neck is not the same width as it"
+        verdict={{ tone: "positive" }}
         checked={sharpening}
         onChange={(on) =>
           onForm(
@@ -188,6 +190,7 @@ export function PhysicsBand({
       <SwitchRow
         label="Depletable superheat"
         hint="the liquid may cool below the inlet, throttling evaporation"
+        verdict={{ tone: "recipe" }}
         checked={form.depletable_superheat}
         onChange={(depletable_superheat) => onForm({ depletable_superheat })}
         disabled={locked || (capability.known && !capability.hasTemperature)}
@@ -200,6 +203,7 @@ export function PhysicsBand({
       <SwitchRow
         label="Two-way evaporation"
         hint="the closure may raise the temperature, not only lower the source"
+        verdict={{ tone: "recipe" }}
         checked={form.evap_closure_two_way}
         onChange={(evap_closure_two_way) => onForm({ evap_closure_two_way })}
         disabled={locked}

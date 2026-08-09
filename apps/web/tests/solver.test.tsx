@@ -1507,3 +1507,27 @@ describe("SolverView recipes", () => {
     ).toBeNull();
   });
 });
+
+describe("SolverView verdict chips", () => {
+  it("carries the bench's verdict on each opt-in switch", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // The chip is context beside the label, not part of the switch's name --
+    // the switches above were all found by their bare labels.
+    expect(screen.getByText("benched + · +0.039 val")).toBeInTheDocument();
+    expect(screen.getByText("benched −")).toBeInTheDocument();
+    expect(screen.getAllByText("benched ∅").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("default on")).toHaveLength(2);
+  });
+
+  it("keeps the unbenched tone for options with no numbers yet", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // Attachment pressure, receding cap, evolving width, pinch-off.
+    expect(screen.getAllByText("unbenched")).toHaveLength(4);
+  });
+});

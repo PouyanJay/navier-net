@@ -180,6 +180,40 @@
 .srow .sw-hint {
   color: var(--faint);
 }
+/* The bench's verdict, on the switch it judged. Tone by token set, never a
+   raw colour -- and never colour alone: each tone carries its own text. */
+.vchip {
+  flex: none;
+  align-self: center;
+  padding: 0 var(--s2);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.vchip.pos {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.vchip.neg {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.vchip.inert {
+  border: 1px solid var(--control-border);
+  background: var(--control);
+  color: var(--muted);
+}
+.vchip.open {
+  background: var(--holdout-soft);
+  color: var(--holdout);
+}
+.vchip.recipe {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
 .srow-why {
   margin-top: var(--s1);
   color: var(--muted);
