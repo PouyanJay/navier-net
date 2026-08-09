@@ -535,10 +535,13 @@ def _configure(
         f"model.cap_freedom={str(request.cap_freedom).lower()}",
         f"model.cap_delta={request.cap_delta}",
         f"model.nucleation_root={str(request.nucleation_root).lower()}",
-        # The supervision channel travels WITH the DOF, always: launching the
-        # root without its driving signal is the measured undriven-knob failure,
-        # so the platform does not offer that combination at all.
+        # The supervision channel travels WITH the DOF, always: launching a cap
+        # DOF without its driving signal is the measured undriven-knob failure,
+        # so the platform does not offer that combination at all -- for either
+        # end of the bubble.
         f"training.root_supervision={str(request.nucleation_root).lower()}",
+        f"model.nose_shape={str(request.nose_shape).lower()}",
+        f"training.nose_supervision={str(request.nose_shape).lower()}",
         f"training.evap_closure_two_way={str(request.evap_closure_two_way).lower()}",
         f"training.alpha_eps_anneal_steps={request.alpha_eps_anneal_steps}",
         f"training.alpha_eps_final={request.alpha_eps_final}",

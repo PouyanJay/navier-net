@@ -694,3 +694,34 @@ def test_a_circular_nose_does_not_learn_an_overhang(tmp_path):
     mean_ratio = sum(ratios) / len(ratios)
     assert mean_ratio < 1.0, f"supervision invented an overhang on a circle: {ratios}"
     assert max(ratios) < 1.08, f"supervision invented an overhang on a circle: {ratios}"
+
+
+# --- T3: the artifact, end-to-end ---------------------------------------------
+
+
+def test_evaluate_writes_the_nose_block_for_a_nose_shape_run(tmp_path):
+    """A trained nose-shape run's metrics.json carries physics.nose with the
+    trained w_nose(t), its budget use, and the per-frame model RMS -- exactly
+    what the bench gates read."""
+    import json
+
+    from naviernet.evaluation import evaluate
+    from naviernet.training import train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(
+        tmp_path,
+        [
+            "model.front_geometry=true",
+            "model.nose_shape=true",
+            "training.nose_supervision=true",
+        ],
+    )
+    model, data, _ = train(cfg, paths)
+    evaluate(cfg, model, data, paths)
+    metrics = json.loads(paths.metrics_json.read_text())
+    nose = metrics["physics"]["nose"]
+    assert "w" in nose["per_frame"][0]
+    assert "w_budget_use" in nose
+    assert nose["nose_delta"] == cfg.model.nose_delta
+    assert np.isfinite(nose["per_frame"][0]["model_nose_rms"])

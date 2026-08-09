@@ -85,6 +85,7 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       cap_freedom: false,
       front_velocity: false,
       nucleation_root: false,
+      nose_shape: false,
       root_attachment: false,
       receding_cap: false,
     };
@@ -124,6 +125,7 @@ export interface Modifier {
     | "liquid_film"
     | "cap_freedom"
     | "nucleation_root"
+    | "nose_shape"
     | "root_attachment"
     | "receding_cap";
   label: string;
@@ -180,8 +182,8 @@ export const MODIFIERS: Modifier[] = [
     label: "Free the end caps",
     hint: "the nose is shaped, not a circle of fixed curvature",
     on: ["front", "sharp"],
-    // The root DOF and its dependent physics: two shape systems on one cap.
-    excludes: ["nucleation_root", "root_attachment"],
+    // The per-cap DOFs and their dependent physics: two shape systems on one cap.
+    excludes: ["nucleation_root", "nose_shape", "root_attachment"],
   },
   {
     key: "nucleation_root",
@@ -190,6 +192,14 @@ export const MODIFIERS: Modifier[] = [
     on: ["front", "sharp"],
     excludes: ["cap_freedom"],
     dependents: ["root_attachment"],
+  },
+  {
+    // Beside the root it composes with: each end cap carries its own DOF.
+    key: "nose_shape",
+    label: "Nose shape w_nose(t)",
+    hint: "the head blunts and overhangs with the data · supervised",
+    on: ["front", "sharp"],
+    excludes: ["cap_freedom"],
   },
   {
     key: "root_attachment",

@@ -801,6 +801,50 @@ def test_launch_rejects_invalid_nucleation_root_combinations(client, extra, need
     assert needle in r.text, (extra, r.text)
 
 
+@pytest.mark.parametrize(
+    ("extra", "needle"),
+    [
+        ({"nose_shape": True, "cap_freedom": True}, "cap_freedom"),
+        ({"nose_shape": True, "front_geometry": False}, "front_geometry"),
+        (
+            {"nose_shape": True, "datasets": ["highest_t", "other"]},
+            "single-dataset",
+        ),
+    ],
+)
+def test_launch_rejects_invalid_nose_shape_combinations(client, extra, needle):
+    """The nose DOF's dependency tree, mirrored at the API boundary as 422s --
+    the root ladder's pattern at the other end of the bubble."""
+    r = client.post("/api/runs", json={**TINY_RUN, **extra})
+    assert r.status_code == 422, extra
+    assert needle in r.text, (extra, r.text)
+
+
+def test_nose_shape_launch_couples_its_supervision(client, repo_root):
+    """The platform never offers the undriven knob at either end: launching the
+    nose DOF always launches its supervision channel with it, composes with
+    the rooted recipe, and leaving it off leaves the objective untouched."""
+    from naviernet_api.models import RunLaunchRequest
+    from naviernet_api.services.run_manager import _configure
+    from naviernet_api.settings import Settings
+
+    settings = Settings(repo_root=repo_root)
+    cfg, _ = _configure(
+        settings,
+        "nose-on",
+        RunLaunchRequest(**{**TINY_RUN, "nose_shape": True, "nucleation_root": True}),
+    )
+    assert cfg.model.nose_shape is True
+    assert cfg.training.nose_supervision is True
+    # The intended recipe composes: each end cap carries its own DOF + channel.
+    assert cfg.model.nucleation_root is True
+    assert cfg.training.root_supervision is True
+
+    off, _ = _configure(settings, "nose-off", RunLaunchRequest(**TINY_RUN))
+    assert off.model.nose_shape is False
+    assert off.training.nose_supervision is False
+
+
 def test_nucleation_root_launch_couples_its_supervision(client, repo_root):
     """The platform never offers the undriven knob: launching the root DOF
     always launches its supervision channel with it, and leaving it off leaves

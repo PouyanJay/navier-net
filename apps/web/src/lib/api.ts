@@ -477,6 +477,13 @@ export interface RunLaunchRequest {
    * (an undriven DOF is the measured failure mode). Requires front_geometry;
    * mutually exclusive with cap_freedom; single-dataset only for now. */
   nucleation_root: boolean;
+  /** The nose shape: the NOSE cap stops asserting a circle and carries its own
+   * trained bluntness w_nose(t) -- the measured head overhangs late (bluntness
+   * crossing 1), which no circle can draw. Launching it always brings its
+   * supervision channel (training.nose_supervision). Requires front_geometry;
+   * composable with nucleation_root (different caps); mutually exclusive with
+   * cap_freedom (the same cap); single-dataset only for now. */
+  nose_shape: boolean;
   /** The attachment pressure: over the dry contact patch the jump's gap term
    * drops to (1 + cos theta_app)/H*, demanding a blunter root. theta_app inits
    * and bounds from the fluid's own wetting config. Requires nucleation_root +

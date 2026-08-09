@@ -35,6 +35,7 @@ export interface SolverFormState {
   film_pressure: boolean;
   liquid_film: boolean;
   nucleation_root: boolean;
+  nose_shape: boolean;
   root_attachment: boolean;
   receding_cap: boolean;
   depletable_superheat: boolean;
@@ -116,6 +117,11 @@ export const FORM_DEFAULTS: SolverFormState = {
   // launches its supervision channel too (the API couples them): a DOF without
   // its driving signal is the measured undriven-knob failure.
   nucleation_root: false,
+  // The nose shape: the advancing head's cap stops being a circle -- the same
+  // Hugelschaffer family that freed the root, mirrored, with its own w_nose(t).
+  // Composable with the root (different caps), exclusive with the free end
+  // caps (the same cap). The API couples its supervision channel the same way.
+  nose_shape: false,
   root_attachment: false,
   receding_cap: false,
   // A superheat that can be depleted, and a closure that can raise it: without

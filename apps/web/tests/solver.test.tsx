@@ -582,6 +582,29 @@ describe("SolverView", () => {
     expect(body.cap_delta).toBe(0.2);
   });
 
+  it("composes the nose shape with the root and excludes the free caps", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // Free caps on, then the nose DOF: two shape systems on one cap, so the
+    // toggle switches the free caps OFF rather than offering the trainer's
+    // rejected combination. The root DOF composes -- different caps.
+    fireEvent.click(screen.getByRole("switch", { name: "Free the end caps" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Nose shape w_nose(t)" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Nucleation root w(t)" }));
+    expect(
+      screen.getByRole("switch", { name: "Free the end caps" }),
+    ).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.nose_shape).toBe(true);
+    expect(body.nucleation_root).toBe(true);
+    expect(body.cap_freedom).toBe(false);
+  });
+
   it("names the momentum closure each treatment implies", async () => {
     stubApi();
     renderStage(<SolverView />);

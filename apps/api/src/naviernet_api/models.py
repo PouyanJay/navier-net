@@ -388,6 +388,17 @@ class RunLaunchRequest(BaseModel):
     # Opt-in until benched. Requires front_geometry; mutually exclusive with
     # cap_freedom (two shape systems on one cap); single-dataset only for now.
     nucleation_root: bool = False
+    # The nose shape: the NOSE cap stops asserting a circle and carries the
+    # same mirrored Hugelschaffer family with its OWN bluntness w_nose(t) --
+    # the measured head overhangs late (nose-window bluntness 0.61 -> 1.83,
+    # crossing 1), a shape no circle can draw, and the trained pressure
+    # already demands it (curvature gap 0.94 at the nose vs 0.23 on the
+    # body). Launching it from the platform ALWAYS brings its supervision
+    # channel (training.nose_supervision): this exact nose is where
+    # cap_freedom starved undriven, twice. Opt-in until benched. Requires
+    # front_geometry; composable with nucleation_root (different caps);
+    # mutually exclusive with cap_freedom (the same cap); single-dataset only.
+    nose_shape: bool = False
     # The attachment pressure (R2): over the dry contact patch the gap term of
     # the Young-Laplace jump drops to (1 + cos theta_app)/H* -- lower demanded
     # curvature, a blunter root, the measured sign through the physics.
@@ -486,6 +497,7 @@ class RunLaunchRequest(BaseModel):
             "front_velocity",
             "cap_freedom",
             "nucleation_root",
+            "nose_shape",
         ):
             if getattr(self, flag) and not self.front_geometry:
                 raise ValueError(
@@ -528,6 +540,16 @@ class RunLaunchRequest(BaseModel):
         if self.nucleation_root and len(self.resolved_datasets()) > 1:
             raise ValueError(
                 "nucleation_root is single-dataset for now: its supervision channel "
+                "is not yet threaded through joint runs -- launch it on one series"
+            )
+        if self.nose_shape and self.cap_freedom:
+            raise ValueError(
+                "nose_shape and cap_freedom are two shape systems on the same "
+                "cap: no bench could attribute a result to either -- enable one"
+            )
+        if self.nose_shape and len(self.resolved_datasets()) > 1:
+            raise ValueError(
+                "nose_shape is single-dataset for now: its supervision channel "
                 "is not yet threaded through joint runs -- launch it on one series"
             )
         if self.root_attachment and not self.nucleation_root:
