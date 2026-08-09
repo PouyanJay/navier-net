@@ -379,6 +379,25 @@ class RunLaunchRequest(BaseModel):
     # discipline every physics feature ships under). Requires sharp_interface
     # and the 'T' field.
     liquid_film: bool = False
+    # The nucleation root: the ROOT cap stops asserting a circle and carries the
+    # Hugelschaffer bluntness w(t) -- the measured masks disagree with a circle
+    # more and more as the event runs, and the circle is the one interface
+    # region beyond the model's reach. Launching it from the platform ALWAYS
+    # brings its supervision channel (training.root_supervision) with it: a DOF
+    # without its driving signal is the twice-measured undriven-knob failure.
+    # Opt-in until benched. Requires front_geometry; mutually exclusive with
+    # cap_freedom (two shape systems on one cap); single-dataset only for now.
+    nucleation_root: bool = False
+    # The attachment pressure (R2): over the dry contact patch the gap term of
+    # the Young-Laplace jump drops to (1 + cos theta_app)/H* -- lower demanded
+    # curvature, a blunter root, the measured sign through the physics.
+    # theta_app inits and bounds from the fluid's own wetting config. Requires
+    # nucleation_root and sharp_interface.
+    root_attachment: bool = False
+    # The receding Bretherton branch (R0): a receding meniscus's cap is FLATTER
+    # than static, and without this the model clamps it TO static -- an O(10%)
+    # overstatement on exactly the receding root body. Requires sharp_interface.
+    receding_cap: bool = False
     # Let the superheat deplete below the inlet, so evaporation can throttle
     # itself as the bubble blankets the wall. Needs the 'T' field.
     depletable_superheat: bool | None = None
@@ -466,6 +485,7 @@ class RunLaunchRequest(BaseModel):
             "evolving_width",
             "front_velocity",
             "cap_freedom",
+            "nucleation_root",
         ):
             if getattr(self, flag) and not self.front_geometry:
                 raise ValueError(
@@ -492,6 +512,39 @@ class RunLaunchRequest(BaseModel):
             raise ValueError(
                 "alpha_eps_anneal_steps needs alpha_eps_final: a target of 0 would "
                 "divide phi by zero rather than sharpen the interface"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_root_ladder(self) -> RunLaunchRequest:
+        # The nucleation-root dependency tree, mirrored from the trainer's own
+        # guards (its own validator, so the monolithic combo check stops
+        # growing -- the pinn.py _validate_* decomposition, at the API boundary).
+        if self.nucleation_root and self.cap_freedom:
+            raise ValueError(
+                "nucleation_root and cap_freedom are two shape systems on the same "
+                "cap: no bench could attribute a result to either -- enable one"
+            )
+        if self.nucleation_root and len(self.resolved_datasets()) > 1:
+            raise ValueError(
+                "nucleation_root is single-dataset for now: its supervision channel "
+                "is not yet threaded through joint runs -- launch it on one series"
+            )
+        if self.root_attachment and not self.nucleation_root:
+            raise ValueError(
+                "root_attachment drives the nucleation root's bluntness through the "
+                "jump condition -- enable nucleation_root, or turn root_attachment off"
+            )
+        if self.root_attachment and self.sharp_interface is False:
+            raise ValueError(
+                "root_attachment blends the Young-Laplace jump's gap term, so it "
+                "requires sharp_interface -- enable it, or turn root_attachment off"
+            )
+        if self.receding_cap and self.sharp_interface is False:
+            raise ValueError(
+                "receding_cap extends the gap curvature the Young-Laplace jump "
+                "consumes, so it requires sharp_interface -- enable it, or turn "
+                "receding_cap off"
             )
         return self
 

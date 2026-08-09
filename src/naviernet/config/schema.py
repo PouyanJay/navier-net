@@ -79,6 +79,27 @@ class FluidConfig:
     # evaporation scales as sqrt(R_universal / molar_mass); without it the film
     # flux q = k dT / delta diverges as the film thins.
     molar_mass: float = MISSING
+    # Wetting conditions (the nucleation root's closures). This is where the
+    # offered fluids genuinely diverge -- their kinematic viscosities nearly
+    # coincide while their contact-angle physics does not -- so every attachment
+    # closure reads these, never an FC-72 literal in code. Angles in degrees.
+    # Static equilibrium angle, and the hysteresis window it sits in. For the
+    # perfectly wetting dielectrics the window is degrees-wide at most; for
+    # water it spans tens of degrees and IS the closure (see wetting_source).
+    theta_e_deg: float = MISSING
+    theta_adv_deg: float = MISSING
+    theta_rec_deg: float = MISSING
+    # Evaporating-angle law theta_ev[deg] = coeff * dT^exp (dT in K). Null =
+    # no law is measured for this fluid; the hysteresis window carries the
+    # closure instead -- which is water's path, not a degraded default.
+    theta_ev_coeff: Optional[float] = None  # noqa: UP045 -- OmegaConf needs Optional
+    theta_ev_exp: Optional[float] = None  # noqa: UP045
+    # Provenance of the values above: "measured" (a published fit for THIS
+    # fluid), "partial" (measured in a neighbouring regime, anchor only),
+    # "extrapolated" (wetting-class transfer from a sibling fluid), or
+    # "hysteresis" (no law; the window is the closure). Recorded in every
+    # run's diagnostics so a conclusion drawn on extrapolated constants says so.
+    wetting_source: str = MISSING
 
 
 @dataclass
@@ -237,6 +258,48 @@ class ModelConfig:
     # discrepancy is a near-constant 1.25-1.48 across every frame and across
     # independently trained runs. Requires `sharp_interface`; off by default.
     film_pressure: bool = False
+    # The nucleation root: replace the ROOT cap's enforced circle with the
+    # Hugelschaffer half-oval carrying ONE trained, time-varying, bounded
+    # bluntness parameter w(t). The circle is the one region of the interface
+    # measured beyond the model's reach: the masks disagree with it more and
+    # more as the event runs (circle residual 12% -> 32%, taper drifting
+    # blunter), the deviation is driven and time-varying (a static family
+    # cannot follow it), and the attachment physics predicts exactly its sign
+    # (a dry patch on the heated plate lowers the demanded curvature over the
+    # root). w = 0 IS the circle, the apex crossing is exact for every w (the
+    # pin survives structurally), the seams keep meeting the body, and the
+    # nose cap stays circular -- freedom is spent only where the signal is.
+    # Requires `front_geometry`; mutually exclusive with `cap_freedom` (two
+    # shape systems on one cap). Off by default -> byte-identical.
+    nucleation_root: bool = False
+    # Bound on the Hugelschaffer bluntness |w| as a fraction of the root cap
+    # radius. Must stay inside 1: at |w| = r the family's denominator reaches
+    # zero at the apex and the curvature diverges. 0.6 spans apex radii from
+    # 0.53 r (sharpened) to 8.5 r (blunted) -- well past the measured drift.
+    root_delta: float = 0.6
+    # The attachment pressure (nucleation-root R2): over the dry contact patch
+    # on the heated plate the gap-direction capillary term is NOT the
+    # both-plates-wetted 2/H* -- contact-angle cosines ADD across the gap
+    # (Park & Homsy 1984 for the wetted limit; Lu, Glasner, Bertozzi & Kim
+    # 2007 for the contacted one), so the attached side carries
+    # (1 + cos theta_app)/H*: LOWER capillary pressure, demanding a BLUNTER
+    # root -- the measured sign. theta_app is ONE trained scalar whose init
+    # and bounds come from the per-fluid wetting config; the patch footprint
+    # a(x,t) is a trained monotone extent about the anchor (the nose-rate
+    # treatment: it never shrinks while the bubble grows). Requires
+    # `nucleation_root` (the DOF the pressure drives) and `sharp_interface`
+    # (the jump the blend enters). Off by default -> the jump is unchanged.
+    root_attachment: bool = False
+    # Receding Bretherton branch (nucleation-root R0): a receding meniscus's cap
+    # is FLATTER than static -- kappa R = 1 + beta (3Ca)^{2/3} with beta_rear =
+    # -1.13 -- and without this flag every receding section is clamped TO the
+    # static 2/H*, an O(10%) curvature overstatement on exactly the receding
+    # root body (the trained capsule recedes at essentially every station; only
+    # the nose advances). One term on an existing function, benchable alone
+    # (the pi/4-fix precedent). Requires `sharp_interface` (the jump condition
+    # is what consumes the gap curvature in training); off by default -> the
+    # advancing-only correction is byte-for-byte what it was.
+    receding_cap: bool = False
     # Liquid film: the thin layer the bubble leaves against the gap walls, as a
     # 1-D field delta(x, t) evaluated on the explicit front. Deposition follows the
     # Aussillous-Quere saturating law on the LOCAL normal speed -- deliberately
@@ -436,6 +499,28 @@ class TrainingConfig:
     # field inherits that staircase; both frames are blurred identically, so the
     # interface is not shifted.
     fv_smooth_px: float = 1.5
+
+    # Root-window supervision (nucleation-root R1): drive the Hugelschaffer
+    # bluntness w(t) with the measured mask's signed-distance transform sampled
+    # AT the predicted root-cap contour, plus the per-frame scalar bluntness
+    # target. Distance- and ratio-based, never pixel-only: the root's mismatch
+    # band is thinner than the interface blur and cap pixels are a sliver of
+    # the batch, which is how cap_freedom starved twice (the undriven-knob
+    # trap). Requires `model.nucleation_root` (nothing else reads the signal).
+    # Off by default -> the objective is unchanged.
+    root_supervision: bool = False
+    # Like fv_weight, these sit outside the rebalancer, so nothing corrects a
+    # weight too small to act -- a flag whose default makes it inert is a
+    # switch that does nothing (the front-velocity lesson). 10 matches the
+    # fv precedent for a front functional; the bluntness term's differences
+    # are O(0.1) so its square needs the larger factor to register. The R0/R1
+    # probe's mechanism gate (w(t) budget use) is what validates these.
+    root_sdf_weight: float = 10.0
+    root_bluntness_weight: float = 25.0
+    # The root sampling budget: cap samples per frame for the supervision's own
+    # front call -- denser than the physics' front_cap_samples, because these
+    # samples are the only place the root signal enters.
+    root_cap_samples: int = 48
 
     seed: int = 0
     device: str = "cpu"

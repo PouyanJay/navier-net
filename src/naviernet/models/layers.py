@@ -85,3 +85,10 @@ def logit(p: float) -> float:
     how a curve net's output bias is anchored at a measured starting value."""
     p = min(max(p, 1e-6), 1.0 - 1e-6)
     return float(torch.logit(torch.tensor(p)))
+
+
+def inverse_softplus(value: float) -> float:
+    """The pre-softplus value landing exactly on ``value`` -- ``logit``'s
+    sibling for rate-like quantities anchored at a measured positive start."""
+    value = max(value, 1e-6)
+    return float(torch.log(torch.expm1(torch.tensor(value))))

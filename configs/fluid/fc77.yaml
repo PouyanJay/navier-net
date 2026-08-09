@@ -28,3 +28,14 @@ sigma: 8.0e-3 # N/m
 h_lv: 89.0e3 # J/kg  (latent heat at the boiling point)
 
 molar_mass: 0.415 # kg/mol (3M datasheet; FC-77 is a mixture, average MW)
+
+# Wetting: perfectly wetting dielectric BY CLASS -- no published contact-angle
+# or evaporating-angle measurement exists for FC-77. The law below is FC-72's
+# (Raj et al. 2012), transferred across the perfluorocarbon wetting class.
+# Every run using it is labeled wetting_source: extrapolated in its outputs.
+theta_e_deg: 0.5 # class value; unmeasured for this fluid
+theta_adv_deg: 0.5
+theta_rec_deg: 0.0
+theta_ev_coeff: 9.37 # FC-72's fit, class-extrapolated
+theta_ev_exp: 0.54
+wetting_source: extrapolated

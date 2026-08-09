@@ -617,16 +617,16 @@ def test_the_jump_weights_the_in_plane_curvature_by_pi_over_four(tmp_path):
     import torch
 
     from naviernet.physics.groups import compute_groups
-    from naviernet.physics.residuals import IN_PLANE_WEIGHT, gap_curvature, total_curvature
+    from naviernet.physics.residuals import IN_PLANE_WEIGHT, gap_curvature, jump_total_curvature
 
     model, data, cfg = _model_and_data(tmp_path)
     groups = compute_groups(cfg)
     front = model.nets["phi"].front(torch.tensor([[float(data.t[0])]]), n_body=8, n_cap=8)
 
     expected = IN_PLANE_WEIGHT * front.kappa_par + gap_curvature(front.normal_speed, groups)
-    assert torch.allclose(total_curvature(front, groups), expected)
+    assert torch.allclose(jump_total_curvature(model, front, groups), expected)
     # And it is genuinely weighted, not a pass-through.
     assert not torch.allclose(
-        total_curvature(front, groups),
+        jump_total_curvature(model, front, groups),
         front.kappa_par + gap_curvature(front.normal_speed, groups),
     )

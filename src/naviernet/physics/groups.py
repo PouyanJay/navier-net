@@ -28,6 +28,23 @@ ACCOMMODATION = 0.035
 # evaporate. Typical microchannel wall finish, ~0.1 um.
 FILM_DRYOUT_ROUGHNESS_M = 1e-7
 
+# Rim slope discontinuity at the nucleation cavity, for the Gibbs pinning bound
+# theta <= theta_ev + alpha (Oliver, Huh & Mason 1977; non-equilibrium
+# extension Tsoumpas et al. 2014, matched to ~1 deg for the HFE fluids). A
+# property of the cavity's GEOMETRY, which is unmeasured for our heater --
+# a stated assumption like ACCOMMODATION, deliberately not a per-run tunable.
+GIBBS_RIM_SLOPE_DEG = 30.0
+
+# The apparent angle's hard ceiling: at 90 deg the meniscus is vertical in the
+# gap and the attached capillary term (1 + cos theta)/H* has lost its whole
+# wetting contribution -- also the classical departure gate (plan Q4b).
+MAX_CONTACT_ANGLE_DEG = 90.0
+
+# ln(L / l_V) in the Cox-Voinov relation, for our geometry (outer scale the
+# half-gap, inner the Voinov microscale): 7-12; the plan's stated choice is 10
+# (Janecek & Nikolayev PRE 88:060404R, 2013; Bures & Sato JFM 916:A53, 2021).
+COX_VOINOV_LOG = 10.0
+
 # The dimensionless groups a joint (transfer-learning) model is conditioned on:
 # the regime descriptors that distinguish one dataset's heat-flux condition from
 # another's, spanning momentum, heat transfer, property ratios, and confinement.
@@ -185,6 +202,41 @@ def compute_groups(cfg) -> dict[str, float]:
     groups["film_depletion"] = groups["Ja"] / groups["Pe"]
     groups["film_dryout_star"] = FILM_DRYOUT_ROUGHNESS_M / length
 
+    # Nucleation-root wetting closures (model.nucleation_root): the trained
+    # apparent-angle unknown's INIT AND BOUNDS, derived per fluid -- the
+    # apparent angle under evaporation is emergent (Nikolayev), so it is an
+    # inverse unknown like `r_int_star`, initialised at the fluid's own
+    # evaporating-angle law at this run's superheat scale (or at the advancing
+    # angle where no law is measured -- water's hysteresis-window path) and
+    # bounded above by Gibbs pinning at the cavity rim. Omitted (not defaulted)
+    # on configs predating the wetting fields, the molar_mass lesson: run
+    # snapshots from before this feature must keep composing, and those runs
+    # never trained the root.
+    wetting = _optional_wetting(fluid)
+    if wetting is not None:
+        if fluid.theta_ev_coeff is not None and fluid.theta_ev_exp is not None:
+            theta_ev = float(fluid.theta_ev_coeff) * groups["dT_ref"] ** float(
+                fluid.theta_ev_exp
+            )
+            init = theta_ev
+        else:
+            # No measured law (water's path): the hysteresis window is the
+            # closure. Gibbs pinning holds up to the ADVANCING angle plus the
+            # rim slope, and the equilibrium angle is the honest resting init.
+            theta_ev = float(fluid.theta_adv_deg)
+            init = float(fluid.theta_e_deg)
+        upper = min(MAX_CONTACT_ANGLE_DEG, theta_ev + GIBBS_RIM_SLOPE_DEG)
+        lower = float(fluid.theta_rec_deg)
+        groups["theta_app_min_deg"] = lower
+        groups["theta_app_max_deg"] = upper
+        groups["theta_app_init_deg"] = min(max(init, lower), upper)
+        # The film-entrainment threshold Ca_crit ~ theta_V^3 / (9 ln(L/l_V))
+        # (Bures & Sato eq. 2.6): above it a receding edge deposits film
+        # instead of keeping its contact line -- the guard on where an
+        # attachment field may exist at all.
+        voinov = math.radians(min(theta_ev, MAX_CONTACT_ANGLE_DEG))
+        groups["wetting_ca_crit"] = voinov**3 / (9.0 * COX_VOINOV_LOG)
+
     return groups
 
 
@@ -192,6 +244,17 @@ def _optional_molar_mass(fluid) -> float | None:
     """The vapour's molar mass, or ``None`` on a config that predates the field."""
     try:
         return float(fluid.molar_mass)
+    except (AttributeError, MissingMandatoryValue):
+        return None
+
+
+def _optional_wetting(fluid) -> tuple[float, float] | None:
+    """The fluid's wetting window ``(theta_adv, theta_rec)``, or ``None`` on a
+    config that predates the wetting fields. Probing the two REQUIRED angles is
+    the snapshot test; the law fields are legitimately null (water) and cannot
+    distinguish an old config."""
+    try:
+        return float(fluid.theta_adv_deg), float(fluid.theta_rec_deg)
     except (AttributeError, MissingMandatoryValue):
         return None
 

@@ -775,3 +775,92 @@ def test_liquid_film_reaches_the_run_it_launched(client, repo_root):
     cfg = client.get(f"/api/runs/{run_id}").json()["config"]
     assert cfg["model"]["liquid_film"] is True
     assert cfg["model"]["sharp_interface"] is True
+
+
+@pytest.mark.parametrize(
+    ("extra", "needle"),
+    [
+        ({"root_attachment": True}, "nucleation_root"),
+        ({"nucleation_root": True, "cap_freedom": True}, "cap_freedom"),
+        (
+            {"nucleation_root": True, "root_attachment": True, "sharp_interface": False},
+            "sharp_interface",
+        ),
+        ({"receding_cap": True, "sharp_interface": False}, "sharp_interface"),
+        (
+            {"nucleation_root": True, "datasets": ["highest_t", "other"]},
+            "single-dataset",
+        ),
+    ],
+)
+def test_launch_rejects_invalid_nucleation_root_combinations(client, extra, needle):
+    """The root ladder's dependency tree, mirrored at the API boundary as 422s
+    so an invalid ask fails with the reason, not deep in the worker."""
+    r = client.post("/api/runs", json={**TINY_RUN, **extra})
+    assert r.status_code == 422, extra
+    assert needle in r.text, (extra, r.text)
+
+
+def test_nucleation_root_launch_couples_its_supervision(client, repo_root):
+    """The platform never offers the undriven knob: launching the root DOF
+    always launches its supervision channel with it, and leaving it off leaves
+    the objective untouched."""
+    from naviernet_api.models import RunLaunchRequest
+    from naviernet_api.services.run_manager import _configure
+    from naviernet_api.settings import Settings
+
+    settings = Settings(repo_root=repo_root)
+    cfg, _ = _configure(
+        settings, "root-on", RunLaunchRequest(**{**TINY_RUN, "nucleation_root": True})
+    )
+    assert cfg.model.nucleation_root is True
+    assert cfg.training.root_supervision is True
+
+    off, _ = _configure(settings, "root-off", RunLaunchRequest(**TINY_RUN))
+    assert off.model.nucleation_root is False
+    assert off.training.root_supervision is False
+
+
+def test_root_physics_is_opt_in_and_travels_when_asked(client, repo_root):
+    """Unbenched physics stays out of the recipe: the resolved flags carry
+    root_attachment/receding_cap false untouched, and an explicit ask on a
+    series that supports them composes the overrides."""
+    import json
+
+    from naviernet_api.models import RunLaunchRequest
+    from naviernet_api.services.run_manager import _interface_overrides
+    from naviernet_api.settings import Settings
+
+    raw = repo_root / "data" / "raw" / TINY_RUN["dataset"]
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "model.json").write_text(json.dumps({"enabled": ["mom", "energy"]}))
+    settings = Settings(repo_root=repo_root)
+
+    silent = _interface_overrides(settings, TINY_RUN["dataset"], RunLaunchRequest(**TINY_RUN))
+    assert "model.root_attachment=false" in silent
+    assert "model.receding_cap=false" in silent
+
+    asked = _interface_overrides(
+        settings,
+        TINY_RUN["dataset"],
+        RunLaunchRequest(
+            **{
+                **TINY_RUN,
+                "nucleation_root": True,
+                "root_attachment": True,
+                "receding_cap": True,
+            }
+        ),
+    )
+    assert "model.root_attachment=true" in asked
+    assert "model.receding_cap=true" in asked
+
+
+def test_asking_for_root_attachment_on_a_stage_a_series_is_rejected(client):
+    """The attachment blends the jump, which reads the pressure field; a
+    Stage-A series has none."""
+    r = client.post(
+        "/api/runs", json={**TINY_RUN, "nucleation_root": True, "root_attachment": True}
+    )
+    assert r.status_code == 422
+    assert "root_attachment" in r.text

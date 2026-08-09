@@ -25,7 +25,7 @@ from naviernet.models.geometry import (
     GeometryContext,
     GeometryPriors,
 )
-from naviernet.models.layers import AdaptiveTanh, FourierFeatures
+from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softplus, logit
 
 # A deliberate exception to the usual physics -> models dependency direction
 # (the only one): the film net's channel bound and data-anchored start are
@@ -124,6 +124,8 @@ class BubblePINN(nn.Module):
         names = list(fields if fields is not None else cfg.model.fields)
         self._validate_front_geometry(cfg, geometry)
         self._validate_sharp_interface(cfg, names)
+        self._validate_receding_cap(cfg)
+        self._validate_root_attachment(cfg)
         self._validate_pressure_shape(cfg)
         self._validate_film_pressure(cfg)
         self._validate_liquid_film(cfg, names)
@@ -141,6 +143,8 @@ class BubblePINN(nn.Module):
                     cap_delta=self.cap_delta,
                     pressure_shape=self.pressure_shape,
                     shape_delta=self.shape_delta,
+                    nucleation_root=self.nucleation_root,
+                    root_delta=self.root_delta,
                 )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
@@ -153,6 +157,8 @@ class BubblePINN(nn.Module):
         # the shared fields, so a seeded run with the flag off starts from
         # bit-identical weights (regression-tested).
         self._init_liquid_film(cfg)
+        # After the film for tidiness; consumes no RNG (zero-init scalars).
+        self._init_root_attachment()
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -172,6 +178,39 @@ class BubblePINN(nn.Module):
                 "model.sharp_interface reads the liquid pressure at the interface, so "
                 "it requires the 'p' field in model.fields (the Stage-B field set); "
                 f"this model has {names}."
+            )
+
+    def _validate_receding_cap(self, cfg) -> None:
+        """The receding Bretherton branch modifies the gap curvature the jump
+        condition consumes; without the sharp-interface conditions nothing in
+        training reads it, and a flag that silently did nothing would be the
+        undriven-knob trap wearing a different hat."""
+        self.receding_cap = bool(getattr(cfg.model, "receding_cap", False))
+        if self.receding_cap and not self.sharp_interface:
+            raise ValueError(
+                "model.receding_cap extends the gap curvature the Young-Laplace "
+                "jump consumes, so it requires model.sharp_interface=true -- "
+                "enable it, or turn model.receding_cap off."
+            )
+
+    def _validate_root_attachment(self, cfg) -> None:
+        """The attachment pressure blends the jump condition's gap term over the
+        patch; without the root DOF there is nothing for the lowered pressure to
+        shape, and without the sharp interface there is no jump to blend."""
+        self.root_attachment = bool(getattr(cfg.model, "root_attachment", False))
+        if not self.root_attachment:
+            return
+        if not self.nucleation_root:
+            raise ValueError(
+                "model.root_attachment drives the Hugelschaffer root DOF through "
+                "the jump condition, so it requires model.nucleation_root=true -- "
+                "enable it, or turn model.root_attachment off."
+            )
+        if not self.sharp_interface:
+            raise ValueError(
+                "model.root_attachment blends the Young-Laplace jump's gap term "
+                "over the patch, so it requires model.sharp_interface=true -- "
+                "enable it, or turn model.root_attachment off."
             )
 
     def _validate_pressure_shape(self, cfg) -> None:
@@ -274,6 +313,95 @@ class BubblePINN(nn.Module):
         # the literature value, and the fluid-to-fluid RATIO stays computed.
         self._log_film_resistance = nn.Parameter(torch.zeros(1))
 
+    # The patch footprint's starting extent as a fraction of the root cap, its
+    # starting growth rate (fractions of the cap per unit t*), and the smooth
+    # gate's width as a fraction of the patch length. Inits, not physics: the
+    # dry-spot literature has no FC-72 measurement to anchor them (stated in
+    # the plan), so they only place the unknowns somewhere trainable -- the
+    # mechanism gate is that both MOVE off these.
+    PATCH_FRAC_INIT = 0.25
+    PATCH_RATE_INIT = 0.5
+    PATCH_GATE_FRACTION = 0.25
+
+    def _init_root_attachment(self) -> None:
+        """The attachment's two unknowns, both zero-init scalars (no RNG):
+        the apparent contact angle (see :meth:`theta_app_deg`) and the patch
+        footprint's monotone extent (see :meth:`patch_extent`)."""
+        if not self.root_attachment:
+            return
+        self._theta_app_raw = nn.Parameter(torch.zeros(1))
+        self._patch_frac_raw = nn.Parameter(torch.zeros(1))
+        self._patch_rate_raw = nn.Parameter(torch.zeros(1))
+
+    def theta_app_deg(self, groups: dict[str, float]) -> torch.Tensor:
+        """The apparent contact angle over the patch, in degrees -- ONE trained
+        scalar, sigmoid-bounded in the fluid's own window and shifted so the
+        zero-init raw lands exactly on the fluid's init (the evaporating-angle
+        law at this run's superheat scale, or the advancing angle on water's
+        hysteresis path). An inverse unknown like ``r_int_star``: the apparent
+        angle under evaporation is emergent, never an FC-72 literal in code.
+        """
+        if not self.root_attachment:
+            raise RuntimeError(
+                "theta_app_deg needs the attachment: this model was built with "
+                "model.root_attachment=false."
+            )
+        try:
+            lo = float(groups["theta_app_min_deg"])
+            hi = float(groups["theta_app_max_deg"])
+            init = float(groups["theta_app_init_deg"])
+        except KeyError as missing:
+            raise ValueError(
+                "model.root_attachment needs the per-fluid wetting groups "
+                "(theta_app_min/init/max_deg), which this config does not derive "
+                "-- it predates the fluid wetting fields. Add theta_e_deg / "
+                "theta_adv_deg / theta_rec_deg to the fluid config, as "
+                "configs/fluid/*.yaml do."
+            ) from missing
+        span = max(hi - lo, 1e-6)
+        shift = logit((init - lo) / span)
+        return lo + span * torch.sigmoid(self._theta_app_raw + shift)
+
+    def patch_extent(self, t: torch.Tensor) -> torch.Tensor:
+        """The patch footprint's axial extent from the anchor at times ``t`` of
+        shape ``(N, 1)``: a trained monotone fraction of the root cap radius.
+
+        ``sigmoid(logit(f0) + raw + softplus(rate) * (t - t_min))`` -- monotone
+        in t by construction (the nose-rate treatment: a dry patch does not
+        rewet while the bubble grows) and bounded by the cap. The cap radius is
+        DETACHED: the patch reads the geometry, it must not reshape the cap
+        through this side door (the jump condition is its one honest channel).
+        """
+        if not self.root_attachment:
+            raise RuntimeError(
+                "patch_extent needs the attachment: this model was built with "
+                "model.root_attachment=false."
+            )
+        geometry = self.nets["phi"]
+        rate = torch.nn.functional.softplus(
+            self._patch_rate_raw + inverse_softplus(self.PATCH_RATE_INIT)
+        )
+        grown = (t - float(geometry.priors.t_min)).clamp(min=0.0) * rate
+        fraction = torch.sigmoid(logit(self.PATCH_FRAC_INIT) + self._patch_frac_raw + grown)
+        return fraction * geometry.frame(t).r_root.detach().abs()
+
+    def attachment_fraction(self, points: torch.Tensor) -> torch.Tensor:
+        """The attachment field ``a(x, t)`` at front samples ``(N, 3)``: 1 over
+        the patch footprint, 0 beyond it, smoothly gated on the axial distance
+        from the measured anchor. The gate width scales with the patch (a
+        fixed fraction), so the transition stays resolvable as the patch grows.
+        """
+        if not self.root_attachment:
+            raise RuntimeError(
+                "attachment_fraction needs the attachment: this model was built "
+                "with model.root_attachment=false."
+            )
+        geometry = self.nets["phi"]
+        extent = self.patch_extent(points[:, 2:3])
+        distance = (points[:, 0:1] - float(geometry.priors.x_root)).clamp(min=0.0)
+        gate = self.PATCH_GATE_FRACTION * extent + 1e-6
+        return torch.sigmoid((extent - distance) / gate)
+
     def film_resistance(self, groups: dict[str, float]) -> torch.Tensor:
         """The effective kinetic resistance ``R_gamma* exp(w)``, an inverse
         unknown scaled off the literature value (see ``_init_liquid_film``)."""
@@ -351,6 +479,14 @@ class BubblePINN(nn.Module):
         self.cap_delta = float(getattr(cfg.model, "cap_delta", 0.2))
         self.pressure_shape = bool(getattr(cfg.model, "pressure_shape", False))
         self.shape_delta = float(getattr(cfg.model, "shape_delta", 0.3))
+        self.nucleation_root = bool(getattr(cfg.model, "nucleation_root", False))
+        self.root_delta = float(getattr(cfg.model, "root_delta", 0.6))
+        if self.nucleation_root and not self.front_geometry:
+            raise ValueError(
+                "model.nucleation_root reshapes the front geometry's ROOT CAP, so "
+                "it requires model.front_geometry=true; a free level set has no "
+                "root cap to reshape."
+            )
         if self.evolving_width and not self.front_geometry:
             raise ValueError(
                 "model.evolving_width reparameterises the front geometry's width "

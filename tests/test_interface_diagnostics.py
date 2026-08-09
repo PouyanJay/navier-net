@@ -325,9 +325,9 @@ def test_the_two_readings_of_the_jump_agree(tmp_path):
     trains, so its arithmetic is not refactored for sharing. This pins them
     together so the pair cannot drift apart silently."""
     from naviernet.physics.residuals import (
+        jump_total_curvature,
         laplace_jump_residual,
         pressure_implied_curvature,
-        total_curvature,
     )
 
     model, data, _ = _model(tmp_path, TINY_SHARP)
@@ -338,7 +338,7 @@ def test_the_two_readings_of_the_jump_agree(tmp_path):
     with torch.no_grad():
         residual = laplace_jump_residual(model, front, groups)
         demanded = pressure_implied_curvature(model, front, groups)
-        carried = total_curvature(front, groups)
+        carried = jump_total_curvature(model, front, groups)
         rearranged = (demanded - carried) / groups["We"]
 
     assert torch.allclose(residual, rearranged, atol=1e-5)

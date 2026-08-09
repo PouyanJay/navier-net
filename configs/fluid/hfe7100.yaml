@@ -28,3 +28,15 @@ sigma: 1.02e-2 # N/m
 h_lv: 112.0e3 # J/kg  (latent heat at the boiling point)
 
 molar_mass: 0.250 # kg/mol (C4F9OCH3; 3M datasheet)
+
+# Wetting: perfectly wetting (theta_e <= 0.5 deg). The evaporating angle is
+# PARTIALLY measured: theta_ev = 8.8 +/- 1.0 deg for ambient evaporation on
+# fused silica (Tsoumpas, Dehaeck, Rednikov & Colinet, Langmuir 30:11847,
+# 2014) -- NOT boiling, so it anchors the init only. Exponent 0 encodes the
+# measured constant; the Gibbs bound still opens the window above it.
+theta_e_deg: 0.5
+theta_adv_deg: 0.5
+theta_rec_deg: 0.0
+theta_ev_coeff: 8.8
+theta_ev_exp: 0.0
+wetting_source: partial

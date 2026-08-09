@@ -23,10 +23,11 @@ import torch
 from naviernet.physics.film import film_surface_pressure
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.residuals import (
-    gap_curvature,
+    jump_gap_curvature,
+    jump_total_curvature,
     pressure_implied_curvature,
-    total_curvature,
 )
+from naviernet.physics.root import root_report
 
 # Stations along the bubble the half-width profiles are compared on. Odd, so a
 # station lands exactly mid-bubble where the measured neck sits.
@@ -187,7 +188,7 @@ def interface_diagnostics(model, data, groups: dict[str, float] | None = None):
     return InterfaceDiagnostics(
         laplace_error_nose=nose_error,
         laplace_error_front=front_error,
-        axial_capillary_gradient=_axial_capillary_gradient(front, groups),
+        axial_capillary_gradient=_axial_capillary_gradient(model, front, groups),
         curvature_gap=_curvature_gap(model, front, groups),
         neck_model=neck_of_profile(model_half_width_profile(geometry, float(data.t[last]))),
         neck_measured=neck_of_profile(measured_half_width_profile(data, last)),
@@ -215,7 +216,7 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
         # shape diagnostics below are pure geometry and stay measurable.
         return float("nan"), float("nan")
     with torch.no_grad():
-        capillary = (total_curvature(front, groups) / groups["We"]).detach()
+        capillary = (jump_total_curvature(model, front, groups) / groups["We"]).detach()
         liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
         residual = (_vapour_pressure(model, front) - liquid - capillary).abs()
 
@@ -253,7 +254,7 @@ def _curvature_gap(model, front, groups: dict[str, float]) -> dict[str, float]:
             pressure_implied_curvature(
                 model, front, groups, p_vapor=_vapour_pressure(model, front)
             )
-            - gap_curvature(front.normal_speed, groups)
+            - jump_gap_curvature(model, front, groups)
         ).squeeze(1)
         carried = front.kappa_par.squeeze(1).detach()
     on_cap, u = front.on_cap.squeeze(1) > 0, front.u.squeeze(1)
@@ -305,7 +306,7 @@ def _vapour_pressure(model, front) -> torch.Tensor:
 BODY_INTERIOR = (0.1, 0.9)
 
 
-def _axial_capillary_gradient(front, groups: dict[str, float]) -> float:
+def _axial_capillary_gradient(model, front, groups: dict[str, float]) -> float:
     """Mean axial gradient of the capillary pressure across the body's interior:
     its range divided by the length it varies over, averaged across times.
 
@@ -321,7 +322,7 @@ def _axial_capillary_gradient(front, groups: dict[str, float]) -> float:
     fact perfectly straight where it matters.
     """
     lo, hi = BODY_INTERIOR
-    total = front.kappa_par + gap_curvature(front.normal_speed, groups)
+    total = front.kappa_par + jump_gap_curvature(model, front, groups)
     u = front.u.squeeze(1)
     body = (front.on_cap.squeeze(1) == 0) & (front.side.squeeze(1) > 0) & (u >= lo) & (u <= hi)
     x = front.points[body, 0].detach()
@@ -517,4 +518,8 @@ def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
     }
     if getattr(model, "liquid_film", False):
         report["film"] = film_report(model, data, groups)
+    # The root window is measured for EVERY front-geometry run -- the profile
+    # stations above exclude the caps, and a baseline that cannot see the root
+    # cannot be compared against a run that reshapes it.
+    report["root"] = root_report(model, data, groups)
     return report

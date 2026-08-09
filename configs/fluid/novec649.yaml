@@ -27,3 +27,14 @@ sigma: 1.08e-2 # N/m
 h_lv: 88.0e3 # J/kg  (latent heat at the boiling point)
 
 molar_mass: 0.316 # kg/mol (C6F12O; 3M datasheet)
+
+# Wetting: perfectly wetting dielectric BY CLASS -- no published contact-angle
+# or evaporating-angle measurement exists for Novec 649. The law below is
+# FC-72's (Raj et al. 2012), transferred across the fluorinated-dielectric
+# wetting class. Runs using it are labeled wetting_source: extrapolated.
+theta_e_deg: 0.5 # class value; unmeasured for this fluid
+theta_adv_deg: 0.5
+theta_rec_deg: 0.0
+theta_ev_coeff: 9.37 # FC-72's fit, class-extrapolated
+theta_ev_exp: 0.54
+wetting_source: extrapolated
