@@ -18,7 +18,7 @@ interface LaunchDockProps {
  * The launch bar: what is about to run, and the two buttons that do it.
  *
  * It carries the summary because the configuration above it is five folded
- * bands long — the last thing before Run should state what Run will do. The
+ * bands long -- the last thing before Run should state what Run will do. The
  * chips are the reproducibility statement: the chosen recipe, then everything
  * this run changes about it. And a disabled Run says why it is disabled,
  * rather than leaving the user to hunt the rail for the field that is empty.

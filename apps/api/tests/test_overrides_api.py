@@ -14,6 +14,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 from helpers import TINY_RUN, read_stream
+from naviernet_api.models import RunLaunchRequest
 from naviernet_api.services.overrides import OverrideRejected, validate_overrides
 
 
@@ -106,3 +107,23 @@ def test_launched_run_snapshot_records_the_override(client: TestClient, repo_roo
     assert snapshot["training"]["kin_grid"] == 64
     # The platform's own keys still composed around it.
     assert snapshot["training"]["steps"] == 2
+
+
+def test_form_owned_keys_mirror_the_built_override_list():
+    """FORM_OWNED_KEYS claims to mirror what the worker composes; hold it.
+
+    The built list is _form_overrides plus the resolved interface flags (built
+    here with every field available, so all six resolve to concrete values).
+    Nested keys (training.weights.*) are excluded: the validator refuses them
+    structurally, so they need no ownership entry.
+    """
+    from naviernet_api.services import run_manager
+    from naviernet_api.services.overrides import FORM_OWNED_KEYS
+
+    request = RunLaunchRequest(dataset="any")
+    built = run_manager._form_overrides(request) + run_manager._resolved_interface_flags(
+        request, ["p", "T"]
+    )
+    keys = [token.split("=", 1)[0] for token in built]
+    top_level = {key for key in keys if key.count(".") == 1}
+    assert top_level == set(FORM_OWNED_KEYS)

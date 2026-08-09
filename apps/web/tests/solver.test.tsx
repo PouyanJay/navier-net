@@ -1520,7 +1520,9 @@ describe("SolverView verdict chips", () => {
     // the switches above were all found by their bare labels.
     expect(screen.getByText("benched + · +0.039 val")).toBeInTheDocument();
     expect(screen.getByText("benched −")).toBeInTheDocument();
-    expect(screen.getAllByText("benched ∅").length).toBeGreaterThan(0);
+    // Liquid film, free end caps, growth constraints, front velocity, RAR:
+    // exact, so an accidental tone flip on any of the five fails here.
+    expect(screen.getAllByText("benched ∅")).toHaveLength(5);
     expect(screen.getAllByText("default on")).toHaveLength(2);
   });
 

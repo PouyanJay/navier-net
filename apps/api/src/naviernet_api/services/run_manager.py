@@ -513,6 +513,49 @@ def _configure(
     overrides = [
         f"paths.root={settings.repo_root}",
         f"run_name={run_id}",
+        *_form_overrides(request),
+    ]
+    from naviernet_api.services.config_service import compose_cfg_once
+    from naviernet_api.services.datasets import series_is_stage_b, series_overrides
+
+    overrides.extend(_interface_overrides(settings, dataset, request))
+
+    # The series' saved conditions and frame exclusions travel with every run.
+    overrides.extend(series_overrides(settings, dataset))
+    # Stage-B physics collapses a random interface, so a fresh Stage-B run trains
+    # the Stage-A objective alone for the warm-up fraction, then engages momentum/
+    # energy/evaporation on the converged interface -- the warm start done in one
+    # run, with no extra step for the user. The primary series decides the stage.
+    if series_is_stage_b(settings, dataset):
+        warmup = int(request.steps * STAGE_B_WARMUP_FRACTION)
+        overrides.append(f"training.stage_b_warmup_steps={warmup}")
+    # Joint training: hand the pipeline the whole list. Each series' regime is
+    # read from its own tensors, so the primary's compose is enough as the base.
+    datasets = request.datasets or [dataset]
+    if len(datasets) > 1:
+        overrides.append(f"datasets=[{','.join(datasets)}]")
+    # Held-out conditions (axis B): whole datasets loaded but never supervised.
+    heldout = request.heldout_datasets or []
+    if heldout:
+        overrides.append(f"heldout_datasets=[{','.join(heldout)}]")
+    # Advanced overrides come LAST: overlap with any platform-owned key was
+    # rejected at validation, and last-wins order means the one server-computed
+    # key they may legitimately target (training.stage_b_warmup_steps) yields
+    # to an explicit expert choice. Re-canonicalised through the same validator
+    # the launch gate used, so the worker never composes a raw network token.
+    overrides.extend(checked_overrides(request))
+    return compose_cfg_once(dataset, overrides=overrides), 0
+
+
+def _form_overrides(request: RunLaunchRequest) -> list[str]:
+    """The launch form's own fields as Hydra overrides.
+
+    Together with :func:`_resolved_interface_flags`, this list DEFINES the
+    form-owned key set: `overrides.FORM_OWNED_KEYS` mirrors it so an advanced
+    override can never fight a form control, and the parity is held by a test
+    (test_overrides_api) rather than by this comment alone.
+    """
+    return [
         f"training.steps={request.steps}",
         f"training.lr={request.lr}",
         f"training.lr_halflife={request.lr_halflife}",
@@ -570,36 +613,6 @@ def _configure(
         f"training.fv_weight={request.fv_weight}",
         f"training.fv_apex_weight={request.fv_apex_weight}",
     ]
-    from naviernet_api.services.config_service import compose_cfg_once
-    from naviernet_api.services.datasets import series_is_stage_b, series_overrides
-
-    overrides.extend(_interface_overrides(settings, dataset, request))
-
-    # The series' saved conditions and frame exclusions travel with every run.
-    overrides.extend(series_overrides(settings, dataset))
-    # Stage-B physics collapses a random interface, so a fresh Stage-B run trains
-    # the Stage-A objective alone for the warm-up fraction, then engages momentum/
-    # energy/evaporation on the converged interface -- the warm start done in one
-    # run, with no extra step for the user. The primary series decides the stage.
-    if series_is_stage_b(settings, dataset):
-        warmup = int(request.steps * STAGE_B_WARMUP_FRACTION)
-        overrides.append(f"training.stage_b_warmup_steps={warmup}")
-    # Joint training: hand the pipeline the whole list. Each series' regime is
-    # read from its own tensors, so the primary's compose is enough as the base.
-    datasets = request.datasets or [dataset]
-    if len(datasets) > 1:
-        overrides.append(f"datasets=[{','.join(datasets)}]")
-    # Held-out conditions (axis B): whole datasets loaded but never supervised.
-    heldout = request.heldout_datasets or []
-    if heldout:
-        overrides.append(f"heldout_datasets=[{','.join(heldout)}]")
-    # Advanced overrides come LAST: overlap with any platform-owned key was
-    # rejected at validation, and last-wins order means the one server-computed
-    # key they may legitimately target (training.stage_b_warmup_steps) yields
-    # to an explicit expert choice. Re-canonicalised through the same validator
-    # the launch gate used, so the worker never composes a raw network token.
-    overrides.extend(checked_overrides(request))
-    return compose_cfg_once(dataset, overrides=overrides), 0
 
 
 def _resolved_interface_flags(request: RunLaunchRequest, fields: list[str]) -> list[str]:

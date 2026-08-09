@@ -9,9 +9,9 @@ import {
 } from "./form";
 import { SwitchRow, ValueRow } from "./Rows";
 
-/** What a launch targets. The three are mutually exclusive — a resume takes its
- * config from the checkpoint, and a sweep varies the seed on one series — so
- * they are one choice, not three switches that disable each other. */
+/** What a launch targets. The three are mutually exclusive -- a resume takes
+ * its config from the checkpoint, and a sweep varies the seed on one series --
+ * so they are one choice, not three switches that disable each other. */
 export type LaunchMode = "new" | "resume" | "sweep";
 
 export const LAUNCH_MODES: {

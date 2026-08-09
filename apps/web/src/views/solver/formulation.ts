@@ -5,7 +5,7 @@
  * `sharp_interface`, `film_pressure`, `hard_pin`) with a dependency tree between
  * them, which the form used to render as a flat pile of switches whose hints
  * said "needs front geometry". There are really only THREE coherent
- * formulations, and they form a ladder — each one a superset of the last. This
+ * formulations, and they form a ladder -- each one a superset of the last. This
  * module is that ladder, so the aside can offer a choice instead of a puzzle.
  */
 
@@ -19,7 +19,7 @@ export interface TreatmentMeta {
   label: string;
   /** The mono sub-note on the segment: the treatment in three words. */
   note: string;
-  /** What closes momentum under this treatment — the thing that actually
+  /** What closes momentum under this treatment -- the thing that actually
    * changes between them, and the reason to pick one. */
   momentum: string;
   /** What the interface IS here, in one sentence. */
@@ -71,7 +71,7 @@ export function treatmentOf(form: SolverFormState): Treatment {
  *
  * Every option below the ladder rung is switched off rather than left dangling:
  * a diffuse run has no front to pinch off, and a run without the interface
- * conditions has no Young-Laplace jump for the film pressure to correct — the
+ * conditions has no Young-Laplace jump for the film pressure to correct -- the
  * same combinations the trainer and the API reject.
  */
 export function treatmentPatch(name: Treatment): Partial<SolverFormState> {

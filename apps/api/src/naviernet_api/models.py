@@ -7,9 +7,11 @@ introducing a parallel data model.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from naviernet_api.services.overrides import MAX_OVERRIDES, MAX_TOKEN_LENGTH
 
 
 class Fluid(BaseModel):
@@ -473,7 +475,11 @@ class RunLaunchRequest(BaseModel):
     # naming the offending token), appended AFTER every platform override so an
     # explicit expert choice wins, and recorded in the run's config snapshot
     # like every other override. Ignored on resume, as documented above.
-    overrides: list[str] = Field(default_factory=list, max_length=16)
+    # Caps shared with the validator, so the Pydantic layer and the allowlist
+    # can never disagree about how much text the field may carry.
+    overrides: list[Annotated[str, Field(max_length=MAX_TOKEN_LENGTH)]] = Field(
+        default_factory=list, max_length=MAX_OVERRIDES
+    )
 
     def resolved_datasets(self) -> list[str]:
         """The datasets a new run trains on: `datasets` if given, else `[dataset]`.

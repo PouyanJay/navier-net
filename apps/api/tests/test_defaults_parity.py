@@ -37,6 +37,9 @@ def test_launch_defaults_match_the_cli_training_config():
     config = yaml.safe_load((REPO_ROOT / "configs" / "training" / "stage_a.yaml").read_text())
     request = RunLaunchRequest(dataset="any")
 
+    # Bare == on the floats is deliberate: both sides are hand-written literals
+    # parsed independently, and the test exists to catch drift between exactly
+    # those literals -- approx would let one side be rounded without notice.
     for field in SHARED_FIELDS:
         assert getattr(request, field) == config[field], (
             f"RunLaunchRequest.{field} default {getattr(request, field)!r} has "

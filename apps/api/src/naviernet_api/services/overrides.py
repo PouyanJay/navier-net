@@ -104,6 +104,11 @@ SERIES_OWNED_KEYS = frozenset(
 
 _SCALAR_TYPES = ("int", "float", "bool")
 
+# schema.py uses `from __future__ import annotations` (PEP 563), so field.type
+# is the literal source string ("int", "float", "list[float]", ...) and the
+# scalar check below is a plain string match. That fails CLOSED: a field ever
+# declared with an aliased or verbose spelling ("Optional[float]") becomes
+# non-overridable rather than wrongly accepted.
 _GROUPS = {
     "training": {field.name: field.type for field in dataclasses.fields(TrainingConfig)},
     "model": {field.name: field.type for field in dataclasses.fields(ModelConfig)},
@@ -164,16 +169,7 @@ def _field_type(key: str) -> str:
             "overridable (the weight table and per-field architecture have "
             "their own homes on the form and the Physics & model stage)"
         )
-    if key in FORM_OWNED_KEYS:
-        raise OverrideRejected(
-            f"{key!r} is set by the launch form; change it there instead of "
-            "overriding it, so the form always says what the run does"
-        )
-    if key in SERIES_OWNED_KEYS:
-        raise OverrideRejected(
-            f"{key!r} belongs to the series' saved model configuration; edit "
-            "it on the Physics & model stage"
-        )
+    _reject_if_owned(key)
     declared = _GROUPS[group].get(field)
     if declared is None:
         raise OverrideRejected(
@@ -185,6 +181,20 @@ def _field_type(key: str) -> str:
             "scalar numeric/boolean overrides are accepted"
         )
     return declared
+
+
+def _reject_if_owned(key: str) -> None:
+    """Refuse a key that already has a home: one value, one owner."""
+    if key in FORM_OWNED_KEYS:
+        raise OverrideRejected(
+            f"{key!r} is set by the launch form; change it there instead of "
+            "overriding it, so the form always says what the run does"
+        )
+    if key in SERIES_OWNED_KEYS:
+        raise OverrideRejected(
+            f"{key!r} belongs to the series' saved model configuration; edit "
+            "it on the Physics & model stage"
+        )
 
 
 def _parse_value(key: str, value: str, declared: str) -> str:

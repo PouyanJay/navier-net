@@ -75,8 +75,10 @@ export function recipeState(name: RecipeName): SolverFormState {
   return { ...FORM_DEFAULTS };
 }
 
-/** A boolean whose departure reads as "+ label" / "− label". */
-const SWITCH_LABELS: [keyof SolverFormState, string][] = [
+/** A boolean whose departure reads as "+ label" / "− label". Exported so the
+ * tests can hold it complete against `MODIFIERS`: a switch missing here would
+ * silently drop out of the dock's reproducibility statement. */
+export const SWITCH_LABELS: [keyof SolverFormState, string][] = [
   ["hard_pin", "hard root pin"],
   ["film_pressure", "film pressure"],
   ["liquid_film", "liquid film"],
@@ -172,19 +174,40 @@ export function recipeDiff(
 ): string[] {
   const stamped = recipeState(recipe);
   const treatment = treatmentOf(form);
+  const changed = treatment !== treatmentOf(stamped);
+  const base = changed ? { ...stamped, ...treatmentPatch(treatment) } : stamped;
+  return [
+    ...(changed
+      ? [`treatment → ${treatmentMeta(treatment).label.toLowerCase()}`]
+      : []),
+    ...switchChips(form, base),
+    ...balancingChips(form, base),
+    ...valueChips(form, base),
+    ...overrideChips(form),
+  ];
+}
+
+/** Toggled booleans, each as one signed chip. */
+function switchChips(form: SolverFormState, base: SolverFormState): string[] {
   const chips: string[] = [];
-
-  let base = stamped;
-  if (treatment !== treatmentOf(stamped)) {
-    chips.push(`treatment → ${treatmentMeta(treatment).label.toLowerCase()}`);
-    base = { ...stamped, ...treatmentPatch(treatment) };
-  }
-
   for (const [key, label] of SWITCH_LABELS) {
     if (form[key] !== base[key]) {
       chips.push(`${form[key] ? "+" : "−"} ${label}`);
     }
   }
+  const sharpening = form.alpha_eps_anneal_steps > 0;
+  if (sharpening !== base.alpha_eps_anneal_steps > 0) {
+    chips.push(`${sharpening ? "+" : "−"} sharpening`);
+  }
+  return chips;
+}
+
+/** The loss-balancing enums: the scheme, and the causal variant while it is on. */
+function balancingChips(
+  form: SolverFormState,
+  base: SolverFormState,
+): string[] {
+  const chips: string[] = [];
   if (form.weighting !== base.weighting) {
     chips.push(
       `weighting → ${form.weighting === "rba" ? "RBA" : "gradient-norm"}`,
@@ -195,11 +218,12 @@ export function recipeDiff(
       `causal → ${form.causal_mode === "march" ? "time-marching" : "soft weighting"}`,
     );
   }
-  const sharpening = form.alpha_eps_anneal_steps > 0;
-  if (sharpening !== base.alpha_eps_anneal_steps > 0) {
-    chips.push(`${sharpening ? "+" : "−"} sharpening`);
-  }
+  return chips;
+}
 
+/** Changed numbers (switch-gated where owned) and the loss-weight table. */
+function valueChips(form: SolverFormState, base: SolverFormState): string[] {
+  const chips: string[] = [];
   for (const { key, label, gate } of VALUE_LABELS) {
     if (gate && !gate(form)) continue;
     if (form[key] !== base[key]) {
@@ -215,10 +239,13 @@ export function recipeDiff(
       chips.push(`${label} ${form.weights[key]}`);
     }
   }
-  // Advanced overrides are departures by definition: no recipe stamps any.
-  // Unparseable text adds no chips; the dock is already blocked on it.
-  for (const token of parseOverrides(form.overridesText) ?? []) {
-    chips.push(`+ ${token}`);
-  }
   return chips;
+}
+
+/** Advanced overrides are departures by definition: no recipe stamps any.
+ * Unparseable text adds no chips; the dock is already blocked on it. */
+function overrideChips(form: SolverFormState): string[] {
+  return (parseOverrides(form.overridesText) ?? []).map(
+    (token) => `+ ${token}`,
+  );
 }

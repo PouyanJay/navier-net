@@ -138,3 +138,14 @@ describe("recipeDiff", () => {
     ]);
   });
 });
+
+describe("SWITCH_LABELS completeness", () => {
+  it("covers every modifier key, so no departure can silently drop its chip", async () => {
+    const { MODIFIERS } = await import("../src/views/solver/formulation");
+    const { SWITCH_LABELS } = await import("../src/views/solver/recipes");
+    const labelled = new Set(SWITCH_LABELS.map(([key]) => key));
+    for (const modifier of MODIFIERS) {
+      expect(labelled.has(modifier.key), `no diff-chip label for ${modifier.key}`).toBe(true);
+    }
+  });
+});
