@@ -395,9 +395,12 @@ class RunLaunchRequest(BaseModel):
     # already demands it (curvature gap 0.94 at the nose vs 0.23 on the
     # body). Launching it from the platform ALWAYS brings its supervision
     # channel (training.nose_supervision): this exact nose is where
-    # cap_freedom starved undriven, twice. Opt-in until benched. Requires
-    # front_geometry; composable with nucleation_root (different caps);
-    # mutually exclusive with cap_freedom (the same cap); single-dataset only.
+    # cap_freedom starved undriven, twice. BENCHED NEGATIVE (T6): the jump
+    # drives the freed cap to sharpen against the measured overhang and the
+    # front degrades in every arm -- stays opt-in-and-off until the nose's
+    # jump physics is corrected. Requires front_geometry; composable with
+    # nucleation_root (different caps); mutually exclusive with cap_freedom
+    # (the same cap); single-dataset only.
     nose_shape: bool = False
     # The attachment pressure (R2): over the dry contact patch the gap term of
     # the Young-Laplace jump drops to (1 + cos theta_app)/H* -- lower demanded

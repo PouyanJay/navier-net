@@ -292,6 +292,14 @@ class ModelConfig:
     # meeting the body. Requires `front_geometry`; COMPOSABLE with
     # `nucleation_root` (different caps); mutually exclusive with
     # `cap_freedom` (the same cap). Off by default -> byte-identical.
+    # BENCHED NEGATIVE (T6, 12 runs, 2026-08): the mechanism is alive (71-100%
+    # budget in every arm) but the depth-averaged jump demands MORE curvature
+    # at the nose (gap +0.94) and drives the freed cap to SHARPEN (w -> -delta)
+    # -- the physics-only arm proves it without any supervision -- while the
+    # measured head wants the opposite (the overhang). The fight degrades the
+    # front in every arm tried (full / halved / sdf-only supervision), so the
+    # flag stays off until the nose's jump physics is corrected; freeing the
+    # shape again before that re-runs the same collision.
     nose_shape: bool = False
     # Bound on the Hugelschaffer nose bluntness |w_nose| as a fraction of the
     # nose cap radius; the same rationale (and value) as root_delta.
