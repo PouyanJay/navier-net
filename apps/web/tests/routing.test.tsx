@@ -801,6 +801,11 @@ describe("results routing", () => {
     );
     expect(screen.getByRole("button", { name: "T" })).toBeDisabled();
     expect(screen.getByText(/stage a only/i)).toBeInTheDocument();
+    // The vector chip is the CLIENT's composition of u and v (its own
+    // endpoint, never named in fields_available), so it is offered exactly
+    // when both components are -- it used to key on its own absent name and
+    // sat permanently disabled, quiver unreachable, on every run.
+    expect(screen.getByRole("button", { name: "u,v" })).toBeEnabled();
 
     // The map is real: unit + time readout from the payload.
     expect(screen.getByText("mm·s⁻¹")).toBeInTheDocument();
