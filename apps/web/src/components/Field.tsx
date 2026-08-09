@@ -1,5 +1,7 @@
 import { useId, type ReactNode } from "react";
 
+import { Select } from "./Select";
+
 interface FieldShellProps {
   id: string;
   label: ReactNode;
@@ -125,7 +127,14 @@ interface SelectFieldProps {
   disabled?: boolean;
 }
 
-/** A labeled select for one run-config value. */
+/**
+ * A labeled select for one run-config value.
+ *
+ * Renders the app's own listbox (`Select`, DESIGN_SYSTEM §8.5), never a native
+ * `<select>`: the native control draws the operating system's popup -- system
+ * font, system metrics, system colours, in neither theme -- which is exactly
+ * the one part of a select users actually look at.
+ */
 export function SelectField({
   label,
   hint,
@@ -137,18 +146,14 @@ export function SelectField({
   const id = useId();
   return (
     <FieldShell id={id} label={label} hint={hint}>
-      <select
+      <Select
         id={id}
         value={value}
+        options={options}
+        onChange={onChange}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        className="pick-field"
+      />
     </FieldShell>
   );
 }

@@ -585,17 +585,42 @@ text.chart-axis-title {
   overflow-wrap: break-word;
   min-width: 0;
 }
-/* A long selected option truncates with an ellipsis instead of forcing the
-   field (and its grid column) wider than the card. */
-.fld select {
-  text-overflow: ellipsis;
+/* The field-context listbox trigger: reads exactly like its .fld input
+   siblings (same face, same metrics), so a chooser and a number field sit in
+   one column without betraying which is which. */
+.fld .pick,
+.pick-field {
+  width: 100%;
+}
+.pick-field {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 400;
+  height: auto;
+  padding: var(--s2);
+  color: var(--ink);
+  background: var(--panel);
+  border-color: var(--line-strong);
+}
+.pick-field .pick-val {
+  flex: 1;
+  text-align: left;
+}
+.pick-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* The field's menu spans its trigger, so options align with the value. */
+.fld .pick-menu {
+  width: 100%;
+  max-width: none;
 }
 .fld .fld-hint {
   font-weight: 400;
   color: var(--ink3);
 }
-.fld input,
-.fld select {
+.fld input {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   font-size: 12px;
@@ -608,7 +633,6 @@ text.chart-axis-title {
   min-width: 0;
 }
 .fld input:disabled,
-.fld select:disabled,
 .ug[data-disabled] {
   opacity: 0.5;
 }

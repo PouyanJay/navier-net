@@ -133,6 +133,12 @@ function stubApi({
   return posts;
 }
 
+/** Take an option from the app-drawn listbox (Select): open, then click. */
+function choose(label: RegExp, option: RegExp | string) {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
 beforeEach(() => {
   FakeEventSource.instances = [];
   vi.stubGlobal(
@@ -305,11 +311,9 @@ describe("SolverView", () => {
     await screen.findByLabelText("ds_a");
 
     // Off by default (train on every frame); the user opts in. No strategy toggle.
-    expect(screen.getByLabelText(/Validation split/)).toHaveValue("0");
+    expect(screen.getByLabelText(/Validation split/)).toHaveTextContent("none");
     expect(screen.queryByLabelText(/Split strategy/)).toBeNull();
-    fireEvent.change(screen.getByLabelText(/Validation split/), {
-      target: { value: "0.2" },
-    });
+    choose(/Validation split/, "20%");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -344,7 +348,9 @@ describe("SolverView", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    expect(screen.getByLabelText(/Weighting/)).toHaveValue("gradnorm");
+    expect(screen.getByLabelText(/Weighting/)).toHaveTextContent(
+      "gradient-norm",
+    );
     // The causal mode select only appears once causal weighting is on.
     expect(screen.queryByLabelText(/Causal mode/)).toBeNull();
     // Adaptive collocation refreshes the RBA pool, so it is gated off under gradnorm.
@@ -367,10 +373,10 @@ describe("SolverView", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: "Causal weighting" }));
     // The mode select appears, defaulting to soft weighting.
-    expect(screen.getByLabelText(/Causal mode/)).toHaveValue("weight");
-    fireEvent.change(screen.getByLabelText(/Causal mode/), {
-      target: { value: "march" },
-    });
+    expect(screen.getByLabelText(/Causal mode/)).toHaveTextContent(
+      "soft weighting",
+    );
+    choose(/Causal mode/, "time-marching");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -390,9 +396,7 @@ describe("SolverView", () => {
     expect(
       screen.getByRole("switch", { name: "Causal weighting" }),
     ).toBeChecked();
-    fireEvent.change(screen.getByLabelText(/Weighting/), {
-      target: { value: "rba" },
-    });
+    choose(/Weighting/, /RBA/);
     const causal = screen.getByRole("switch", { name: "Causal weighting" });
     expect(causal).toBeDisabled();
     expect(causal).not.toBeChecked();
@@ -405,9 +409,7 @@ describe("SolverView", () => {
     expect(adaptive).toBeEnabled();
     fireEvent.click(adaptive);
     expect(adaptive).toBeChecked();
-    fireEvent.change(screen.getByLabelText(/Weighting/), {
-      target: { value: "gradnorm" },
-    });
+    choose(/Weighting/, /gradient-norm/);
     expect(
       screen.getByRole("switch", { name: "Adaptive collocation" }),
     ).toBeDisabled();
@@ -416,9 +418,7 @@ describe("SolverView", () => {
     ).not.toBeChecked();
 
     // Finally launch an RBA + adaptive run and confirm the posted combo is valid.
-    fireEvent.change(screen.getByLabelText(/Weighting/), {
-      target: { value: "rba" },
-    });
+    choose(/Weighting/, /RBA/);
     fireEvent.click(
       screen.getByRole("switch", { name: "Adaptive collocation" }),
     );
@@ -962,7 +962,7 @@ describe("SolverView", () => {
     // Steps is the one field a resume still honours.
     expect(screen.getByLabelText(/Steps/)).toBeEnabled();
     const resumeSelect = await screen.findByLabelText(/Run to resume/);
-    expect(resumeSelect).toHaveValue("highest_t");
+    expect(resumeSelect).toHaveTextContent("highest_t · step 1500");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -1546,9 +1546,7 @@ describe("SolverView rebalance cadence", () => {
     expect(cadence).toHaveValue(500);
     expect(cadence).toBeEnabled();
 
-    fireEvent.change(screen.getByLabelText(/Weighting/), {
-      target: { value: "rba" },
-    });
+    choose(/Weighting/, /RBA/);
     expect(screen.getByLabelText(/Rebalance/)).toBeDisabled();
   });
 });

@@ -10,11 +10,18 @@ export interface SelectChoice<T extends string> {
 }
 
 interface SelectProps<T extends string> {
-  /** The control's accessible name. It is never rendered as a caption. */
-  label: string;
+  /** The control's accessible name. It is never rendered as a caption. Omit
+   * when a visible `<label htmlFor={id}>` names the control instead. */
+  label?: string;
+  /** The trigger's element id, so a visible label can point at it. */
+  id?: string;
   value: T;
   options: readonly SelectChoice<T>[];
   onChange: (value: T) => void;
+  disabled?: boolean;
+  /** What the trigger reads while `value` matches no option (a list still
+   * loading, or failed to). */
+  placeholder?: string;
   /** Extra class on the trigger, for callers that size it themselves. */
   className?: string;
 }
@@ -31,9 +38,12 @@ interface SelectProps<T extends string> {
  */
 export function Select<T extends string>({
   label,
+  id,
   value,
   options,
   onChange,
+  disabled,
+  placeholder,
   className,
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
@@ -106,11 +116,13 @@ export function Select<T extends string>({
     <div className="pick" ref={host}>
       <button
         ref={trigger}
+        id={id}
         type="button"
         className={className ? `pick-btn ${className}` : "pick-btn"}
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={disabled}
         aria-controls={open ? listId : undefined}
         // Focus stays on the trigger while the list is open, so the active
         // option is named here rather than by moving focus into the menu.
@@ -129,7 +141,7 @@ export function Select<T extends string>({
         }
         onKeyDown={onKeyDown}
       >
-        <span className="pick-val">{chosen?.label ?? ""}</span>
+        <span className="pick-val">{chosen?.label ?? placeholder ?? ""}</span>
         <HugeiconsIcon icon={MenuOpenIcon} size={14} aria-hidden="true" />
       </button>
 
