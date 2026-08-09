@@ -915,3 +915,96 @@ def test_the_five_fluid_code_gate_with_the_nose(tmp_path, fluid_id, source):
     assert np.isfinite(report["root"]["per_frame"][0]["w"])
     assert np.isfinite(report["nose"]["per_frame"][0]["w"])
     assert 0.0 <= report["nose"]["w_budget_use"] <= 1.0
+
+
+# --- The nose release (`.claude/plans/nose-release-plan.md`) -------------------
+#
+# The T6 bench's post-mortem, measured: the WARM-UP transient alone drives
+# w_nose to the -0.6 tanh rail before any physics engages (-0.59 by step 1500
+# with no supervision and no jump), saturation traps it (~250x gradient
+# attenuation), and the co-adapted pressure entrenches it -- while at the
+# trained state data, measured shape and the jump's own demanded profile all
+# prefer w > 0. So the DOF is FROZEN through the Stage-B warm-up and released
+# when the physics engages, where every measured preference points it the
+# right way. No new physics, no new knobs.
+
+RELEASE_RUN = [
+    "model=stage_b",
+    "training=stage_b",
+    "model.front_geometry=true",
+    "model.sharp_interface=true",
+    "model.nose_shape=true",
+    "training.nose_supervision=true",
+    "training.steps=4",
+    "training.stage_b_warmup_steps=4",
+    "training.lr=0.01",
+]
+
+
+def test_the_nose_dof_freezes_through_the_warmup_and_releases_after(tmp_path):
+    """The whole release contract in one two-phase run: through the warm-up
+    window w_nose stays EXACTLY at its init (frozen, not merely slow), the
+    resume into the released window reproduces the frozen state and then
+    moves it -- so a run resumed across the boundary behaves identically to
+    one that trained straight through."""
+    import torch
+
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.training import _geometry_priors, load_model, train
+    from naviernet.utils.paths import RunPaths
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(tmp_path, RELEASE_RUN, write=mushroom_capsule_writer)
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    times = torch.tensor([[0.0], [0.25], [0.5]])
+
+    # The same seed the trainer uses -> the same init the frozen net must hold.
+    torch.manual_seed(cfg.training.seed)
+    init = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
+    with torch.no_grad():
+        w_init = init.nets["phi"].nose_bluntness(times)
+
+    train(cfg, paths)  # steps 1-4: the whole warm-up window, frozen
+    model, _, _ = load_model(cfg, paths)
+    with torch.no_grad():
+        w_frozen = model.nets["phi"].nose_bluntness(times)
+    assert torch.equal(w_frozen, w_init), "the frozen DOF must hold its init bitwise"
+    # Everything else trained: the freeze is surgical, not a stalled run.
+    assert not torch.equal(
+        model.nets["phi"].rate_net[-1].bias, init.nets["phi"].rate_net[-1].bias
+    )
+
+    _, _, state = train(cfg, paths)  # resumes at step 5 = the release step
+    assert state["done"] == 8
+    released, _, _ = load_model(cfg, paths)
+    with torch.no_grad():
+        w_released = released.nets["phi"].nose_bluntness(times)
+    assert not torch.equal(w_released, w_frozen), "the released DOF must move"
+
+
+def test_a_run_without_a_warmup_never_freezes_the_nose(tmp_path):
+    """Stage-A runs (the mechanism fixtures) and zero-warmup Stage-B runs keep
+    today's behavior: the DOF trains from step 1. The freeze exists only where
+    the measured transient does -- inside a Stage-B warm-up window."""
+    import torch
+
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(
+        tmp_path,
+        [
+            "model.front_geometry=true",
+            "model.nose_shape=true",
+            "training.nose_supervision=true",
+            "training.steps=4",
+            "training.lr=0.01",
+        ],
+        write=mushroom_capsule_writer,
+    )
+    torch.manual_seed(cfg.training.seed)
+    train(cfg, paths)
+    model, _, _ = load_model(cfg, paths)
+    grads_on = all(p.requires_grad for p in model.nets["phi"].nose_net.parameters())
+    assert grads_on

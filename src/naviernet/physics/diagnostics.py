@@ -24,6 +24,7 @@ from naviernet.physics.film import film_surface_pressure
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.nose import nose_report
 from naviernet.physics.residuals import (
+    IN_PLANE_WEIGHT,
     jump_gap_curvature,
     jump_total_curvature,
     pressure_implied_curvature,
@@ -250,12 +251,23 @@ def _curvature_gap(model, front, groups: dict[str, float]) -> dict[str, float]:
         return {}  # a Stage-A run has no pressure to demand anything
     with torch.no_grad():
         # The same estimated vapour pressure the jump errors use, so a diffuse
-        # front-geometry baseline is measurable by one definition too.
+        # front-geometry baseline is measurable by one definition too. The
+        # in-plane weight divides out, so the demand is in kappa_par's own
+        # units and an exactly-satisfied jump reads a gap of ZERO. It did not
+        # always: the unweighted comparison read (pi/4 - 1) * kappa_par on a
+        # perfect shape, and its sign-blind RMS at the nose (+0.944) was
+        # misread as "the pressure demands a SHARPER head" when the correctly
+        # weighted, signed demand sits BELOW the circle -- a blunter head, the
+        # measured direction (the nose-release plan's §0). The signed mean
+        # travels beside the RMS because the sign was the whole story.
         demanded = (
-            pressure_implied_curvature(
-                model, front, groups, p_vapor=_vapour_pressure(model, front)
+            (
+                pressure_implied_curvature(
+                    model, front, groups, p_vapor=_vapour_pressure(model, front)
+                )
+                - jump_gap_curvature(model, front, groups)
             )
-            - jump_gap_curvature(model, front, groups)
+            / IN_PLANE_WEIGHT
         ).squeeze(1)
         carried = front.kappa_par.squeeze(1).detach()
     on_cap, u = front.on_cap.squeeze(1) > 0, front.u.squeeze(1)
@@ -264,11 +276,16 @@ def _curvature_gap(model, front, groups: dict[str, float]) -> dict[str, float]:
         "body": ~on_cap,
         "root_cap": on_cap & (u == 0.0),
     }
-    return {
-        name: _rms((demanded - carried)[sel])
-        for name, sel in regions.items()
-        if bool(sel.any())
-    }
+    gap = demanded - carried
+    report = {name: _rms(gap[sel]) for name, sel in regions.items() if bool(sel.any())}
+    report.update(
+        {
+            f"{name}_signed": float(gap[sel].mean())
+            for name, sel in regions.items()
+            if bool(sel.any())
+        }
+    )
+    return report
 
 
 def _vapour_pressure(model, front) -> torch.Tensor:

@@ -1076,6 +1076,51 @@ def _total_loss(
     return coll + _weighted_sum(losses, weights, schedule, skip=plan.coll_keys)
 
 
+def _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step: int) -> None:
+    """Hold the nose DOF still through the Stage-B warm-up (the nose-release
+    plan §1): the warm-up transient ALONE drives w_nose to the tanh rail --
+    measured at -0.59 by step 1500 with no supervision and no jump physics --
+    and saturation then traps it (~250x gradient attenuation) exactly where
+    every trained-state preference (data, measured shape, the jump's own
+    demanded profile) points the other way. Released at Stage-B engagement,
+    where the geometry already sits near the mask. Frozen means frozen AT ITS
+    INIT (the net's small random output), not clamped to zero -- the losses
+    keep reading it, so their logged magnitudes stay comparable across the
+    boundary.
+
+    State-based, so resume reproduces it: a run resumed past the boundary
+    starts released, one resumed into the warm-up starts frozen. A run with
+    no warm-up (or no Stage-B physics) is never frozen -- today's behavior,
+    which is what the fast Stage-A mechanism tests train under.
+    """
+    geometry = model.nets["phi"]
+    if not getattr(geometry, "nose_shape", False):
+        return
+    frozen = bool(stage_b_keys) and 0 < first_step <= tcfg.stage_b_warmup_steps
+    for p in geometry.nose_net.parameters():
+        p.requires_grad_(not frozen)
+    if frozen:
+        log.info(
+            "nose DOF frozen through the warm-up (releases at step %d)",
+            tcfg.stage_b_warmup_steps + 1,
+        )
+
+
+def _release_nose_dof(model) -> None:
+    """Let the nose DOF move -- the warm-up freeze's other half, called at the
+    same step Stage-B engages (and BEFORE the optimiser restart, so the fresh
+    Adam sees the trainable parameters). A no-op for every run that was never
+    frozen."""
+    geometry = model.nets["phi"]
+    if not getattr(geometry, "nose_shape", False):
+        return
+    if all(p.requires_grad for p in geometry.nose_net.parameters()):
+        return
+    for p in geometry.nose_net.parameters():
+        p.requires_grad_(True)
+    log.info("nose DOF released: w_nose(t) may move")
+
+
 def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     """True only at the one step the warm-up hands off to Stage-B physics -- where
     the optimiser is restarted. Never true when the warm-up is disabled
@@ -1214,6 +1259,7 @@ def train(
     first_step = state["done"] + 1
     last_step = state["done"] + steps
     plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
+    _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step)
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
@@ -1275,7 +1321,9 @@ def train(
 
         if _stage_b_engages_at(step, tcfg, stage_b_keys):
             # Engage Stage-B physics on the interface the warm-up converged, from a
-            # clean optimiser (see _restart_for_stage_b).
+            # clean optimiser (see _restart_for_stage_b). The nose DOF releases
+            # first, so the fresh optimiser sees it trainable.
+            _release_nose_dof(model)
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)

@@ -353,8 +353,55 @@ def test_the_curvature_gap_names_where_the_shape_and_the_pressure_disagree(tmp_p
     model, data, _ = _model(tmp_path, TINY_SHARP)
     diag = interface_diagnostics(model, data)
 
-    assert set(diag.curvature_gap) == {"nose_cap", "body", "root_cap"}
-    assert all(v >= 0.0 and np.isfinite(v) for v in diag.curvature_gap.values())
+    regions = {"nose_cap", "body", "root_cap"}
+    assert set(diag.curvature_gap) == regions | {f"{r}_signed" for r in regions}
+    assert all(np.isfinite(v) for v in diag.curvature_gap.values())
+    # The RMS entries are magnitudes; the signed means may legitimately be
+    # negative -- the sign IS the finding they exist to carry.
+    assert all(diag.curvature_gap[r] >= 0.0 for r in regions)
+
+
+def test_a_satisfied_jump_reads_a_zero_curvature_gap(tmp_path):
+    """The regression the nose-release plan §2 demands: per sample, the gap
+    must equal ``We * residual / (pi/4)`` -- so an exactly-satisfied jump
+    reads ZERO. The unweighted comparison read ``(pi/4 - 1) * kappa_par`` on
+    a perfect shape, and its sign-blind RMS at the nose was misread as 'the
+    pressure demands a sharper head'; this identity is what makes that
+    misreading impossible to reintroduce."""
+    import torch
+
+    from naviernet.physics.diagnostics import (
+        DIAGNOSTIC_BODY_SAMPLES,
+        DIAGNOSTIC_CAP_SAMPLES,
+        diagnostic_times,
+        interface_diagnostics,
+    )
+    from naviernet.physics.groups import compute_groups
+    from naviernet.physics.residuals import IN_PLANE_WEIGHT, laplace_jump_residual
+
+    model, data, cfg = _model(tmp_path, TINY_SHARP)
+    groups = compute_groups(cfg)
+    diag = interface_diagnostics(model, data, groups)
+
+    front = model.nets["phi"].front(
+        diagnostic_times(data),
+        n_body=DIAGNOSTIC_BODY_SAMPLES,
+        n_cap=DIAGNOSTIC_CAP_SAMPLES,
+    )
+    with torch.no_grad():
+        residual = laplace_jump_residual(model, front, groups).squeeze(1)
+    on_cap, u = front.on_cap.squeeze(1) > 0, front.u.squeeze(1)
+    expected = groups["We"] * residual / IN_PLANE_WEIGHT
+    for name, sel in {
+        "nose_cap": on_cap & (u == 1.0),
+        "body": ~on_cap,
+        "root_cap": on_cap & (u == 0.0),
+    }.items():
+        rms = float(torch.sqrt((expected[sel] ** 2).mean()))
+        assert diag.curvature_gap[name] == pytest.approx(rms, rel=1e-3), name
+        assert diag.curvature_gap[f"{name}_signed"] == pytest.approx(
+            float(expected[sel].mean()), rel=1e-3, abs=1e-5
+        ), name
 
 
 def test_a_run_without_a_pressure_field_reports_no_curvature_gap(tmp_path):
