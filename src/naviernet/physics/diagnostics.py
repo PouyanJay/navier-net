@@ -22,6 +22,7 @@ import torch
 
 from naviernet.physics.film import film_surface_pressure
 from naviernet.physics.groups import compute_groups
+from naviernet.physics.nose import nose_report
 from naviernet.physics.residuals import (
     jump_gap_curvature,
     jump_total_curvature,
@@ -518,8 +519,9 @@ def physics_report(model, data, groups: dict[str, float] | None = None) -> dict:
     }
     if getattr(model, "liquid_film", False):
         report["film"] = film_report(model, data, groups)
-    # The root window is measured for EVERY front-geometry run -- the profile
-    # stations above exclude the caps, and a baseline that cannot see the root
-    # cannot be compared against a run that reshapes it.
+    # The root and nose windows are measured for EVERY front-geometry run --
+    # the profile stations above exclude the caps, and a baseline that cannot
+    # see an end cannot be compared against a run that reshapes it.
     report["root"] = root_report(model, data, groups)
+    report["nose"] = nose_report(model, data)
     return report

@@ -239,7 +239,7 @@ def model_root_window_rms(model, data, row: int) -> float:
     the mask's own circle residual and can go no lower.
     """
     geometry = model.nets["phi"]
-    t = _frame_time(geometry, data, row)
+    t = frame_time(geometry, data, row)
     # NOT under no_grad: the front's own curvature and speed are autograd
     # derivatives, so the graph must exist even though only detached positions
     # are read here.
@@ -254,7 +254,7 @@ def model_root_window_rms(model, data, row: int) -> float:
     return float(np.sqrt(np.mean(distances**2)) / radius)
 
 
-def _frame_time(geometry, data, row: int) -> torch.Tensor:
+def frame_time(geometry, data, row: int) -> torch.Tensor:
     """One frame's time as a ``(1, 1)`` tensor ON THE MODEL'S DEVICE -- every
     geometry call here runs a real forward pass, and a CPU-defaulted tensor
     would crash the first GPU diagnostic (invisible to the CPU-only suite)."""
@@ -304,7 +304,7 @@ def _root_frame_entry(model, data, row: int, frame: int) -> dict:
         "tilt": fit.tilt,
         "model_root_rms": model_root_window_rms(model, data, row),
     }
-    t = _frame_time(geometry, data, row)
+    t = frame_time(geometry, data, row)
     with torch.no_grad():
         if getattr(geometry, "nucleation_root", False):
             entry["w"] = float(geometry.root_bluntness(t))
