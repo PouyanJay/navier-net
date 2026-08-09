@@ -237,7 +237,7 @@
 }
 .recipe-card {
   display: grid;
-  gap: 2px;
+  gap: var(--s1);
   padding: var(--s2) var(--s3);
   border: 1px solid var(--line);
   border-radius: 6px;
