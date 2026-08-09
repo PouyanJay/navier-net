@@ -2,12 +2,16 @@ import { Band, SelectField, TextField } from "../../components";
 import { SeriesIcon } from "../../components/icons";
 import type { DatasetSummary, RunSummary } from "../../lib/api";
 import { seriesName } from "../../lib/series";
-import { VAL_FRACTION_OPTIONS, type SolverFormState } from "./form";
-import { SwitchRow } from "./Rows";
+import {
+  FORM_BOUNDS,
+  VAL_FRACTION_OPTIONS,
+  type SolverFormState,
+} from "./form";
+import { SwitchRow, ValueRow } from "./Rows";
 
-/** What a launch targets. The three are mutually exclusive — a resume takes its
- * config from the checkpoint, and a sweep varies the seed on one series — so
- * they are one choice, not three switches that disable each other. */
+/** What a launch targets. The three are mutually exclusive -- a resume takes
+ * its config from the checkpoint, and a sweep varies the seed on one series --
+ * so they are one choice, not three switches that disable each other. */
 export type LaunchMode = "new" | "resume" | "sweep";
 
 export const LAUNCH_MODES: {
@@ -185,6 +189,21 @@ export function RunBand({
             disabled={locked}
           />
         </div>
+      )}
+
+      {/* A sweep gives every child its own seed from the list above, so the
+          single-run seed appears only where it is the one that trains. */}
+      {mode === "new" && (
+        <ValueRow
+          label="Seed"
+          hint="the trainer's RNG · same config, different draw"
+          value={form.seed}
+          onChange={(seed) => onForm({ seed })}
+          min={FORM_BOUNDS.seed.min}
+          max={FORM_BOUNDS.seed.max}
+          step={1}
+          disabled={locked}
+        />
       )}
 
       <SwitchRow

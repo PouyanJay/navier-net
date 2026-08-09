@@ -61,6 +61,53 @@ export function ValueRow({
   );
 }
 
+/**
+ * What the bench said about an option, carried ON the option.
+ *
+ * The platform's discipline is default-off-until-benched, so the verdict is
+ * exactly the guidance a user needs at the switch: "positive" earned a measured
+ * gain, "negative" degraded every arm tried, "inert" was benched and moved
+ * nothing, "unbenched" has no numbers yet, and "recipe" ships on by default.
+ */
+export type VerdictTone =
+  | "positive"
+  | "negative"
+  | "inert"
+  | "unbenched"
+  | "recipe";
+
+export interface Verdict {
+  tone: VerdictTone;
+  /** The measured number, when one exists (e.g. "+0.039 val"). */
+  note?: string;
+}
+
+const VERDICT_TEXT: Record<VerdictTone, string> = {
+  positive: "benched +",
+  negative: "benched −",
+  inert: "benched ∅",
+  unbenched: "unbenched",
+  recipe: "default on",
+};
+
+const VERDICT_CLASS: Record<VerdictTone, string> = {
+  positive: "vchip pos",
+  negative: "vchip neg",
+  inert: "vchip inert",
+  unbenched: "vchip open",
+  recipe: "vchip recipe",
+};
+
+/** The verdict as a small chip beside a switch's label. */
+export function VerdictChip({ verdict }: { verdict: Verdict }) {
+  return (
+    <span className={VERDICT_CLASS[verdict.tone]}>
+      {VERDICT_TEXT[verdict.tone]}
+      {verdict.note ? ` · ${verdict.note}` : ""}
+    </span>
+  );
+}
+
 interface SwitchRowProps {
   label: string;
   /** What the option does, in the interface's own voice. */
@@ -70,6 +117,8 @@ interface SwitchRowProps {
   disabled?: boolean;
   /** Why it is unavailable, and what to do about it. Shown at the control. */
   reason?: ReactNode;
+  /** What the bench said about this option, shown beside its label. */
+  verdict?: Verdict;
   /** The settings this option owns, revealed only while it is on. */
   children?: ReactNode;
 }
@@ -86,6 +135,7 @@ export function SwitchRow({
   onChange,
   disabled,
   reason,
+  verdict,
   children,
 }: SwitchRowProps) {
   return (
@@ -96,6 +146,7 @@ export function SwitchRow({
         checked={checked}
         onChange={onChange}
         disabled={disabled}
+        badge={verdict ? <VerdictChip verdict={verdict} /> : undefined}
       />
       {reason && <p className="srow-why">{reason}</p>}
       {checked && children && <div className="srow-sub">{children}</div>}

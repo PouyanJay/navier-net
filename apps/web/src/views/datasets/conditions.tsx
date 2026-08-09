@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 
-import { Callout } from "../../components";
+import { Callout, Select } from "../../components";
 import { api, type Fluid } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 
@@ -266,28 +266,17 @@ export function FluidSelect({
     <>
       <div className="fld">
         <label htmlFor={selectId}>Working fluid</label>
-        <div className="ug">
-          <select
-            id={selectId}
-            value={fluidId}
-            disabled={disabled || fluids.status !== "ready"}
-            onChange={(e) => onChange(e.target.value)}
-          >
-            {fluids.status === "ready" ? (
-              list.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))
-            ) : (
-              <option>
-                {fluids.status === "loading"
-                  ? "Loading fluids…"
-                  : "Fluids unavailable"}
-              </option>
-            )}
-          </select>
-        </div>
+        <Select
+          id={selectId}
+          value={fluidId}
+          options={list.map((f) => ({ value: f.id, label: f.name }))}
+          onChange={onChange}
+          disabled={disabled || fluids.status !== "ready"}
+          placeholder={
+            fluids.status === "loading" ? "Loading fluids…" : "Fluids unavailable"
+          }
+          className="pick-field"
+        />
         <span className="fld-why">
           sets the fluid properties and the derived saturation temperature
         </span>

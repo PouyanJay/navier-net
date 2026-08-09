@@ -7,9 +7,11 @@ introducing a parallel data model.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from naviernet_api.services.overrides import MAX_OVERRIDES, MAX_TOKEN_LENGTH
 
 
 class Fluid(BaseModel):
@@ -465,6 +467,19 @@ class RunLaunchRequest(BaseModel):
     # reproduced the baseline exactly).
     fv_weight: float = Field(default=10.0, ge=0.0, le=100.0)
     fv_apex_weight: float = Field(default=10.0, ge=0.0, le=100.0)
+    # Advanced overrides: the bridge to the schema's CLI-only dials (rba_gamma,
+    # kin_grid, fv_smooth_px, ...). Free-form `key=value` Hydra overrides,
+    # STRICTLY allowlisted in services/overrides.py: top-level training.* /
+    # model.* schema fields, numeric/bool values only, never a key the form or
+    # the series' saved model config already owns. Validated at launch (422
+    # naming the offending token), appended AFTER every platform override so an
+    # explicit expert choice wins, and recorded in the run's config snapshot
+    # like every other override. Ignored on resume, as documented above.
+    # Caps shared with the validator, so the Pydantic layer and the allowlist
+    # can never disagree about how much text the field may carry.
+    overrides: list[Annotated[str, Field(max_length=MAX_TOKEN_LENGTH)]] = Field(
+        default_factory=list, max_length=MAX_OVERRIDES
+    )
 
     def resolved_datasets(self) -> list[str]:
         """The datasets a new run trains on: `datasets` if given, else `[dataset]`.

@@ -15,7 +15,7 @@ export interface SolverFormState {
   n_bc: number;
   holdout_frame: number;
   val_fraction: number;
-  val_strategy: "tail" | "scatter";
+  seed: number;
   rebalance_every: number;
   log_every: number;
   weights: LossWeightsInput;
@@ -50,6 +50,8 @@ export interface SolverFormState {
   front_velocity: boolean;
   fv_weight: number;
   fv_apex_weight: number;
+  /** Advanced overrides as raw text; parsed to `overrides` at launch. */
+  overridesText: string;
 }
 
 export const FORM_DEFAULTS: SolverFormState = {
@@ -62,11 +64,13 @@ export const FORM_DEFAULTS: SolverFormState = {
   // The Solver no longer exposes a single-frame holdout; generalization is the
   // series hold-out and the validation split. -1 disables the legacy frame knob.
   holdout_frame: -1,
-  // Off by default (train on every frame); the user opts into a split. Always
-  // "tail": hold the last frames of each kept series -- the honest extrapolation
-  // test, never a random/interior frame the neighbours already pin down.
+  // Off by default (train on every frame); the user opts into a split. The
+  // strategy is not form state at all: the platform always splits "tail" (the
+  // honest extrapolation test), which is the API's own default.
   val_fraction: 0,
-  val_strategy: "tail",
+  // 0, matching the trainer's default: the value every UI run trained at
+  // before the field was exposed, so existing runs stay comparable.
+  seed: 0,
   rebalance_every: 500,
   log_every: 200,
   weights: { data: 10, vof: 1, div: 1, src: 0.1, bc: 5 },
@@ -100,9 +104,8 @@ export const FORM_DEFAULTS: SolverFormState = {
   // Free end caps: the nose and root stop being constant-curvature arcs, so the
   // data can fit them and the Young-Laplace jump can reshape them. Opt-in until
   // benched, so the current recipe stays reproducible head to head. `cap_delta`
-  // bounds the departure as a fraction of the local radius; it rides the request
-  // at its default and is tuned from the CLI/API, like the fine kinematics
-  // sub-parameters -- the aside offers the decision, not every dial.
+  // bounds the departure as a fraction of the local radius, offered under the
+  // switch it belongs to (an offered decision deserves its one bound).
   cap_freedom: false,
   cap_delta: 0.2,
   // Film pressure: the offset the depth-averaged pressure cannot carry at the
@@ -149,7 +152,23 @@ export const FORM_DEFAULTS: SolverFormState = {
   // rebalancer, and at 1 they are measurably inert.
   fv_weight: 10,
   fv_apex_weight: 10,
+  overridesText: "",
 };
+
+/**
+ * Parse the advanced-overrides text into `key=value` tokens; null when it does
+ * not parse. Shape only -- the API owns the real allowlist (which keys exist,
+ * their types, who owns them) and answers a 422 naming the offending token, so
+ * the two validators can never disagree about anything but shape.
+ */
+export function parseOverrides(text: string): string[] | null {
+  const tokens = text.split(/\s+/).filter((token) => token !== "");
+  for (const token of tokens) {
+    const eq = token.indexOf("=");
+    if (eq <= 0 || eq === token.length - 1) return null;
+  }
+  return tokens;
+}
 
 /** Loss-weighting schemes. "gradnorm" is the live rebalancer (needs a hand-picked
  * rebalance cadence); "rba" is bounded residual-based attention (stable, no tuning). */
@@ -176,6 +195,8 @@ export const VAL_FRACTION_OPTIONS = [
 
 /** Bounds shown on the inputs; the API enforces the same ranges. */
 export const FORM_BOUNDS = {
+  seed: { min: 0, max: 2 ** 31 - 1 },
+  cap_delta: { min: 0, max: 0.95 },
   steps: { min: 1, max: 20000 },
   lr: { min: 0.00001, max: 1 },
   lr_halflife: { min: 1, max: 100000 },
@@ -205,7 +226,15 @@ export function toLaunchRequest(
   form: SolverFormState,
   target: { datasets: string[]; heldout?: string[] } | { resumeRunId: string },
 ): RunLaunchRequest {
-  const base = { ...form };
+  // The raw text stays in the form; the request carries parsed tokens. An
+  // unparseable text never reaches here -- launchBlocked holds Run until it
+  // parses -- so the fallback to [] is for the empty field, not bad input.
+  const { overridesText, ...rest } = form;
+  const overrides = parseOverrides(overridesText) ?? [];
+  const base = {
+    ...rest,
+    ...(overrides.length > 0 ? { overrides } : {}),
+  };
   if ("resumeRunId" in target) {
     return { ...base, resume: true, run_id: target.resumeRunId };
   }

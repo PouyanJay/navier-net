@@ -75,7 +75,6 @@ const WEIGHT_TERMS: {
  * changes how the loss is walked.
  */
 export function ObjectiveBand({ form, onForm, locked }: ObjectiveBandProps) {
-  const rba = form.weighting === "rba";
   const explicitFront = treatmentOf(form) !== "diffuse";
   const extras = (form.kinematics ? 1 : 0) + (form.front_velocity ? 1 : 0);
 
@@ -102,26 +101,12 @@ export function ObjectiveBand({ form, onForm, locked }: ObjectiveBandProps) {
           disabled={locked}
         />
       ))}
-      <ValueRow
-        label="Rebalance"
-        hint={
-          rba
-            ? "RBA weights every point every step"
-            : "how often the gradient-norm balancer re-weights"
-        }
-        value={form.rebalance_every}
-        onChange={(rebalance_every) => onForm({ rebalance_every })}
-        min={FORM_BOUNDS.rebalance_every.min}
-        max={FORM_BOUNDS.rebalance_every.max}
-        step={100}
-        suffix="steps"
-        disabled={locked || rba}
-      />
 
       <SubLabel note="opt-in · default off">Extra supervision</SubLabel>
       <SwitchRow
         label="Growth constraints"
         hint="hold the late-window volume budget to a monotone, source-balanced rate"
+        verdict={{ tone: "inert" }}
         checked={form.kinematics}
         onChange={(kinematics) => onForm({ kinematics })}
         disabled={locked}
@@ -169,6 +154,7 @@ export function ObjectiveBand({ form, onForm, locked }: ObjectiveBandProps) {
       <SwitchRow
         label="Measured front velocity"
         hint="supervise the front's rate against the velocity measured from consecutive masks"
+        verdict={{ tone: "inert" }}
         checked={form.front_velocity}
         onChange={(front_velocity) => onForm({ front_velocity })}
         disabled={locked || !explicitFront}

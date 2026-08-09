@@ -5,11 +5,12 @@
  * `sharp_interface`, `film_pressure`, `hard_pin`) with a dependency tree between
  * them, which the form used to render as a flat pile of switches whose hints
  * said "needs front geometry". There are really only THREE coherent
- * formulations, and they form a ladder — each one a superset of the last. This
+ * formulations, and they form a ladder -- each one a superset of the last. This
  * module is that ladder, so the aside can offer a choice instead of a puzzle.
  */
 
 import type { SolverFormState } from "./form";
+import type { Verdict } from "./Rows";
 
 export type Treatment = "diffuse" | "front" | "sharp";
 
@@ -18,7 +19,7 @@ export interface TreatmentMeta {
   label: string;
   /** The mono sub-note on the segment: the treatment in three words. */
   note: string;
-  /** What closes momentum under this treatment — the thing that actually
+  /** What closes momentum under this treatment -- the thing that actually
    * changes between them, and the reason to pick one. */
   momentum: string;
   /** What the interface IS here, in one sentence. */
@@ -70,7 +71,7 @@ export function treatmentOf(form: SolverFormState): Treatment {
  *
  * Every option below the ladder rung is switched off rather than left dangling:
  * a diffuse run has no front to pinch off, and a run without the interface
- * conditions has no Young-Laplace jump for the film pressure to correct — the
+ * conditions has no Young-Laplace jump for the film pressure to correct -- the
  * same combinations the trainer and the API reject.
  */
 export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
@@ -130,6 +131,9 @@ export interface Modifier {
     | "receding_cap";
   label: string;
   hint: string;
+  /** What the bench said, shown on the switch. The rail's discipline is
+   * default-off-until-benched; the verdict is why the default is what it is. */
+  verdict: Verdict;
   /** The rungs that admit it; on any other rung it is not shown at all. */
   on: Treatment[];
   /** Keys forced ON with this one -- the dependencies the trainer enforces,
@@ -161,18 +165,25 @@ export const MODIFIERS: Modifier[] = [
     key: "hard_pin",
     label: "Hard root pin",
     hint: "anchor the root at the measured cavity",
+    // Root drift eliminated architecturally, IoU neutral: the reason the
+    // diffuse rung offers it at all.
+    verdict: { tone: "positive", note: "drift eliminated" },
     on: ["diffuse"],
   },
   {
     key: "film_pressure",
     label: "Film pressure",
     hint: "Bretherton film offset on the bubble's sides",
+    verdict: { tone: "positive" },
     on: ["sharp"],
   },
   {
     key: "liquid_film",
     label: "Liquid film δ(x,t)",
     hint: "deposited · evaporating · dryout · its source and its pressure",
+    // Every coupling verified, no emergent neck: the film's forcing measured
+    // ~1000x under the jump scale.
+    verdict: { tone: "inert" },
     on: ["sharp"],
   },
   {
@@ -181,6 +192,9 @@ export const MODIFIERS: Modifier[] = [
     key: "cap_freedom",
     label: "Free the end caps",
     hint: "the nose is shaped, not a circle of fixed curvature",
+    // Starved undriven twice; the supervised per-cap DOFs below are the
+    // successors that measurably moved.
+    verdict: { tone: "inert" },
     on: ["front", "sharp"],
     // The per-cap DOFs and their dependent physics: two shape systems on one cap.
     excludes: ["nucleation_root", "nose_shape", "root_attachment"],
@@ -189,6 +203,8 @@ export const MODIFIERS: Modifier[] = [
     key: "nucleation_root",
     label: "Nucleation root w(t)",
     hint: "the root cap blunts with the data, not a circle · supervised",
+    // The largest IoU gain of any physics feature, and an emergent neck.
+    verdict: { tone: "positive", note: "+0.039 val" },
     on: ["front", "sharp"],
     excludes: ["cap_freedom"],
     dependents: ["root_attachment"],
@@ -198,6 +214,10 @@ export const MODIFIERS: Modifier[] = [
     key: "nose_shape",
     label: "Nose shape w_nose(t)",
     hint: "the head blunts and overhangs with the data · supervised",
+    // T6: the depth-averaged jump demands the OPPOSITE of the measured
+    // overhang and the front degrades in every arm; off until the nose's
+    // jump physics is corrected.
+    verdict: { tone: "negative" },
     on: ["front", "sharp"],
     excludes: ["cap_freedom"],
   },
@@ -205,6 +225,7 @@ export const MODIFIERS: Modifier[] = [
     key: "root_attachment",
     label: "Attachment pressure",
     hint: "(1 + cos θ)/H* over the dry patch · per-fluid wetting",
+    verdict: { tone: "unbenched" },
     on: ["sharp"],
     requires: ["nucleation_root"],
   },
@@ -212,18 +233,21 @@ export const MODIFIERS: Modifier[] = [
     key: "receding_cap",
     label: "Receding cap flattening",
     hint: "the rear Bretherton branch · flatter than static",
+    verdict: { tone: "unbenched" },
     on: ["sharp"],
   },
   {
     key: "evolving_width",
     label: "Evolving width",
     hint: "the profile keeps deforming past the data",
+    verdict: { tone: "unbenched" },
     on: ["front", "sharp"],
   },
   {
     key: "allow_pinch",
     label: "Allow pinch-off",
     hint: "signed radius · the bubble may detach",
+    verdict: { tone: "unbenched" },
     on: ["front", "sharp"],
   },
 ];

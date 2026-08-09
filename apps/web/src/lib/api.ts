@@ -423,8 +423,13 @@ export interface RunLaunchRequest {
   holdout_frame: number;
   /** Per-dataset fraction of frames held out as an in-distribution validation set. */
   val_fraction: number;
-  /** How the split picks frames: "tail" (extrapolation) | "scatter" (interpolation). */
-  val_strategy: "tail" | "scatter";
+  /** How the split picks frames: "tail" (extrapolation) | "scatter"
+   * (interpolation). Optional: the platform always splits "tail", the API's
+   * own default, so the form no longer carries the field. */
+  val_strategy?: "tail" | "scatter";
+  /** The trainer's RNG seed. Exposed on the form since solver-recipes: before
+   * that every UI-launched single run trained at the API default of 0. */
+  seed: number;
   rebalance_every: number;
   log_every: number;
   weights: LossWeightsInput;
@@ -520,6 +525,11 @@ export interface RunLaunchRequest {
   /** Weight on the nose apex's 2-D displacement -- the one interface point with
    * an honest frame-to-frame correspondence. */
   fv_apex_weight: number;
+  /** Advanced overrides: `key=value` Hydra tokens for the schema's CLI-only
+   * dials. Strictly allowlisted server-side (top-level training.* / model.*
+   * scalar fields the form and the series config do not own); an invalid token
+   * is a 422 naming it. */
+  overrides?: string[];
 }
 
 export interface RunJobStatus {

@@ -20,6 +20,7 @@ import {
   type SolverFormState,
 } from "./solver/form";
 import { MonitorPanel } from "./solver/MonitorPanel";
+import { recipeState, type RecipeName } from "./solver/recipes";
 import type { LaunchMode } from "./solver/RunBand";
 import { SolverAside } from "./solver/SolverAside";
 import { SweepPanel } from "./solver/SweepPanel";
@@ -60,6 +61,10 @@ function statusDot(status: RunJobStatus | null): DotState {
 /** The Solver: configure a run on the left, watch it live on the right. */
 export function SolverView({ onRunState, project }: SolverViewProps) {
   const [form, setForm] = useState<SolverFormState>(FORM_DEFAULTS);
+  // The stated baseline the dock's departure chips are computed against.
+  // FORM_DEFAULTS is the full-physics recipe's stamped state (asserted in
+  // tests), so the rail opens on that card with zero departures.
+  const [recipe, setRecipe] = useState<RecipeName>("full-physics");
   const [mode, setMode] = useState<LaunchMode>("new");
   const [seedsText, setSeedsText] = useState("0, 1, 2");
   const targets = useRunTargets(project?.datasets ?? null);
@@ -73,6 +78,13 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
       setForm((prev) => ({ ...prev, ...patch })),
     [],
   );
+
+  // Selecting a card stamps the whole form; re-selecting the active card
+  // returns to the recipe, dropping any departures.
+  const selectRecipe = useCallback((name: RecipeName) => {
+    setRecipe(name);
+    setForm(recipeState(name));
+  }, []);
 
   useCapabilityGuard(form, patchForm, capability);
 
@@ -132,6 +144,8 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
         <SolverAside
           form={form}
           onForm={patchForm}
+          recipe={recipe}
+          onRecipe={selectRecipe}
           mode={mode}
           onMode={selectMode}
           targets={targets}

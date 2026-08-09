@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 
 interface SwitchProps {
   label: string;
@@ -6,6 +6,9 @@ interface SwitchProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  /** Rendered beside the label, outside it: a badge is context (a verdict, a
+   * count), not part of the switch's accessible name. */
+  badge?: ReactNode;
 }
 
 /** An accessible on/off switch with its visible label and an optional mono hint. */
@@ -15,6 +18,7 @@ export function Switch({
   checked,
   onChange,
   disabled,
+  badge,
 }: SwitchProps) {
   const labelId = useId();
   return (
@@ -33,6 +37,7 @@ export function Switch({
       <span className="sw-label" id={labelId}>
         {label}
       </span>
+      {badge}
       {hint && <span className="sw-hint">{hint}</span>}
     </div>
   );

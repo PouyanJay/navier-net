@@ -133,6 +133,12 @@ function stubApi({
   return posts;
 }
 
+/** Take an option from the app-drawn listbox (Select): open, then click. */
+function choose(label: RegExp, option: RegExp | string) {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
 beforeEach(() => {
   FakeEventSource.instances = [];
   vi.stubGlobal(
@@ -305,17 +311,17 @@ describe("SolverView", () => {
     await screen.findByLabelText("ds_a");
 
     // Off by default (train on every frame); the user opts in. No strategy toggle.
-    expect(screen.getByLabelText(/Validation split/)).toHaveValue("0");
+    expect(screen.getByLabelText(/Validation split/)).toHaveTextContent("none");
     expect(screen.queryByLabelText(/Split strategy/)).toBeNull();
-    fireEvent.change(screen.getByLabelText(/Validation split/), {
-      target: { value: "0.2" },
-    });
+    choose(/Validation split/, "20%");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
     const body = posts[0] as Record<string, unknown>;
     expect(body.val_fraction).toBe(0.2);
-    expect(body.val_strategy).toBe("tail");
+    // The strategy is no longer form state: the API's own "tail" default is
+    // the platform's only split, so the request does not carry the field.
+    expect(body.val_strategy).toBeUndefined();
     expect(body.heldout_datasets).toBeUndefined();
   });
 
@@ -342,7 +348,9 @@ describe("SolverView", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    expect(screen.getByLabelText(/Weighting/)).toHaveValue("gradnorm");
+    expect(screen.getByLabelText(/Weighting/)).toHaveTextContent(
+      "gradient-norm",
+    );
     // The causal mode select only appears once causal weighting is on.
     expect(screen.queryByLabelText(/Causal mode/)).toBeNull();
     // Adaptive collocation refreshes the RBA pool, so it is gated off under gradnorm.
@@ -365,10 +373,10 @@ describe("SolverView", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: "Causal weighting" }));
     // The mode select appears, defaulting to soft weighting.
-    expect(screen.getByLabelText(/Causal mode/)).toHaveValue("weight");
-    fireEvent.change(screen.getByLabelText(/Causal mode/), {
-      target: { value: "march" },
-    });
+    expect(screen.getByLabelText(/Causal mode/)).toHaveTextContent(
+      "soft weighting",
+    );
+    choose(/Causal mode/, "time-marching");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -388,9 +396,7 @@ describe("SolverView", () => {
     expect(
       screen.getByRole("switch", { name: "Causal weighting" }),
     ).toBeChecked();
-    fireEvent.change(screen.getByLabelText(/Weighting/), {
-      target: { value: "rba" },
-    });
+    choose(/Weighting/, /RBA/);
     const causal = screen.getByRole("switch", { name: "Causal weighting" });
     expect(causal).toBeDisabled();
     expect(causal).not.toBeChecked();
@@ -403,9 +409,7 @@ describe("SolverView", () => {
     expect(adaptive).toBeEnabled();
     fireEvent.click(adaptive);
     expect(adaptive).toBeChecked();
-    fireEvent.change(screen.getByLabelText(/Weighting/), {
-      target: { value: "gradnorm" },
-    });
+    choose(/Weighting/, /gradient-norm/);
     expect(
       screen.getByRole("switch", { name: "Adaptive collocation" }),
     ).toBeDisabled();
@@ -414,9 +418,7 @@ describe("SolverView", () => {
     ).not.toBeChecked();
 
     // Finally launch an RBA + adaptive run and confirm the posted combo is valid.
-    fireEvent.change(screen.getByLabelText(/Weighting/), {
-      target: { value: "rba" },
-    });
+    choose(/Weighting/, /RBA/);
     fireEvent.click(
       screen.getByRole("switch", { name: "Adaptive collocation" }),
     );
@@ -960,7 +962,7 @@ describe("SolverView", () => {
     // Steps is the one field a resume still honours.
     expect(screen.getByLabelText(/Steps/)).toBeEnabled();
     const resumeSelect = await screen.findByLabelText(/Run to resume/);
-    expect(resumeSelect).toHaveValue("highest_t");
+    expect(resumeSelect).toHaveTextContent("highest_t · step 1500");
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -1417,5 +1419,259 @@ describe("SolverView measured front velocity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts).toHaveLength(1));
     expect((posts[0] as Record<string, unknown>).front_velocity).toBe(false);
+  });
+});
+
+describe("SolverView recipes", () => {
+  it("opens on the full-physics recipe with zero departures", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.getByRole("radio", { name: /Full physics/ })).toBeChecked();
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips).toHaveTextContent("full physics");
+    // The platform default IS the recommended recipe: no departure chips.
+    expect(chips.children).toHaveLength(1);
+  });
+
+  it("stamps the held-out recipe: explicit front + causal weighting", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: /Best held-out IoU/ }));
+
+    expect(screen.getByRole("radio", { name: /Explicit front/ })).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Causal weighting" }),
+    ).toBeChecked();
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips).toHaveTextContent("best held-out iou");
+    expect(chips.children).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.front_geometry).toBe(true);
+    expect(body.sharp_interface).toBe(false);
+    expect(body.causal_weighting).toBe(true);
+  });
+
+  it("reports a departure from the recipe as a dock chip", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Nucleation root w(t)" }),
+    );
+
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips).toHaveTextContent("+ nucleation root");
+    expect(screen.getByText(/full physics · modified/)).toBeInTheDocument();
+  });
+
+  it("re-selecting the card returns the form to the recipe", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Nucleation root w(t)" }),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /Full physics/ }));
+
+    expect(
+      screen.getByRole("switch", { name: "Nucleation root w(t)" }),
+    ).not.toBeChecked();
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips.children).toHaveLength(1);
+  });
+
+  it("withholds the chips row on resume, whose config is the checkpoint's", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Resume" }));
+
+    expect(
+      screen.queryByRole("list", { name: "Departures from the recipe" }),
+    ).toBeNull();
+  });
+});
+
+describe("SolverView verdict chips", () => {
+  it("carries the bench's verdict on each opt-in switch", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // The chip is context beside the label, not part of the switch's name --
+    // the switches above were all found by their bare labels.
+    expect(screen.getByText("benched + · +0.039 val")).toBeInTheDocument();
+    expect(screen.getByText("benched −")).toBeInTheDocument();
+    // Liquid film, free end caps, growth constraints, front velocity, RAR:
+    // exact, so an accidental tone flip on any of the five fails here.
+    expect(screen.getAllByText("benched ∅")).toHaveLength(5);
+    expect(screen.getAllByText("default on")).toHaveLength(2);
+  });
+
+  it("keeps the unbenched tone for options with no numbers yet", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // Attachment pressure, receding cap, evolving width, pinch-off.
+    expect(screen.getAllByText("unbenched")).toHaveLength(4);
+  });
+});
+
+describe("SolverView rebalance cadence", () => {
+  it("sits with its scheme and disables under RBA, which has no period", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    const cadence = screen.getByLabelText(/Rebalance/);
+    expect(cadence).toHaveValue(500);
+    expect(cadence).toBeEnabled();
+
+    choose(/Weighting/, /RBA/);
+    expect(screen.getByLabelText(/Rebalance/)).toBeDisabled();
+  });
+});
+
+describe("SolverView seed and cap delta", () => {
+  it("posts the chosen seed with a single new run", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    const seed = screen.getByLabelText(/Seed/);
+    expect(seed).toHaveValue(0);
+    fireEvent.change(seed, { target: { value: "7" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).seed).toBe(7);
+  });
+
+  it("offers no single-run seed in sweep mode, whose list is the seeds", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Seed sweep" }));
+    expect(screen.queryByLabelText(/^Seed$/)).toBeNull();
+    expect(screen.getByLabelText(/Seeds/)).toBeInTheDocument();
+  });
+
+  it("reveals the cap's one bound only while the caps are free", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.queryByLabelText(/Cap delta/)).toBeNull();
+    fireEvent.click(screen.getByRole("switch", { name: "Free the end caps" }));
+    const delta = screen.getByLabelText(/Cap delta/);
+    expect(delta).toHaveValue(0.2);
+    fireEvent.change(delta, { target: { value: "0.35" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.cap_freedom).toBe(true);
+    expect(body.cap_delta).toBe(0.35);
+  });
+});
+
+describe("SolverView advanced overrides", () => {
+  it("posts parsed tokens and reports each as a departure chip", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // The band folds closed by default; open it to reach the field.
+    fireEvent.click(
+      screen.getByRole("button", { name: /Advanced overrides/ }),
+    );
+    fireEvent.change(screen.getByLabelText(/Overrides/), {
+      target: { value: "training.kin_grid=64  training.rba_gamma=0.995" },
+    });
+
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips).toHaveTextContent("+ training.kin_grid=64");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).overrides).toEqual([
+      "training.kin_grid=64",
+      "training.rba_gamma=0.995",
+    ]);
+  });
+
+  it("omits the field entirely when empty", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect("overrides" in (posts[0] as Record<string, unknown>)).toBe(false);
+    expect("overridesText" in (posts[0] as Record<string, unknown>)).toBe(
+      false,
+    );
+  });
+
+  it("holds Run while the text does not parse, with the reason", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Advanced overrides/ }),
+    );
+    fireEvent.change(screen.getByLabelText(/Overrides/), {
+      target: { value: "training.kin_grid" },
+    });
+
+    expect(
+      screen.getByText("Overrides are key=value tokens separated by spaces."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  });
+
+  it("surfaces the API's 422 verdict on a refused dial", async () => {
+    stubApi({
+      launchStatus: 422,
+      launchDetail:
+        "'training.steps' is set by the launch form; change it there instead",
+    });
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Advanced overrides/ }),
+    );
+    fireEvent.change(screen.getByLabelText(/Overrides/), {
+      target: { value: "training.steps=99" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(
+      await screen.findByText(/set by the launch form/),
+    ).toBeInTheDocument();
   });
 });

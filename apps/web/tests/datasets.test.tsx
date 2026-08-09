@@ -1585,7 +1585,8 @@ describe("new series conditions", () => {
     expect(form.queryByRole("spinbutton", { name: /saturation/i })).toBeNull();
 
     // Choosing water updates the read-only saturation temperature.
-    fireEvent.change(fluid, { target: { value: "water" } });
+    fireEvent.click(fluid);
+    fireEvent.click(form.getByRole("option", { name: "Water" }));
     expect(await form.findByText(/100/)).toBeInTheDocument();
   });
 
@@ -1593,9 +1594,8 @@ describe("new series conditions", () => {
     const calls = mockApi();
     renderStage(<Harness />);
     const form = await openModal();
-    fireEvent.change(await form.findByLabelText("Working fluid"), {
-      target: { value: "water" },
-    });
+    fireEvent.click(await form.findByLabelText("Working fluid"));
+    fireEvent.click(form.getByRole("option", { name: "Water" }));
     fireEvent.change(form.getByLabelText(/Frame interval/), {
       target: { value: "0.25" },
     });
