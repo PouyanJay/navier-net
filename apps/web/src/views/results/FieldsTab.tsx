@@ -86,6 +86,26 @@ const FIELD_DEFS: FieldDef[] = [
   },
 ];
 
+/** The servable-map names a trained field set implies -- the client-side seed
+ * mirroring the API's `available_fields`, in the SERVABLE namespace. The run
+ * records `model.fields` (`phi, u, v, ...`), the server serves derived maps
+ * (`alpha, umag, ...`); seeding chips with the former marked α and |u|
+ * disabled until the first fetch corrected them. */
+const servableSeed = (fields: string[]): string[] => {
+  const stageB = fields.includes("p") && fields.includes("T");
+  return ["alpha", "u", "v", "umag", "s", ...(stageB ? ["p", "T"] : [])];
+};
+
+/** Whether one chip's map can be served given the available list. The vector
+ * chip is a CLIENT composition of u and v (its own endpoint, not a scalar map),
+ * so it is available exactly when both components are -- the server's list
+ * never names it, and keying it on its own name kept the quiver permanently
+ * disabled with a wrong "needs a Stage-B checkpoint" tooltip. */
+const chipAvailable = (k: FieldDef["k"], available: string[]): boolean =>
+  k === "vectors"
+    ? available.includes("u") && available.includes("v")
+    : available.includes(k);
+
 /** The |residual| maps: where each governing equation is least satisfied. */
 const RESIDUAL_DEFS = [
   { k: "res_vof", label: "vof · interface transport" },
@@ -349,7 +369,7 @@ export function FieldsTab({
   // Seeded from the field set the run recorded, so the picker is right on the
   // first paint rather than after a round trip.
   const [available, setAvailable] = useState<string[] | null>(
-    capability.fields.length > 0 ? capability.fields : null,
+    capability.fields.length > 0 ? servableSeed(capability.fields) : null,
   );
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -461,7 +481,7 @@ export function FieldsTab({
           data-testid="field-chips"
         >
           {FIELD_DEFS.map((def) => {
-            const disabled = available !== null && !available.includes(def.k);
+            const disabled = available !== null && !chipAvailable(def.k, available);
             return (
               <button
                 key={def.k}
