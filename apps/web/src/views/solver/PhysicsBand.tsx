@@ -140,6 +140,18 @@ export function PhysicsBand({
               disabled={locked}
             />
           )}
+          {modifier.key === "cap_freedom" && (
+            <ValueRow
+              label="Cap delta"
+              hint="how far a cap may leave its circle · fraction of the local radius"
+              value={form.cap_delta}
+              onChange={(cap_delta) => onForm({ cap_delta })}
+              min={FORM_BOUNDS.cap_delta.min}
+              max={FORM_BOUNDS.cap_delta.max}
+              step={0.05}
+              disabled={locked}
+            />
+          )}
         </SwitchRow>
       ))}
 

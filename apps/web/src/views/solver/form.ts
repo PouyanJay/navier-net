@@ -15,7 +15,6 @@ export interface SolverFormState {
   n_bc: number;
   holdout_frame: number;
   val_fraction: number;
-  val_strategy: "tail" | "scatter";
   seed: number;
   rebalance_every: number;
   log_every: number;
@@ -63,11 +62,10 @@ export const FORM_DEFAULTS: SolverFormState = {
   // The Solver no longer exposes a single-frame holdout; generalization is the
   // series hold-out and the validation split. -1 disables the legacy frame knob.
   holdout_frame: -1,
-  // Off by default (train on every frame); the user opts into a split. Always
-  // "tail": hold the last frames of each kept series -- the honest extrapolation
-  // test, never a random/interior frame the neighbours already pin down.
+  // Off by default (train on every frame); the user opts into a split. The
+  // strategy is not form state at all: the platform always splits "tail" (the
+  // honest extrapolation test), which is the API's own default.
   val_fraction: 0,
-  val_strategy: "tail",
   // 0, matching the trainer's default: the value every UI run trained at
   // before the field was exposed, so existing runs stay comparable.
   seed: 0,
@@ -104,9 +102,8 @@ export const FORM_DEFAULTS: SolverFormState = {
   // Free end caps: the nose and root stop being constant-curvature arcs, so the
   // data can fit them and the Young-Laplace jump can reshape them. Opt-in until
   // benched, so the current recipe stays reproducible head to head. `cap_delta`
-  // bounds the departure as a fraction of the local radius; it rides the request
-  // at its default and is tuned from the CLI/API, like the fine kinematics
-  // sub-parameters -- the aside offers the decision, not every dial.
+  // bounds the departure as a fraction of the local radius, offered under the
+  // switch it belongs to (an offered decision deserves its one bound).
   cap_freedom: false,
   cap_delta: 0.2,
   // Film pressure: the offset the depth-averaged pressure cannot carry at the
@@ -180,6 +177,8 @@ export const VAL_FRACTION_OPTIONS = [
 
 /** Bounds shown on the inputs; the API enforces the same ranges. */
 export const FORM_BOUNDS = {
+  seed: { min: 0, max: 2 ** 31 - 1 },
+  cap_delta: { min: 0, max: 0.95 },
   steps: { min: 1, max: 20000 },
   lr: { min: 0.00001, max: 1 },
   lr_halflife: { min: 1, max: 100000 },

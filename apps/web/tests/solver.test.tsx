@@ -315,7 +315,9 @@ describe("SolverView", () => {
     await waitFor(() => expect(posts).toHaveLength(1));
     const body = posts[0] as Record<string, unknown>;
     expect(body.val_fraction).toBe(0.2);
-    expect(body.val_strategy).toBe("tail");
+    // The strategy is no longer form state: the API's own "tail" default is
+    // the platform's only split, so the request does not carry the field.
+    expect(body.val_strategy).toBeUndefined();
     expect(body.heldout_datasets).toBeUndefined();
   });
 
@@ -1546,5 +1548,49 @@ describe("SolverView rebalance cadence", () => {
       target: { value: "rba" },
     });
     expect(screen.getByLabelText(/Rebalance/)).toBeDisabled();
+  });
+});
+
+describe("SolverView seed and cap delta", () => {
+  it("posts the chosen seed with a single new run", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    const seed = screen.getByLabelText(/Seed/);
+    expect(seed).toHaveValue(0);
+    fireEvent.change(seed, { target: { value: "7" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).seed).toBe(7);
+  });
+
+  it("offers no single-run seed in sweep mode, whose list is the seeds", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Seed sweep" }));
+    expect(screen.queryByLabelText(/^Seed$/)).toBeNull();
+    expect(screen.getByLabelText(/Seeds/)).toBeInTheDocument();
+  });
+
+  it("reveals the cap's one bound only while the caps are free", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.queryByLabelText(/Cap delta/)).toBeNull();
+    fireEvent.click(screen.getByRole("switch", { name: "Free the end caps" }));
+    const delta = screen.getByLabelText(/Cap delta/);
+    expect(delta).toHaveValue(0.2);
+    fireEvent.change(delta, { target: { value: "0.35" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.cap_freedom).toBe(true);
+    expect(body.cap_delta).toBe(0.35);
   });
 });
