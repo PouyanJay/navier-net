@@ -1419,3 +1419,91 @@ describe("SolverView measured front velocity", () => {
     expect((posts[0] as Record<string, unknown>).front_velocity).toBe(false);
   });
 });
+
+describe("SolverView recipes", () => {
+  it("opens on the full-physics recipe with zero departures", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    expect(screen.getByRole("radio", { name: /Full physics/ })).toBeChecked();
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips).toHaveTextContent("full physics");
+    // The platform default IS the recommended recipe: no departure chips.
+    expect(chips.children).toHaveLength(1);
+  });
+
+  it("stamps the held-out recipe: explicit front + causal weighting", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: /Best held-out IoU/ }));
+
+    expect(screen.getByRole("radio", { name: /Explicit front/ })).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Causal weighting" }),
+    ).toBeChecked();
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips).toHaveTextContent("best held-out iou");
+    expect(chips.children).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.front_geometry).toBe(true);
+    expect(body.sharp_interface).toBe(false);
+    expect(body.causal_weighting).toBe(true);
+  });
+
+  it("reports a departure from the recipe as a dock chip", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Nucleation root w(t)" }),
+    );
+
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips).toHaveTextContent("+ nucleation root");
+    expect(screen.getByText(/full physics · modified/)).toBeInTheDocument();
+  });
+
+  it("re-selecting the card returns the form to the recipe", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Nucleation root w(t)" }),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /Full physics/ }));
+
+    expect(
+      screen.getByRole("switch", { name: "Nucleation root w(t)" }),
+    ).not.toBeChecked();
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips.children).toHaveLength(1);
+  });
+
+  it("withholds the chips row on resume, whose config is the checkpoint's", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Resume" }));
+
+    expect(
+      screen.queryByRole("list", { name: "Departures from the recipe" }),
+    ).toBeNull();
+  });
+});

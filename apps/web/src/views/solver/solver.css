@@ -193,6 +193,91 @@
   border-bottom: 0;
 }
 
+/* ── Recipe cards ────────────────────────────────────────────────────────
+   The benched configurations, one card each, with the evidence on the card.
+   The selected card is the run's stated baseline: the dock's departure chips
+   are computed against it, so selection here is provenance, not just tint. */
+.recipe-cards {
+  display: grid;
+  gap: var(--s1);
+}
+.recipe-card {
+  display: grid;
+  gap: 2px;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--control);
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 150ms var(--ease),
+    border-color 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.recipe-card:hover:not([aria-disabled="true"]) {
+  background: var(--control-hover);
+  color: var(--text-soft);
+}
+.recipe-card.on {
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+.recipe-card[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.recipe-hd {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+/* A real radio marker, as on the treatment ladder: the chosen recipe differs
+   in shape, not only in tint. */
+.recipe-hd::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1px solid var(--control-border);
+}
+.recipe-card.on .recipe-hd::before {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 3px var(--primary);
+}
+.recipe-nm {
+  font-size: 12.5px;
+  font-weight: 620;
+  color: var(--text-soft);
+}
+.recipe-card.on .recipe-nm {
+  color: var(--text);
+}
+.recipe-ev {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--faint);
+}
+.recipe-card.on .recipe-ev {
+  color: var(--primary);
+}
+.recipe-detail {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+@media (prefers-reduced-motion: reduce) {
+  .recipe-card {
+    transition: none;
+  }
+}
+
 /* ── Interface treatment ─────────────────────────────────────────────────
    The three coherent formulations as one choice. They are a ladder, not four
    independent switches, and the thing that changes between them — which
@@ -447,6 +532,30 @@
   line-height: 1.4;
   color: var(--holdout);
   text-wrap: pretty;
+}
+/* The departures from the chosen recipe: the run's reproducibility statement,
+   in holdout tokens -- like everything else that marks what differs from the
+   baseline the platform would have run. */
+.dock-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dock-chip {
+  font-size: 9.5px;
+  line-height: 1.6;
+  padding: 0 var(--s2);
+  border-radius: 999px;
+  background: var(--holdout-soft);
+  color: var(--holdout);
+}
+.dock-chip.base {
+  border: 1px solid var(--control-border);
+  background: var(--control);
+  color: var(--faint);
 }
 .dock-buttons {
   display: grid;

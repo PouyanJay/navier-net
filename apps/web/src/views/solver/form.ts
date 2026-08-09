@@ -16,6 +16,7 @@ export interface SolverFormState {
   holdout_frame: number;
   val_fraction: number;
   val_strategy: "tail" | "scatter";
+  seed: number;
   rebalance_every: number;
   log_every: number;
   weights: LossWeightsInput;
@@ -67,6 +68,9 @@ export const FORM_DEFAULTS: SolverFormState = {
   // test, never a random/interior frame the neighbours already pin down.
   val_fraction: 0,
   val_strategy: "tail",
+  // 0, matching the trainer's default: the value every UI run trained at
+  // before the field was exposed, so existing runs stay comparable.
+  seed: 0,
   rebalance_every: 500,
   log_every: 200,
   weights: { data: 10, vof: 1, div: 1, src: 0.1, bc: 5 },

@@ -5,6 +5,8 @@ import { treatmentMeta, treatmentOf } from "./formulation";
 import { LaunchDock } from "./LaunchDock";
 import { ObjectiveBand } from "./ObjectiveBand";
 import { PhysicsBand } from "./PhysicsBand";
+import { RecipeBand } from "./RecipeBand";
+import { recipeDiff, recipeMeta, type RecipeName } from "./recipes";
 import { RunBand, type LaunchMode } from "./RunBand";
 import { TrainingBand } from "./TrainingBand";
 import type { RunTargets } from "./useRunTargets";
@@ -13,6 +15,8 @@ import type { SeriesCapability } from "./useSeriesCapability";
 interface SolverAsideProps {
   form: SolverFormState;
   onForm: (patch: Partial<SolverFormState>) => void;
+  recipe: RecipeName;
+  onRecipe: (name: RecipeName) => void;
   mode: LaunchMode;
   onMode: (mode: LaunchMode) => void;
   targets: RunTargets;
@@ -27,17 +31,19 @@ interface SolverAsideProps {
 }
 
 /**
- * The Solver's rail, as four bands and a launch dock.
+ * The Solver's rail: a recipe, four bands, and a launch dock.
  *
- * The bands answer four different questions, in the order a run is decided:
- * what it trains on, what physics it is given, what it is scored on, and how
- * the optimizer walks that score. Everything that used to sit in one 30-control
- * card is now in the band whose question it answers, and nothing that does not
- * apply to the current choices is rendered at all.
+ * The recipe answers the question that comes before any knob (what should this
+ * run be?); the bands answer the four that follow, in the order a run is
+ * decided: what it trains on, what physics it is given, what it is scored on,
+ * and how the optimizer walks that score. Nothing that does not apply to the
+ * current choices is rendered at all.
  */
 export function SolverAside({
   form,
   onForm,
+  recipe,
+  onRecipe,
   mode,
   onMode,
   targets,
@@ -52,9 +58,16 @@ export function SolverAside({
   const available = targets.available ?? [];
   // On resume the checkpoint's own config owns every field but Steps.
   const fixed = running || mode === "resume";
+  const diff = recipeDiff(form, recipe);
 
   return (
     <>
+      <RecipeBand
+        recipe={recipe}
+        onRecipe={onRecipe}
+        modified={diff.length > 0}
+        locked={fixed}
+      />
       <RunBand
         form={form}
         onForm={onForm}
@@ -89,6 +102,13 @@ export function SolverAside({
       />
       <LaunchDock
         summary={runSummary(form, mode, targets, seeds, available)}
+        // A resume takes its config from the checkpoint; there is no recipe
+        // baseline to report departures from, so the chips row is withheld.
+        recipe={
+          mode === "resume"
+            ? null
+            : { label: recipeMeta(recipe).label.toLowerCase(), diff }
+        }
         blocked={launchBlocked(form, mode, targets, seeds, running)}
         running={running}
         onReset={onReset}
