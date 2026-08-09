@@ -133,12 +133,12 @@ def _signed_distance_loss(ctx: RootContext, plan: RootPlan) -> torch.Tensor:
     points = front.points[on_root]
     frame_of = time_index(plan.times, points[:, 2:3])
 
-    distance = _sample_sdf(plan, points, frame_of)
+    distance = sample_sdf(plan, points, frame_of)
     radius = geometry.frame(plan.times).r_root.detach().abs().clamp(min=ANCHOR_FLOOR)
     return ((distance / radius[frame_of].squeeze(1)) ** 2).mean()
 
 
-def _sample_sdf(plan: RootPlan, points: torch.Tensor, frame_of: torch.Tensor) -> torch.Tensor:
+def sample_sdf(plan: RootPlan, points: torch.Tensor, frame_of: torch.Tensor) -> torch.Tensor:
     """Bilinear samples of each frame's signed-distance raster at ``points``,
     DIFFERENTIABLE in the point positions: the gradient of a distance field is
     its unit direction toward the measured interface, which is exactly the

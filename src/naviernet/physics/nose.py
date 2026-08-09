@@ -149,6 +149,7 @@ def _nose_frame_entry(model, data, row: int, frame: int) -> dict:
         "bluntness": fit.bluntness,
         "updown_bias": fit.updown_bias,
         "tilt": fit.tilt,
+        "x_edge": measured_nose_edge(data, row),
         "model_nose_rms": model_nose_window_rms(model, data, row),
     }
     if getattr(geometry, "nose_shape", False):

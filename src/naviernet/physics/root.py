@@ -73,7 +73,7 @@ class Raster(NamedTuple):
 
         The numpy sibling of the two torch bilinear samplers
         (:func:`naviernet.physics.front_velocity.sample_measured`, detached;
-        :func:`naviernet.physics.root_supervision._sample_sdf`,
+        :func:`naviernet.physics.root_supervision.sample_sdf`,
         differentiable) -- three backends because their consumers need
         different gradient semantics, kept cross-referenced so a fourth copy
         does not appear.

@@ -116,9 +116,14 @@ MUSHROOM_LEDGE_OFFSET = 0.05
 MUSHROOM_W_PX, MUSHROOM_H_PX = 192, 96
 
 
-def mushroom_capsule_writer(path, n_frames: int = 6) -> None:
-    """The mushroom-head dataset: SDF-exact (away from the corner rings, the
-    blunt-root fixture's own accepted caveat) via min/max of primitive SDFs."""
+def _write_thin_capsule(path, n_frames: int, bulged_nose: bool) -> None:
+    """The thin-capsule dataset at the fixture's own fine grid, with or
+    without the mushroom head: SDF-exact (away from the corner rings, the
+    blunt-root fixture's own accepted caveat) via min/max of primitive SDFs.
+    ONE writer for the mechanism pair, so its control differs from its
+    treatment by exactly the bulge and nothing else -- resolution included
+    (the coarse 96x48 grid quantises the window onto ~6 columns and the
+    'measured' targets become pixel noise the loss then chases)."""
     import json
 
     from tests.conftest import (
@@ -139,6 +144,8 @@ def mushroom_capsule_writer(path, n_frames: int = 6) -> None:
     def frame_sdf(nose: float) -> np.ndarray:
         nearest_x = np.clip(gx, CAPSULE_X_ROOT, nose)
         body = np.hypot(gx - nearest_x, gy - CAPSULE_Y_CENTER) - MUSHROOM_BODY_RADIUS
+        if not bulged_nose:
+            return body
         disc = np.hypot(gx - nose, gy - CAPSULE_Y_CENTER) - MUSHROOM_BULGE_RADIUS
         bulge = np.maximum(disc, (nose + MUSHROOM_LEDGE_OFFSET) - gx)
         return np.minimum(body, bulge)
@@ -165,6 +172,16 @@ def mushroom_capsule_writer(path, n_frames: int = 6) -> None:
         t_star=(np.arange(n_frames) * CAPSULE_DT).astype(np.float32),
         meta=json.dumps(meta),
     )
+
+
+def mushroom_capsule_writer(path, n_frames: int = 6) -> None:
+    """The mechanism treatment: the thin capsule with the mushroomed head."""
+    _write_thin_capsule(path, n_frames, bulged_nose=True)
+
+
+def thin_capsule_writer(path, n_frames: int = 6) -> None:
+    """The mechanism control: the same capsule, same grid, circular nose."""
+    _write_thin_capsule(path, n_frames, bulged_nose=False)
 
 
 def test_measured_nose_fit_reads_the_far_edge_from_the_pin(tmp_path):
@@ -537,3 +554,143 @@ def test_a_training_step_leaves_the_nose_net_finite(tmp_path):
     model, _, _ = load_model(cfg, paths)
     w = model.nets["phi"].nose_bluntness(torch.tensor([[0.0], [0.5]]))
     assert torch.isfinite(w).all()
+
+
+# --- T2: the supervision channel ----------------------------------------------
+#
+# The DOF ships WITH its channel, in one task: this exact nose is where
+# cap_freedom starved twice on pixel losses (mismatch-AREA scaling against a
+# cap-sized knob), and the root journey's distance + ratio channel measurably
+# fixed the same failure at the other end. The mechanism test is the bench's
+# question in miniature: does a mushroomed-head dataset actually move w_nose?
+
+NOSE_TRAIN = [
+    "model.front_geometry=true",
+    "model.nose_shape=true",
+    "training.nose_supervision=true",
+    "training.steps=120",
+    "training.lr=0.01",
+]
+
+
+def test_nose_supervision_requires_the_nose_shape(tmp_path):
+    from naviernet.training import _validate_training_config
+    from tests.conftest import staged_run
+
+    cfg, _ = staged_run(
+        tmp_path, ["model.front_geometry=true", "training.nose_supervision=true"]
+    )
+    with pytest.raises(ValueError, match="nose_shape"):
+        _validate_training_config(cfg)
+
+
+def test_zero_weight_nose_supervision_is_rejected(tmp_path):
+    """Both weights at zero measures the nose and then ignores it -- an
+    undriven knob wearing a supervision flag, the exact trap this journey's
+    design rule exists to forbid."""
+    from naviernet.training import _validate_training_config
+    from tests.conftest import staged_run
+
+    cfg, _ = staged_run(
+        tmp_path,
+        [
+            "model.front_geometry=true",
+            "model.nose_shape=true",
+            "training.nose_supervision=true",
+            "training.nose_sdf_weight=0",
+            "training.nose_bluntness_weight=0",
+        ],
+    )
+    with pytest.raises(ValueError, match="supervises nothing"):
+        _validate_training_config(cfg)
+
+
+def test_the_nose_plan_excludes_held_out_frames(tmp_path):
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.physics import nose_supervision
+    from naviernet.utils.paths import RunPaths
+    from tests.conftest import staged_run
+
+    cfg, _ = staged_run(
+        tmp_path,
+        ["training.val_fraction=0.2", "training.val_strategy=tail"],
+        write=mushroom_capsule_writer,
+    )
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    plan = nose_supervision.build_plan(data, cfg, "cpu")
+    assert set(plan.rows).isdisjoint(data.validation_rows)
+    assert bool(np.isfinite(plan.bluntness.numpy()).all())
+    assert bool((plan.depth > 0).all())
+    # The mushroom's measured targets sit ABOVE 1 -- the plan must carry the
+    # overhang as-is, never clamp it to a circle-legal ratio.
+    assert float(plan.bluntness.max()) > 1.2
+
+
+def _trained_station_ratios(cfg, model) -> list[float]:
+    """The model's own quarter-vs-full half-width ratios at the loss's own
+    stations -- the RENDERED quantity the mechanism gates read. Never the
+    parameter: the root bench's w went negative while rendering a BLUNTER
+    shape (the cap radius overshoots the mask's local scale and w compensates
+    -- a coordinate, not a contradiction), so a gate on w's value or sign
+    would misread exactly the mechanism it exists to check."""
+    import torch
+
+    from naviernet.data.dataset import BubbleDataset
+    from naviernet.physics import nose_supervision
+    from naviernet.physics.root import BLUNTNESS_DEPTH_FRACTION
+    from naviernet.utils.paths import RunPaths
+
+    data = BubbleDataset(cfg, RunPaths.from_config(cfg), device="cpu")
+    plan = nose_supervision.build_plan(data, cfg, "cpu")
+    geometry = model.nets["phi"]
+    with torch.no_grad():
+        anchor = geometry.nose(plan.times)
+        shallow = geometry.nose_half_width(
+            anchor - BLUNTNESS_DEPTH_FRACTION * plan.depth, plan.times
+        )
+        deep = geometry.nose_half_width(anchor - plan.depth, plan.times)
+        return (shallow / deep).squeeze(1).tolist()
+
+
+@pytest.mark.slow  # trains 120 Adam steps (~4s)
+def test_the_supervision_drives_the_overhang_on_the_mushroom_head(tmp_path):
+    """The mechanism question in miniature: a dataset whose head overhangs
+    must move w_nose(t) off its zero init AND render the overhang -- the
+    undriven-knob trap's regression test at the nose."""
+    import torch
+
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(tmp_path, NOSE_TRAIN, write=mushroom_capsule_writer)
+    train(cfg, paths)
+    model, _, _ = load_model(cfg, paths)
+    with torch.no_grad():
+        w = model.nets["phi"].nose_bluntness(torch.tensor([[0.25]]))
+    assert abs(float(w)) > 0.05, f"the supervision left w_nose(t) undriven: {float(w)}"
+
+    ratios = _trained_station_ratios(cfg, model)
+    mean_ratio = sum(ratios) / len(ratios)
+    assert mean_ratio > 1.0, f"the trained head must overhang, ratios={ratios}"
+
+
+@pytest.mark.slow  # trains 120 Adam steps (~4s)
+def test_a_circular_nose_does_not_learn_an_overhang(tmp_path):
+    """The control: on data whose nose IS a circle the same supervision must
+    not invent an overhang. The mushroom's own writer minus the bulge -- same
+    grid, same body -- so the pair isolates the head's shape. Gated on the
+    RENDERED ratio, not the parameter: on this fixture the trained w settles
+    near -0.6 while the rendered head faithfully tracks the measured circle
+    (r_nose overshoots and w compensates -- the root bench's negative-w
+    coordinate story reproduced in miniature, which is exactly why parameter
+    gates are forbidden)."""
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(tmp_path, NOSE_TRAIN, write=thin_capsule_writer)
+    train(cfg, paths)
+    model, _, _ = load_model(cfg, paths)
+    ratios = _trained_station_ratios(cfg, model)
+    mean_ratio = sum(ratios) / len(ratios)
+    assert mean_ratio < 1.0, f"supervision invented an overhang on a circle: {ratios}"
+    assert max(ratios) < 1.08, f"supervision invented an overhang on a circle: {ratios}"

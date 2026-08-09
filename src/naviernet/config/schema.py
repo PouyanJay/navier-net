@@ -541,6 +541,24 @@ class TrainingConfig:
     # samples are the only place the root signal enters.
     root_cap_samples: int = 48
 
+    # Nose-window supervision: drive the Hugelschaffer nose bluntness
+    # w_nose(t) with the mask's signed-distance transform sampled AT the
+    # predicted nose-cap contour, plus the per-frame scalar bluntness target
+    # (which legitimately EXCEEDS 1 late -- the measured overhang). The exact
+    # mirror of root_supervision, for the exact reason: this nose is where
+    # cap_freedom starved twice on pixel losses (the undriven-knob trap), and
+    # the root's distance+ratio channel measurably fixed the same failure.
+    # Requires `model.nose_shape` (nothing else reads the signal). Off by
+    # default -> the objective is unchanged.
+    nose_supervision: bool = False
+    # The root's proven weights, carried over: these sit outside the
+    # rebalancer, so nothing corrects a weight too small to act; the bench's
+    # mechanism gate (w_nose budget use) is what validates them.
+    nose_sdf_weight: float = 10.0
+    nose_bluntness_weight: float = 25.0
+    # The nose sampling budget, mirroring root_cap_samples.
+    nose_cap_samples: int = 48
+
     seed: int = 0
     device: str = "cpu"
     log_every: int = 200
