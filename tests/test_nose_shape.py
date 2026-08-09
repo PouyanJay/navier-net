@@ -725,3 +725,187 @@ def test_evaluate_writes_the_nose_block_for_a_nose_shape_run(tmp_path):
     assert "w_budget_use" in nose
     assert nose["nose_delta"] == cfg.model.nose_delta
     assert np.isfinite(nose["per_frame"][0]["model_nose_rms"])
+
+
+# --- T4: variant coverage -----------------------------------------------------
+
+
+def test_checkpoint_refuses_a_nose_shape_mismatch(tmp_path):
+    """The flag changes what the weights MEAN (a nose net exists and the cap
+    is a different family), so a mismatched invocation must fail loudly."""
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(
+        tmp_path, ["model.front_geometry=true", "model.nose_shape=true"]
+    )
+    train(cfg, paths)
+    plain, _ = staged_capsule_run(tmp_path, ["model.front_geometry=true"])
+    with pytest.raises(ValueError, match="nose_shape"):
+        load_model(plain, paths)
+
+
+def test_nose_delta_change_is_refused_on_reload(tmp_path):
+    """The bound scales the bluntness net's output: the same weights describe
+    a different head through a different delta -- like root_delta."""
+    from naviernet.training import load_model, train
+    from tests.conftest import staged_capsule_run
+
+    on = ["model.front_geometry=true", "model.nose_shape=true"]
+    cfg, paths = staged_capsule_run(tmp_path, [*on, "model.nose_delta=0.6"])
+    train(cfg, paths)
+    other, _ = staged_capsule_run(tmp_path, [*on, "model.nose_delta=0.3"])
+    with pytest.raises(ValueError, match="nose_delta"):
+        load_model(other, paths)
+
+
+def test_joint_runs_reject_the_nose_shape_for_now(tmp_path):
+    """The supervision plan is single-dataset; a joint w_nose(t) with no
+    channel would be exactly the undriven knob. Explicit rejection until it
+    is threaded through the joint contexts -- the root's rule, mirrored."""
+    from naviernet.training import train
+    from tests.conftest import staged_joint_run
+
+    cfg, paths = staged_joint_run(
+        tmp_path, ["model.front_geometry=true", "model.nose_shape=true"]
+    )
+    with pytest.raises(NotImplementedError, match="nose_shape"):
+        train(cfg, paths)
+
+
+def test_a_pre_nose_config_snapshot_still_composes(tmp_path):
+    """Run snapshots written before the nose fields existed must keep
+    composing (the molar_mass lesson): merging over the structured schema
+    fills the defaults, the flag reads off, and the model builds."""
+    from omegaconf import OmegaConf
+
+    from naviernet.config.schema import Config
+
+    snapshot = OmegaConf.to_container(make_config([]), resolve=True)
+    for key in ("nose_shape", "nose_delta"):
+        del snapshot["model"][key]
+    for key in (
+        "nose_supervision",
+        "nose_sdf_weight",
+        "nose_bluntness_weight",
+        "nose_cap_samples",
+    ):
+        del snapshot["training"][key]
+    cfg = OmegaConf.merge(OmegaConf.structured(Config), OmegaConf.create(snapshot))
+    assert cfg.model.nose_shape is False
+    assert cfg.training.nose_supervision is False
+
+
+@pytest.mark.slow  # trains 2 x 120 Adam steps (~8s)
+def test_a_nose_shape_run_resumes_cleanly(tmp_path):
+    """Resume must rebuild the same construction and keep training: the plan
+    is deterministic, so the resumed run supervises against the identical
+    measurement."""
+    from naviernet.training import train
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(tmp_path, NOSE_TRAIN, write=mushroom_capsule_writer)
+    train(cfg, paths)
+    _, _, state = train(cfg, paths)  # resumes from the checkpoint
+    assert state["done"] == 2 * cfg.training.steps
+
+
+def test_root_and_nose_train_together(tmp_path):
+    """The intended recipe: both cap DOFs and both channels in one run. Two
+    steps engage everything; both nets come out finite and the metrics carry
+    both physics blocks."""
+    import torch
+
+    from naviernet.physics.diagnostics import physics_report
+    from naviernet.training import train
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(
+        tmp_path,
+        [
+            "model.front_geometry=true",
+            "model.nucleation_root=true",
+            "model.nose_shape=true",
+            "training.root_supervision=true",
+            "training.nose_supervision=true",
+        ],
+        write=mushroom_capsule_writer,
+    )
+    model, data, _ = train(cfg, paths)
+    geometry = model.nets["phi"]
+    times = torch.tensor([[0.0], [0.5]])
+    assert torch.isfinite(geometry.root_bluntness(times)).all()
+    assert torch.isfinite(geometry.nose_bluntness(times)).all()
+    report = physics_report(model, data)
+    assert "w" in report["root"]["per_frame"][0]
+    assert "w" in report["nose"]["per_frame"][0]
+
+
+def test_nose_shape_composes_with_the_front_velocity_terms(tmp_path):
+    """Plan decision 6, stated as a test rather than assumed: fv_apex
+    supervises the apex's 2-D displacement and the Hugelschaffer apex crossing
+    is exact for every w, so the fv terms train unchanged beside the shaped
+    nose (off_nose_cap keeps excluding the nose from the normal profile)."""
+    import torch
+
+    from naviernet.training import train
+    from tests.conftest import staged_run
+
+    cfg, paths = staged_run(
+        tmp_path,
+        [
+            "model.front_geometry=true",
+            "model.nose_shape=true",
+            "training.nose_supervision=true",
+            "training.front_velocity=true",
+        ],
+        write=mushroom_capsule_writer,
+    )
+    model, _, _ = train(cfg, paths)
+    w = model.nets["phi"].nose_bluntness(torch.tensor([[0.25]]))
+    assert torch.isfinite(w).all()
+
+
+# --- T5: the five-fluid code gate ---------------------------------------------
+#
+# The bench runs on Series-1/FC-72 (the only data), but future series may use
+# any of the five fluids, so the CODE must be correct for all of them from day
+# one -- the full recipe (root ladder + nose) composes, validates, and takes a
+# 2-step training run per fluid, with the wetting provenance intact.
+
+TINY_SHARP_ROOT_NOSE = [
+    "model=stage_b",
+    "training=stage_b",
+    "model.front_geometry=true",
+    "model.sharp_interface=true",
+    "model.nucleation_root=true",
+    "model.root_attachment=true",
+    "training.root_supervision=true",
+    "model.nose_shape=true",
+    "training.nose_supervision=true",
+]
+
+
+@pytest.mark.parametrize(
+    ("fluid_id", "source"),
+    [
+        ("fc72", "measured"),
+        ("fc77", "extrapolated"),
+        ("hfe7100", "partial"),
+        ("novec649", "extrapolated"),
+        ("water", "hysteresis"),
+    ],
+)
+def test_the_five_fluid_code_gate_with_the_nose(tmp_path, fluid_id, source):
+    from naviernet.physics.diagnostics import physics_report
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import train
+    from tests.conftest import staged_capsule_run
+
+    cfg, paths = staged_capsule_run(tmp_path, [*TINY_SHARP_ROOT_NOSE, f"fluid={fluid_id}"])
+    model, data, _ = train(cfg, paths)  # 2 steps: the whole ladder engages
+    report = physics_report(model, data, compute_groups(cfg))
+    assert report["root"]["wetting_source"] == source
+    assert np.isfinite(report["root"]["per_frame"][0]["w"])
+    assert np.isfinite(report["nose"]["per_frame"][0]["w"])
+    assert 0.0 <= report["nose"]["w_budget_use"] <= 1.0
