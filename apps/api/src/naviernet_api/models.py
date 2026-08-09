@@ -465,6 +465,15 @@ class RunLaunchRequest(BaseModel):
     # reproduced the baseline exactly).
     fv_weight: float = Field(default=10.0, ge=0.0, le=100.0)
     fv_apex_weight: float = Field(default=10.0, ge=0.0, le=100.0)
+    # Advanced overrides: the bridge to the schema's CLI-only dials (rba_gamma,
+    # kin_grid, fv_smooth_px, ...). Free-form `key=value` Hydra overrides,
+    # STRICTLY allowlisted in services/overrides.py: top-level training.* /
+    # model.* schema fields, numeric/bool values only, never a key the form or
+    # the series' saved model config already owns. Validated at launch (422
+    # naming the offending token), appended AFTER every platform override so an
+    # explicit expert choice wins, and recorded in the run's config snapshot
+    # like every other override. Ignored on resume, as documented above.
+    overrides: list[str] = Field(default_factory=list, max_length=16)
 
     def resolved_datasets(self) -> list[str]:
         """The datasets a new run trains on: `datasets` if given, else `[dataset]`.

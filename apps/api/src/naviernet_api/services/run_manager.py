@@ -216,6 +216,7 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
         # dies. (The resolution itself happens again at compose time, where the
         # overrides are actually built.)
         _interface_overrides(settings, dataset, request)
+        checked_overrides(request)
 
     with _lock:
         if _slot_busy():
@@ -235,6 +236,21 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
     if result is None:  # unreachable: the job was registered above
         raise RuntimeError(f"run {run_id!r} vanished from the registry")
     return result
+
+
+def checked_overrides(request: RunLaunchRequest) -> list[str]:
+    """The request's advanced overrides, validated and canonicalised.
+
+    The strict allowlist lives in services/overrides.py; here a rejection is
+    turned into the 422 the caller can act on. Shared with the sweep launcher,
+    whose children skip `launch()` and would otherwise skip the gate.
+    """
+    from naviernet_api.services.overrides import OverrideRejected, validate_overrides
+
+    try:
+        return validate_overrides(request.overrides)
+    except OverrideRejected as exc:
+        raise LaunchRejected(422, str(exc)) from exc
 
 
 def _slot_busy() -> bool:
@@ -577,6 +593,12 @@ def _configure(
     heldout = request.heldout_datasets or []
     if heldout:
         overrides.append(f"heldout_datasets=[{','.join(heldout)}]")
+    # Advanced overrides come LAST: overlap with any platform-owned key was
+    # rejected at validation, and last-wins order means the one server-computed
+    # key they may legitimately target (training.stage_b_warmup_steps) yields
+    # to an explicit expert choice. Re-canonicalised through the same validator
+    # the launch gate used, so the worker never composes a raw network token.
+    overrides.extend(checked_overrides(request))
     return compose_cfg_once(dataset, overrides=overrides), 0
 
 

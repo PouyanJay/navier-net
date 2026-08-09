@@ -1,6 +1,7 @@
 import type { DatasetSummary } from "../../lib/api";
 import { seriesNameOf } from "../../lib/series";
-import type { SolverFormState } from "./form";
+import { AdvancedBand } from "./AdvancedBand";
+import { parseOverrides, type SolverFormState } from "./form";
 import { treatmentMeta, treatmentOf } from "./formulation";
 import { LaunchDock } from "./LaunchDock";
 import { ObjectiveBand } from "./ObjectiveBand";
@@ -100,6 +101,7 @@ export function SolverAside({
         locked={running}
         fixed={fixed}
       />
+      <AdvancedBand form={form} onForm={onForm} locked={fixed} />
       <LaunchDock
         summary={runSummary(form, mode, targets, seeds, available)}
         // A resume takes its config from the checkpoint; there is no recipe
@@ -171,6 +173,9 @@ export function launchBlocked(
   }
   if (mode === "sweep" && seeds === null) {
     return "Give 1-6 unique, non-negative seeds.";
+  }
+  if (parseOverrides(form.overridesText) === null) {
+    return "Overrides are key=value tokens separated by spaces.";
   }
   if (
     form.front_velocity &&

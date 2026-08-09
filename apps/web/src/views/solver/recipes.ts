@@ -12,7 +12,7 @@
  */
 
 import type { SolverFormState } from "./form";
-import { FORM_DEFAULTS } from "./form";
+import { FORM_DEFAULTS, parseOverrides } from "./form";
 import { treatmentMeta, treatmentOf, treatmentPatch } from "./formulation";
 
 export type RecipeName = "full-physics" | "best-heldout" | "legacy";
@@ -214,6 +214,11 @@ export function recipeDiff(
     if (form.weights[key] !== base.weights[key]) {
       chips.push(`${label} ${form.weights[key]}`);
     }
+  }
+  // Advanced overrides are departures by definition: no recipe stamps any.
+  // Unparseable text adds no chips; the dock is already blocked on it.
+  for (const token of parseOverrides(form.overridesText) ?? []) {
+    chips.push(`+ ${token}`);
   }
   return chips;
 }

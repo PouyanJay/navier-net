@@ -631,3 +631,9 @@
 .ug:has(input[aria-invalid]) {
   border-color: var(--danger);
 }
+
+/* Advanced overrides speak the CLI's vocabulary, so the field is set in it. */
+.adv-overrides input {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}

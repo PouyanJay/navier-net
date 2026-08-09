@@ -525,6 +525,11 @@ export interface RunLaunchRequest {
   /** Weight on the nose apex's 2-D displacement -- the one interface point with
    * an honest frame-to-frame correspondence. */
   fv_apex_weight: number;
+  /** Advanced overrides: `key=value` Hydra tokens for the schema's CLI-only
+   * dials. Strictly allowlisted server-side (top-level training.* / model.*
+   * scalar fields the form and the series config do not own); an invalid token
+   * is a 422 naming it. */
+  overrides?: string[];
 }
 
 export interface RunJobStatus {

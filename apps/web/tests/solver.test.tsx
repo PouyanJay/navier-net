@@ -1594,3 +1594,84 @@ describe("SolverView seed and cap delta", () => {
     expect(body.cap_delta).toBe(0.35);
   });
 });
+
+describe("SolverView advanced overrides", () => {
+  it("posts parsed tokens and reports each as a departure chip", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // The band folds closed by default; open it to reach the field.
+    fireEvent.click(
+      screen.getByRole("button", { name: /Advanced overrides/ }),
+    );
+    fireEvent.change(screen.getByLabelText(/Overrides/), {
+      target: { value: "training.kin_grid=64  training.rba_gamma=0.995" },
+    });
+
+    const chips = screen.getByRole("list", {
+      name: "Departures from the recipe",
+    });
+    expect(chips).toHaveTextContent("+ training.kin_grid=64");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).overrides).toEqual([
+      "training.kin_grid=64",
+      "training.rba_gamma=0.995",
+    ]);
+  });
+
+  it("omits the field entirely when empty", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect("overrides" in (posts[0] as Record<string, unknown>)).toBe(false);
+    expect("overridesText" in (posts[0] as Record<string, unknown>)).toBe(
+      false,
+    );
+  });
+
+  it("holds Run while the text does not parse, with the reason", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Advanced overrides/ }),
+    );
+    fireEvent.change(screen.getByLabelText(/Overrides/), {
+      target: { value: "training.kin_grid" },
+    });
+
+    expect(
+      screen.getByText("Overrides are key=value tokens separated by spaces."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  });
+
+  it("surfaces the API's 422 verdict on a refused dial", async () => {
+    stubApi({
+      launchStatus: 422,
+      launchDetail:
+        "'training.steps' is set by the launch form; change it there instead",
+    });
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Advanced overrides/ }),
+    );
+    fireEvent.change(screen.getByLabelText(/Overrides/), {
+      target: { value: "training.steps=99" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(
+      await screen.findByText(/set by the launch form/),
+    ).toBeInTheDocument();
+  });
+});

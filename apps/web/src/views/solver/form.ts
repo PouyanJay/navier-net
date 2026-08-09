@@ -50,6 +50,8 @@ export interface SolverFormState {
   front_velocity: boolean;
   fv_weight: number;
   fv_apex_weight: number;
+  /** Advanced overrides as raw text; parsed to `overrides` at launch. */
+  overridesText: string;
 }
 
 export const FORM_DEFAULTS: SolverFormState = {
@@ -150,7 +152,23 @@ export const FORM_DEFAULTS: SolverFormState = {
   // rebalancer, and at 1 they are measurably inert.
   fv_weight: 10,
   fv_apex_weight: 10,
+  overridesText: "",
 };
+
+/**
+ * Parse the advanced-overrides text into `key=value` tokens; null when it does
+ * not parse. Shape only -- the API owns the real allowlist (which keys exist,
+ * their types, who owns them) and answers a 422 naming the offending token, so
+ * the two validators can never disagree about anything but shape.
+ */
+export function parseOverrides(text: string): string[] | null {
+  const tokens = text.split(/\s+/).filter((token) => token !== "");
+  for (const token of tokens) {
+    const eq = token.indexOf("=");
+    if (eq <= 0 || eq === token.length - 1) return null;
+  }
+  return tokens;
+}
 
 /** Loss-weighting schemes. "gradnorm" is the live rebalancer (needs a hand-picked
  * rebalance cadence); "rba" is bounded residual-based attention (stable, no tuning). */
@@ -208,7 +226,15 @@ export function toLaunchRequest(
   form: SolverFormState,
   target: { datasets: string[]; heldout?: string[] } | { resumeRunId: string },
 ): RunLaunchRequest {
-  const base = { ...form };
+  // The raw text stays in the form; the request carries parsed tokens. An
+  // unparseable text never reaches here -- launchBlocked holds Run until it
+  // parses -- so the fallback to [] is for the empty field, not bad input.
+  const { overridesText, ...rest } = form;
+  const overrides = parseOverrides(overridesText) ?? [];
+  const base = {
+    ...rest,
+    ...(overrides.length > 0 ? { overrides } : {}),
+  };
   if ("resumeRunId" in target) {
     return { ...base, resume: true, run_id: target.resumeRunId };
   }

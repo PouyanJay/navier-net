@@ -75,6 +75,8 @@ export { BalanceScaleIcon as ObjectiveIcon } from "@hugeicons/core-free-icons";
 export { PreferenceHorizontalIcon as TuningIcon } from "@hugeicons/core-free-icons";
 /* The recipe band: a benched configuration, marked as the chosen baseline. */
 export { BookmarkCheck01Icon as RecipeIcon } from "@hugeicons/core-free-icons";
+/* Advanced overrides: raw key=value dials, the CLI's vocabulary in the rail. */
+export { CodeIcon as OverridesIcon } from "@hugeicons/core-free-icons";
 
 /* The Physics stage's three config bands: the conservation laws that always
    train, the physics you may add on top, and the capacity that carries it. */
