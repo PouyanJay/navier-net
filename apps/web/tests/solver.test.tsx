@@ -1531,3 +1531,20 @@ describe("SolverView verdict chips", () => {
     expect(screen.getAllByText("unbenched")).toHaveLength(4);
   });
 });
+
+describe("SolverView rebalance cadence", () => {
+  it("sits with its scheme and disables under RBA, which has no period", async () => {
+    stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    const cadence = screen.getByLabelText(/Rebalance/);
+    expect(cadence).toHaveValue(500);
+    expect(cadence).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText(/Weighting/), {
+      target: { value: "rba" },
+    });
+    expect(screen.getByLabelText(/Rebalance/)).toBeDisabled();
+  });
+});

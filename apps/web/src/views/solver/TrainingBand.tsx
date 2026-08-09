@@ -143,6 +143,23 @@ export function TrainingBand({
         options={WEIGHTING_OPTIONS}
         disabled={fixed}
       />
+      <ValueRow
+        label="Rebalance"
+        // The cadence lives beside the scheme that decides whether it applies:
+        // under RBA there is no periodic rebalance to give a period to.
+        hint={
+          rba
+            ? "RBA weights every point every step"
+            : "how often the gradient-norm balancer re-weights"
+        }
+        value={form.rebalance_every}
+        onChange={(rebalance_every) => onForm({ rebalance_every })}
+        min={FORM_BOUNDS.rebalance_every.min}
+        max={FORM_BOUNDS.rebalance_every.max}
+        step={100}
+        suffix="steps"
+        disabled={fixed || rba}
+      />
       <SwitchRow
         label="Causal weighting"
         hint="learn the early times first, and only then let the late ones count"
