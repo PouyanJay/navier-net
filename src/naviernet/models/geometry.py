@@ -146,13 +146,14 @@ class GeometryContext(NamedTuple):
     priors: GeometryPriors | None = None
 
 
-class RootCapQuery(NamedTuple):
-    """Where the root cap is being asked about: the signed axial offset from
-    the cap centre, the (signed, under ``allow_pinch``) cap radius, and the
-    time. One bundle, because the three always travel together and every
+class CapQuery(NamedTuple):
+    """Where an END CAP is being asked about: the signed axial offset from
+    the cap centre (negative inside the ROOT cap region, positive inside the
+    NOSE one), the (signed, under ``allow_pinch``) cap radius, and the time.
+    One bundle, because the three always travel together and every
     Hugelschaffer helper reads the same derived ``r_abs``."""
 
-    x_c: torch.Tensor  # x - ax, negative inside the cap region
+    x_c: torch.Tensor  # x - ax at the root, x - bx at the nose
     radius: torch.Tensor  # the cap radius, sign carried through to phi
     t: torch.Tensor
 
@@ -258,6 +259,8 @@ class GeometricInterface(nn.Module):
         shape_delta: float = 0.3,
         nucleation_root: bool = False,
         root_delta: float = 0.6,
+        nose_shape: bool = False,
+        nose_delta: float = 0.6,
     ):
         super().__init__()
         # The REFERENCE dataset's anchors. A single-dataset run has only these; a
@@ -301,6 +304,26 @@ class GeometricInterface(nn.Module):
             raise ValueError(
                 "model.nucleation_root and model.cap_freedom are two shape systems "
                 "on the same cap: no bench could attribute a result to either. "
+                "Enable one."
+            )
+        # The nose shape: the NOSE cap becomes the same Hugelschaffer half-oval
+        # that freed the root, mirrored, with its OWN bluntness w_nose(t). The
+        # family already expresses the measured overhang (bluntness > 1): for
+        # w > 0 the width's maximum sits interior to the seam. Composable with
+        # `nucleation_root` (they own different caps); exclusive with
+        # `cap_freedom` (the same cap). Validated whatever the flag says.
+        self.nose_shape = bool(nose_shape)
+        self.nose_delta = float(nose_delta)
+        if not 0.0 <= self.nose_delta < 1.0:
+            raise ValueError(
+                f"model.nose_delta must be in [0, 1) -- it bounds the Hugelschaffer "
+                f"bluntness |w_nose| as a fraction of the nose cap radius, and at 1 "
+                f"the apex curvature diverges. Got {self.nose_delta}."
+            )
+        if self.nose_shape and self.cap_freedom:
+            raise ValueError(
+                "model.nose_shape and model.cap_freedom are two shape systems on "
+                "the same cap: no bench could attribute a result to either. "
                 "Enable one."
             )
         # Pressure-driven shape: the width profile's modes are SOLVED from the
@@ -381,6 +404,11 @@ class GeometricInterface(nn.Module):
         # OPENS as the circle it replaces and learns its way off it.
         if self.nucleation_root:
             self.root_net = mlp(1 + self.n_cond, out_bias=0.0)
+        # And the nose net after the root net, for the same reason one level
+        # up: a rooted run gaining the nose must start from the rooted run's
+        # own bit-identical weights.
+        if self.nose_shape:
+            self.nose_net = mlp(1 + self.n_cond, out_bias=0.0)
 
     def _anchors(self, ctx: GeometryContext) -> GeometryPriors:
         """This call's dataset anchors: the bound ones for a joint run, the
@@ -628,6 +656,24 @@ class GeometricInterface(nn.Module):
         ctx = ctx or GeometryContext()
         return self.root_delta * torch.tanh(self.root_net(_with_context(t, ctx.c)))
 
+    def nose_bluntness(
+        self, t: torch.Tensor, ctx: GeometryContext | None = None
+    ) -> torch.Tensor:
+        """The nose cap's Hugelschaffer bluntness ``w_nose(t)``, dimensionless
+        (as a fraction of the cap radius), in ``(-nose_delta, nose_delta)`` --
+        ``root_bluntness``'s mirror, with its own net.
+
+        Positive blunts the head: the width near the apex inflates, its
+        maximum moves INTERIOR to the seam, and the rendered quarter-window
+        bluntness can exceed 1 -- the measured overhang regime of frames 9-11.
+        Exactly zero when the feature is off, so every consumer can read it
+        unconditionally.
+        """
+        if not self.nose_shape:
+            return torch.zeros_like(t)
+        ctx = ctx or GeometryContext()
+        return self.nose_delta * torch.tanh(self.nose_net(_with_context(t, ctx.c)))
+
     def _widthlogit(
         self, u: torch.Tensor, t: torch.Tensor, ctx: GeometryContext
     ) -> torch.Tensor:
@@ -748,13 +794,19 @@ class GeometricInterface(nn.Module):
         # radius -- always, unless `allow_pinch` -- it is the identity.
         inflated = torch.copysign(torch.sqrt(radius**2 + ABS_SMOOTH**2), radius)
         phi = inflated - torch.sqrt(d_sq + ABS_SMOOTH**2)
-        if not self.nucleation_root:
-            return phi
-        query = RootCapQuery(x_c=x[:, 0:1] - f.ax, radius=radius, t=t)
-        return torch.where(query.x_c < 0, self._root_cap_phi(query, dy, ctx), phi)
+        # The two cap regions are disjoint (ax < bx), so each replacement is
+        # independent and the composition `nucleation_root x nose_shape` is
+        # exactly both applied.
+        if self.nucleation_root:
+            query = CapQuery(x_c=x[:, 0:1] - f.ax, radius=radius, t=t)
+            phi = torch.where(query.x_c < 0, self._root_cap_phi(query, dy, ctx), phi)
+        if self.nose_shape:
+            query = CapQuery(x_c=x[:, 0:1] - f.bx, radius=radius, t=t)
+            phi = torch.where(query.x_c > 0, self._nose_cap_phi(query, dy, ctx), phi)
+        return phi
 
     def _root_cap_phi(
-        self, query: RootCapQuery, dy: torch.Tensor, ctx: GeometryContext
+        self, query: CapQuery, dy: torch.Tensor, ctx: GeometryContext
     ) -> torch.Tensor:
         """The field inside the root-cap region under ``nucleation_root``: the
         radial comparison becomes the Hugelschaffer half-width one.
@@ -776,19 +828,50 @@ class GeometricInterface(nn.Module):
         inflated = torch.copysign(torch.sqrt(width_sq + ABS_SMOOTH**2), query.radius)
         return inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
 
-    def _root_width_sq(self, query: RootCapQuery, ctx: GeometryContext | None) -> torch.Tensor:
-        """The Hugelschaffer root cap's SQUARED half-width at the query's
-        signed offset from the cap centre (clamped onto the cap's own span).
+    def _nose_cap_phi(
+        self, query: CapQuery, dy: torch.Tensor, ctx: GeometryContext
+    ) -> torch.Tensor:
+        """The field inside the nose-cap region under ``nose_shape`` --
+        ``_root_cap_phi`` mirrored: the same matched-floor width comparison,
+        with the overshoot now PAST the nose apex (x > bx + r), so the exact
+        apex (W = 0, dy = 0, excess = 0 -> phi = 0) and the exact seam at
+        x = bx (W = r, matching the circular comparison there) both survive
+        for every w_nose."""
+        width_sq = self._nose_width_sq(query, ctx)
+        excess = (query.x_c - query.r_abs).clamp(min=0.0)
+        inflated = torch.copysign(torch.sqrt(width_sq + ABS_SMOOTH**2), query.radius)
+        return inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
+
+    @staticmethod
+    def _hugelschaffer_width_sq(
+        xi: torch.Tensor, r_abs: torch.Tensor, w: torch.Tensor
+    ) -> torch.Tensor:
+        """The Hugelschaffer half-oval's SQUARED half-width at normalised
+        in-cap offset ``xi`` (0 at the seam, -1 at the apex) -- ONE formula for
+        both caps; each wrapper below maps its own signed offset onto ``xi``
+        and reads its own bluntness net, so the family is never re-derived.
 
         Squared, deliberately: consumers put the floor inside their one sqrt.
         An intermediate ``sqrt(width_sq)`` reaches exactly zero at the apex
         column, where its gradient is infinite and ``0 * inf`` fed NaN into
         the bluntness net on the first training step -- the matched-floor
-        lesson, relearned.
+        lesson, relearned at the root and shared here so the nose cannot
+        relearn it again.
         """
-        w = self.root_bluntness(query.t, ctx)
+        return r_abs**2 * (1.0 - xi**2) * (1.0 + w**2) / (1.0 + 2.0 * w * xi + w**2)
+
+    def _root_width_sq(self, query: CapQuery, ctx: GeometryContext | None) -> torch.Tensor:
+        """The root cap's squared half-width at the query's signed offset from
+        the cap centre (clamped onto the cap's own span)."""
         xi = (query.x_c / query.r_abs).clamp(min=-1.0, max=0.0)
-        return query.r_abs**2 * (1.0 - xi**2) * (1.0 + w**2) / (1.0 + 2.0 * w * xi + w**2)
+        return self._hugelschaffer_width_sq(xi, query.r_abs, self.root_bluntness(query.t, ctx))
+
+    def _nose_width_sq(self, query: CapQuery, ctx: GeometryContext | None) -> torch.Tensor:
+        """The nose cap's squared half-width: the same family MIRRORED -- the
+        nose's positive in-cap offset maps onto the shared ``xi`` axis by a
+        sign, which is the entire root/nose difference in the field."""
+        xi = (-query.x_c / query.r_abs).clamp(min=-1.0, max=0.0)
+        return self._hugelschaffer_width_sq(xi, query.r_abs, self.nose_bluntness(query.t, ctx))
 
     def root_half_width(
         self, x: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
@@ -803,10 +886,29 @@ class GeometricInterface(nn.Module):
         """
         ctx = ctx or GeometryContext()
         f = self.frame(t, ctx)
-        query = RootCapQuery(x_c=x - f.ax, radius=f.r_root, t=t)
+        query = CapQuery(x_c=x - f.ax, radius=f.r_root, t=t)
         cap = torch.sqrt(self._root_width_sq(query, ctx) + ABS_SMOOTH**2)
         u = (query.x_c / (f.bx - f.ax)).clamp(0.0, 1.0)
         return torch.where(query.x_c < 0, cap, self.half_width(u, t, ctx))
+
+    def nose_half_width(
+        self, x: torch.Tensor, t: torch.Tensor, ctx: GeometryContext | None = None
+    ) -> torch.Tensor:
+        """The bubble's half-width at ABSOLUTE axial position ``x`` near the
+        nose -- ``root_half_width``'s mirror: the Hugelschaffer nose cap inside
+        the cap's span, the body profile behind it. What the rendered mask
+        carries at that column, so the measured nose bluntness targets (ratios
+        legitimately ABOVE 1) compare against exactly this.
+
+        Differentiable in the bluntness; works with the feature off too
+        (w_nose = 0 reads the circular cap).
+        """
+        ctx = ctx or GeometryContext()
+        f = self.frame(t, ctx)
+        query = CapQuery(x_c=x - f.bx, radius=f.r_nose, t=t)
+        cap = torch.sqrt(self._nose_width_sq(query, ctx) + ABS_SMOOTH**2)
+        u = ((x - f.ax) / (f.bx - f.ax)).clamp(0.0, 1.0)
+        return torch.where(query.x_c > 0, cap, self.half_width(u, t, ctx))
 
     def front(
         self, t: torch.Tensor, n_body: int, n_cap: int, ctx: GeometryContext | None = None
@@ -996,13 +1098,23 @@ class GeometricInterface(nn.Module):
                     torch.zeros_like(radius),
                 ),
             )
-            if not self.nucleation_root:
+            if not self.nucleation_root and not self.nose_shape:
                 return circle
-            # The NOSE cap keeps the circle's closed forms (freedom is spent
-            # only where a signal demands it); the root cap becomes the
-            # parametric Hugelschaffer half-oval.
-            hugel = self._root_cap_hugelschaffer(query, frame, ctx)
-            return tuple(torch.where(at_root, h, c) for h, c in zip(hugel, circle, strict=True))
+            # Each freed cap becomes the parametric Hugelschaffer half-oval;
+            # the other keeps the circle's closed forms (freedom is spent only
+            # where its flag -- and its supervision signal -- is).
+            frames = circle
+            if self.nucleation_root:
+                hugel = self._root_cap_hugelschaffer(query, frame, ctx)
+                frames = tuple(
+                    torch.where(at_root, h, c) for h, c in zip(hugel, frames, strict=True)
+                )
+            if self.nose_shape:
+                hugel = self._nose_cap_hugelschaffer(query, frame, ctx)
+                frames = tuple(
+                    torch.where(at_root, c, h) for h, c in zip(hugel, frames, strict=True)
+                )
+            return frames
         # A polar curve r(psi) about the cap centre. Both reduce to the circle's
         # closed forms when r' = r'' = 0 -- the normal to the radial direction and
         # kappa to 1/r -- which is why freeing the cap changes nothing until the
@@ -1041,19 +1153,50 @@ class GeometricInterface(nn.Module):
     def _root_cap_hugelschaffer(
         self, query: FrontQuery, frame: CapsuleFrame, ctx: GeometryContext
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """The root cap as the Hugelschaffer half-oval, parametrically::
+        """The root cap as the Hugelschaffer half-oval: the shared parametric
+        form about ``ax``, opening toward -x, read off ``root_bluntness``."""
+        w = self.root_bluntness(query.t, ctx)
+        return self._hugelschaffer_cap_frame(
+            query, frame.ax, frame.r_root, w, sign=-1.0, ctx=ctx
+        )
 
-            x(psi) = ax - r cos(psi)
-            y(psi) = c  + r sin(psi) q(psi),
+    def _nose_cap_hugelschaffer(
+        self, query: FrontQuery, frame: CapsuleFrame, ctx: GeometryContext
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """The nose cap as the Hugelschaffer half-oval: the same form MIRRORED
+        about ``bx``, opening toward +x, read off ``nose_bluntness`` -- the
+        root/nose difference is a sign and a centre, nothing else."""
+        w = self.nose_bluntness(query.t, ctx)
+        return self._hugelschaffer_cap_frame(
+            query, frame.bx, frame.r_nose, w, sign=1.0, ctx=ctx
+        )
+
+    def _hugelschaffer_cap_frame(
+        self,
+        query: FrontQuery,
+        centre_x: torch.Tensor,
+        r: torch.Tensor,
+        w: torch.Tensor,
+        sign: float,
+        ctx: GeometryContext,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """An end cap as the Hugelschaffer half-oval, parametrically::
+
+            x(psi) = centre_x + sign r cos(psi)
+            y(psi) = c + r sin(psi) q(psi),
             q(psi) = sqrt((1 + w^2) / (1 - 2 w cos(psi) + w^2))
 
-        with ``w = root_bluntness(t)`` dimensionless on the cap radius. The
-        structural guarantees are properties of this form, not of training:
+        with ``w`` the cap's own bluntness, dimensionless on the cap radius,
+        and ``sign`` -1 for the root cap (opening toward -x) or +1 for the
+        nose (toward +x). ONE implementation for both ends, so the structural
+        guarantees are proved once -- they are properties of this form, not of
+        training:
 
         - **Exact apex for every w** (``psi = 0``: q cancels against sin = 0,
-          the point is ``(ax - r, c)`` -- the pinned root).
+          the point is ``(centre_x + sign r, c)`` -- the pinned root, or the
+          exactly-monotone nose s(t)).
         - **Exact seams for every w** (``psi = +/-pi/2``: q = 1 exactly, the
-          point is ``(ax, c +/- r)`` -- the body's own width at u = 0).
+          point is ``(centre_x, c +/- r)`` -- the body's own width at its end).
         - **The circle at w = 0** (q = 1 identically).
         - **C-infinity in psi** for |w| < 1: the denominator is
           ``(1 - w cos)^2 + w^2 sin^2 > 0``.
@@ -1061,16 +1204,18 @@ class GeometricInterface(nn.Module):
         Derivatives are taken by autograd on the angle leaf (the cap-freedom
         device), and normal/curvature use the parametric formulas, which reduce
         to the circle's radial normal and ``1/r`` at w = 0. Sign conventions
-        follow the circle branch: outward normal (out of the vapour, apex reads
-        ``(-1, 0)``), curvature positive where the vapour is convex, zero for a
-        vanished cap (``allow_pinch``) rather than a floored 1/ABS_SMOOTH.
+        follow the circle branch: outward normal (out of the vapour, the root
+        apex reads ``(-1, 0)`` and the nose apex ``(+1, 0)``), curvature
+        positive where the vapour is convex, zero for a vanished cap
+        (``allow_pinch``) rather than a floored 1/ABS_SMOOTH. The ``sign``
+        factor on both flips the traversal's orientation consistently, so both
+        caps satisfy those conventions from the one formula (verified at w = 0
+        against the circle's closed forms in the tests).
         """
-        r = frame.r_root
         psi = query.angle.detach().requires_grad_(True)
         cos, sin = torch.cos(psi), torch.sin(psi)
-        w = self.root_bluntness(query.t, ctx)
         q = torch.sqrt((1.0 + w**2) / (1.0 - 2.0 * w * cos + w**2))
-        x_rel = -r * cos
+        x_rel = sign * r * cos
         y_rel = r * sin * q
 
         d_psi = _d_wrt(psi)
@@ -1079,16 +1224,16 @@ class GeometricInterface(nn.Module):
         speed = torch.sqrt(dx**2 + dy**2).clamp(min=ABS_SMOOTH)
 
         position = torch.cat(
-            [frame.ax + x_rel, self.centerline(query.u, query.t, ctx) + y_rel], dim=1
+            [centre_x + x_rel, self.centerline(query.u, query.t, ctx) + y_rel], dim=1
         )
-        # (-dy, dx)/|.|: the leftward normal of the psi-increasing traversal
-        # (lower seam -> apex -> upper seam), which points out of the vapour.
-        # The signed division mirrors the polar branch: a vanished cap's normal
-        # must not flip.
-        normal = torch.cat([-dy, dx], dim=1) / torch.copysign(speed, r)
+        # -sign (-dy, dx)/|.|: the outward-of-the-vapour normal of the
+        # psi-increasing traversal (lower seam -> apex -> upper seam) for
+        # either opening direction. The signed division mirrors the polar
+        # branch: a vanished cap's normal must not flip.
+        normal = -sign * torch.cat([-dy, dx], dim=1) / torch.copysign(speed, r)
         kappa = torch.where(
             r > ABS_SMOOTH,
-            (dy * d2x - dx * d2y) / speed**3,
+            -sign * (dy * d2x - dx * d2y) / speed**3,
             torch.zeros_like(r),
         )
         return position, normal, kappa

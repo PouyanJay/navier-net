@@ -277,6 +277,33 @@ class ModelConfig:
     # zero at the apex and the curvature diverges. 0.6 spans apex radii from
     # 0.53 r (sharpened) to 8.5 r (blunted) -- well past the measured drift.
     root_delta: float = 0.6
+    # The nose shape: replace the NOSE cap's enforced circle with the same
+    # Hugelschaffer half-oval that freed the root, mirrored, carrying its OWN
+    # trained, time-varying, bounded bluntness w_nose(t). The measured head is
+    # non-circular and only late (nose-window bluntness 0.61 -> 1.83 through
+    # the event, CROSSING 1 -- an overhanging, mushroomed head no circle can
+    # draw), the model's nose error appears exactly there (RMS 0.02 -> 0.19),
+    # and the trained pressure already demands a non-circular nose (curvature
+    # gap 0.94 at the nose cap vs 0.23 on the body) -- a physics drive the
+    # root never had. The family already expresses the overhang: for w > 0
+    # the width's maximum sits interior to the seam. w = 0 IS the circle, the
+    # apex crossing is exact for every w (the monotone nose survives
+    # structurally, so fv_apex composes unchanged), and the seams keep
+    # meeting the body. Requires `front_geometry`; COMPOSABLE with
+    # `nucleation_root` (different caps); mutually exclusive with
+    # `cap_freedom` (the same cap). Off by default -> byte-identical.
+    # BENCHED NEGATIVE (T6, 12 runs, 2026-08): the mechanism is alive (71-100%
+    # budget in every arm) but the depth-averaged jump demands MORE curvature
+    # at the nose (gap +0.94) and drives the freed cap to SHARPEN (w -> -delta)
+    # -- the physics-only arm proves it without any supervision -- while the
+    # measured head wants the opposite (the overhang). The fight degrades the
+    # front in every arm tried (full / halved / sdf-only supervision), so the
+    # flag stays off until the nose's jump physics is corrected; freeing the
+    # shape again before that re-runs the same collision.
+    nose_shape: bool = False
+    # Bound on the Hugelschaffer nose bluntness |w_nose| as a fraction of the
+    # nose cap radius; the same rationale (and value) as root_delta.
+    nose_delta: float = 0.6
     # The attachment pressure (nucleation-root R2): over the dry contact patch
     # on the heated plate the gap-direction capillary term is NOT the
     # both-plates-wetted 2/H* -- contact-angle cosines ADD across the gap
@@ -521,6 +548,24 @@ class TrainingConfig:
     # front call -- denser than the physics' front_cap_samples, because these
     # samples are the only place the root signal enters.
     root_cap_samples: int = 48
+
+    # Nose-window supervision: drive the Hugelschaffer nose bluntness
+    # w_nose(t) with the mask's signed-distance transform sampled AT the
+    # predicted nose-cap contour, plus the per-frame scalar bluntness target
+    # (which legitimately EXCEEDS 1 late -- the measured overhang). The exact
+    # mirror of root_supervision, for the exact reason: this nose is where
+    # cap_freedom starved twice on pixel losses (the undriven-knob trap), and
+    # the root's distance+ratio channel measurably fixed the same failure.
+    # Requires `model.nose_shape` (nothing else reads the signal). Off by
+    # default -> the objective is unchanged.
+    nose_supervision: bool = False
+    # The root's proven weights, carried over: these sit outside the
+    # rebalancer, so nothing corrects a weight too small to act; the bench's
+    # mechanism gate (w_nose budget use) is what validates them.
+    nose_sdf_weight: float = 10.0
+    nose_bluntness_weight: float = 25.0
+    # The nose sampling budget, mirroring root_cap_samples.
+    nose_cap_samples: int = 48
 
     seed: int = 0
     device: str = "cpu"

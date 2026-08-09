@@ -388,6 +388,20 @@ class RunLaunchRequest(BaseModel):
     # Opt-in until benched. Requires front_geometry; mutually exclusive with
     # cap_freedom (two shape systems on one cap); single-dataset only for now.
     nucleation_root: bool = False
+    # The nose shape: the NOSE cap stops asserting a circle and carries the
+    # same mirrored Hugelschaffer family with its OWN bluntness w_nose(t) --
+    # the measured head overhangs late (nose-window bluntness 0.61 -> 1.83,
+    # crossing 1), a shape no circle can draw, and the trained pressure
+    # already demands it (curvature gap 0.94 at the nose vs 0.23 on the
+    # body). Launching it from the platform ALWAYS brings its supervision
+    # channel (training.nose_supervision): this exact nose is where
+    # cap_freedom starved undriven, twice. BENCHED NEGATIVE (T6): the jump
+    # drives the freed cap to sharpen against the measured overhang and the
+    # front degrades in every arm -- stays opt-in-and-off until the nose's
+    # jump physics is corrected. Requires front_geometry; composable with
+    # nucleation_root (different caps); mutually exclusive with cap_freedom
+    # (the same cap); single-dataset only.
+    nose_shape: bool = False
     # The attachment pressure (R2): over the dry contact patch the gap term of
     # the Young-Laplace jump drops to (1 + cos theta_app)/H* -- lower demanded
     # curvature, a blunter root, the measured sign through the physics.
@@ -486,6 +500,7 @@ class RunLaunchRequest(BaseModel):
             "front_velocity",
             "cap_freedom",
             "nucleation_root",
+            "nose_shape",
         ):
             if getattr(self, flag) and not self.front_geometry:
                 raise ValueError(
@@ -516,10 +531,11 @@ class RunLaunchRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _check_root_ladder(self) -> RunLaunchRequest:
-        # The nucleation-root dependency tree, mirrored from the trainer's own
-        # guards (its own validator, so the monolithic combo check stops
-        # growing -- the pinn.py _validate_* decomposition, at the API boundary).
+    def _check_cap_ladder(self) -> RunLaunchRequest:
+        # The per-cap shape DOFs' dependency tree -- the nucleation-root ladder
+        # and the nose beside it -- mirrored from the trainer's own guards (its
+        # own validator, so the monolithic combo check stops growing -- the
+        # pinn.py _validate_* decomposition, at the API boundary).
         if self.nucleation_root and self.cap_freedom:
             raise ValueError(
                 "nucleation_root and cap_freedom are two shape systems on the same "
@@ -528,6 +544,16 @@ class RunLaunchRequest(BaseModel):
         if self.nucleation_root and len(self.resolved_datasets()) > 1:
             raise ValueError(
                 "nucleation_root is single-dataset for now: its supervision channel "
+                "is not yet threaded through joint runs -- launch it on one series"
+            )
+        if self.nose_shape and self.cap_freedom:
+            raise ValueError(
+                "nose_shape and cap_freedom are two shape systems on the same "
+                "cap: no bench could attribute a result to either -- enable one"
+            )
+        if self.nose_shape and len(self.resolved_datasets()) > 1:
+            raise ValueError(
+                "nose_shape is single-dataset for now: its supervision channel "
                 "is not yet threaded through joint runs -- launch it on one series"
             )
         if self.root_attachment and not self.nucleation_root:

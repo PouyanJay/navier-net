@@ -30,7 +30,15 @@ from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.geometry import GeometryPriors
 from naviernet.models.pinn import BoundPINN, BubblePINN
-from naviernet.physics import front_velocity, kinematics, registry, root_supervision, weighting
+from naviernet.physics import (
+    cap_supervision,
+    front_velocity,
+    kinematics,
+    nose_supervision,
+    registry,
+    root_supervision,
+    weighting,
+)
 from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
 from naviernet.physics.shape_solve import bind_solved_shape
 from naviernet.utils.logging import get_logger
@@ -143,6 +151,7 @@ def _architecture_record(cfg) -> dict:
     hard_pin = bool(getattr(cfg.model, "hard_pin", False))
     cap_freedom = bool(getattr(cfg.model, "cap_freedom", False))
     nucleation_root = bool(getattr(cfg.model, "nucleation_root", False))
+    nose_shape = bool(getattr(cfg.model, "nose_shape", False))
     return {
         "hard_pin": hard_pin,
         "pin_d_ref": float(cfg.model.pin_d_ref) if hard_pin else None,
@@ -152,6 +161,8 @@ def _architecture_record(cfg) -> dict:
         "cap_delta": float(cfg.model.cap_delta) if cap_freedom else None,
         "nucleation_root": nucleation_root,
         "root_delta": float(cfg.model.root_delta) if nucleation_root else None,
+        "nose_shape": nose_shape,
+        "nose_delta": float(cfg.model.nose_delta) if nose_shape else None,
         "root_attachment": bool(getattr(cfg.model, "root_attachment", False)),
         "front_geometry": bool(getattr(cfg.model, "front_geometry", False)),
         "sharp_interface": bool(getattr(cfg.model, "sharp_interface", False)),
@@ -277,6 +288,13 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         path,
         "The attachment adds theta_app and the patch unknowns and changes the jump.",
     )
+    _require_matching_flag(
+        cfg,
+        ckpt,
+        "nose_shape",
+        path,
+        "The Hugelschaffer nose adds the w_nose(t) net and reshapes the nose cap.",
+    )
 
     _require_matching_value(
         cfg,
@@ -286,6 +304,15 @@ def _check_architecture_compat(cfg, ckpt: dict, path) -> None:
         path,
         "The bound scales the bluntness net's output, so the same weights describe "
         "a different root.",
+    )
+    _require_matching_value(
+        cfg,
+        ckpt,
+        "nose_shape",
+        "nose_delta",
+        path,
+        "The bound scales the nose bluntness net's output, so the same weights "
+        "describe a different head.",
     )
 
     _require_matching_value(
@@ -319,6 +346,7 @@ def _validate_training_config(cfg) -> None:
     _validate_kinematics(tcfg, cfg.model.fields)
     _validate_front_velocity(tcfg, cfg.model)
     _validate_root_supervision(tcfg, cfg.model)
+    _validate_nose_supervision(tcfg, cfg.model)
     _validate_sharpening(tcfg, cfg.model.alpha_eps)
 
 
@@ -346,6 +374,34 @@ def _validate_root_supervision(tcfg, model_cfg) -> None:
     if tcfg.root_cap_samples < 2:
         raise ValueError(
             f"training.root_cap_samples={tcfg.root_cap_samples} must be >= 2 "
+            f"(a cap is an arc, not a point)."
+        )
+
+
+def _validate_nose_supervision(tcfg, model_cfg) -> None:
+    """Reject a nose-supervision config that cannot drive anything, loudly and
+    before any measurement is taken -- ``_validate_root_supervision``'s mirror."""
+    if not getattr(tcfg, "nose_supervision", False):
+        return
+    if not bool(getattr(model_cfg, "nose_shape", False)):
+        raise ValueError(
+            "training.nose_supervision drives the Hugelschaffer nose bluntness "
+            "w_nose(t), which only exists under model.nose_shape=true. Enable it, "
+            "or turn training.nose_supervision off."
+        )
+    for key in ("nose_sdf_weight", "nose_bluntness_weight"):
+        if getattr(tcfg, key) < 0:
+            raise ValueError(f"training.{key}={getattr(tcfg, key)} must be >= 0")
+    if tcfg.nose_sdf_weight == 0 and tcfg.nose_bluntness_weight == 0:
+        raise ValueError(
+            "training.nose_supervision=true with both training.nose_sdf_weight and "
+            "training.nose_bluntness_weight at 0 supervises nothing -- an undriven "
+            "knob wearing a supervision flag. Give one of them a weight, or turn "
+            "training.nose_supervision off."
+        )
+    if tcfg.nose_cap_samples < 2:
+        raise ValueError(
+            f"training.nose_cap_samples={tcfg.nose_cap_samples} must be >= 2 "
             f"(a cap is an arc, not a point)."
         )
 
@@ -533,6 +589,24 @@ def _root_plan(cfg, data: BubbleDataset, device) -> root_supervision.RootPlan | 
         float(plan.bluntness[0]),
         float(plan.bluntness[-1]),
         int(cfg.training.root_cap_samples),
+    )
+    return plan
+
+
+def _nose_plan(cfg, data: BubbleDataset, device) -> cap_supervision.WindowPlan | None:
+    """The run's measured nose targets when the supervision is on, else ``None``.
+    Measured once (deterministic, no RNG), the root/front-velocity pattern."""
+    if not getattr(cfg.training, "nose_supervision", False):
+        return None
+    plan = nose_supervision.build_plan(data, cfg, device)
+    log.info(
+        "nose supervision on: %d frames %s, bluntness targets %.3f -> %.3f "
+        "(above 1 = the overhang), %d cap samples",
+        len(plan.rows),
+        [data.frame_numbers[r] for r in plan.rows],
+        float(plan.bluntness[0]),
+        float(plan.bluntness[-1]),
+        int(cfg.training.nose_cap_samples),
     )
     return plan
 
@@ -1077,6 +1151,7 @@ def train(
     kin_plan = _kinematic_plan(cfg, data, device)
     fv_plan = _front_velocity_plan(cfg, data, device)
     root_plan = _root_plan(cfg, data, device)
+    nose_plan = _nose_plan(cfg, data, device)
     front_times = _front_times(cfg, data, device)
 
     equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg), _film(cfg))
@@ -1232,9 +1307,16 @@ def train(
         if root_plan is not None:
             # Outside the causal gate, RBA and the rebalancer, same reason.
             root_total, root_record = root_supervision.root_losses(
-                root_supervision.RootContext(model, tcfg), root_plan
+                cap_supervision.SupervisionContext(model, tcfg), root_plan
             )
             total = total + root_total
+        nose_record: dict[str, float] = {}
+        if nose_plan is not None:
+            # Outside the causal gate, RBA and the rebalancer, same reason.
+            nose_total, nose_record = nose_supervision.nose_losses(
+                cap_supervision.SupervisionContext(model, tcfg), nose_plan
+            )
+            total = total + nose_total
         total.backward()
         opt.step()
 
@@ -1243,6 +1325,7 @@ def train(
             record.update(kin_record)
             record.update(fv_record)
             record.update(root_record)
+            record.update(nose_record)
             record["step"] = step
             record["lr"] = lr
             state["hist"].append(record)
@@ -1473,6 +1556,14 @@ def _train_joint(
         # avoid. Raise rather than silently train it blind.
         raise NotImplementedError(
             "model.nucleation_root is not yet supported for joint (multi-dataset) "
+            "runs: its supervision channel is single-dataset. Run it on one "
+            "dataset, or turn it off for the joint run."
+        )
+    if bool(getattr(cfg.model, "nose_shape", False)):
+        # The same reason as the root: an unsupervised joint w_nose(t) would be
+        # exactly the undriven knob this feature exists to avoid.
+        raise NotImplementedError(
+            "model.nose_shape is not yet supported for joint (multi-dataset) "
             "runs: its supervision channel is single-dataset. Run it on one "
             "dataset, or turn it off for the joint run."
         )

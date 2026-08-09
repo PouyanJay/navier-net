@@ -145,6 +145,8 @@ class BubblePINN(nn.Module):
                     shape_delta=self.shape_delta,
                     nucleation_root=self.nucleation_root,
                     root_delta=self.root_delta,
+                    nose_shape=self.nose_shape,
+                    nose_delta=self.nose_delta,
                 )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
@@ -481,11 +483,19 @@ class BubblePINN(nn.Module):
         self.shape_delta = float(getattr(cfg.model, "shape_delta", 0.3))
         self.nucleation_root = bool(getattr(cfg.model, "nucleation_root", False))
         self.root_delta = float(getattr(cfg.model, "root_delta", 0.6))
+        self.nose_shape = bool(getattr(cfg.model, "nose_shape", False))
+        self.nose_delta = float(getattr(cfg.model, "nose_delta", 0.6))
         if self.nucleation_root and not self.front_geometry:
             raise ValueError(
                 "model.nucleation_root reshapes the front geometry's ROOT CAP, so "
                 "it requires model.front_geometry=true; a free level set has no "
                 "root cap to reshape."
+            )
+        if self.nose_shape and not self.front_geometry:
+            raise ValueError(
+                "model.nose_shape reshapes the front geometry's NOSE CAP, so it "
+                "requires model.front_geometry=true; a free level set has no nose "
+                "cap to reshape."
             )
         if self.evolving_width and not self.front_geometry:
             raise ValueError(

@@ -73,7 +73,7 @@ class Raster(NamedTuple):
 
         The numpy sibling of the two torch bilinear samplers
         (:func:`naviernet.physics.front_velocity.sample_measured`, detached;
-        :func:`naviernet.physics.root_supervision._sample_sdf`,
+        :func:`naviernet.physics.cap_supervision.sample_sdf`,
         differentiable) -- three backends because their consumers need
         different gradient semantics, kept cross-referenced so a fourth copy
         does not appear.
@@ -194,6 +194,22 @@ def _bluntness(distance: np.ndarray, half_width: np.ndarray, depth: float) -> fl
     return shallow / deep
 
 
+def vapour_columns(
+    data, row: int, alpha_level: float, end: str = "root"
+) -> tuple[np.ndarray, np.ndarray]:
+    """One dataset row's vapour mask and its occupied columns -- shared by the
+    root and nose dataset wrappers, so the two ends cannot disagree on what
+    the mask is. ``end`` only names the caller in the error."""
+    mask = (data.alpha[row] > alpha_level) & (data.valid[row] > 0)
+    columns = np.nonzero(mask.any(axis=0))[0]
+    if columns.size == 0:
+        raise ValueError(
+            f"dataset row {row} has no vapour (alpha > {alpha_level}) to fit a "
+            f"{end} window on -- check the dataset's masks."
+        )
+    return mask, columns
+
+
 def measured_root_fit(
     data,
     row: int,
@@ -206,13 +222,7 @@ def measured_root_fit(
     same orientation rule ``pin_anchor`` itself uses, so a flipped series
     measures its actual root.
     """
-    mask = (data.alpha[row] > alpha_level) & (data.valid[row] > 0)
-    columns = np.nonzero(mask.any(axis=0))[0]
-    if columns.size == 0:
-        raise ValueError(
-            f"dataset row {row} has no vapour (alpha > {alpha_level}) to fit a "
-            f"root window on -- check the dataset's masks."
-        )
+    mask, columns = vapour_columns(data, row, alpha_level)
     x_pin, y_root = data.pin_anchor
     root_at_left = abs(float(data.x[columns[0]]) - x_pin) <= abs(
         float(data.x[columns[-1]]) - x_pin
@@ -239,7 +249,7 @@ def model_root_window_rms(model, data, row: int) -> float:
     the mask's own circle residual and can go no lower.
     """
     geometry = model.nets["phi"]
-    t = _frame_time(geometry, data, row)
+    t = frame_time(geometry, data, row)
     # NOT under no_grad: the front's own curvature and speed are autograd
     # derivatives, so the graph must exist even though only detached positions
     # are read here.
@@ -254,7 +264,7 @@ def model_root_window_rms(model, data, row: int) -> float:
     return float(np.sqrt(np.mean(distances**2)) / radius)
 
 
-def _frame_time(geometry, data, row: int) -> torch.Tensor:
+def frame_time(geometry, data, row: int) -> torch.Tensor:
     """One frame's time as a ``(1, 1)`` tensor ON THE MODEL'S DEVICE -- every
     geometry call here runs a real forward pass, and a CPU-defaulted tensor
     would crash the first GPU diagnostic (invisible to the CPU-only suite)."""
@@ -304,7 +314,7 @@ def _root_frame_entry(model, data, row: int, frame: int) -> dict:
         "tilt": fit.tilt,
         "model_root_rms": model_root_window_rms(model, data, row),
     }
-    t = _frame_time(geometry, data, row)
+    t = frame_time(geometry, data, row)
     with torch.no_grad():
         if getattr(geometry, "nucleation_root", False):
             entry["w"] = float(geometry.root_bluntness(t))
