@@ -34,6 +34,30 @@ class Fluid(BaseModel):
     h_lv: float  # J/kg
 
 
+class RunManifest(BaseModel):
+    """A run's identity record, written into `outputs/<run_id>/run.json` when the
+    run is launched -- before it trains, so a run that dies early still knows
+    what it was.
+
+    Everything here is a STORED fact, not one inferred later: which project owns
+    the run, which series it spans, and when it started. Membership used to be
+    joined through the dataset name at read time, which made it retroactive (a
+    series re-attached to a second project moved its runs' history with it) and
+    lossy (a run whose dataset could not be identified belonged nowhere).
+    """
+
+    # Bumped when a field's meaning changes; a reader that does not recognise the
+    # version ignores the file rather than misreading it.
+    schema_version: int = 1
+    run_id: str
+    # None when the run was launched outside a project (the CLI, or a series no
+    # project references yet). Such runs fall back to the dataset join.
+    project_id: str | None = None
+    datasets: list[str] = Field(default_factory=list)
+    heldout_datasets: list[str] = Field(default_factory=list)
+    created_at: str  # ISO-8601 UTC, when the run was launched
+
+
 class RunSummary(BaseModel):
     """One row in the runs list."""
 
@@ -41,6 +65,9 @@ class RunSummary(BaseModel):
     # Editable display name; None = show the id. The id stays the immutable key.
     label: str | None = None
     dataset: str | None = None
+    # The project the run recorded at launch, or None for a run that predates the
+    # manifest (those are still scoped by their datasets; see services/runs.py).
+    project_id: str | None = None
     status: str  # "running" | "trained" | "failed" | "empty"
     steps: int | None = None  # completed training steps, if known
     iou_holdout: float | None = None  # single-dataset holdout-frame IoU, if evaluated
@@ -91,6 +118,7 @@ class RunDetail(BaseModel):
     id: str
     label: str | None = None  # editable display name; None = show the id
     dataset: str | None = None
+    project_id: str | None = None  # recorded at launch; None on pre-manifest runs
     status: str
     steps: int | None = None
     metrics: dict | None = None  # verbatim metrics.json
@@ -317,6 +345,12 @@ class RunLaunchRequest(BaseModel):
     # Joint (transfer-learning) training: train ONE model across these datasets.
     # Empty/absent means the single `dataset`. Use `resolved_datasets()` to read.
     datasets: list[str] | None = None
+    # The project this run belongs to, recorded in the run's manifest so
+    # membership is a stored fact rather than a dataset join made at read time.
+    # Omitted means "infer it from the datasets" (unique match wins); an unknown
+    # id is a 404, never a silently unowned run. Ignored on resume: the run keeps
+    # the manifest it was launched with.
+    project: str | None = None
     resume: bool = False
     run_id: str | None = None  # required when resuming
     steps: int = Field(default=1500, ge=1, le=20_000)

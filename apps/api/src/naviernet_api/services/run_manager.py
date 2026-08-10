@@ -27,6 +27,7 @@ from naviernet.config.schema import validate_split
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import RunJobStatus, RunLaunchRequest
 from naviernet_api.services import datasets as datasets_service
+from naviernet_api.services import run_manifest
 from naviernet_api.services import runs as runs_service
 from naviernet_api.settings import Settings
 
@@ -211,6 +212,9 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
         request.datasets = datasets
         request.dataset = datasets[0]
         dataset = datasets[0]
+        # Resolved here so the worker only ever records a decided owner, and an
+        # unknown project comes back as a 404 instead of an unowned run.
+        request.project = resolved_project(settings, request)
         # Rejected here, not in the worker: an unsupported request should come
         # back as a 422 the caller can act on, not as a run that starts and then
         # dies. (The resolution itself happens again at compose time, where the
@@ -251,6 +255,20 @@ def checked_overrides(request: RunLaunchRequest) -> list[str]:
         return validate_overrides(request.overrides)
     except OverrideRejected as exc:
         raise LaunchRejected(422, str(exc)) from exc
+
+
+def resolved_project(settings: Settings, request: RunLaunchRequest) -> str | None:
+    """The project id to record for a new run: the requested one (checked), else
+    the one its datasets imply. Shared with the sweep launcher, whose children
+    skip `launch()` and would otherwise record no owner at all.
+    """
+    from naviernet_api.services import projects as projects_service
+
+    if request.project is not None:
+        if projects_service.get_project(settings, request.project) is None:
+            raise LaunchRejected(404, f"unknown project {request.project!r}")
+        return request.project
+    return run_manifest.project_for_datasets(settings, request.resolved_datasets())
 
 
 def _slot_busy() -> bool:
@@ -408,6 +426,15 @@ def _worker(settings: Settings, run_id: str, request: RunLaunchRequest) -> None:
         pipeline = Pipeline(cfg)
         if not request.resume:
             _write_snapshot(cfg, pipeline.paths.output_dir)
+            # Before the first step, so a run that dies in training still records
+            # its owner. A resume keeps the manifest it was launched with.
+            run_manifest.write(
+                pipeline.paths.output_dir,
+                run_id=run_id,
+                project_id=request.project,
+                datasets=request.resolved_datasets(),
+                heldout_datasets=request.heldout_datasets or [],
+            )
         _run_stages(pipeline, run_id, request)
         _finish(settings, run_id, error=None)
         log.info("run %s finished", run_id)

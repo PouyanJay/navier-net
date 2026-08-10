@@ -44,7 +44,7 @@ def list_runs(
     scope = projects_service.get_project(settings, project)
     if scope is None:
         raise HTTPException(status_code=404, detail=f"project {project!r} not found")
-    return runs_service.list_runs(settings, datasets=set(scope.datasets))
+    return runs_service.list_runs(settings, project=scope)
 
 
 @router.post("", response_model=RunJobStatus, status_code=202)

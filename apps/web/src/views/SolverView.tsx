@@ -104,7 +104,10 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
       // A sweep varies seeds on one dataset; use the first selected series.
       if (selected.length === 0 || !seeds) return;
       void run.startSweep({
-        ...toLaunchRequest(form, { datasets: [selected[0]] }),
+        ...toLaunchRequest(form, {
+          datasets: [selected[0]],
+          project: project?.id ?? null,
+        }),
         seeds,
       });
       return;
@@ -120,9 +123,10 @@ export function SolverView({ onRunState, project }: SolverViewProps) {
       toLaunchRequest(form, {
         datasets: selected,
         heldout: heldout ? [heldout] : [],
+        project: project?.id ?? null,
       }),
     );
-  }, [run, form, targets, mode, seeds]);
+  }, [run, form, targets, mode, seeds, project]);
 
   const rebalanceSteps = useMemo(() => {
     if (run.hist.length === 0) return [];

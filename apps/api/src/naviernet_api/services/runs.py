@@ -20,7 +20,15 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
-from naviernet_api.models import MAX_LABEL_LEN, ArtifactFlags, RunDetail, RunSummary
+from naviernet_api.models import (
+    MAX_LABEL_LEN,
+    ArtifactFlags,
+    ProjectSummary,
+    RunDetail,
+    RunManifest,
+    RunSummary,
+)
+from naviernet_api.services import run_manifest
 from naviernet_api.settings import Settings
 
 if TYPE_CHECKING:
@@ -239,9 +247,17 @@ def _checkpoint_steps(checkpoint: Path) -> int | None:
     return int(done) if done is not None else None
 
 
-def _datasets_of(run_dir: Path, metrics: dict | None) -> list[str]:
+def _datasets_of(
+    run_dir: Path, metrics: dict | None, manifest: RunManifest | None = None
+) -> list[str]:
     """Every dataset a run spans: the v2 `datasets` list for a joint run, else
-    the single dataset. Names are validated like run ids (they become paths)."""
+    the manifest's list, else the single dataset. Names are validated like run
+    ids (they become paths).
+
+    The manifest sits between the two because it exists from the moment the run
+    is launched: a run that failed before the evaluate stage wrote `metrics.json`
+    still reports the series it was training on.
+    """
     if metrics and isinstance(metrics.get("datasets"), list):
         names = [str(name) for name in metrics["datasets"]]
         safe = [name for name in names if _RUN_ID_RE.match(name)]
@@ -249,6 +265,8 @@ def _datasets_of(run_dir: Path, metrics: dict | None) -> list[str]:
             log.warning("ignoring unsafe dataset name %r in %s", name, run_dir)
         if safe:
             return safe
+    if manifest is not None and manifest.datasets:
+        return list(manifest.datasets)
     dataset = _dataset_of(run_dir, metrics)
     return [dataset] if dataset is not None else []
 
@@ -264,9 +282,14 @@ def _heldout_of(run_dir: Path, metrics: dict | None) -> list[str]:
     return safe
 
 
-def _run_date(run_dir: Path) -> str | None:
-    """When the run last changed, as an ISO UTC timestamp (directory mtime —
-    runs record no explicit timestamp of their own)."""
+def _run_date(run_dir: Path, manifest: RunManifest | None) -> str | None:
+    """When the run happened, as an ISO UTC timestamp.
+
+    The manifest's launch time when there is one; otherwise the directory mtime,
+    which is all a pre-manifest run has (and which every later write moves).
+    """
+    if manifest is not None:
+        return manifest.created_at
     try:
         stamp = run_dir.stat().st_mtime
     except OSError:
@@ -285,12 +308,27 @@ def _live_state(run_id: str):
     return run_manager.status(run_id)
 
 
-def list_runs(settings: Settings, datasets: set[str] | None = None) -> list[RunSummary]:
+def _belongs_to(
+    project: ProjectSummary, manifest: RunManifest | None, spanned: list[str]
+) -> bool:
+    """Whether a run is this project's.
+
+    A run that recorded an owner at launch is that project's and no other, even
+    if the series it trained on is later attached elsewhere. A run from before
+    the manifest (or one launched without a decidable owner) falls back to the
+    dataset join, which is how the whole listing worked before manifests: it may
+    show up under every project holding one of its series.
+    """
+    if manifest is not None and manifest.project_id is not None:
+        return manifest.project_id == project.id
+    return bool(set(spanned) & set(project.datasets))
+
+
+def list_runs(settings: Settings, project: ProjectSummary | None = None) -> list[RunSummary]:
     """Every run directory under `outputs/`, newest name last (sorted).
 
-    With `datasets`, only runs spanning at least one of those datasets are
-    returned — the project-scoped listing (a run with no identifiable dataset
-    cannot belong to a project, so it is excluded from scoped listings).
+    With `project`, only that project's runs — see :func:`_belongs_to` for what
+    that means for a run that predates the manifest.
     """
     if not settings.outputs_dir.is_dir():
         return []
@@ -300,15 +338,20 @@ def list_runs(settings: Settings, datasets: set[str] | None = None) -> list[RunS
         if not run_dir.is_dir() or run_dir.name in _NON_RUN_DIRS:
             continue
         metrics = _read_json(run_dir / "metrics.json")
-        spanned = _datasets_of(run_dir, metrics)
-        if datasets is not None and not set(spanned) & datasets:
+        manifest = run_manifest.read(run_dir)
+        spanned = _datasets_of(run_dir, metrics, manifest)
+        if project is not None and not _belongs_to(project, manifest, spanned):
             continue
-        summaries.append(_summarize_run(settings, run_dir, metrics, spanned))
+        summaries.append(_summarize_run(settings, run_dir, metrics, manifest, spanned))
     return summaries
 
 
 def _summarize_run(
-    settings: Settings, run_dir: Path, metrics: dict | None, spanned: list[str]
+    settings: Settings,
+    run_dir: Path,
+    metrics: dict | None,
+    manifest: RunManifest | None,
+    spanned: list[str],
 ) -> RunSummary:
     """One run's list row: live job state wins over the on-disk view."""
     run_id = run_dir.name
@@ -327,6 +370,7 @@ def _summarize_run(
         id=run_id,
         label=read_run_label(run_dir),
         dataset=dataset,
+        project_id=manifest.project_id if manifest else None,
         status=status,
         iou_holdout=metrics.get("iou_holdout") if metrics else None,
         datasets=spanned,
@@ -339,7 +383,7 @@ def _summarize_run(
         n_frames=len(per_frame) if isinstance(per_frame, (dict, list)) else None,
         seed=_seed_of(config),
         recipe=recipe_of(config),
-        date=_run_date(run_dir),
+        date=_run_date(run_dir, manifest),
         steps_done=live.steps_done if status == "running" else None,
         steps_total=live.steps_total if status == "running" else None,
     )
@@ -446,10 +490,12 @@ def get_run(settings: Settings, run_id: str) -> RunDetail | None:
         config=config is not None,
     )
 
+    manifest = run_manifest.read(run_dir)
     return RunDetail(
         id=run_id,
         label=read_run_label(run_dir),
         dataset=dataset,
+        project_id=manifest.project_id if manifest else None,
         status="trained" if artifacts.checkpoint else "empty",
         steps=_checkpoint_steps(paths.checkpoint),
         metrics=metrics,

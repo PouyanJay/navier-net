@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from naviernet.utils.logging import get_logger
-from naviernet_api.models import ProjectSummary, ProjectUpdate
+from naviernet_api.models import ProjectSummary, ProjectUpdate, RunSummary
 from naviernet_api.services import datasets as datasets_service
 from naviernet_api.services import run_manager
 from naviernet_api.services import runs as runs_service
@@ -229,6 +229,17 @@ def _try_remove(
         log.error("could not remove %s while deleting project: %s", label, exc)
 
 
+def _claimed_by(run: RunSummary, project_id: str) -> bool:
+    """Whether this project may cascade over the run.
+
+    Its own runs, and runs from before run manifests (which recorded no owner, so
+    only their dataset can place them). Another project's run is left alone even
+    when it trained on a series this project is dropping: the run is that
+    project's artifact, and its own delete will take it.
+    """
+    return run.project_id in (None, project_id)
+
+
 def remove_series(
     settings: Settings, project_id: str, dataset_id: str
 ) -> ProjectSummary | None:
@@ -267,7 +278,7 @@ def remove_series(
         shared = _datasets_of_other_projects(settings, project_id)
         if dataset_id not in shared:
             for run in runs_service.list_runs(settings):
-                if run.dataset == dataset_id:
+                if run.dataset == dataset_id and _claimed_by(run, project_id):
                     _try_remove(
                         runs_service.delete_run, settings, run.id, label=f"run {run.id}"
                     )
@@ -282,12 +293,14 @@ def remove_series(
 
 
 def delete_project(settings: Settings, project_id: str) -> ProjectSummary | None:
-    """Delete a project and the data and outputs it exclusively owns.
+    """Delete a project, its own runs, and the data it exclusively owns.
 
-    A dataset still referenced by another project — and that dataset's runs —
-    is preserved; only series this project alone holds have their raw and
-    processed directories and their runs removed. Returns the deleted project,
-    or None if the id is unknown (mirrors `update_project`, so the route can 404).
+    A dataset still referenced by another project is preserved: only series this
+    project alone holds have their raw and processed directories removed. Runs
+    follow their recorded project rather than their series, so a run of this
+    project on a shared dataset still goes, and another project's run on a
+    dataset this one owns stays. Returns the deleted project, or None if the id
+    is unknown (mirrors `update_project`, so the route can 404).
 
     Raises `ProjectInUseError` if a training run is live on one of the owned
     datasets: deleting its tensors mid-run would corrupt the run (and the worker
@@ -316,8 +329,14 @@ def delete_project(settings: Settings, project_id: str) -> ProjectSummary | None
         # Best-effort: one stubborn file must not abort the cascade and leave the
         # project record pointing at half-deleted data. Log what could not be
         # removed, then always drop the record last.
+        # A run this project launched goes with it wherever its series ended up
+        # (a series shared with another project survives, its own runs untouched).
+        # A run from before the manifest has no owner to read, so it goes only
+        # with a series this project exclusively holds -- the pre-manifest rule.
         for run in runs_service.list_runs(settings):
-            if run.dataset in owned:
+            if run.project_id == project_id or (
+                run.project_id is None and run.dataset in owned
+            ):
                 _try_remove(runs_service.delete_run, settings, run.id, label=f"run {run.id}")
         for dataset in owned:
             _try_remove(
