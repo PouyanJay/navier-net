@@ -593,8 +593,12 @@ describe("SolverView", () => {
     // toggle switches the free caps OFF rather than offering the trainer's
     // rejected combination. The root DOF composes -- different caps.
     fireEvent.click(screen.getByRole("switch", { name: "Free the end caps" }));
-    fireEvent.click(screen.getByRole("switch", { name: "Nose shape w_nose(t)" }));
-    fireEvent.click(screen.getByRole("switch", { name: "Nucleation root w(t)" }));
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Nose shape w_nose(t)" }),
+    );
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Nucleation root w(t)" }),
+    );
     expect(
       screen.getByRole("switch", { name: "Free the end caps" }),
     ).toHaveAttribute("aria-checked", "false");
@@ -899,6 +903,27 @@ describe("SolverView", () => {
     expect(await screen.findByLabelText("ds_a")).toBeInTheDocument();
     // A processed dataset from another project must not appear here.
     expect(screen.queryByLabelText("other")).toBeNull();
+  });
+
+  it("stamps the open project onto the launch it starts", async () => {
+    const posts: unknown[] = [];
+    stubMultiDataset([{ id: "ds_a", processed: true }], posts);
+    const project = {
+      id: "a".repeat(32),
+      name: "P",
+      description: "",
+      datasets: ["ds_a"],
+      created_at: "2026-07-24T00:00:00+00:00",
+    };
+    renderStage(<SolverView project={project} />);
+    await screen.findByLabelText("ds_a");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    // The run records the project that launched it, rather than leaving the
+    // server to infer an owner from a series two projects may share.
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0] as Record<string, unknown>).project).toBe(project.id);
   });
 
   it("surfaces a rejected launch as an alert", async () => {
@@ -1602,9 +1627,7 @@ describe("SolverView advanced overrides", () => {
     await screen.findByLabelText("highest_t");
 
     // The band folds closed by default; open it to reach the field.
-    fireEvent.click(
-      screen.getByRole("button", { name: /Advanced overrides/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Advanced overrides/ }));
     fireEvent.change(screen.getByLabelText(/Overrides/), {
       target: { value: "training.kin_grid=64  training.rba_gamma=0.995" },
     });
@@ -1640,9 +1663,7 @@ describe("SolverView advanced overrides", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Advanced overrides/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Advanced overrides/ }));
     fireEvent.change(screen.getByLabelText(/Overrides/), {
       target: { value: "training.kin_grid" },
     });
@@ -1662,9 +1683,7 @@ describe("SolverView advanced overrides", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Advanced overrides/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Advanced overrides/ }));
     fireEvent.change(screen.getByLabelText(/Overrides/), {
       target: { value: "training.steps=99" },
     });

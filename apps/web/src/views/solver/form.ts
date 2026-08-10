@@ -224,7 +224,9 @@ export const HOLDOUT_OPTIONS = [
 
 export function toLaunchRequest(
   form: SolverFormState,
-  target: { datasets: string[]; heldout?: string[] } | { resumeRunId: string },
+  target:
+    | { datasets: string[]; heldout?: string[]; project?: string | null }
+    | { resumeRunId: string },
 ): RunLaunchRequest {
   // The raw text stays in the form; the request carries parsed tokens. An
   // unparseable text never reaches here -- launchBlocked holds Run until it
@@ -244,6 +246,10 @@ export function toLaunchRequest(
   return {
     ...base,
     datasets: target.datasets,
+    // The open project owns the run it launched. Sent explicitly rather than
+    // left to the server's dataset inference, which cannot decide a series two
+    // projects share.
+    ...(target.project ? { project: target.project } : {}),
     ...(heldout.length > 0 ? { heldout_datasets: heldout } : {}),
   };
 }

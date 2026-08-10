@@ -7,6 +7,9 @@ export interface RunSummary {
   /** Editable display name; null falls back to the id, which stays the key. */
   label?: string | null;
   dataset: string | null;
+  /** The project the run recorded when it was launched. Null on runs written
+   * before run manifests, which are scoped by their datasets instead. */
+  project_id?: string | null;
   status: RunStatus;
   steps: number | null;
   iou_holdout: number | null;
@@ -110,6 +113,8 @@ export interface RunDetail {
   id: string;
   label?: string | null;
   dataset: string | null;
+  /** The project recorded at launch; null on pre-manifest runs. */
+  project_id?: string | null;
   status: "trained" | "empty";
   steps: number | null;
   metrics: RunMetrics | null;
@@ -410,6 +415,9 @@ export interface RunLaunchRequest {
   dataset?: string | null;
   /** Joint (transfer-learning) training: one model across these datasets. */
   datasets?: string[] | null;
+  /** The project to record as the run's owner. Omitted lets the server infer it
+   * from the series (a unique match wins); an unknown id is a 404. */
+  project?: string | null;
   /** Whole datasets kept OUT of training and scored as a transfer test (axis B). */
   heldout_datasets?: string[] | null;
   resume?: boolean;

@@ -110,6 +110,10 @@ def launch(settings: Settings, request: SweepLaunchRequest) -> SweepStatus:
     # single-dataset by design (seeds vary, the series does not).
     request.dataset = dataset
     request.datasets = None
+    # Children bypass run_manager.launch(), so the project has to be resolved
+    # here too -- otherwise every sweep child would record no owner. Copied into
+    # each child by `model_copy` below.
+    request.project = run_manager.resolved_project(settings, request)
     # Minting and registration are not one critical section: two same-second
     # launches could mint the same id, but the loser is rejected by
     # reserve_children's single-slot check before it ever touches _sweeps.

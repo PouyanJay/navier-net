@@ -8,7 +8,10 @@ Two directories, deliberately kept apart:
 
 ``outputs/<run_name>/``
     Everything a particular run produced: checkpoints, metrics, figures, video,
-    and Hydra's snapshot of the config that produced them.
+    and Hydra's snapshot of the config that produced them. A run launched from
+    the platform also carries ``run.json``, its identity record (owning project,
+    series, launch time), written by the API rather than by the pipeline; see
+    ``apps/api/.../services/run_manifest.py``.
 """
 
 from __future__ import annotations
