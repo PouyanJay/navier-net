@@ -253,6 +253,9 @@ __marimo__/
 # journey skill tracking files (feature requirements/implementation state)
 .memory/
 
+# manuscript sources, generated figures, and their build artefacts
+paper/
+
 # ---------------------------------------------------------------------------
 # Web platform (apps/web) — product code is tracked; deps and build output not
 # ---------------------------------------------------------------------------
