@@ -247,8 +247,10 @@ __marimo__/
 !/outputs/.gitkeep
 
 # Claude Code local config, skills, agents, references, plans, and the UI mockup
-# (developer tooling / design assets — not part of the shipped package)
+# (developer tooling / design assets, not part of the shipped package)
 .claude/
+CLAUDE.md
+**/CLAUDE.md
 
 # journey skill tracking files (feature requirements/implementation state)
 .memory/
