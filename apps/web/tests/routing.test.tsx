@@ -659,8 +659,13 @@ describe("results routing", () => {
       ).toBeInTheDocument(),
     );
     // And nothing in the scorecard is an em dash: every slot it keeps is a
-    // measurement, every slot it drops is an action.
-    expect(screen.getByTestId("overview-scorecard")).not.toHaveTextContent("—");
+    // measurement, every slot it drops is an action. Waited on the settled
+    // panel: the scorecard's numbers arrive with the validation fetch, and on a
+    // slow machine the frame before it resolves does show the placeholder dash
+    // this assertion is about.
+    const scorecard = screen.getByTestId("overview-scorecard");
+    await waitFor(() => expect(scorecard).toHaveTextContent("0.962"));
+    expect(scorecard).not.toHaveTextContent("—");
   });
 
   it("leads the overview with the evidence, and opens the worst frame", async () => {
