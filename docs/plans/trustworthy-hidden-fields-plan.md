@@ -352,7 +352,16 @@ renders from it.
 
 WP0 -> WP1 -> WP2 -> WP3 -> WP4 -> WP6 (audit can be built in parallel from WP1) ->
 WP5 -> WP7 (UI follows each package's schema change) -> WP8.
-Each package is merged only when its gate passes on three seeds of `Series-1-w300`.
+
+Revised 2026-10-15 (decided with the authors): the packages are not independent,
+so a per-package gate can stall on a package that was never meant to pass alone
+(the heat budget needs the thermal rebuild, the flux balance the two-phase pressure).
+The acceptance test is therefore the FULL chain, three seeds of `Series-1-w300`
+(`experiment=trusted_w300 model=trusted training=trusted`), judged by the WP6 audit
+and the seed-ensemble test. The per-package benches are attribution only, run as
+time allows, and never block. All packages travel on one branch and one pull
+request (`feat/trusted-fields`, #11); the per-package branches are kept for
+debugging with their closed pull requests.
 
 ## Implementation log
 
@@ -374,6 +383,11 @@ Each package is merged only when its gate passes on three seeds of `Series-1-w30
   and the gradient-norm rebalancer driving the Darcy weight to 0.03-0.8 while the
   kinematic weight climbed to 300-900. The WP2 bench onwards runs from a worktree
   at the #10 commit (`navier-net-bench`).
+- 2026-10-15, per-package benches of WP2 and WP3 (`trust-wp2-s{0,1,2}`,
+  `trust-wp3-s{0,1,2}`) stopped at steps 3000 and 2500 of 12000: six runs on the
+  four fast cores progressed at a fifth of the WP1 pace, and the authors chose the
+  full-chain acceptance run instead (see the revised sequence). Their partial logs
+  stay under `outputs/`.
 - 2026-10-15, WP2 (#4): physical walls, Brinkman no-slip, outlet, mass balance.
   Joint runs refuse the mass balance for now.
 - 2026-10-15, WP3 (#5): two-phase pressure, curl-free vapour. Joint runs refuse it.
