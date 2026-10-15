@@ -1,40 +1,41 @@
 import { Band, SelectField } from "../../components";
-import {
-  HugeiconsIcon,
-  OptionalPhysicsIcon,
-  WarningIcon,
-} from "../../components/icons";
+import { OptionalPhysicsIcon } from "../../components/icons";
 import { fieldByName, fieldOptions, optionLabel } from "../../lib/fields";
-import { FORM_BOUNDS, type SolverFormState } from "./form";
+import type { SolverFormState } from "./form";
 import { treatmentOf } from "./formulation";
 import { TRUSTED_CAUSAL_GATE, TRUSTED_TIME_BINS } from "./recipes";
-import { SubLabel, SwitchRow, ValueRow } from "./Rows";
+import { Caution, SubLabel, SwitchRow, ValueRow } from "./Rows";
 import type { SeriesCapability } from "./useSeriesCapability";
 
-interface PhysicsChoicesBandProps {
+interface GroupProps {
   form: SolverFormState;
   onForm: (patch: Partial<SolverFormState>) => void;
-  /** What the primary series trains, so an unsupported ask is refused here. */
-  capability: SeriesCapability;
   locked: boolean;
 }
 
-type ChoiceKey =
-  | "walls_at"
-  | "wall_condition"
-  | "momentum_closure"
-  | "outlet_condition"
-  | "pressure_representation"
-  | "thermal_model"
-  | "source_mode";
+interface PhysicsChoicesBandProps extends GroupProps {
+  /** What the primary series trains, so an unsupported ask is refused here. */
+  capability: SeriesCapability;
+}
 
-/** The table entry behind one choice, with its label, help and options. */
-const choice = (key: ChoiceKey) => fieldByName(key);
+/** The form keys that are a choice among the field table's options. */
+type ChoiceKey = {
+  [K in keyof SolverFormState]: SolverFormState[K] extends string ? K : never;
+}[keyof SolverFormState];
+
+/** The table's label for a form field. */
+const labelOf = (name: keyof SolverFormState) => fieldByName(name).label;
+
+/** The table's bounds for a numeric form field. */
+function boundsOf(name: keyof SolverFormState): { min: number; max: number } {
+  const spec = fieldByName(name);
+  return { min: spec.lo ?? -Infinity, max: spec.hi ?? Infinity };
+}
 
 /**
  * The trusted-fields choices: where the walls are and what holds at them, how
- * the pressure and the temperature are represented, and the balances the
- * run is held to.
+ * the pressure and the temperature are represented, and the balances the run
+ * is held to.
  *
  * Every control renders from the field table (`lib/fields.ts`): its label,
  * its explanation, its options and its bounds are the pipeline's own
@@ -48,13 +49,6 @@ export function PhysicsChoicesBand({
   capability,
   locked,
 }: PhysicsChoicesBandProps) {
-  const treatment = treatmentOf(form);
-  const sharp = treatment === "sharp";
-  const noPressure = capability.known && !capability.hasPressure;
-  const noTemperature = capability.known && !capability.hasTemperature;
-  const twoPhaseBlocked = !sharp || noPressure;
-  const sharpThermalBlocked = !sharp || noTemperature;
-  const sharpThermal = form.thermal_model === "sharp";
   const summary = [
     form.walls_at === "physical" ? "physical walls" : "crop walls",
     optionLabel(form.momentum_closure),
@@ -62,7 +56,6 @@ export function PhysicsChoicesBand({
   ]
     .filter(Boolean)
     .join(" · ");
-
   return (
     <Band
       icon={OptionalPhysicsIcon}
@@ -71,67 +64,80 @@ export function PhysicsChoicesBand({
       collapsible
       defaultOpen={false}
     >
-      <SubLabel note="where the liquid stops">Walls and outlet</SubLabel>
-      <Choice
-        spec="walls_at"
-        value={form.walls_at}
-        onChange={(walls_at) =>
-          onForm({ walls_at: walls_at as SolverFormState["walls_at"] })
-        }
-        disabled={locked}
+      <WallsGroup form={form} onForm={onForm} locked={locked} />
+      <RepresentationGroup
+        form={form}
+        onForm={onForm}
+        locked={locked}
+        capability={capability}
       />
-      <Choice
-        spec="wall_condition"
-        value={form.wall_condition}
-        onChange={(wall_condition) =>
-          onForm({
-            wall_condition: wall_condition as SolverFormState["wall_condition"],
-          })
-        }
-        disabled={locked}
-      />
-      <Choice
-        spec="momentum_closure"
-        value={form.momentum_closure}
-        onChange={(momentum_closure) =>
-          onForm({
-            momentum_closure:
-              momentum_closure as SolverFormState["momentum_closure"],
-          })
-        }
-        disabled={locked}
-      />
-      {form.momentum_closure === "darcy" &&
-        form.wall_condition === "no_slip" &&
-        sharp && (
-          <Caution>
-            Darcy drag with no slip is over-determined: a first-order law admits
-            only no penetration at a wall. Choose Brinkman, or no penetration.
-          </Caution>
-        )}
-      <Choice
-        spec="outlet_condition"
-        value={form.outlet_condition}
-        onChange={(outlet_condition) =>
-          onForm({
-            outlet_condition:
-              outlet_condition as SolverFormState["outlet_condition"],
-          })
-        }
-        disabled={locked}
-      />
+      <BalancesGroup form={form} onForm={onForm} locked={locked} />
+    </Band>
+  );
+}
 
+/** Where the liquid stops, what holds there, and what closes momentum. */
+function WallsGroup({ form, onForm, locked }: GroupProps) {
+  const sharp = treatmentOf(form) === "sharp";
+  const overDetermined =
+    sharp &&
+    form.momentum_closure === "darcy" &&
+    form.wall_condition === "no_slip";
+  return (
+    <>
+      <SubLabel note="where the liquid stops">Walls and outlet</SubLabel>
+      <Choice name="walls_at" form={form} onForm={onForm} locked={locked} />
+      <Choice
+        name="wall_condition"
+        form={form}
+        onForm={onForm}
+        locked={locked}
+      />
+      <Choice
+        name="momentum_closure"
+        form={form}
+        onForm={onForm}
+        locked={locked}
+      />
+      {overDetermined && (
+        <Caution>
+          Darcy drag with no slip is over-determined: a first-order law admits
+          only no penetration at a wall. Choose Brinkman, or no penetration.
+        </Caution>
+      )}
+      <Choice
+        name="outlet_condition"
+        form={form}
+        onForm={onForm}
+        locked={locked}
+      />
+    </>
+  );
+}
+
+/** How the pressure and the temperature are represented: the choices that
+ * read the sharp front, and the series' fields. */
+function RepresentationGroup({
+  form,
+  onForm,
+  locked,
+  capability,
+}: PhysicsChoicesBandProps) {
+  const treatment = treatmentOf(form);
+  const sharp = treatment === "sharp";
+  const twoPhaseBlocked =
+    !sharp || (capability.known && !capability.hasPressure);
+  const sharpThermalBlocked =
+    !sharp || (capability.known && !capability.hasTemperature);
+  const sharpThermal = form.thermal_model === "sharp";
+  return (
+    <>
       <SubLabel note="needs the sharp front">Pressure and temperature</SubLabel>
       <Choice
-        spec="pressure_representation"
-        value={form.pressure_representation}
-        onChange={(value) =>
-          onForm({
-            pressure_representation:
-              value as SolverFormState["pressure_representation"],
-          })
-        }
-        disabled={locked || twoPhaseBlocked}
+        name="pressure_representation"
+        form={form}
+        onForm={onForm}
+        locked={locked || twoPhaseBlocked}
         reason={
           twoPhaseBlocked
             ? "The two-phase pressure blends the vapour pressure across the Young-Laplace jump, so it needs the sharp front and its pressure field."
@@ -139,16 +145,17 @@ export function PhysicsChoicesBand({
         }
       />
       <Choice
-        spec="thermal_model"
-        value={form.thermal_model}
-        onChange={(value) =>
+        name="thermal_model"
+        form={form}
+        onForm={(patch) =>
+          // The thermal source exists only under the sharp model.
           onForm(
-            value === "sharp"
-              ? { thermal_model: "sharp" }
-              : { thermal_model: "legacy", source_mode: "free" },
+            patch.thermal_model === "sharp"
+              ? patch
+              : { ...patch, source_mode: "free" },
           )
         }
-        disabled={locked || sharpThermalBlocked}
+        locked={locked || sharpThermalBlocked}
         reason={
           sharpThermalBlocked
             ? "The sharp thermal model reads the evaporation flux on the explicit front and needs the temperature field: the sharp treatment, with Energy on Physics & model."
@@ -156,22 +163,22 @@ export function PhysicsChoicesBand({
         }
       />
       <Choice
-        spec="source_mode"
-        value={form.source_mode}
-        onChange={(value) =>
+        name="source_mode"
+        form={form}
+        onForm={(patch) =>
+          // The thermal source rebuilds the front once per distinct collocation
+          // instant, so the batch must be binned.
           onForm(
-            value === "thermal"
+            patch.source_mode === "thermal"
               ? {
-                  source_mode: "thermal",
-                  // The thermal source rebuilds the front once per distinct
-                  // collocation instant, so the batch must be binned.
+                  ...patch,
                   collocation_time_bins:
                     form.collocation_time_bins || TRUSTED_TIME_BINS,
                 }
-              : { source_mode: "free" },
+              : patch,
           )
         }
-        disabled={locked || !sharpThermal}
+        locked={locked || !sharpThermal}
         reason={
           sharpThermal
             ? undefined
@@ -179,18 +186,22 @@ export function PhysicsChoicesBand({
         }
       />
       <ValueRow
-        label={choice_label("collocation_time_bins")}
-        hint={fieldByName("collocation_time_bins").help}
+        label={labelOf("collocation_time_bins")}
+        hint="distinct instants per batch"
         value={form.collocation_time_bins}
         onChange={(collocation_time_bins) => onForm({ collocation_time_bins })}
-        min={FORM_BOUNDS.collocation_time_bins.min}
-        max={FORM_BOUNDS.collocation_time_bins.max}
+        min={
+          form.source_mode === "thermal"
+            ? 1
+            : boundsOf("collocation_time_bins").min
+        }
+        max={boundsOf("collocation_time_bins").max}
         step={1}
         disabled={locked}
       />
       <SwitchRow
-        label={choice_label("mirror_symmetry")}
-        hint={fieldByName("mirror_symmetry").help}
+        label={labelOf("mirror_symmetry")}
+        hint="every field even about the centreline, v odd"
         verdict={{ tone: "unbenched" }}
         checked={form.mirror_symmetry}
         onChange={(mirror_symmetry) => onForm({ mirror_symmetry })}
@@ -201,36 +212,42 @@ export function PhysicsChoicesBand({
             : undefined
         }
       />
+    </>
+  );
+}
 
+/** The balances the run is held to, and what it records about them. */
+function BalancesGroup({ form, onForm, locked }: GroupProps) {
+  const gated = form.causal_gate_min_weight != null;
+  return (
+    <>
       <SubLabel note="what the run is held to">Balances and records</SubLabel>
       <SwitchRow
-        label={choice_label("mass_balance")}
-        hint={fieldByName("mass_balance").help}
+        label={labelOf("mass_balance")}
+        hint="flux through every cross-section · inlet plus vapour created upstream"
         verdict={{ tone: "unbenched" }}
         checked={form.mass_balance}
         onChange={(mass_balance) => onForm({ mass_balance })}
         disabled={locked}
       >
         <ValueRow
-          label={choice_label("mass_balance_weight")}
-          hint={fieldByName("mass_balance_weight").help}
+          label={labelOf("mass_balance_weight")}
+          hint="outside the rebalancer"
           value={form.mass_balance_weight}
           onChange={(mass_balance_weight) => onForm({ mass_balance_weight })}
-          min={FORM_BOUNDS.weight.min}
-          max={FORM_BOUNDS.weight.max}
+          min={boundsOf("mass_balance_weight").min}
+          max={boundsOf("mass_balance_weight").max}
           step={0.1}
           disabled={locked}
         />
       </SwitchRow>
       <SwitchRow
-        label={choice_label("causal_gate_min_weight")}
-        hint={fieldByName("causal_gate_min_weight").help}
+        label={labelOf("causal_gate_min_weight")}
+        hint="eps tightens only once every time chunk clears the gate"
         verdict={{ tone: "positive" }}
-        checked={form.causal_gate_min_weight != null}
+        checked={gated}
         onChange={(on) =>
-          onForm({
-            causal_gate_min_weight: on ? TRUSTED_CAUSAL_GATE : null,
-          })
+          onForm({ causal_gate_min_weight: on ? TRUSTED_CAUSAL_GATE : null })
         }
         disabled={locked || !form.causal_weighting}
         reason={
@@ -241,63 +258,66 @@ export function PhysicsChoicesBand({
       >
         <ValueRow
           label="Gate threshold"
-          hint="every time chunk's weight must clear this before eps tightens"
+          hint="minimum chunk weight"
           value={form.causal_gate_min_weight ?? TRUSTED_CAUSAL_GATE}
           onChange={(causal_gate_min_weight) =>
             onForm({ causal_gate_min_weight })
           }
-          min={FORM_BOUNDS.causal_gate_min_weight.min}
-          max={FORM_BOUNDS.causal_gate_min_weight.max}
+          min={boundsOf("causal_gate_min_weight").min}
+          max={boundsOf("causal_gate_min_weight").max}
           step={0.01}
           disabled={locked}
         />
       </SwitchRow>
       <SwitchRow
-        label={choice_label("log_chunk_residuals")}
-        hint={fieldByName("log_chunk_residuals").help}
+        label={labelOf("log_chunk_residuals")}
+        hint="each equation's residual per time chunk, in the run's history"
         verdict={{ tone: "recipe" }}
         checked={form.log_chunk_residuals}
         onChange={(log_chunk_residuals) => onForm({ log_chunk_residuals })}
         disabled={locked}
       />
-    </Band>
+    </>
   );
 }
 
-const choice_label = (name: string) => fieldByName(name).label;
-
-interface ChoiceProps {
-  spec: ChoiceKey;
-  value: string;
-  onChange: (value: string) => void;
-  disabled: boolean;
+interface ChoiceProps<K extends ChoiceKey> {
+  name: K;
+  form: SolverFormState;
+  onForm: (patch: Partial<SolverFormState>) => void;
+  locked: boolean;
   /** Why it cannot be changed here, and what would let it. */
   reason?: string;
 }
 
-/** One choice among the table's options, with its help as the hint. */
-function Choice({ spec, value, onChange, disabled, reason }: ChoiceProps) {
-  const entry = choice(spec);
+/** One choice among the table's options, labelled and explained by the table.
+ * The explanation sits under the control, not in its label, so the control's
+ * accessible name stays the label alone. */
+function Choice<K extends ChoiceKey>({
+  name,
+  form,
+  onForm,
+  locked,
+  reason,
+}: ChoiceProps<K>) {
+  const spec = fieldByName(name);
   return (
     <div className="srow">
       <SelectField
-        label={entry.label}
-        hint={entry.help}
-        value={value}
-        onChange={onChange}
-        options={fieldOptions(entry)}
-        disabled={disabled}
+        label={spec.label}
+        value={form[name]}
+        // The options are the table's, so a chosen value is of the key's type;
+        // this is the one place the string widens back to it.
+        onChange={(value) =>
+          onForm({
+            [name]: value as SolverFormState[K],
+          } as Partial<SolverFormState>)
+        }
+        options={fieldOptions(spec)}
+        disabled={locked}
       />
+      <p className="choice-help">{spec.help}</p>
       {reason && <p className="srow-why">{reason}</p>}
     </div>
-  );
-}
-
-function Caution({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="rail-caution" role="status">
-      <HugeiconsIcon icon={WarningIcon} size={13} aria-hidden="true" />
-      <span>{children}</span>
-    </p>
   );
 }

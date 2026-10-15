@@ -36,11 +36,10 @@ describe("the field table", () => {
     }
   });
 
-  it("reads the baked fields off the table rather than a second list", () => {
+  it("bakes exactly the frame interval, the channel width and U_ref into the tensors", () => {
+    // Pinned as a literal: a table flag flipped by accident fails here.
     expect([...BAKED_KEYS].sort()).toEqual(
-      FIELD_TABLE.filter((s) => s.baked)
-        .map((s) => s.name)
-        .sort(),
+      ["channel_width_um", "dt_frame_ms", "U_ref"].sort(),
     );
   });
 

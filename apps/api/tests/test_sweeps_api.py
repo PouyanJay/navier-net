@@ -115,6 +115,9 @@ def test_sweep_child_failure_aborts_the_rest(client: TestClient, repo_root: Path
         ),
         pytest.param({**TINY_SWEEP, "dataset": "nope"}, 409, id="not-preprocessed"),
         pytest.param({**TINY_SWEEP, "dataset": "../evil"}, 404, id="traversal-dataset"),
+        # The physics pre-flight runs for sweeps too: the Stage-A series cannot
+        # carry the sharp thermal model, and no child may be reserved for it.
+        pytest.param({**TINY_SWEEP, "thermal_model": "sharp"}, 422, id="unsupported-physics"),
     ],
 )
 def test_sweep_rejections(client: TestClient, payload: dict, expected: int):

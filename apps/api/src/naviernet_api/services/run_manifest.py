@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from naviernet.utils.logging import get_logger
-from naviernet_api.models import RunManifest
+from naviernet_api.models import RunLaunchRequest, RunManifest
 from naviernet_api.settings import Settings
 
 log = get_logger(__name__)
@@ -50,14 +50,14 @@ def _now() -> str:
 
 def write(
     output_dir: Path,
-    *,
     run_id: str,
-    project_id: str | None,
-    datasets: list[str],
-    heldout_datasets: list[str],
+    request: RunLaunchRequest,
+    *,
     config_sha256: str | None = None,
 ) -> RunManifest:
-    """Record the run's identity beside its artifacts, and return it.
+    """Record the run's identity beside its artifacts, and return it: the
+    project the launch resolved, the series the request spans, and the digest
+    of the inputs it composed to.
 
     Write-then-rename, like the project files: a crash mid-write cannot leave a
     truncated manifest that would read as a run belonging nowhere.
@@ -65,9 +65,9 @@ def write(
     manifest = RunManifest(
         schema_version=SCHEMA_VERSION,
         run_id=run_id,
-        project_id=project_id,
-        datasets=list(datasets),
-        heldout_datasets=list(heldout_datasets),
+        project_id=request.project,
+        datasets=request.resolved_datasets(),
+        heldout_datasets=list(request.heldout_datasets or []),
         created_at=_now(),
         config_sha256=config_sha256,
     )
@@ -76,7 +76,7 @@ def write(
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(manifest.model_dump_json(indent=2))
     tmp.replace(path)
-    log.info("wrote manifest for run %s (project %s)", run_id, project_id or "-")
+    log.info("wrote manifest for run %s (project %s)", run_id, request.project or "-")
     return manifest
 
 

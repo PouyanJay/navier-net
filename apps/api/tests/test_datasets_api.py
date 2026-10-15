@@ -715,6 +715,26 @@ def test_a_thermal_choice_outside_its_options_is_refused_by_name(client):
     assert "cavity_y_fraction" in r.json()["detail"]
 
 
+def test_an_inconsistent_combination_is_refused_before_it_is_saved(client):
+    """Each value is within its bounds; together they do not compose (isothermal
+    walls need their temperature; a cavity flux needs a radius). The edit is a
+    400 naming the gap, and nothing is written, so the groups still serve."""
+    r = client.patch(
+        "/api/datasets/sample/conditions", json={"side_wall_thermal": "isothermal"}
+    )
+    assert r.status_code == 400
+    assert "T_wall_C" in r.json()["detail"]
+
+    r = client.patch("/api/datasets/sample/conditions", json={"q_cavity_W_cm2": 2.0})
+    assert r.status_code == 400
+    assert "heater_radius_um" in r.json()["detail"]
+
+    assert client.get("/api/datasets/sample").json()["conditions"]["side_wall_thermal"] == (
+        "adiabatic"
+    )
+    assert client.get("/api/datasets/sample/groups").status_code == 200
+
+
 def test_an_explicit_null_clears_an_optional_condition_only(client):
     client.patch("/api/datasets/sample/conditions", json={"T_init_C": 58.0})
     assert client.get("/api/datasets/sample").json()["conditions"]["T_init_C"] == pytest.approx(
@@ -733,13 +753,16 @@ def test_an_explicit_null_clears_an_optional_condition_only(client):
 def test_thermal_conditions_reach_every_compose_site(repo_root):
     settings = Settings(repo_root=repo_root)
     datasets_service.save_conditions(
-        settings, "sample", {"T_init_C": 58.0, "side_wall_thermal": "isothermal"}
+        settings,
+        "sample",
+        {"T_init_C": 58.0, "side_wall_thermal": "isothermal", "T_wall_C": 60.0},
     )
 
     overrides = datasets_service.conditions_overrides(settings, "sample")
 
     assert "experiment.T_init_C=58.0" in overrides
     assert "experiment.side_wall_thermal=isothermal" in overrides
+    assert "experiment.T_wall_C=60.0" in overrides
     cfg = compose_cfg("sample", overrides=datasets_service.series_overrides(settings, "sample"))
     assert cfg.experiment.T_init_C == pytest.approx(58.0)
     assert cfg.experiment.side_wall_thermal == "isothermal"

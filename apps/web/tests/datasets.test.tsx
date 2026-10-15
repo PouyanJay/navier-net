@@ -1600,8 +1600,12 @@ describe("new series conditions", () => {
     // and the wrong µm/px, and nothing downstream would say so. All conditions
     // are sent at once: the filled measurements and the operating defaults.
     expect(order).toEqual(["conditions", "preprocess"]);
+    // Exactly these: the filled measurements, the operating defaults and the
+    // thermal choices at their defaults. An optional condition left "not set"
+    // is not sent at all, so a new series never inherits another series'
+    // temperatures or heaters.
     expect(calls.conditionPatches).toEqual([
-      expect.objectContaining({
+      {
         dt_frame_ms: 0.25,
         channel_width_um: 400,
         channel_height_um: 150,
@@ -1609,15 +1613,12 @@ describe("new series conditions", () => {
         q_wall_W_cm2: 2,
         flow_rate_mL_hr: 5,
         U_ref: 0.2,
-        // The thermal choices travel at their defaults...
         side_wall_thermal: "adiabatic",
+        cavity_y_fraction: 0.5,
         q_wall_mode: "fixed",
-      }),
+        q_wall_max_W_cm2: 10,
+      },
     ]);
-    // ...and an optional condition left "not set" is not sent at all, so a new
-    // series never inherits another series' temperatures.
-    expect(calls.conditionPatches[0]).not.toHaveProperty("T_init_C");
-    expect(calls.conditionPatches[0]).not.toHaveProperty("q_cavity_W_cm2");
   });
 
   it("sends a thermal condition the user filled in, typed", async () => {

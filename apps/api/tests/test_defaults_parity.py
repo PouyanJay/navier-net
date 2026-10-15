@@ -79,6 +79,24 @@ def test_a_form_owned_choice_defaults_to_the_schema_value(spec):
         assert _literal_options(RunLaunchRequest, spec.name) == spec.options
 
 
+@pytest.mark.parametrize(
+    "spec",
+    [s for s in specs(owner="form") if s.kind in ("float", "int")],
+    ids=lambda spec: spec.key,
+)
+def test_a_form_owned_number_carries_the_tables_bounds(spec):
+    """The request's ge/le on a form-owned number are the table's lo/hi, so the
+    launch form, the API and the pipeline refuse the same values."""
+    bounds = {type(c).__name__: c for c in RunLaunchRequest.model_fields[spec.name].metadata}
+
+    assert bounds["Ge"].ge == spec.lo, (
+        f"{spec.name}: ge {bounds['Ge'].ge} vs table lo {spec.lo}"
+    )
+    assert bounds["Le"].le == spec.hi, (
+        f"{spec.name}: le {bounds['Le'].le} vs table hi {spec.hi}"
+    )
+
+
 @pytest.mark.parametrize("spec", specs(section="conditions"), ids=lambda spec: spec.key)
 def test_a_series_condition_is_editable_and_reported(spec):
     """Every condition of the field table can be sent on a conditions edit and

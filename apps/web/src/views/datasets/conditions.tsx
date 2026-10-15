@@ -1,7 +1,12 @@
 import { useEffect, useId, useState } from "react";
 
 import { Callout, Select } from "../../components";
-import { api, type Fluid, type OperatingConditions } from "../../lib/api";
+import {
+  api,
+  type ConditionsUpdate,
+  type Fluid,
+  type OperatingConditions,
+} from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import {
   fieldByName,
@@ -126,12 +131,13 @@ const HAND_WRITTEN = new Set(
 );
 
 /**
- * The thermal conditions and heaters the sharp thermal model reads, rendered
- * straight from the field table so a new input is one table entry. An optional
- * one left empty stays "not set" and takes its derived default (the inlet at
- * saturation, no cavity heater, the heater on for the whole event).
+ * Every further series condition the field table declares, rendered straight
+ * from it so a new input is one table entry. Today these are the thermal
+ * conditions and heaters the sharp thermal model reads, under one heading. An
+ * optional one left empty stays "not set" and takes its derived default (the
+ * inlet at saturation, no cavity heater, the heater on for the whole event).
  */
-export const THERMAL_CONDITIONS: ConditionSpec[] = fieldSpecs({
+export const TABLE_CONDITIONS: ConditionSpec[] = fieldSpecs({
   section: "conditions",
   owner: "series",
   advanced: false,
@@ -142,7 +148,7 @@ export const THERMAL_CONDITIONS: ConditionSpec[] = fieldSpecs({
 export const ALL_CONDITIONS: ConditionSpec[] = [
   ...REQUIRED_CONDITIONS,
   ...OPERATING_CONDITIONS,
-  ...THERMAL_CONDITIONS,
+  ...TABLE_CONDITIONS,
 ];
 
 export type ConditionInputs = Record<ConditionKey, string>;
@@ -196,6 +202,45 @@ export function conditionValid(spec: ConditionSpec, raw: string): boolean {
   }
   if (raw.trim() === "") return spec.optional;
   return parseCondition(raw, spec.min, spec.max) !== null;
+}
+
+export interface ParsedCondition {
+  spec: ConditionSpec;
+  value: number | string | null;
+  valid: boolean;
+}
+
+/** Every condition's typed value and validity, from the form strings. */
+export function parseConditions(inputs: ConditionInputs): ParsedCondition[] {
+  return ALL_CONDITIONS.map((spec) => ({
+    spec,
+    value: conditionValue(spec, inputs[spec.key]),
+    valid: conditionValid(spec, inputs[spec.key]),
+  }));
+}
+
+/**
+ * The conditions edit to send: each entry's value under its key. With
+ * `original`, only the entries whose value changed (so an edit to one
+ * condition never re-sends, and re-bakes, the others); a cleared optional one
+ * travels as null, which the API reads as "clear". Without it, every entry
+ * with a value (a new series: an unset optional one is simply not sent).
+ */
+export function toConditionsUpdate(
+  parsed: ParsedCondition[],
+  original?: ParsedCondition[],
+): ConditionsUpdate {
+  const before = new Map(
+    original?.map((entry) => [entry.spec.key, entry.value]),
+  );
+  const entries = parsed.filter(({ spec, value, valid }) =>
+    original ? valid && value !== before.get(spec.key) : value !== null,
+  );
+  // The keys are the table's condition names, which the request type lists
+  // field by field; this is the one place the generic row meets that type.
+  return Object.fromEntries(
+    entries.map(({ spec, value }) => [spec.key, value]),
+  ) as ConditionsUpdate;
 }
 
 export type FluidsLoad =

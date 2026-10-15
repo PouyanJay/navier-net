@@ -734,27 +734,38 @@ def flags_from(model_cfg) -> dict[str, object]:
 
 
 # The configuration choice behind each registry flag, as the Hydra override that
-# switches it on; what the API reports as an equation's ``enabled_by``.
+# switches it on, and the one that keeps it off; what the API reports as an
+# equation's ``enabled_by``.
 _FLAG_CHOICES = {
     "liquid_film": "model.liquid_film=true",
     "two_phase_pressure": "model.pressure_representation=two_phase",
     "sharp_thermal": "model.thermal_model=sharp",
     "thermal_source": "model.source_mode=thermal",
 }
+_FLAG_DEFAULTS = {
+    "liquid_film": "model.liquid_film=false",
+    "two_phase_pressure": "model.pressure_representation=single",
+    "sharp_thermal": "model.thermal_model=legacy",
+    "thermal_source": "model.source_mode=free",
+}
 
 
 def enabled_by(equation: Equation) -> str | None:
-    """The configuration choice that admits ``equation``, as a Hydra override,
-    or None for a term gated only by the fields the model trains."""
-    if equation.closure is not None:
-        return f"model.momentum_closure={equation.closure}"
-    if equation.flag is not None:
-        return _FLAG_CHOICES[equation.flag]
+    """The configuration choices that admit ``equation``, as comma-separated
+    Hydra overrides (composing them, with its fields present, enables it), or
+    None for a term gated only by the fields the model trains."""
+    choices: list[str] = []
     if equation.mode == "sharp":
-        return "model.sharp_interface=true"
-    if equation.mode == "diffuse":
-        return "model.sharp_interface=false"
-    return None
+        choices.append("model.sharp_interface=true")
+    elif equation.mode == "diffuse":
+        choices.append("model.sharp_interface=false")
+    if equation.closure is not None:
+        choices.append(f"model.momentum_closure={equation.closure}")
+    if equation.flag is not None:
+        choices.append(_FLAG_CHOICES[equation.flag])
+    excluded = {equation.unless_flag, *equation.unless_flags} - {None}
+    choices.extend(_FLAG_DEFAULTS[flag] for flag in sorted(excluded))
+    return ", ".join(choices) or None
 
 
 def collocation_equations(equations: Sequence[Equation]) -> list[Equation]:

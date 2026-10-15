@@ -11,6 +11,8 @@ import pytest
 
 from naviernet.physics import registry
 
+from .conftest import make_config
+
 STAGE_A_FIELDS = ("phi", "u", "v", "s")
 
 
@@ -101,8 +103,6 @@ def test_collocation_terms_expose_per_point_residuals_that_mean_to_the_term():
     from naviernet.models.pinn import BubblePINN
     from naviernet.physics.groups import compute_groups
 
-    from .conftest import make_config
-
     cfg = make_config(
         [
             "model=stage_b",
@@ -138,3 +138,44 @@ def test_collocation_terms_expose_per_point_residuals_that_mean_to_the_term():
 
     bc = next(e for e in equations if e.id == "bc")
     assert bc.pointwise is None, "bc is a boundary term, not a per-point collocation residual"
+
+
+# --- enabled_by: the choices that admit each equation ---------------------------
+
+ALL_FIELDS = sorted({f for e in registry.REGISTRY for f in e.fields_required})
+
+
+def _enabled_under(overrides: list[str]) -> set[str]:
+    cfg = make_config([f"model.fields=[{','.join(ALL_FIELDS)}]", *overrides])
+    return {
+        e.id for e in registry.enabled_equations(ALL_FIELDS, **registry.flags_from(cfg.model))
+    }
+
+
+@pytest.mark.parametrize("equation", registry.REGISTRY, ids=lambda e: e.id)
+def test_composing_the_admitting_choices_enables_the_equation(equation):
+    """`enabled_by` is a recipe, not a label: composing exactly those overrides
+    (with every field present) enables the equation it describes."""
+    choices = registry.enabled_by(equation)
+
+    overrides = choices.split(", ") if choices else []
+    assert equation.id in _enabled_under(overrides) or not equation.implemented
+
+
+@pytest.mark.parametrize(
+    "equation",
+    [e for e in registry.REGISTRY if registry.enabled_by(e) is None],
+    ids=lambda e: e.id,
+)
+def test_an_equation_with_no_admitting_choice_is_on_under_every_choice(equation):
+    """None means gated by the fields alone: no physics choice switches it off."""
+    every_choice = [
+        "model.sharp_interface=true",
+        "model.momentum_closure=brinkman",
+        "model.pressure_representation=two_phase",
+        "model.thermal_model=sharp",
+        "model.source_mode=thermal",
+        "model.liquid_film=true",
+    ]
+    assert equation.id in _enabled_under([])
+    assert equation.id in _enabled_under(every_choice)

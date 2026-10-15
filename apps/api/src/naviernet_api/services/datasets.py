@@ -21,6 +21,7 @@ from omegaconf import DictConfig, OmegaConf
 from naviernet.config.fields import FieldSpec, hydra_literal
 from naviernet.config.fields import specs as field_specs
 from naviernet.data.preprocess import BAKED_CONDITION_FIELDS
+from naviernet.physics.groups import compute_groups
 from naviernet.physics.registry import REGISTRY, enabled_equations, stage_b_terms
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import (
@@ -229,13 +230,19 @@ def read_series_fluid(settings: Settings, dataset: str) -> str | None:
 def conditions_overrides(settings: Settings, dataset: str) -> list[str]:
     """Saved conditions as Hydra overrides, for compose sites of this dataset.
     Includes the fluid *group* override (`fluid=<id>`) when one is selected."""
-    saved = read_conditions(settings, dataset)
+    return _overrides_of(_read_raw_conditions(settings, dataset))
+
+
+def _overrides_of(saved: dict) -> list[str]:
+    """A conditions object as Hydra overrides: the known condition values, and
+    the fluid group when a known fluid is selected."""
     overrides = [
         f"{CONDITION_FIELDS[key].key}={hydra_literal(value)}"
         for key, value in sorted(saved.items())
+        if key in CONDITION_FIELDS
     ]
-    fluid = read_series_fluid(settings, dataset)
-    if fluid is not None:
+    fluid = saved.get(FLUID_KEY)
+    if isinstance(fluid, str) and is_known_fluid(fluid):
         overrides.append(f"{FLUID_KEY}={fluid}")
     return overrides
 
@@ -253,25 +260,50 @@ def save_conditions(
     if path is None or not path.parent.is_dir():
         raise ConditionsError(f"dataset {dataset!r} not found")
 
-    fluid = updates.get(FLUID_KEY)
-    if fluid is not None and (not isinstance(fluid, str) or not is_known_fluid(fluid)):
-        raise ConditionsError(
-            f"unknown fluid {fluid!r}; choose one of {', '.join(available_fluid_ids())}"
-        )
-    merged = _read_raw_conditions(settings, dataset)
-    for key, value in updates.items():
-        if key == FLUID_KEY:
-            merged[key] = value
-        elif value is None:
-            merged.pop(key, None)
-            _require_optional(key)
-        else:
-            merged[key] = _validated_condition(key, value)
+    merged = _merge_conditions(_read_raw_conditions(settings, dataset), updates)
+    _require_consistent(settings, dataset, merged)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(merged, indent=2))
     tmp.replace(path)
     log.info("saved conditions for %s: %s", dataset, sorted(updates))
     return merged
+
+
+def _merge_conditions(saved: dict, updates: dict[str, float | str | None]) -> dict:
+    """``saved`` with every validated edit applied (a null fluid is a no-op)."""
+    merged = dict(saved)
+    for key, value in updates.items():
+        if key == FLUID_KEY:
+            if value is not None:
+                merged[key] = _validated_fluid(value)
+        elif value is None:
+            _require_optional(key)
+            merged.pop(key, None)
+        else:
+            merged[key] = _validated_condition(key, value)
+    return merged
+
+
+def _validated_fluid(fluid: object) -> str:
+    if not isinstance(fluid, str) or not is_known_fluid(fluid):
+        raise ConditionsError(
+            f"unknown fluid {fluid!r}; choose one of {', '.join(available_fluid_ids())}"
+        )
+    return fluid
+
+
+def _require_consistent(settings: Settings, dataset: str, merged: dict) -> None:
+    """The conditions as a whole must compose: the groups refuse combinations
+    the per-field bounds admit (a cavity flux without a radius, isothermal
+    walls without their temperature, an initial temperature below saturation,
+    a fitted flux whose cap is below its start). Checked before the file is
+    written, so a bad combination is a 400 here and never a 500 everywhere
+    else the series composes."""
+    overrides = [*_overrides_of(merged), *_frame_count_overrides(settings, dataset)]
+    try:
+        compute_groups(compose_cfg(dataset, overrides=overrides))
+    except ValueError as exc:
+        raise ConditionsError(str(exc)) from exc
 
 
 def _require_optional(key: str) -> None:
@@ -668,7 +700,9 @@ def _current_baked_conditions(settings: Settings, dataset: str) -> dict[str, flo
     cfg = compose_cfg(dataset, overrides=series_overrides(settings, dataset))
     baked: dict[str, float] = {}
     for key in BAKED_CONDITION_FIELDS:
-        baked[key] = float(OmegaConf.select(cfg, CONDITION_FIELDS[key].key))
+        baked[key] = float(
+            OmegaConf.select(cfg, CONDITION_FIELDS[key].key, throw_on_missing=True)
+        )
     return baked
 
 
@@ -799,7 +833,10 @@ def conditions_from_cfg(cfg: DictConfig) -> OperatingConditions:
     every field-table condition, read at its Hydra path, plus the identity and
     frame facts the experiment block carries."""
     exp = cfg.experiment
-    values = {name: OmegaConf.select(cfg, spec.key) for name, spec in CONDITION_FIELDS.items()}
+    values = {
+        name: OmegaConf.select(cfg, spec.key, throw_on_missing=True)
+        for name, spec in CONDITION_FIELDS.items()
+    }
     values["U_ref_m_s"] = values.pop("U_ref")  # reported under its unit
     return OperatingConditions(
         fluid=exp.fluid,

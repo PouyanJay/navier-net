@@ -1,6 +1,7 @@
 import { useId, type ReactNode } from "react";
 
 import { Switch } from "../../components";
+import { HugeiconsIcon, WarningIcon } from "../../components/icons";
 
 interface ValueRowProps {
   label: ReactNode;
@@ -70,11 +71,7 @@ export function ValueRow({
  * nothing, "unbenched" has no numbers yet, and "recipe" ships on by default.
  */
 export type VerdictTone =
-  | "positive"
-  | "negative"
-  | "inert"
-  | "unbenched"
-  | "recipe";
+  "positive" | "negative" | "inert" | "unbenched" | "recipe";
 
 export interface Verdict {
   tone: VerdictTone;
@@ -166,6 +163,17 @@ export function SubLabel({
     <p className="sublabel">
       {children}
       {note && <span>{note}</span>}
+    </p>
+  );
+}
+
+/** A caution rendered at the control that caused it: why a choice is withheld
+ * or inconsistent, and what to do about it. */
+export function Caution({ children }: { children: ReactNode }) {
+  return (
+    <p className="rail-caution" role="status">
+      <HugeiconsIcon icon={WarningIcon} size={13} aria-hidden="true" />
+      <span>{children}</span>
     </p>
   );
 }

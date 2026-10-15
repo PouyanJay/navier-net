@@ -1,7 +1,5 @@
 /** Typed client for the naviernet API. Types mirror the backend response models. */
 
-import type { FieldSpec } from "./fields";
-
 export type RunStatus = "running" | "trained" | "failed" | "empty";
 
 export interface RunSummary {
@@ -99,6 +97,16 @@ export interface RunMetrics {
   heldout_datasets?: string[];
   val_iou_mean?: number | null; // joint: mean of training series' validation IoU
   transfer?: TransferMetrics | null; // held-out series, scored over every frame
+  /** The acceptance audit's verdicts (audit.json), written by the evaluate
+   * stage since WP6: the worst value over every event frame against the
+   * threshold the run's config set. Absent on runs that wrote no audit. */
+  audit?: Record<string, AuditVerdict>;
+}
+
+export interface AuditVerdict {
+  worst: number;
+  max: number;
+  pass: boolean;
 }
 
 /** The single generalization number to headline for a run: the single-dataset
@@ -1012,10 +1020,6 @@ export const api = {
 
   /** The catalogue of characterised working fluids for the new-series form. */
   listFluids: () => getJson<Fluid[]>("/api/fluids"),
-  /** The field table as the server declares it; the forms render from the
-   * committed copy in `lib/fields.ts`, and this is the same table for any
-   * other client. */
-  listFields: () => getJson<FieldSpec[]>("/api/config/fields"),
 };
 
 /** Direct artifact URLs (used as href / img src / video src, not fetched as JSON). */

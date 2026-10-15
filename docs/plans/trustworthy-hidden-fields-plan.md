@@ -397,5 +397,11 @@ Each package is merged only when its gate passes on three seeds of `Series-1-w30
   (`apps/web/src/lib/fieldTable.json`): thermal conditions in both series modals,
   a "Physics choices" band and a "Trusted fields" recipe on the Solver, the
   acceptance verdicts on the Results physics tab, and the admitting choice on each
-  equation's popover. Parity tests hold the table, the schema dataclasses, the
-  request models, the form defaults and the committed copy equal.
+  equation's popover. The "Trusted fields" recipe is a committed export of what
+  `model=trusted training=trusted` compose to (`apps/web/src/lib/trustedRecipe.json`,
+  same script), so the card cannot drift from the CLI recipe. A conditions edit is
+  checked as a whole before it is saved (the groups refuse a cavity flux without a
+  radius, isothermal walls without their temperature, an initial temperature below
+  saturation, a fitted flux capped below its start). Parity tests hold the table,
+  the schema dataclasses, the request models, the form defaults, the request
+  bounds and both committed copies equal.

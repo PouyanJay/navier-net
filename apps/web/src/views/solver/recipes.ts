@@ -12,6 +12,7 @@
  */
 
 import { fieldSpecs, optionLabel } from "../../lib/fields";
+import trustedRecipe from "../../lib/trustedRecipe.json";
 import type { SolverFormState } from "./form";
 import { FORM_DEFAULTS, parseOverrides } from "./form";
 import { treatmentMeta, treatmentOf, treatmentPatch } from "./formulation";
@@ -84,45 +85,27 @@ export function recipeState(name: RecipeName): SolverFormState {
   return { ...FORM_DEFAULTS };
 }
 
-/** The gate the trusted recipe sets on the causal schedule, and the time
- * bins the thermal source needs (configs/training/trusted.yaml). */
-export const TRUSTED_CAUSAL_GATE = 0.99;
-export const TRUSTED_TIME_BINS = 8;
-
 /**
- * The trusted-fields recipe: configs/model/trusted.yaml and
- * configs/training/trusted.yaml, as the form expresses them. The physics
- * choices switch on together because each package of the chain was gated on
- * the one before it; the run length is the benchmark's.
+ * The trusted-fields recipe: `configs/model/trusted.yaml` and
+ * `configs/training/trusted.yaml` exactly, as the launch form expresses them.
+ * The stamp is a committed export of what those YAMLs compose to
+ * (`lib/trustedRecipe.json`, written by `scripts/export_field_table.py` and
+ * held current by the Python tests), so the card cannot drift from the CLI
+ * recipe the benchmarks run. The physics choices switch on together because
+ * each package of the chain was gated on the one before it.
  */
-function trustedState(): SolverFormState {
-  return {
-    ...FORM_DEFAULTS,
-    ...treatmentPatch("sharp"),
-    film_pressure: false,
-    nucleation_root: true,
-    root_attachment: true,
-    receding_cap: true,
-    walls_at: "physical",
-    wall_condition: "no_slip",
-    momentum_closure: "brinkman",
-    outlet_condition: "zero_gradient",
-    pressure_representation: "two_phase",
-    thermal_model: "sharp",
-    source_mode: "thermal",
-    mass_balance: true,
-    collocation_time_bins: TRUSTED_TIME_BINS,
-    causal_weighting: true,
-    causal_mode: "weight",
-    causal_gate_min_weight: TRUSTED_CAUSAL_GATE,
-    log_chunk_residuals: true,
-    steps: 12000,
-    lr_halflife: 2500,
-    val_fraction: 0.1,
-    rebalance_every: 500,
-    log_every: 500,
-  };
-}
+const TRUSTED_STAMP = trustedRecipe as Partial<SolverFormState>;
+
+/** The gate the trusted recipe sets on the causal schedule, and the time bins
+ * the thermal source needs: what the rail restores when either is switched
+ * back on by hand. */
+export const TRUSTED_CAUSAL_GATE = TRUSTED_STAMP.causal_gate_min_weight ?? 0.99;
+export const TRUSTED_TIME_BINS = TRUSTED_STAMP.collocation_time_bins || 8;
+
+const trustedState = (): SolverFormState => ({
+  ...FORM_DEFAULTS,
+  ...TRUSTED_STAMP,
+});
 
 /** A boolean whose departure reads as "+ label" / "− label". Exported so the
  * tests can hold it complete against `MODIFIERS`: a switch missing here would
@@ -151,7 +134,8 @@ export const SWITCH_LABELS: [keyof SolverFormState, string][] = [
 ];
 
 /** The physics choices that are a pick among options; a departure reads as
- * "label → option". Read off the field table, so a new choice needs no entry. */
+ * "label → option". Read off the field table; a new choice needs its form
+ * field, which `fieldTable.test.ts` holds for every form-owned entry. */
 const CHOICE_SPECS = fieldSpecs({ section: "physics", owner: "form" }).filter(
   (spec) => spec.kind === "enum",
 );

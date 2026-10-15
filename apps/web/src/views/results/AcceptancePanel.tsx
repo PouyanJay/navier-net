@@ -1,44 +1,44 @@
 import { Panel } from "../../components";
+import type { AuditVerdict, RunMetrics } from "../../lib/api";
 import { CheckRow, UnrunRow } from "./CheckRow";
 
-/** One acceptance verdict as the evaluate stage writes it into the metrics
- * (`audit.verdicts` of audit.json): the worst value over every event frame,
- * the threshold it was read against, and whether it passed. */
-export interface AuditVerdict {
-  worst: number;
-  max: number;
-  pass: boolean;
-}
+export type { AuditVerdict } from "../../lib/api";
 
-export type AuditVerdicts = Partial<
-  Record<"mirror" | "residuals" | "flux" | "heat", AuditVerdict>
+const VERDICT_IDS = ["mirror", "residuals", "flux", "heat"] as const;
+type VerdictId = (typeof VERDICT_IDS)[number];
+
+/** What a run's metrics say about each acceptance test: the verdict, or why
+ * there is none ("absent" when the run wrote no audit, "unreadable" when it
+ * wrote one in a shape this page cannot read). */
+export type AuditVerdicts = Record<
+  VerdictId,
+  AuditVerdict | "absent" | "unreadable"
 >;
 
-const VERDICT_KEYS = ["mirror", "residuals", "flux", "heat"] as const;
+function readVerdict(entry: unknown): AuditVerdict | "unreadable" {
+  if (!entry || typeof entry !== "object") return "unreadable";
+  const { worst, max, pass } = entry as Record<string, unknown>;
+  if (typeof worst !== "number" || typeof max !== "number") return "unreadable";
+  return { worst, max, pass: pass === true };
+}
 
-/** The acceptance verdicts an evaluated run recorded, or null for a run that
- * wrote no audit (one evaluated before the audit existed, or with it off). */
+/** The acceptance verdicts a run recorded, read defensively: the metrics are
+ * a file the evaluate stage wrote, and an older or partial audit must read as
+ * missing tests, never as passes. Null for a run that wrote no audit at all. */
 export function auditVerdicts(
-  metrics: object | null | undefined,
+  metrics: RunMetrics | null | undefined,
 ): AuditVerdicts | null {
-  const audit = (metrics as Record<string, unknown> | null | undefined)?.[
-    "audit"
-  ];
+  const audit = metrics?.audit;
   if (!audit || typeof audit !== "object") return null;
-  const verdicts: AuditVerdicts = {};
-  for (const key of VERDICT_KEYS) {
-    const entry = (audit as Record<string, unknown>)[key];
-    if (!entry || typeof entry !== "object") continue;
-    const { worst, max, pass } = entry as Record<string, unknown>;
-    if (typeof worst === "number" && typeof max === "number") {
-      verdicts[key] = { worst, max, pass: pass === true };
-    }
-  }
-  return Object.keys(verdicts).length > 0 ? verdicts : null;
+  const entries = VERDICT_IDS.map((id) => [
+    id,
+    id in audit ? readVerdict(audit[id]) : "absent",
+  ]);
+  return Object.fromEntries(entries) as AuditVerdicts;
 }
 
 /** What each verdict measured, in the interface's own voice. */
-const ROWS: { id: keyof AuditVerdicts; name: string; detail: string }[] = [
+const ROWS: { id: VerdictId; name: string; detail: string }[] = [
   {
     id: "mirror",
     name: "Mirror symmetry",
@@ -74,12 +74,16 @@ const fmt = (value: number) => value.toPrecision(3);
  * cannot make; it belongs to a seed sweep.
  */
 export function AcceptancePanel({ audit }: { audit: AuditVerdicts | null }) {
-  const rows = audit ? ROWS.filter((row) => audit[row.id]) : [];
-  const passed = rows.filter((row) => audit?.[row.id]?.pass).length;
+  const measured = audit
+    ? ROWS.filter((row) => typeof audit[row.id] === "object")
+    : [];
+  const passed = measured.filter(
+    (row) => (audit?.[row.id] as AuditVerdict).pass,
+  ).length;
   return (
     <Panel
       title="Acceptance audit"
-      subtitle={audit ? `${passed} of ${rows.length} pass` : "not run"}
+      subtitle={audit ? `${passed} of ${measured.length} pass` : "not run"}
     >
       {!audit && (
         <p className="state-note">
@@ -87,22 +91,38 @@ export function AcceptancePanel({ audit }: { audit: AuditVerdicts | null }) {
           the audit on to measure it.
         </p>
       )}
-      {rows.map((row) => {
-        const verdict = audit![row.id]!;
-        return (
-          <CheckRow
-            key={row.id}
-            check={{
-              id: row.id,
-              name: row.name,
-              detail: row.detail,
-              value: fmt(verdict.worst),
-              against: `≤ ${fmt(verdict.max)}`,
-              ok: verdict.pass,
-            }}
-          />
-        );
-      })}
+      {audit &&
+        ROWS.map((row) => {
+          const verdict = audit[row.id];
+          if (typeof verdict !== "object") {
+            return (
+              <UnrunRow
+                key={row.id}
+                check={{
+                  id: row.id,
+                  name: row.name,
+                  reason:
+                    verdict === "absent"
+                      ? "not in this run's audit; re-run the evaluate stage"
+                      : "recorded in a shape this page cannot read",
+                }}
+              />
+            );
+          }
+          return (
+            <CheckRow
+              key={row.id}
+              check={{
+                id: row.id,
+                name: row.name,
+                detail: row.detail,
+                value: fmt(verdict.worst),
+                against: `≤ ${fmt(verdict.max)}`,
+                ok: verdict.pass,
+              }}
+            />
+          );
+        })}
       <UnrunRow
         check={{
           id: "seeds",

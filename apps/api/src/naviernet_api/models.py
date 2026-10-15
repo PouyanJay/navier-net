@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from naviernet.config.fields import Kind, Owner, Section
 from naviernet_api.services.overrides import MAX_OVERRIDES, MAX_TOKEN_LENGTH
 
 
@@ -21,9 +22,9 @@ class FieldSpecOut(BaseModel):
     key: str  # the Hydra path the value composes to
     name: str  # the short name the request models and the forms use
     label: str
-    kind: Literal["float", "int", "bool", "enum"]
-    section: Literal["conditions", "physics", "training", "acceptance"]
-    owner: Literal["series", "form", "override"]
+    kind: Kind
+    section: Section
+    owner: Owner
     help: str = ""
     unit: str = ""
     options: list[str] = Field(default_factory=list)
@@ -668,7 +669,7 @@ class RunLaunchRequest(BaseModel):
     def _check_trusted_physics(self) -> RunLaunchRequest:
         # The trusted-fields choices' own dependency tree, mirrored from the
         # model's and the trainer's validators so a bad combination is a 422
-        # naming the fix, not a worker failure.
+        # naming the fix, not a worker failure: what reads the sharp front...
         if self.pressure_representation == "two_phase" and self.sharp_interface is False:
             raise ValueError(
                 "pressure_representation=two_phase blends the vapour pressure with the "
@@ -683,6 +684,17 @@ class RunLaunchRequest(BaseModel):
                 "so it requires front_geometry and sharp_interface -- enable them, or "
                 "keep the legacy thermal model"
             )
+        if self.mirror_symmetry and not self.front_geometry:
+            raise ValueError(
+                "mirror_symmetry reflects about the centreline of the run's wall span, "
+                "which the front geometry carries -- enable front_geometry, or turn "
+                "mirror_symmetry off"
+            )
+        return self._check_thermal_source()._check_single_dataset_physics()
+
+    def _check_thermal_source(self) -> RunLaunchRequest:
+        # ...and what the thermal source needs: the model that computes the flux,
+        # and a binned batch to rebuild the front per instant.
         if self.source_mode == "thermal" and self.thermal_model != "sharp":
             raise ValueError(
                 "source_mode=thermal takes the source from the interface flux, which "
@@ -694,13 +706,7 @@ class RunLaunchRequest(BaseModel):
                 "source_mode=thermal rebuilds the front once per distinct collocation "
                 "instant, so it needs collocation_time_bins > 0 (the trusted recipe uses 8)"
             )
-        if self.mirror_symmetry and not self.front_geometry:
-            raise ValueError(
-                "mirror_symmetry reflects about the centreline of the run's wall span, "
-                "which the front geometry carries -- enable front_geometry, or turn "
-                "mirror_symmetry off"
-            )
-        return self._check_single_dataset_physics()
+        return self
 
     def _check_single_dataset_physics(self) -> RunLaunchRequest:
         if len(self.resolved_datasets()) <= 1:

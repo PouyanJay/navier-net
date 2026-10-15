@@ -14,6 +14,7 @@ set inside it and threads are spawned / statuses reported outside it.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import threading
 from collections.abc import Callable
@@ -437,17 +438,7 @@ def _worker(settings: Settings, run_id: str, request: RunLaunchRequest) -> None:
         _announce_start(run_id, base_steps, request)
         pipeline = Pipeline(cfg)
         if not request.resume:
-            digest = _write_snapshot(cfg, pipeline.paths.output_dir)
-            # Before the first step, so a run that dies in training still records
-            # its owner. A resume keeps the manifest it was launched with.
-            run_manifest.write(
-                pipeline.paths.output_dir,
-                run_id=run_id,
-                project_id=request.project,
-                datasets=request.resolved_datasets(),
-                heldout_datasets=request.heldout_datasets or [],
-                config_sha256=digest,
-            )
+            _record_identity(cfg, pipeline.paths.output_dir, run_id, request)
         _run_stages(pipeline, run_id, request)
         _finish(settings, run_id, error=None)
         log.info("run %s finished", run_id)
@@ -673,9 +664,14 @@ def _require_physics_support(
     series' fields resolved to, the sharp thermal model needs the T field, and
     physical walls need tensors preprocessed with the wall positions.
     """
-    from naviernet_api.services.datasets import series_fields, tensors_meta
+    _require_sharp_support(settings, request, "model.sharp_interface=true" in overrides)
+    if request.walls_at == "physical":
+        _require_wall_positions(settings, request.resolved_datasets())
 
-    sharp = "model.sharp_interface=true" in overrides
+
+def _require_sharp_support(settings: Settings, request: RunLaunchRequest, sharp: bool) -> None:
+    from naviernet_api.services.datasets import series_fields
+
     if request.pressure_representation == "two_phase" and not sharp:
         raise LaunchRejected(
             422,
@@ -691,15 +687,19 @@ def _require_physics_support(
             "thermal_model=sharp needs the sharp front and the 'T' field. Enable Momentum "
             "and Energy on Physics & model, or keep the legacy thermal model.",
         )
-    if request.walls_at == "physical":
-        for dataset in request.resolved_datasets():
-            if "y_wall_lo_star" not in tensors_meta(settings, dataset):
-                raise LaunchRejected(
-                    422,
-                    f"walls_at=physical needs the wall positions, which the tensors of "
-                    f"series {dataset!r} do not carry. Re-run preprocessing on it, or "
-                    "keep the walls at the crop edges.",
-                )
+
+
+def _require_wall_positions(settings: Settings, datasets: list[str]) -> None:
+    from naviernet_api.services.datasets import tensors_meta
+
+    for dataset in datasets:
+        if "y_wall_lo_star" not in tensors_meta(settings, dataset):
+            raise LaunchRejected(
+                422,
+                f"walls_at=physical needs the wall positions, which the tensors of "
+                f"series {dataset!r} do not carry. Re-run preprocessing on it, or "
+                "keep the walls at the crop edges.",
+            )
 
 
 def _resolved_interface_flags(request: RunLaunchRequest, fields: list[str]) -> list[str]:
@@ -783,14 +783,35 @@ def _resume_config(
     return cfg, int(state["state"]["done"])
 
 
-def _write_snapshot(cfg, output_dir: Path) -> str:
+def _record_identity(cfg, output_dir: Path, run_id: str, request: RunLaunchRequest) -> None:
+    """The config snapshot and the manifest, before the first step, so a run
+    that dies in training still records what it was and whose it is. A resume
+    keeps both from its original launch."""
+    _write_snapshot(cfg, output_dir)
+    run_manifest.write(output_dir, run_id, request, config_sha256=config_digest(cfg))
+
+
+def _write_snapshot(cfg, output_dir: Path) -> None:
     """Persist the composed config like Hydra does for CLI runs, so the run's
-    detail view (and a later resume) can read it back; returns the snapshot's
-    SHA-256, the manifest's handle on the run's exact inputs."""
+    detail view (and a later resume) can read it back."""
     from omegaconf import OmegaConf
 
     snapshot_dir = output_dir / ".hydra"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
-    path = snapshot_dir / "config.yaml"
-    OmegaConf.save(cfg, path)
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    OmegaConf.save(cfg, snapshot_dir / "config.yaml")
+
+
+# Keys that name the run rather than its inputs; two runs of one configuration
+# differ in them alone, so the digest leaves them out.
+_IDENTITY_KEYS = ("run_name", "paths")
+
+
+def config_digest(cfg) -> str:
+    """SHA-256 of the run's inputs: the composed config without its own name
+    and paths, serialised canonically, so equal inputs give equal digests."""
+    from omegaconf import OmegaConf
+
+    inputs = OmegaConf.to_container(cfg, resolve=False)
+    for key in _IDENTITY_KEYS:
+        inputs.pop(key, None)
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True, default=str).encode()).hexdigest()

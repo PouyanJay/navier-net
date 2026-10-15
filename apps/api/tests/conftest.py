@@ -16,11 +16,13 @@ from naviernet_api.main import create_app
 from naviernet_api.settings import Settings, get_settings
 
 
-def write_synthetic_tensors(path: Path) -> None:
+def write_synthetic_tensors(path: Path, wall_positions: bool = False) -> None:
     """A tiny but schema-complete `tensors.npz`: an 11-frame growing bubble.
 
     Small enough that a real 2-step training run over it takes a second, so the
-    solver tests stay in the fast, data-free tier.
+    solver tests stay in the fast, data-free tier. With ``wall_positions`` the
+    meta carries the detected wall rows (what `model.walls_at=physical` reads),
+    as preprocessing writes since the trusted-fields work.
     """
     import numpy as np
 
@@ -61,6 +63,13 @@ def write_synthetic_tensors(path: Path) -> None:
         # Raw-frame geometry, so the overlays figure can render on synthetic
         # raws: the imaged band's rows within the (16 x 140) raw frames.
         "y_roi": [64, 76],
+        # The detected wall rows in y*, as preprocessing writes them: here the
+        # crop edges, so a walled domain spans the same band.
+        **(
+            {"y_wall_lo_star": 0.0, "y_wall_hi_star": 1.0, "y_center_star": 0.5}
+            if wall_positions
+            else {}
+        ),
         # Snapshot of the conditions baked into these tensors (matches the
         # highest_t defaults), so the staleness check has something to compare.
         "baked_conditions": {

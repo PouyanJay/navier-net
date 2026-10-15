@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
-from naviernet.config.fields import FIELD_TABLE
+from naviernet.config.fields import FIELD_TABLE, export
 
 
-def test_the_field_table_is_served_in_table_order(client: TestClient):
+def test_the_field_table_is_served_whole_and_in_table_order(client: TestClient):
     r = client.get("/api/config/fields")
     assert r.status_code == 200
     body = r.json()
 
+    # Every entry, every attribute: the response model may not drop one.
+    assert body == json.loads(json.dumps(export()))
     assert [entry["key"] for entry in body] == [spec.key for spec in FIELD_TABLE]
     assert len({entry["name"] for entry in body}) == len(body)
 

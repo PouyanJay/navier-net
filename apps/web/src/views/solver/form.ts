@@ -245,8 +245,6 @@ export const FORM_BOUNDS = {
   fv_weight: { min: 0, max: 100 },
   alpha_eps_anneal_steps: { min: 0, max: 20000 },
   alpha_eps_final: { min: 0.001, max: 0.2 },
-  collocation_time_bins: { min: 0, max: 1024 },
-  causal_gate_min_weight: { min: 0, max: 1 },
 } as const;
 
 /** Holdout options in physical frame numbers; values are the 0-based index. */

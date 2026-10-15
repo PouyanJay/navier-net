@@ -121,11 +121,12 @@ def test_every_string_choice_of_the_model_and_training_schemas_is_reachable(grou
     )
 
 
-def test_the_baked_fields_are_the_tables_baked_conditions():
-    assert (
-        tuple(spec.name for spec in fields.specs(section="conditions") if spec.baked)
-        == BAKED_CONDITION_FIELDS
-    )
+def test_the_baked_fields_are_exactly_the_three_the_tensors_depend_on():
+    """The frame interval sets the time axis, the width sets um/px and the
+    reference velocity sets the reference time; nothing else is baked. Pinned
+    as a literal, so flipping a table flag by accident fails here."""
+    assert BAKED_CONDITION_FIELDS == ("dt_frame_ms", "channel_width_um", "U_ref")
+    assert [spec.name for spec in FIELD_TABLE if spec.baked] == list(BAKED_CONDITION_FIELDS)
 
 
 def test_hydra_literals_compose_back_to_the_value():
@@ -157,4 +158,22 @@ def test_the_web_copy_of_the_table_is_current():
 
     assert json.loads(WEB_COPY.read_text()) == fields.export(), (
         "apps/web/src/lib/fieldTable.json is stale: run scripts/export_field_table.py"
+    )
+
+
+def test_the_web_copy_of_the_trusted_recipe_is_current():
+    """The Solver's "Trusted fields" card stamps a committed export of what
+    `model=trusted training=trusted` compose to; a stale copy fails here."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "export_field_table", REPO_ROOT / "scripts" / "export_field_table.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    copy = REPO_ROOT / "apps" / "web" / "src" / "lib" / "trustedRecipe.json"
+    assert copy.is_file(), "run scripts/export_field_table.py"
+    assert json.loads(copy.read_text(encoding="utf-8")) == json.loads(module.render_recipe()), (
+        "apps/web/src/lib/trustedRecipe.json is stale: run scripts/export_field_table.py"
     )

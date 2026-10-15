@@ -169,6 +169,15 @@
   color: var(--text-soft);
 }
 .srow .sw-hint,
+/* A choice's explanation, under its control rather than inside its label. */
+.choice-help {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  text-wrap: pretty;
+}
 .srow-why {
   flex-basis: 100%;
   margin: 0 0 0 calc(34px + var(--s3));

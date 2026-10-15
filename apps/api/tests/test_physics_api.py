@@ -200,14 +200,16 @@ def test_validation_drops_a_nan_nested_inside_residual_convergence(client):
     json.dumps(physics.model_dump(), allow_nan=False)
 
 
-def test_every_gated_equation_names_the_choice_that_admits_it(client):
-    """The registry's gate behind each equation, as the override that makes it,
-    so the UI can say why a term is on rather than only that it is."""
+def test_every_equation_carries_the_choices_that_admit_it(client):
+    """The registry's gate behind each equation, as the overrides that make it,
+    so the UI can say why a term is on rather than only that it is. The route
+    carries the registry's answer verbatim (its semantics are tested with the
+    registry: composing the choices enables the equation)."""
+    from naviernet.physics.registry import REGISTRY, enabled_by
+
     eqs = _by_id(client.get("/api/physics/sample").json())
 
-    assert eqs["brinkman"]["enabled_by"] == "model.momentum_closure=brinkman"
-    assert eqs["vapour_potential"]["enabled_by"] == "model.pressure_representation=two_phase"
-    assert eqs["energy_liquid"]["enabled_by"] == "model.thermal_model=sharp"
-    assert eqs["laplace"]["enabled_by"] == "model.sharp_interface=true"
-    assert eqs["mom"]["enabled_by"] == "model.sharp_interface=false"
+    for equation in REGISTRY:
+        assert eqs[equation.id]["enabled_by"] == enabled_by(equation), equation.id
+    assert "model.momentum_closure=brinkman" in eqs["brinkman"]["enabled_by"]
     assert eqs["vof"]["enabled_by"] is None

@@ -59,7 +59,7 @@ BAKED_CONDITION_FIELDS: tuple[str, ...] = tuple(
 def baked_conditions(cfg) -> dict[str, float]:
     """The values of the tensor-baked condition fields for a composed config."""
     return {
-        spec.name: float(OmegaConf.select(cfg, spec.key))
+        spec.name: float(OmegaConf.select(cfg, spec.key, throw_on_missing=True))
         for spec in field_specs(section="conditions")
         if spec.baked
     }

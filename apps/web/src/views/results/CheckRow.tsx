@@ -13,6 +13,11 @@ export function CheckRow({ check }: { check: PhysicsCheck }) {
       </span>
       <div>
         <b>{check.name}</b>
+        {/* The verdict in words too: the glyph and its colour are hidden
+            from assistive technology, so the row has to say it. */}
+        <span className="sr-only">
+          {check.ok ? "within tolerance" : "flagged"}
+        </span>
         <span>{check.detail}</span>
       </div>
       <span className={check.ok ? "check-v" : "check-v flag"}>

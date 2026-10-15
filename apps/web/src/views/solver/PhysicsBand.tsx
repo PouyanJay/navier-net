@@ -1,9 +1,5 @@
 import { Band } from "../../components";
-import {
-  HugeiconsIcon,
-  InterfaceIcon,
-  WarningIcon,
-} from "../../components/icons";
+import { InterfaceIcon } from "../../components/icons";
 import { FORM_BOUNDS, type SolverFormState } from "./form";
 import {
   modifierPatch,
@@ -13,7 +9,7 @@ import {
   treatmentOf,
   treatmentPatch,
 } from "./formulation";
-import { SubLabel, SwitchRow, ValueRow } from "./Rows";
+import { Caution, SubLabel, SwitchRow, ValueRow } from "./Rows";
 import type { SeriesCapability } from "./useSeriesCapability";
 
 interface PhysicsBandProps {
@@ -98,24 +94,18 @@ export function PhysicsBand({
       <p className="treat-detail">{meta.detail}</p>
 
       {noPressure && (
-        <p className="rail-caution" role="status">
-          <HugeiconsIcon icon={WarningIcon} size={13} aria-hidden="true" />
-          <span>
-            The sharp front reads a pressure field, which{" "}
-            <b>{capability.fields ? "this series" : "the series"}</b> does not
-            train. Enable Momentum on Physics &amp; model to reach it.
-          </span>
-        </p>
+        <Caution>
+          The sharp front reads a pressure field, which{" "}
+          <b>{capability.fields ? "this series" : "the series"}</b> does not
+          train. Enable Momentum on Physics &amp; model to reach it.
+        </Caution>
       )}
       {capability.loadError && (
-        <p className="rail-caution" role="status">
-          <HugeiconsIcon icon={WarningIcon} size={13} aria-hidden="true" />
-          <span>
-            Could not read what this series trains ({capability.loadError}), so
-            the treatments are all offered. A launch the series cannot support
-            will be refused with the reason.
-          </span>
-        </p>
+        <Caution>
+          Could not read what this series trains ({capability.loadError}), so
+          the treatments are all offered. A launch the series cannot support
+          will be refused with the reason.
+        </Caution>
       )}
 
       {modifiersFor(treatment).map((modifier) => (
