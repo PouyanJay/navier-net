@@ -50,6 +50,23 @@ export interface SolverFormState {
   front_velocity: boolean;
   fv_weight: number;
   fv_apex_weight: number;
+  /** The trusted-fields physics choices and training switches, one field-table
+   * entry each (`lib/fields.ts`; `fieldTable.test.ts` holds these defaults
+   * equal to the table's). */
+  walls_at: "crop" | "physical";
+  wall_condition: "no_slip" | "no_penetration";
+  momentum_closure: "darcy" | "brinkman";
+  outlet_condition: "none" | "zero_gradient";
+  pressure_representation: "single" | "two_phase";
+  thermal_model: "legacy" | "sharp";
+  source_mode: "free" | "thermal";
+  mirror_symmetry: boolean;
+  mass_balance: boolean;
+  mass_balance_weight: number;
+  collocation_time_bins: number;
+  /** The causal schedule's convergence gate; null keeps the fixed annealing. */
+  causal_gate_min_weight: number | null;
+  log_chunk_residuals: boolean;
   /** Advanced overrides as raw text; parsed to `overrides` at launch. */
   overridesText: string;
 }
@@ -152,6 +169,22 @@ export const FORM_DEFAULTS: SolverFormState = {
   // rebalancer, and at 1 they are measurably inert.
   fv_weight: 10,
   fv_apex_weight: 10,
+  // The trusted-fields choices at the schema's defaults: today's physics, so
+  // an untouched form composes byte-for-byte what it did before they existed.
+  // The trusted recipe (recipes.ts) is where they switch on together.
+  walls_at: "crop",
+  wall_condition: "no_slip",
+  momentum_closure: "darcy",
+  outlet_condition: "none",
+  pressure_representation: "single",
+  thermal_model: "legacy",
+  source_mode: "free",
+  mirror_symmetry: false,
+  mass_balance: false,
+  mass_balance_weight: 1,
+  collocation_time_bins: 0,
+  causal_gate_min_weight: null,
+  log_chunk_residuals: false,
   overridesText: "",
 };
 
@@ -212,6 +245,8 @@ export const FORM_BOUNDS = {
   fv_weight: { min: 0, max: 100 },
   alpha_eps_anneal_steps: { min: 0, max: 20000 },
   alpha_eps_final: { min: 0.001, max: 0.2 },
+  collocation_time_bins: { min: 0, max: 1024 },
+  causal_gate_min_weight: { min: 0, max: 1 },
 } as const;
 
 /** Holdout options in physical frame numbers; values are the 0-based index. */

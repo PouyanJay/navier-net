@@ -260,13 +260,19 @@ renders from it.
   `RunLaunchRequest` (`models.py:334-624`) and `_form_overrides`
   (`services/run_manager.py:577-642`) gain the choices; `conditions_from_cfg`
   (`services/datasets.py:764-780`) is built from the table.
-- **Web**: a generic `FieldInput` component (number with unit and bounds, toggle,
-  select) rendered from the table, used by the Datasets conditions editor
+- **Web**: the table reaches the web as a committed copy
+  (`apps/web/src/lib/fieldTable.json`, written by `scripts/export_field_table.py`;
+  `tests/test_field_table.py` fails when it is stale), so the forms render from it
+  without a request and the web tests need no stub. The Datasets conditions editor
   (`apps/web/src/views/datasets/conditions.tsx`, `EditConditionsModal.tsx`,
-  `NewSeriesModal.tsx`), a new "Physics choices" band on the Solver page
-  (`views/solver/form.ts`, `formulation.ts`, `recipes.ts`), and an "Acceptance" panel on
-  the Results page showing `audit.json` with pass/fail. `lib/api.ts` types follow the
-  table's JSON shape. Existing hand-written fields stay and migrate opportunistically.
+  `NewSeriesModal.tsx`) renders the thermal section from the table (a number with
+  unit and bounds, or a listbox), a "Physics choices" band on the Solver page renders
+  the choices from it (`views/solver/PhysicsChoicesBand.tsx`, `form.ts`,
+  `formulation.ts`, `recipes.ts` with a "Trusted fields" recipe), and an "Acceptance
+  audit" panel on the Results page shows the verdicts the evaluate stage wrote into
+  `metrics.json` with pass/fail (`views/results/AcceptancePanel.tsx`). `lib/api.ts`
+  types follow the table's JSON shape. Existing hand-written fields stay and read
+  their bounds, units and labels off the table.
 - **Registry flags**: `enabled_equations` (`physics/registry.py:497-520`) gains the new
   gating flags (momentum_closure, outlet_condition, pressure_representation,
   thermal_model, interface_temperature, source_mode) and its callers are updated
@@ -370,3 +376,26 @@ Each package is merged only when its gate passes on three seeds of `Series-1-w30
   thermal conditions and heaters; `highest_t` is untouched so the published runs
   and the paper scripts keep composing what they were made with. Joint runs refuse
   the sharp thermal model.
+- 2026-10-15, WP5 (#8): `model.mirror_symmetry` (opt-in): every field network
+  averaged with its reflection about the centre of the wall span (v odd), the
+  capsule centreline pinned to the axis; `configs/model/trusted_mirror.yaml`.
+  Joint runs refuse it.
+- 2026-10-15, WP6 (#7): `naviernet/audit.py` run by `evaluate` on every checkpoint
+  (`audit.json`, `audit_fields.npz`, verdicts in `metrics.json`); thresholds under
+  `evaluation.acceptance`; `scripts/audit_ensemble.py` for the seed-agreement test.
+- 2026-10-15, WP7 (#9): the field table `naviernet/config/fields.py` (45 entries:
+  series conditions, physics choices, training switches, acceptance thresholds)
+  served at `GET /api/config/fields`; the API's condition allow-list, the baked-field
+  list, the form-owned key set and the launch form's override list are generated
+  from it, and the override gate accepts a table-declared choice or threshold by
+  its declared kind, options and bounds (so `evaluation.acceptance.*` and the named
+  physics choices are reachable). `RunLaunchRequest` carries the physics choices and
+  training switches with the schema's defaults and mirrors the trainer's dependency
+  tree; the launcher refuses a choice the series cannot carry (no `p`, no `T`, no
+  wall positions in the tensors) before a slot is taken. `run.json` v2 records the
+  SHA-256 of the config snapshot. The web renders from a committed copy of the table
+  (`apps/web/src/lib/fieldTable.json`): thermal conditions in both series modals,
+  a "Physics choices" band and a "Trusted fields" recipe on the Solver, the
+  acceptance verdicts on the Results physics tab, and the admitting choice on each
+  equation's popover. Parity tests hold the table, the schema dataclasses, the
+  request models, the form defaults and the committed copy equal.

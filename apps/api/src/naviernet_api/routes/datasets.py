@@ -63,7 +63,8 @@ def update_conditions(
     """Save per-series operating conditions; groups recompute immediately."""
     if datasets_service.get_dataset_summary(settings, dataset) is None:
         raise HTTPException(status_code=404, detail=f"dataset {dataset!r} not found")
-    updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+    # Unset fields keep their value; an EXPLICIT null clears an optional one.
+    updates = payload.model_dump(exclude_unset=True)
     try:
         datasets_service.save_conditions(settings, dataset, updates)
     except ConditionsError as exc:

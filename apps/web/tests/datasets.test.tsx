@@ -66,6 +66,17 @@ const DETAIL = {
     n_frames_usable: 11,
     n_frames_event: 10,
     U_ref_m_s: 0.2,
+    T_inlet_C: null,
+    T_init_C: 58,
+    side_wall_thermal: "adiabatic",
+    T_wall_C: null,
+    q_cavity_W_cm2: null,
+    heater_radius_um: null,
+    heater_on_ms: null,
+    cavity_y_fraction: 0.5,
+    q_wall_mode: "fixed",
+    q_wall_max_W_cm2: 10,
+    dT_ref_K: null,
   },
 };
 const GROUPS = {
@@ -521,6 +532,35 @@ describe("DatasetsView", () => {
         screen.queryByText(/Re-preprocess required/i),
       ).not.toBeInTheDocument(),
     );
+  });
+
+  it("edits a thermal condition, and clears one back to not set", async () => {
+    const calls = mockApi();
+    renderStage(<DatasetsView project={PROJECT} onProjectChanged={noop} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit .+ conditions/ }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", { name: /Edit .*conditions/ }),
+    );
+
+    // The series was saved with an initial temperature; the editor shows it,
+    // and the inlet (never set) reads as not set rather than as a number.
+    const initial = dialog.getByLabelText(/Initial liquid temperature/);
+    expect(initial).toHaveValue(58);
+    expect(dialog.getByLabelText(/Inlet temperature/)).toHaveValue(null);
+    fireEvent.change(initial, { target: { value: "" } });
+    fireEvent.change(dialog.getByLabelText(/Heater on for/), {
+      target: { value: "2.5" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
+
+    await waitFor(() => expect(calls.conditionPatches).toHaveLength(1));
+    // Clearing travels as an explicit null; untouched fields do not travel.
+    expect(calls.conditionPatches[0]).toEqual({
+      T_init_C: null,
+      heater_on_ms: 2.5,
+    });
   });
 
   it("renames a series; the label replaces the id everywhere visible", async () => {
@@ -1561,7 +1601,7 @@ describe("new series conditions", () => {
     // are sent at once: the filled measurements and the operating defaults.
     expect(order).toEqual(["conditions", "preprocess"]);
     expect(calls.conditionPatches).toEqual([
-      {
+      expect.objectContaining({
         dt_frame_ms: 0.25,
         channel_width_um: 400,
         channel_height_um: 150,
@@ -1569,8 +1609,36 @@ describe("new series conditions", () => {
         q_wall_W_cm2: 2,
         flow_rate_mL_hr: 5,
         U_ref: 0.2,
-      },
+        // The thermal choices travel at their defaults...
+        side_wall_thermal: "adiabatic",
+        q_wall_mode: "fixed",
+      }),
     ]);
+    // ...and an optional condition left "not set" is not sent at all, so a new
+    // series never inherits another series' temperatures.
+    expect(calls.conditionPatches[0]).not.toHaveProperty("T_init_C");
+    expect(calls.conditionPatches[0]).not.toHaveProperty("q_cavity_W_cm2");
+  });
+
+  it("sends a thermal condition the user filled in, typed", async () => {
+    const calls = mockApi();
+    renderStage(<Harness />);
+    const form = await openModal();
+    for (const [label, value] of [
+      [/Frame interval/, "0.25"],
+      [/Channel width/, "400"],
+      [/Channel height/, "150"],
+      [/Initial liquid temperature/, "58"],
+      [/Cavity heater flux/, "2"],
+    ] as const) {
+      fireEvent.change(form.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(submit());
+
+    await waitFor(() => expect(calls.conditionPatches).toHaveLength(1));
+    expect(calls.conditionPatches[0]).toEqual(
+      expect.objectContaining({ T_init_C: 58, q_cavity_W_cm2: 2 }),
+    );
   });
 
   it("derives the saturation temperature from the fluid, read-only", async () => {

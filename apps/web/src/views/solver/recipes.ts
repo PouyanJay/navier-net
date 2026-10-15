@@ -11,11 +11,12 @@
  * statement a run's provenance needs, where a vague "custom" says nothing.
  */
 
+import { fieldSpecs, optionLabel } from "../../lib/fields";
 import type { SolverFormState } from "./form";
 import { FORM_DEFAULTS, parseOverrides } from "./form";
 import { treatmentMeta, treatmentOf, treatmentPatch } from "./formulation";
 
-export type RecipeName = "full-physics" | "best-heldout" | "legacy";
+export type RecipeName = "full-physics" | "trusted" | "best-heldout" | "legacy";
 
 export interface RecipeMeta {
   name: RecipeName;
@@ -33,6 +34,13 @@ export const RECIPES: RecipeMeta[] = [
     evidence: "the platform default",
     detail:
       "Sets the sharp-front treatment: capsule front, Young-Laplace + kinematic condition, film pressure on.",
+  },
+  {
+    name: "trusted",
+    label: "Trusted fields",
+    evidence: "audited chain",
+    detail:
+      "Sets the sharp treatment with physical walls, Brinkman no-slip, an outlet, the two-phase pressure, the sharp thermal model and the mass balance: the chain the hidden fields are audited under (configs/model/trusted.yaml).",
   },
   {
     name: "best-heldout",
@@ -61,6 +69,7 @@ export const recipeMeta = (name: RecipeName): RecipeMeta =>
  * opens with that card selected and zero departures.
  */
 export function recipeState(name: RecipeName): SolverFormState {
+  if (name === "trusted") return trustedState();
   if (name === "best-heldout") {
     return {
       ...FORM_DEFAULTS,
@@ -73,6 +82,46 @@ export function recipeState(name: RecipeName): SolverFormState {
     return { ...FORM_DEFAULTS, ...treatmentPatch("diffuse") };
   }
   return { ...FORM_DEFAULTS };
+}
+
+/** The gate the trusted recipe sets on the causal schedule, and the time
+ * bins the thermal source needs (configs/training/trusted.yaml). */
+export const TRUSTED_CAUSAL_GATE = 0.99;
+export const TRUSTED_TIME_BINS = 8;
+
+/**
+ * The trusted-fields recipe: configs/model/trusted.yaml and
+ * configs/training/trusted.yaml, as the form expresses them. The physics
+ * choices switch on together because each package of the chain was gated on
+ * the one before it; the run length is the benchmark's.
+ */
+function trustedState(): SolverFormState {
+  return {
+    ...FORM_DEFAULTS,
+    ...treatmentPatch("sharp"),
+    film_pressure: false,
+    nucleation_root: true,
+    root_attachment: true,
+    receding_cap: true,
+    walls_at: "physical",
+    wall_condition: "no_slip",
+    momentum_closure: "brinkman",
+    outlet_condition: "zero_gradient",
+    pressure_representation: "two_phase",
+    thermal_model: "sharp",
+    source_mode: "thermal",
+    mass_balance: true,
+    collocation_time_bins: TRUSTED_TIME_BINS,
+    causal_weighting: true,
+    causal_mode: "weight",
+    causal_gate_min_weight: TRUSTED_CAUSAL_GATE,
+    log_chunk_residuals: true,
+    steps: 12000,
+    lr_halflife: 2500,
+    val_fraction: 0.1,
+    rebalance_every: 500,
+    log_every: 500,
+  };
 }
 
 /** A boolean whose departure reads as "+ label" / "− label". Exported so the
@@ -96,7 +145,16 @@ export const SWITCH_LABELS: [keyof SolverFormState, string][] = [
   ["kinematics", "growth constraints"],
   ["front_velocity", "front velocity"],
   ["render", "render"],
+  ["mirror_symmetry", "mirror symmetry"],
+  ["mass_balance", "mass balance"],
+  ["log_chunk_residuals", "chunk residuals"],
 ];
+
+/** The physics choices that are a pick among options; a departure reads as
+ * "label → option". Read off the field table, so a new choice needs no entry. */
+const CHOICE_SPECS = fieldSpecs({ section: "physics", owner: "form" }).filter(
+  (spec) => spec.kind === "enum",
+);
 
 /** A number whose departure reads as "label base → value". Sub-parameters are
  * gated on the switch that owns them: a changed kinematics weight is noise
@@ -149,16 +207,30 @@ const VALUE_LABELS: {
     label: "w_fv_apex",
     gate: (form) => form.front_velocity,
   },
+  {
+    key: "mass_balance_weight",
+    label: "w_mass",
+    gate: (form) => form.mass_balance,
+  },
+  { key: "collocation_time_bins", label: "time bins" },
+  {
+    key: "causal_gate_min_weight",
+    label: "causal gate",
+    gate: (form) =>
+      form.causal_weighting && form.causal_gate_min_weight != null,
+  },
 ];
 
-const WEIGHT_LABELS: { key: keyof SolverFormState["weights"]; label: string }[] =
-  [
-    { key: "data", label: "w_data" },
-    { key: "vof", label: "w_vof" },
-    { key: "div", label: "w_div" },
-    { key: "src", label: "w_src" },
-    { key: "bc", label: "w_bc" },
-  ];
+const WEIGHT_LABELS: {
+  key: keyof SolverFormState["weights"];
+  label: string;
+}[] = [
+  { key: "data", label: "w_data" },
+  { key: "vof", label: "w_vof" },
+  { key: "div", label: "w_div" },
+  { key: "src", label: "w_src" },
+  { key: "bc", label: "w_bc" },
+];
 
 /**
  * Every departure of `form` from `recipe`'s stamped state, as dock chips.
@@ -181,10 +253,25 @@ export function recipeDiff(
       ? [`treatment → ${treatmentMeta(treatment).label.toLowerCase()}`]
       : []),
     ...switchChips(form, base),
+    ...choiceChips(form, base),
     ...balancingChips(form, base),
     ...valueChips(form, base),
     ...overrideChips(form),
   ];
+}
+
+/** The physics choices, each as one "label → option" chip. */
+function choiceChips(form: SolverFormState, base: SolverFormState): string[] {
+  const chips: string[] = [];
+  for (const spec of CHOICE_SPECS) {
+    const key = spec.name as keyof SolverFormState;
+    if (form[key] !== base[key]) {
+      chips.push(
+        `${spec.label.toLowerCase()} → ${optionLabel(String(form[key]))}`,
+      );
+    }
+  }
+  return chips;
 }
 
 /** Toggled booleans, each as one signed chip. */
@@ -198,6 +285,14 @@ function switchChips(form: SolverFormState, base: SolverFormState): string[] {
   const sharpening = form.alpha_eps_anneal_steps > 0;
   if (sharpening !== base.alpha_eps_anneal_steps > 0) {
     chips.push(`${sharpening ? "+" : "−"} sharpening`);
+  }
+  // The causal gate is a switch with a threshold: set or not set.
+  const gated = form.causal_gate_min_weight != null;
+  if (
+    form.causal_weighting &&
+    gated !== (base.causal_gate_min_weight != null)
+  ) {
+    chips.push(`${gated ? "+" : "−"} causal gate`);
   }
   return chips;
 }

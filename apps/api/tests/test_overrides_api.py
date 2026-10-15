@@ -8,6 +8,7 @@ carries the overridden value.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -127,3 +128,35 @@ def test_form_owned_keys_mirror_the_built_override_list():
     keys = [token.split("=", 1)[0] for token in built]
     top_level = {key for key in keys if key.count(".") == 1}
     assert top_level == set(FORM_OWNED_KEYS)
+
+
+class TestFieldTableDials:
+    """Keys the field table declares as override dials pass the gate with the
+    table's own kind, options and bounds; keys it declares elsewhere are refused
+    with their home."""
+
+    def test_accepts_a_declared_choice_verbatim(self):
+        assert validate_overrides(["model.interface_temperature=kinetic"]) == [
+            "model.interface_temperature=kinetic"
+        ]
+
+    def test_reaches_the_acceptance_thresholds(self):
+        assert validate_overrides(["evaluation.acceptance.mirror_max=0.1"]) == [
+            "evaluation.acceptance.mirror_max=0.1"
+        ]
+        assert validate_overrides(["evaluation.audit=False"]) == ["evaluation.audit=false"]
+
+    @pytest.mark.parametrize(
+        ("token", "reason"),
+        [
+            ("model.interface_temperature=plasma", "must be one of saturation, kinetic"),
+            ("evaluation.acceptance.seed_corr_min=2", "within [0, 1]"),
+            ("model.walls_at=physical", "set by the launch form"),
+            ("training.mass_balance=true", "set by the launch form"),
+            ("experiment.T_init_C=58", "series' operating conditions"),
+            ("evaluation.stride=2", "outside training.* / model.*"),
+        ],
+    )
+    def test_rejects_with_the_reason(self, token: str, reason: str):
+        with pytest.raises(OverrideRejected, match=re.escape(reason)):
+            validate_overrides([token])

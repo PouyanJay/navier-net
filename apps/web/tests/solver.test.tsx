@@ -1329,6 +1329,113 @@ describe("SolverView defaults", () => {
   });
 });
 
+describe("SolverView physics choices", () => {
+  it("posts the schema's choices untouched, so an unchanged run composes as before", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.walls_at).toBe("crop");
+    expect(body.wall_condition).toBe("no_slip");
+    expect(body.momentum_closure).toBe("darcy");
+    expect(body.outlet_condition).toBe("none");
+    expect(body.pressure_representation).toBe("single");
+    expect(body.thermal_model).toBe("legacy");
+    expect(body.source_mode).toBe("free");
+    expect(body.mirror_symmetry).toBe(false);
+    expect(body.mass_balance).toBe(false);
+    expect(body.collocation_time_bins).toBe(0);
+    expect(body.causal_gate_min_weight).toBeNull();
+    expect(body.log_chunk_residuals).toBe(false);
+  });
+
+  it("renders each choice from the field table and posts what was chosen", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    // The band opens closed; its controls are the table's own labels.
+    fireEvent.click(screen.getByRole("button", { name: /Physics choices/ }));
+    choose(/^Walls/, /physical/);
+    choose(/Momentum closure/, /brinkman/);
+    choose(/^Outlet/, /zero gradient/);
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Cross-section mass balance" }),
+    );
+    fireEvent.change(screen.getByLabelText(/Mass balance weight/), {
+      target: { value: "2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.walls_at).toBe("physical");
+    expect(body.momentum_closure).toBe("brinkman");
+    expect(body.outlet_condition).toBe("zero_gradient");
+    expect(body.mass_balance).toBe(true);
+    expect(body.mass_balance_weight).toBe(2);
+  });
+
+  it("stamps the trusted recipe and posts the whole audited chain", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: /Trusted fields/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.sharp_interface).toBe(true);
+    expect(body.walls_at).toBe("physical");
+    expect(body.momentum_closure).toBe("brinkman");
+    expect(body.pressure_representation).toBe("two_phase");
+    expect(body.thermal_model).toBe("sharp");
+    expect(body.source_mode).toBe("thermal");
+    expect(body.collocation_time_bins).toBe(8);
+    expect(body.mass_balance).toBe(true);
+    expect(body.causal_weighting).toBe(true);
+    expect(body.causal_gate_min_weight).toBe(0.99);
+    expect(body.log_chunk_residuals).toBe(true);
+  });
+
+  it("drops the sharp thermal model and the two-phase pressure with the sharp rung", async () => {
+    const posts = stubApi();
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("radio", { name: /Trusted fields/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Explicit front/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+
+    const body = posts[0] as Record<string, unknown>;
+    expect(body.sharp_interface).toBe(false);
+    expect(body.pressure_representation).toBe("single");
+    expect(body.thermal_model).toBe("legacy");
+    expect(body.source_mode).toBe("free");
+    // Choices that do not read the front survive the step down.
+    expect(body.walls_at).toBe("physical");
+    expect(body.mass_balance).toBe(true);
+  });
+
+  it("withholds the sharp thermal model from a series without temperature, and says why", async () => {
+    stubApi({ fields: ["phi", "u", "v", "s", "p"] });
+    renderStage(<SolverView />);
+    await screen.findByLabelText("highest_t");
+
+    fireEvent.click(screen.getByRole("button", { name: /Physics choices/ }));
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Thermal model/)).toBeDisabled(),
+    );
+    expect(screen.getByText(/needs the temperature field/)).toBeInTheDocument();
+  });
+});
+
 describe("SolverView two-way closure", () => {
   it("is switchable, not just silently sent", async () => {
     const posts = stubApi();
@@ -1548,7 +1655,8 @@ describe("SolverView verdict chips", () => {
     // Liquid film, free end caps, growth constraints, front velocity, RAR:
     // exact, so an accidental tone flip on any of the five fails here.
     expect(screen.getAllByText("benched ∅")).toHaveLength(5);
-    expect(screen.getAllByText("default on")).toHaveLength(2);
+    // Depletable superheat, two-way evaporation, the per-chunk residual record.
+    expect(screen.getAllByText("default on")).toHaveLength(3);
   });
 
   it("keeps the unbenched tone for options with no numbers yet", async () => {
@@ -1556,8 +1664,9 @@ describe("SolverView verdict chips", () => {
     renderStage(<SolverView />);
     await screen.findByLabelText("highest_t");
 
-    // Attachment pressure, receding cap, evolving width, pinch-off.
-    expect(screen.getAllByText("unbenched")).toHaveLength(4);
+    // Attachment pressure, receding cap, evolving width, pinch-off, mirror
+    // symmetry, the cross-section mass balance.
+    expect(screen.getAllByText("unbenched")).toHaveLength(6);
   });
 });
 

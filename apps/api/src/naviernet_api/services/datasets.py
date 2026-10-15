@@ -18,6 +18,8 @@ from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
 
+from naviernet.config.fields import FieldSpec, hydra_literal
+from naviernet.config.fields import specs as field_specs
 from naviernet.data.preprocess import BAKED_CONDITION_FIELDS
 from naviernet.physics.registry import REGISTRY, enabled_equations, stage_b_terms
 from naviernet.utils.logging import get_logger
@@ -54,18 +56,14 @@ class ExclusionError(ValueError):
     """A rejected frame-exclusion edit (out of range, holdout, too few left)."""
 
 
-# Editable per-series conditions: the Hydra override path each field drives,
-# plus its accepted [min, max] (server-side bounds per SECURITY.md §4; the
-# ranges are generous physical sanity limits, not experiment tuning). Saved
-# values apply at every compose site for the dataset (detail, groups,
+# Editable per-series conditions, by short name: the field table's conditions
+# section (`naviernet.config.fields`), each entry carrying the Hydra path it
+# drives, its kind, its options and its accepted [lo, hi] (server-side bounds
+# per SECURITY.md §4; generous physical sanity limits, not experiment tuning).
+# Saved values apply at every compose site for the dataset (detail, groups,
 # preprocess, run launches), so the whole pipeline sees them.
-CONDITION_FIELDS: dict[str, tuple[str, float, float]] = {
-    "dt_frame_ms": ("experiment.dt_frame_ms", 1e-6, 1e4),
-    "channel_width_um": ("experiment.channel_width_um", 1.0, 1e6),
-    "channel_height_um": ("experiment.channel_height_um", 1.0, 1e6),
-    "flow_rate_mL_hr": ("experiment.flow_rate_mL_hr", 1e-3, 1e6),
-    "q_wall_W_cm2": ("experiment.q_wall_W_cm2", 1e-3, 1e4),
-    "U_ref": ("scales.U_ref", 1e-6, 1e3),
+CONDITION_FIELDS: dict[str, FieldSpec] = {
+    spec.name: spec for spec in field_specs(section="conditions")
 }
 # T_sat is not here: it is a property of the selected fluid (derived, read-only),
 # not a typed operating condition. The working fluid is chosen by group name and
@@ -171,8 +169,8 @@ def _read_raw_conditions(settings: Settings, dataset: str) -> dict:
     return saved
 
 
-def read_conditions(settings: Settings, dataset: str) -> dict[str, float]:
-    """The series' saved scalar condition values ({} when none saved)."""
+def read_conditions(settings: Settings, dataset: str) -> dict[str, float | str]:
+    """The series' saved condition values ({} when none saved)."""
     saved = _read_raw_conditions(settings, dataset)
     return {k: v for k, v in saved.items() if k in CONDITION_FIELDS}
 
@@ -232,16 +230,25 @@ def conditions_overrides(settings: Settings, dataset: str) -> list[str]:
     """Saved conditions as Hydra overrides, for compose sites of this dataset.
     Includes the fluid *group* override (`fluid=<id>`) when one is selected."""
     saved = read_conditions(settings, dataset)
-    overrides = [f"{CONDITION_FIELDS[key][0]}={value}" for key, value in sorted(saved.items())]
+    overrides = [
+        f"{CONDITION_FIELDS[key].key}={hydra_literal(value)}"
+        for key, value in sorted(saved.items())
+    ]
     fluid = read_series_fluid(settings, dataset)
     if fluid is not None:
         overrides.append(f"{FLUID_KEY}={fluid}")
     return overrides
 
 
-def save_conditions(settings: Settings, dataset: str, updates: dict[str, float | str]) -> dict:
+def save_conditions(
+    settings: Settings, dataset: str, updates: dict[str, float | str | None]
+) -> dict:
     """Merge validated condition edits into the series' file; returns the set.
-    Accepts the scalar operating conditions and an allow-listed ``fluid`` id."""
+
+    Accepts the operating conditions of the field table and an allow-listed
+    ``fluid`` id. A ``None`` clears an OPTIONAL condition back to "not set"
+    (its derived default); on a required one it is refused.
+    """
     path = _conditions_path(settings, dataset)
     if path is None or not path.parent.is_dir():
         raise ConditionsError(f"dataset {dataset!r} not found")
@@ -251,23 +258,50 @@ def save_conditions(settings: Settings, dataset: str, updates: dict[str, float |
         raise ConditionsError(
             f"unknown fluid {fluid!r}; choose one of {', '.join(available_fluid_ids())}"
         )
+    merged = _read_raw_conditions(settings, dataset)
     for key, value in updates.items():
         if key == FLUID_KEY:
-            continue
-        if key not in CONDITION_FIELDS:
-            raise ConditionsError(f"unknown condition field {key!r}")
-        _, lo, hi = CONDITION_FIELDS[key]
-        if not isinstance(value, (int, float)) or not math.isfinite(value):
-            raise ConditionsError(f"{key} must be a finite number, got {value!r}")
-        if not lo <= value <= hi:
-            raise ConditionsError(f"{key} must be within [{lo}, {hi}], got {value!r}")
-
-    merged = {**_read_raw_conditions(settings, dataset), **updates}
+            merged[key] = value
+        elif value is None:
+            merged.pop(key, None)
+            _require_optional(key)
+        else:
+            merged[key] = _validated_condition(key, value)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(merged, indent=2))
     tmp.replace(path)
     log.info("saved conditions for %s: %s", dataset, sorted(updates))
     return merged
+
+
+def _require_optional(key: str) -> None:
+    spec = CONDITION_FIELDS.get(key)
+    if spec is None:
+        raise ConditionsError(f"unknown condition field {key!r}")
+    if not spec.optional:
+        raise ConditionsError(f"{key} cannot be cleared; it always has a value")
+
+
+def _validated_condition(key: str, value: object) -> float | str:
+    """``value`` checked against the field table's declaration of ``key``."""
+    spec = CONDITION_FIELDS.get(key)
+    if spec is None:
+        raise ConditionsError(f"unknown condition field {key!r}")
+    if spec.kind == "enum":
+        if not isinstance(value, str) or value not in spec.options:
+            raise ConditionsError(
+                f"{key} must be one of {', '.join(spec.options)}, got {value!r}"
+            )
+        return value
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
+        raise ConditionsError(f"{key} must be a finite number, got {value!r}")
+    if not spec.lo <= value <= spec.hi:
+        raise ConditionsError(f"{key} must be within [{spec.lo}, {spec.hi}], got {value!r}")
+    return value
 
 
 # ── Per-series frame exclusions ──────────────────────────────────────────────
@@ -634,8 +668,7 @@ def _current_baked_conditions(settings: Settings, dataset: str) -> dict[str, flo
     cfg = compose_cfg(dataset, overrides=series_overrides(settings, dataset))
     baked: dict[str, float] = {}
     for key in BAKED_CONDITION_FIELDS:
-        path = CONDITION_FIELDS[key][0]  # e.g. "experiment.dt_frame_ms"
-        baked[key] = float(OmegaConf.select(cfg, path))
+        baked[key] = float(OmegaConf.select(cfg, CONDITION_FIELDS[key].key))
     return baked
 
 
@@ -762,21 +795,20 @@ def get_dataset(settings: Settings, dataset: str) -> DatasetDetail | None:
 
 
 def conditions_from_cfg(cfg: DictConfig) -> OperatingConditions:
-    """The response model's view of a composed config's operating conditions."""
+    """The response model's view of a composed config's operating conditions:
+    every field-table condition, read at its Hydra path, plus the identity and
+    frame facts the experiment block carries."""
     exp = cfg.experiment
+    values = {name: OmegaConf.select(cfg, spec.key) for name, spec in CONDITION_FIELDS.items()}
+    values["U_ref_m_s"] = values.pop("U_ref")  # reported under its unit
     return OperatingConditions(
         fluid=exp.fluid,
         T_sat_C=exp.T_sat_C,
-        q_wall_W_cm2=exp.q_wall_W_cm2,
-        flow_rate_mL_hr=exp.flow_rate_mL_hr,
-        channel_width_um=exp.channel_width_um,
-        channel_height_um=exp.channel_height_um,
-        dt_frame_ms=exp.dt_frame_ms,
         flow_direction=exp.flow_direction,
         n_frames_raw=exp.n_frames_raw,
         n_frames_usable=exp.n_frames_usable,
         n_frames_event=exp.n_frames_event,
-        U_ref_m_s=cfg.scales.U_ref,
+        **values,
     )
 
 

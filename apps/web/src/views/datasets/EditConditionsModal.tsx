@@ -9,12 +9,15 @@ import {
   BAKED_KEYS,
   type ConditionInputs,
   type ConditionKey,
+  conditionValid,
+  conditionValue,
   DEFAULT_FLUID_ID,
   FluidSelect,
+  inputsFrom,
   MeasurementField,
   OPERATING_CONDITIONS,
-  parseCondition,
   REQUIRED_CONDITIONS,
+  THERMAL_CONDITIONS,
   useFluids,
 } from "./conditions";
 
@@ -28,17 +31,9 @@ interface EditConditionsModalProps {
 // Keep in sync with LabelUpdate.label (max_length) in apps/api .../models.py.
 const MAX_LABEL_LEN = 80;
 
-/** The current conditions as form strings. U_ref is reported as `U_ref_m_s`. */
+/** The current conditions as form strings (an unset optional one reads ""). */
 function initialInputs(detail: DatasetDetail): ConditionInputs {
-  const c = detail.conditions;
-  return {
-    dt_frame_ms: String(c.dt_frame_ms),
-    channel_width_um: String(c.channel_width_um),
-    channel_height_um: String(c.channel_height_um),
-    q_wall_W_cm2: String(c.q_wall_W_cm2),
-    flow_rate_mL_hr: String(c.flow_rate_mL_hr),
-    U_ref: c.U_ref_m_s == null ? "" : String(c.U_ref_m_s),
-  };
+  return inputsFrom(detail.conditions);
 }
 
 /** Edit an existing series' operating conditions. Cheap fields apply on save;
@@ -62,7 +57,7 @@ export function EditConditionsModal({
 
   /** A field's saved (original) value, or null when it was unset/out of range. */
   const originalValue = (spec: (typeof ALL_CONDITIONS)[number]) =>
-    parseCondition(initial[spec.key], spec.min, spec.max);
+    conditionValue(spec, initial[spec.key]);
 
   // The detail carries the fluid's display name; map it back to the group id the
   // API expects, once the catalogue has loaded.
@@ -78,27 +73,29 @@ export function EditConditionsModal({
 
   const parsed = ALL_CONDITIONS.map((spec) => ({
     spec,
-    value: parseCondition(conditions[spec.key], spec.min, spec.max),
+    value: conditionValue(spec, conditions[spec.key]),
+    valid: conditionValid(spec, conditions[spec.key]),
   }));
-  const conditionsValid = parsed.every((entry) => entry.value !== null);
+  const conditionsValid = parsed.every((entry) => entry.valid);
   const fluidReady = fluidList.length > 0 && fluidId !== null;
 
   /** A baked field the user has changed on already-processed tensors. */
   function bakedNote(key: ConditionKey): string | undefined {
     if (!detail.processed || !BAKED_KEYS.has(key)) return undefined;
     const spec = ALL_CONDITIONS.find((s) => s.key === key)!;
-    const current = parseCondition(conditions[key], spec.min, spec.max);
+    const current = conditionValue(spec, conditions[key]);
     if (current === null || current === originalValue(spec)) return undefined;
     return "Baked into the tensors. Saving requires a re-preprocess.";
   }
 
   /** Only the fields the user actually changed, so an edit to one condition
-   * never re-sends (and re-bakes) the others. */
+   * never re-sends (and re-bakes) the others. An optional condition cleared
+   * to "not set" travels as null, which the API reads as "clear". */
   function changedUpdates(): ConditionsUpdate {
     const updates: ConditionsUpdate = {};
-    for (const { spec, value } of parsed) {
-      if (value !== null && value !== originalValue(spec)) {
-        updates[spec.key] = value;
+    for (const { spec, value, valid } of parsed) {
+      if (valid && value !== originalValue(spec)) {
+        (updates as Record<string, unknown>)[spec.key] = value;
       }
     }
     const originalFluidId = fluidList.find(
@@ -225,6 +222,18 @@ export function EditConditionsModal({
                 onChange={setFluidId}
               />
               {OPERATING_CONDITIONS.map((s) => field(s.key))}
+            </div>
+          </div>
+
+          <div className="modal-section">
+            <h3 className="modal-section-hd">
+              Thermal conditions &amp; heating{" "}
+              <span>
+                read by the sharp thermal model · empty keeps the default
+              </span>
+            </h3>
+            <div className="frm">
+              {THERMAL_CONDITIONS.map((s) => field(s.key))}
             </div>
           </div>
 

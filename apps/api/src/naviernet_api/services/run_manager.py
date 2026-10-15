@@ -13,6 +13,7 @@ set inside it and threads are spawned / statuses reported outside it.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from collections.abc import Callable
@@ -23,6 +24,8 @@ from typing import Literal
 
 from omegaconf import DictConfig
 
+from naviernet.config.fields import hydra_literal
+from naviernet.config.fields import specs as field_specs
 from naviernet.config.schema import validate_split
 from naviernet.utils.logging import get_logger
 from naviernet_api.models import RunJobStatus, RunLaunchRequest
@@ -219,7 +222,7 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
         # back as a 422 the caller can act on, not as a run that starts and then
         # dies. (The resolution itself happens again at compose time, where the
         # overrides are actually built.)
-        _interface_overrides(settings, dataset, request)
+        preflight_physics(settings, dataset, request)
         checked_overrides(request)
 
     with _lock:
@@ -240,6 +243,15 @@ def launch(settings: Settings, request: RunLaunchRequest) -> RunJobStatus:
     if result is None:  # unreachable: the job was registered above
         raise RuntimeError(f"run {run_id!r} vanished from the registry")
     return result
+
+
+def preflight_physics(settings: Settings, dataset: str, request: RunLaunchRequest) -> None:
+    """Resolve the interface family and check the trusted-fields choices against
+    the series, so an ask it cannot honour is a 422 before any slot is taken.
+    Shared with the sweep launcher, whose children skip `launch()`."""
+    _require_physics_support(
+        settings, request, _interface_overrides(settings, dataset, request)
+    )
 
 
 def checked_overrides(request: RunLaunchRequest) -> list[str]:
@@ -425,7 +437,7 @@ def _worker(settings: Settings, run_id: str, request: RunLaunchRequest) -> None:
         _announce_start(run_id, base_steps, request)
         pipeline = Pipeline(cfg)
         if not request.resume:
-            _write_snapshot(cfg, pipeline.paths.output_dir)
+            digest = _write_snapshot(cfg, pipeline.paths.output_dir)
             # Before the first step, so a run that dies in training still records
             # its owner. A resume keeps the manifest it was launched with.
             run_manifest.write(
@@ -434,6 +446,7 @@ def _worker(settings: Settings, run_id: str, request: RunLaunchRequest) -> None:
                 project_id=request.project,
                 datasets=request.resolved_datasets(),
                 heldout_datasets=request.heldout_datasets or [],
+                config_sha256=digest,
             )
         _run_stages(pipeline, run_id, request)
         _finish(settings, run_id, error=None)
@@ -546,6 +559,7 @@ def _configure(
     from naviernet_api.services.datasets import series_is_stage_b, series_overrides
 
     overrides.extend(_interface_overrides(settings, dataset, request))
+    _require_physics_support(settings, request, overrides)
 
     # The series' saved conditions and frame exclusions travel with every run.
     overrides.extend(series_overrides(settings, dataset))
@@ -639,7 +653,53 @@ def _form_overrides(request: RunLaunchRequest) -> list[str]:
         f"training.front_velocity={str(request.front_velocity).lower()}",
         f"training.fv_weight={request.fv_weight}",
         f"training.fv_apex_weight={request.fv_apex_weight}",
+        # The trusted-fields choices: every form-owned entry of the field table,
+        # read off the request by its short name, so adding one is one table
+        # entry plus its request field.
+        *(
+            f"{spec.key}={hydra_literal(getattr(request, spec.name))}"
+            for spec in field_specs(owner="form")
+        ),
     ]
+
+
+def _require_physics_support(
+    settings: Settings, request: RunLaunchRequest, overrides: list[str]
+) -> None:
+    """Refuse a trusted-fields choice the series cannot honour, with the fix.
+
+    The request validator holds the choices' own dependency tree; what is left
+    here reads the series: the two-phase pressure needs the sharp front the
+    series' fields resolved to, the sharp thermal model needs the T field, and
+    physical walls need tensors preprocessed with the wall positions.
+    """
+    from naviernet_api.services.datasets import series_fields, tensors_meta
+
+    sharp = "model.sharp_interface=true" in overrides
+    if request.pressure_representation == "two_phase" and not sharp:
+        raise LaunchRejected(
+            422,
+            "pressure_representation=two_phase needs the sharp front, which this series "
+            "cannot compose (no 'p' field). Enable Momentum on Physics & model, or keep "
+            "the single pressure.",
+        )
+    if request.thermal_model == "sharp" and (
+        not sharp or "T" not in series_fields(settings, request.resolved_datasets()[0])
+    ):
+        raise LaunchRejected(
+            422,
+            "thermal_model=sharp needs the sharp front and the 'T' field. Enable Momentum "
+            "and Energy on Physics & model, or keep the legacy thermal model.",
+        )
+    if request.walls_at == "physical":
+        for dataset in request.resolved_datasets():
+            if "y_wall_lo_star" not in tensors_meta(settings, dataset):
+                raise LaunchRejected(
+                    422,
+                    f"walls_at=physical needs the wall positions, which the tensors of "
+                    f"series {dataset!r} do not carry. Re-run preprocessing on it, or "
+                    "keep the walls at the crop edges.",
+                )
 
 
 def _resolved_interface_flags(request: RunLaunchRequest, fields: list[str]) -> list[str]:
@@ -723,11 +783,14 @@ def _resume_config(
     return cfg, int(state["state"]["done"])
 
 
-def _write_snapshot(cfg, output_dir: Path) -> None:
+def _write_snapshot(cfg, output_dir: Path) -> str:
     """Persist the composed config like Hydra does for CLI runs, so the run's
-    detail view (and a later resume) can read it back."""
+    detail view (and a later resume) can read it back; returns the snapshot's
+    SHA-256, the manifest's handle on the run's exact inputs."""
     from omegaconf import OmegaConf
 
     snapshot_dir = output_dir / ".hydra"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, snapshot_dir / "config.yaml")
+    path = snapshot_dir / "config.yaml"
+    OmegaConf.save(cfg, path)
+    return hashlib.sha256(path.read_bytes()).hexdigest()

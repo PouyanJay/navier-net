@@ -34,8 +34,9 @@ MANIFEST_FILE = "run.json"
 
 # The version this module writes. A file claiming a HIGHER version was written by
 # a newer server against a layout this one does not know, so it is ignored rather
-# than half-read.
-SCHEMA_VERSION = 1
+# than half-read. v2 added `config_sha256`, the digest of the config snapshot,
+# so a run is matched to its exact inputs.
+SCHEMA_VERSION = 2
 
 # Dataset names become path segments (`data/processed/<name>`), so they carry the
 # same allowlist the run and dataset ids do (SECURITY.md §3). The manifest is
@@ -54,6 +55,7 @@ def write(
     project_id: str | None,
     datasets: list[str],
     heldout_datasets: list[str],
+    config_sha256: str | None = None,
 ) -> RunManifest:
     """Record the run's identity beside its artifacts, and return it.
 
@@ -67,6 +69,7 @@ def write(
         datasets=list(datasets),
         heldout_datasets=list(heldout_datasets),
         created_at=_now(),
+        config_sha256=config_sha256,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / MANIFEST_FILE

@@ -35,9 +35,11 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 import scipy.signal as ss
+from omegaconf import OmegaConf
 from PIL import Image
 from scipy.ndimage import gaussian_filter, map_coordinates
 
+from naviernet.config.fields import specs as field_specs
 from naviernet.data.contour import DEFAULT_WAVELENGTH_PX, fair_closed_contour
 from naviernet.physics.groups import compute_groups
 from naviernet.utils.logging import get_logger
@@ -45,18 +47,21 @@ from naviernet.utils.paths import RunPaths
 
 # The condition fields baked into the preprocessed tensors: the frame interval
 # sets the time axis, the channel width sets um/px, and the reference velocity
-# sets the reference time. This is the single source of truth for "what a
-# re-preprocess is needed for" -- the API imports it (see datasets service) so
-# the two never drift. Everything else only feeds the dimensionless groups.
-BAKED_CONDITION_FIELDS: tuple[str, ...] = ("dt_frame_ms", "channel_width_um", "U_ref")
+# sets the reference time. Declared on the field table (``baked=True``), which
+# is the single source of truth for "what a re-preprocess is needed for"; the
+# API reads the same table, so the two never drift. Everything else only feeds
+# the dimensionless groups.
+BAKED_CONDITION_FIELDS: tuple[str, ...] = tuple(
+    spec.name for spec in field_specs(section="conditions") if spec.baked
+)
 
 
 def baked_conditions(cfg) -> dict[str, float]:
     """The values of the tensor-baked condition fields for a composed config."""
     return {
-        "dt_frame_ms": cfg.experiment.dt_frame_ms,
-        "channel_width_um": cfg.experiment.channel_width_um,
-        "U_ref": cfg.scales.U_ref,
+        spec.name: float(OmegaConf.select(cfg, spec.key))
+        for spec in field_specs(section="conditions")
+        if spec.baked
     }
 
 

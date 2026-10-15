@@ -106,6 +106,20 @@ const DOMAINS: Domain[] = [
     icon: ThermalIcon,
     rows: (c) => [
       { label: "Wall heat flux", value: c.q_wall_W_cm2, unit: "W·cm⁻²" },
+      {
+        label: "Background flux",
+        value: c.q_wall_mode === "fit" ? "fitted" : "fixed",
+      },
+      { label: "Inlet temp", value: c.T_inlet_C ?? "saturation", unit: "°C" },
+      { label: "Initial liquid temp", value: c.T_init_C ?? "—", unit: "°C" },
+      { label: "Side walls", value: c.side_wall_thermal },
+      {
+        label: "Cavity heater",
+        value:
+          c.q_cavity_W_cm2 == null
+            ? "none"
+            : `${c.q_cavity_W_cm2} W·cm⁻² · r ${c.heater_radius_um ?? "?"} µm`,
+      },
     ],
   },
   {

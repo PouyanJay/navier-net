@@ -1,27 +1,29 @@
 import { useEffect, useId, useState } from "react";
 
 import { Callout, Select } from "../../components";
-import { api, type Fluid } from "../../lib/api";
+import { api, type Fluid, type OperatingConditions } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
+import {
+  fieldByName,
+  fieldOptions,
+  fieldSpecs,
+  type FieldSpec,
+} from "../../lib/fields";
 
 export const DEFAULT_FLUID_ID = "fc72";
 
-export type ConditionKey =
-  | "dt_frame_ms"
-  | "channel_width_um"
-  | "channel_height_um"
-  | "q_wall_W_cm2"
-  | "flow_rate_mL_hr"
-  | "U_ref";
+/** A condition's short name: the field table's `name` (the last segment of
+ * its Hydra key), which is also the key the conditions API takes. */
+export type ConditionKey = string;
 
 /** Condition fields baked into the preprocessed tensors: editing one on a
- * processed series needs a re-preprocess. Mirrors BAKED_CONDITION_FIELDS in the
- * datasets service. Everything else applies live. */
-export const BAKED_KEYS: ReadonlySet<ConditionKey> = new Set<ConditionKey>([
-  "dt_frame_ms",
-  "channel_width_um",
-  "U_ref",
-]);
+ * processed series needs a re-preprocess. Read off the field table, which the
+ * pipeline's own baked-field list is generated from. */
+export const BAKED_KEYS: ReadonlySet<ConditionKey> = new Set(
+  fieldSpecs({ section: "conditions" })
+    .filter((spec) => spec.baked)
+    .map((spec) => spec.name),
+);
 
 export interface ConditionSpec {
   key: ConditionKey;
@@ -29,12 +31,60 @@ export interface ConditionSpec {
   hint: string;
   unit: string;
   step: number;
-  /** Server-side bounds (`CONDITION_FIELDS` in the datasets service). */
+  /** Server-side bounds, from the field table. */
   min: number;
   max: number;
   /** Shown when empty (measurements) or pre-filled as the value (operating). */
   placeholder?: string;
   why: string;
+  /** A number, or a choice among `options`. */
+  kind: "number" | "select";
+  options?: { value: string; label: string }[];
+  /** Empty is a value: "not set", the derived default. */
+  optional: boolean;
+  /** What a new series starts with: "" must be entered (or stays not set). */
+  initial: string;
+}
+
+/** The table's unit, in the interface's typographic register. */
+const UNIT_DISPLAY: Record<string, string> = {
+  "mL/h": "mL·hr⁻¹",
+  "W/cm²": "W·cm⁻²",
+  "m/s": "m·s⁻¹",
+};
+
+/** A sensible input step for a unit, where the table does not say. */
+const STEP_BY_UNIT: Record<string, number> = {
+  "°C": 0.1,
+  "W/cm²": 0.1,
+  µm: 10,
+  ms: 0.1,
+  K: 0.1,
+  "": 0.05,
+};
+
+/** The form spec of one field-table condition, with the hints the table does
+ * not carry (a step, a hint, a placeholder) overlaid. */
+function fromTable(
+  name: string,
+  extra: Partial<ConditionSpec> = {},
+): ConditionSpec {
+  const spec = fieldByName(name);
+  return {
+    key: spec.name,
+    label: spec.label,
+    hint: spec.optional ? "optional" : "",
+    unit: UNIT_DISPLAY[spec.unit] ?? spec.unit,
+    step: STEP_BY_UNIT[spec.unit] ?? 0.1,
+    min: spec.lo ?? -Infinity,
+    max: spec.hi ?? Infinity,
+    why: spec.help,
+    kind: spec.kind === "enum" ? "select" : "number",
+    options: spec.kind === "enum" ? fieldOptions(spec) : undefined,
+    optional: spec.optional,
+    initial: spec.default == null ? "" : String(spec.default),
+    ...extra,
+  };
 }
 
 /**
@@ -44,39 +94,19 @@ export interface ConditionSpec {
  * series nobody has described yet.
  */
 export const REQUIRED_CONDITIONS: ConditionSpec[] = [
-  {
-    key: "dt_frame_ms",
-    label: "Frame interval",
+  fromTable("dt_frame_ms", {
     hint: "Δt between frames",
-    unit: "ms",
     step: 0.1,
     placeholder: "0.5",
-    min: 1e-6,
-    max: 1e4,
-    why: "sets the time axis of the tensors",
-  },
-  {
-    key: "channel_width_um",
-    label: "Channel width",
+  }),
+  fromTable("channel_width_um", {
     hint: "imaged direction",
-    unit: "µm",
-    step: 10,
     placeholder: "300",
-    min: 1,
-    max: 1e6,
-    why: "calibrates µm/px from the detected walls",
-  },
-  {
-    key: "channel_height_um",
-    label: "Channel height",
+  }),
+  fromTable("channel_height_um", {
     hint: "heated wall below",
-    unit: "µm",
-    step: 10,
     placeholder: "150",
-    min: 1,
-    max: 1e6,
-    why: "sets the physical scale of the heated channel",
-  },
+  }),
 ];
 
 /**
@@ -86,44 +116,56 @@ export const REQUIRED_CONDITIONS: ConditionSpec[] = [
  * of the selected fluid (derived, read-only).
  */
 export const OPERATING_CONDITIONS: ConditionSpec[] = [
-  {
-    key: "q_wall_W_cm2",
-    label: "Wall heat flux",
-    hint: "baseline",
-    unit: "W·cm⁻²",
-    step: 0.1,
-    min: 1e-3,
-    max: 1e4,
-    why: "bottom-wall heat flux setpoint",
-  },
-  {
-    key: "flow_rate_mL_hr",
-    label: "Flow rate",
-    hint: "inlet",
-    unit: "mL·hr⁻¹",
-    step: 0.5,
-    min: 1e-3,
-    max: 1e6,
-    why: "volumetric inlet flow rate",
-  },
-  {
-    key: "U_ref",
-    label: "Reference velocity",
-    hint: "U_ref",
-    unit: "m·s⁻¹",
-    step: 0.01,
-    min: 1e-6,
-    max: 1e3,
-    why: "measured nose-speed scale; sets the reference time",
-  },
+  fromTable("q_wall_W_cm2", { hint: "baseline", initial: "2.0" }),
+  fromTable("flow_rate_mL_hr", { hint: "inlet", step: 0.5, initial: "5.0" }),
+  fromTable("U_ref", { hint: "U_ref", step: 0.01, initial: "0.20" }),
 ];
+
+const HAND_WRITTEN = new Set(
+  [...REQUIRED_CONDITIONS, ...OPERATING_CONDITIONS].map((spec) => spec.key),
+);
+
+/**
+ * The thermal conditions and heaters the sharp thermal model reads, rendered
+ * straight from the field table so a new input is one table entry. An optional
+ * one left empty stays "not set" and takes its derived default (the inlet at
+ * saturation, no cavity heater, the heater on for the whole event).
+ */
+export const THERMAL_CONDITIONS: ConditionSpec[] = fieldSpecs({
+  section: "conditions",
+  owner: "series",
+  advanced: false,
+})
+  .filter((spec: FieldSpec) => !HAND_WRITTEN.has(spec.name))
+  .map((spec) => fromTable(spec.name));
 
 export const ALL_CONDITIONS: ConditionSpec[] = [
   ...REQUIRED_CONDITIONS,
   ...OPERATING_CONDITIONS,
+  ...THERMAL_CONDITIONS,
 ];
 
 export type ConditionInputs = Record<ConditionKey, string>;
+
+/** Every condition at its starting value, for a series not yet described. */
+export function initialInputs(): ConditionInputs {
+  return Object.fromEntries(
+    ALL_CONDITIONS.map((spec) => [spec.key, spec.initial]),
+  );
+}
+
+/** A series' saved conditions as form strings (unset reads as ""). U_ref is
+ * reported under its unit, as `U_ref_m_s`. */
+export function inputsFrom(conditions: OperatingConditions): ConditionInputs {
+  const values = conditions as unknown as Record<string, unknown>;
+  return Object.fromEntries(
+    ALL_CONDITIONS.map((spec) => {
+      const value =
+        spec.key === "U_ref" ? conditions.U_ref_m_s : values[spec.key];
+      return [spec.key, value == null ? "" : String(value)];
+    }),
+  );
+}
 
 /** Parse a condition value, or null when it is missing or out of range. */
 export function parseCondition(
@@ -134,6 +176,26 @@ export function parseCondition(
   const value = Number(raw);
   if (raw.trim() === "" || !Number.isFinite(value)) return null;
   return value >= min && value <= max ? value : null;
+}
+
+/** The typed value of a form string: a number, a choice, or null for an
+ * optional condition left empty ("not set"). Read it with `conditionValid`:
+ * an invalid number is also null. */
+export function conditionValue(
+  spec: ConditionSpec,
+  raw: string,
+): number | string | null {
+  if (spec.kind === "select") return raw;
+  return parseCondition(raw, spec.min, spec.max);
+}
+
+/** Whether a form string is acceptable for its condition. */
+export function conditionValid(spec: ConditionSpec, raw: string): boolean {
+  if (spec.kind === "select") {
+    return (spec.options ?? []).some((option) => option.value === raw);
+  }
+  if (raw.trim() === "") return spec.optional;
+  return parseCondition(raw, spec.min, spec.max) !== null;
 }
 
 export type FluidsLoad =
@@ -170,7 +232,8 @@ interface MeasurementFieldProps {
   bakedNote?: string;
 }
 
-/** A single condition with its unit and bounds, in the form's field shell. */
+/** A single condition with its unit and bounds, in the form's field shell: a
+ * number input, or a listbox for a condition that is a choice. */
 export function MeasurementField({
   spec,
   value,
@@ -179,31 +242,43 @@ export function MeasurementField({
   bakedNote,
 }: MeasurementFieldProps) {
   const id = useId();
-  const out =
-    value.trim() !== "" && parseCondition(value, spec.min, spec.max) === null;
+  const out = value.trim() !== "" && !conditionValid(spec, value);
   return (
     <div className="fld">
       <label htmlFor={id}>
         {spec.label}
-        <span className="hint">{spec.hint}</span>
+        {spec.hint && <span className="hint">{spec.hint}</span>}
       </label>
-      <span className="ug" data-disabled={disabled || undefined}>
-        <input
+      {spec.kind === "select" ? (
+        <Select
           id={id}
-          type="number"
-          inputMode="decimal"
           value={value}
-          step={spec.step}
-          min={spec.min}
-          max={spec.max}
-          placeholder={spec.placeholder}
+          options={spec.options ?? []}
+          onChange={onChange}
           disabled={disabled}
-          aria-invalid={out || undefined}
-          aria-describedby={`${id}-why`}
-          onChange={(e) => onChange(e.target.value)}
+          className="pick-field"
         />
-        <span className="sfx">{spec.unit}</span>
-      </span>
+      ) : (
+        <span className="ug" data-disabled={disabled || undefined}>
+          <input
+            id={id}
+            type="number"
+            inputMode="decimal"
+            value={value}
+            step={spec.step}
+            min={spec.min}
+            max={spec.max}
+            placeholder={
+              spec.placeholder ?? (spec.optional ? "not set" : undefined)
+            }
+            disabled={disabled}
+            aria-invalid={out || undefined}
+            aria-describedby={`${id}-why`}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          <span className="sfx">{spec.unit}</span>
+        </span>
+      )}
       <span id={`${id}-why`} className="fld-why">
         {out
           ? `Must be between ${spec.min} and ${spec.max} ${spec.unit}.`
@@ -273,7 +348,9 @@ export function FluidSelect({
           onChange={onChange}
           disabled={disabled || fluids.status !== "ready"}
           placeholder={
-            fluids.status === "loading" ? "Loading fluids…" : "Fluids unavailable"
+            fluids.status === "loading"
+              ? "Loading fluids…"
+              : "Fluids unavailable"
           }
           className="pick-field"
         />

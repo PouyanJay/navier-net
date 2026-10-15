@@ -8,12 +8,15 @@ import { errorMessage } from "../../lib/errors";
 import {
   ALL_CONDITIONS,
   type ConditionInputs,
+  conditionValid,
+  conditionValue,
   DEFAULT_FLUID_ID,
   FluidSelect,
+  initialInputs,
   MeasurementField,
   OPERATING_CONDITIONS,
-  parseCondition,
   REQUIRED_CONDITIONS,
+  THERMAL_CONDITIONS,
   useFluids,
 } from "./conditions";
 
@@ -21,15 +24,9 @@ const POLL_INTERVAL_MS = 1000;
 const SERIES_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 /** Measurements start empty (must be entered); operating conditions start at
- * their defaults and are edited to override. */
-const INITIAL_CONDITIONS: ConditionInputs = {
-  dt_frame_ms: "",
-  channel_width_um: "",
-  channel_height_um: "",
-  q_wall_W_cm2: "2.0",
-  flow_rate_mL_hr: "5.0",
-  U_ref: "0.20",
-};
+ * their defaults and are edited to override; optional thermal conditions
+ * start "not set". */
+const INITIAL_CONDITIONS: ConditionInputs = initialInputs();
 
 type Phase = "form" | "uploading" | "preprocessing";
 
@@ -73,9 +70,10 @@ export function NewSeriesModal({
   const validName = SERIES_ID_RE.test(name) && !project.datasets.includes(name);
   const parsed = ALL_CONDITIONS.map((spec) => ({
     spec,
-    value: parseCondition(conditions[spec.key], spec.min, spec.max),
+    value: conditionValue(spec, conditions[spec.key]),
+    valid: conditionValid(spec, conditions[spec.key]),
   }));
-  const conditionsValid = parsed.every((entry) => entry.value !== null);
+  const conditionsValid = parsed.every((entry) => entry.valid);
 
   // The pipeline reports states, not percentages; poll until it settles.
   useEffect(() => {
@@ -122,10 +120,13 @@ export function NewSeriesModal({
       // Before preprocessing, not after: these values are baked into the
       // calibration and the time axis, so running first would produce tensors
       // built from another series' conditions.
+      // An optional condition left "not set" is simply not sent.
       await api.updateConditions(name, {
         fluid: fluidId,
         ...Object.fromEntries(
-          parsed.map((entry) => [entry.spec.key, entry.value ?? undefined]),
+          parsed
+            .filter((entry) => entry.value !== null)
+            .map((entry) => [entry.spec.key, entry.value]),
         ),
       });
     } catch (err) {
@@ -251,6 +252,28 @@ export function NewSeriesModal({
                 onChange={setFluidId}
               />
               {OPERATING_CONDITIONS.map((spec) => (
+                <MeasurementField
+                  key={spec.key}
+                  spec={spec}
+                  value={conditions[spec.key]}
+                  disabled={busy}
+                  onChange={(next) =>
+                    setConditions((c) => ({ ...c, [spec.key]: next }))
+                  }
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="modal-section">
+            <h3 className="modal-section-hd">
+              Thermal conditions &amp; heating{" "}
+              <span>
+                read by the sharp thermal model · empty keeps the default
+              </span>
+            </h3>
+            <div className="frm">
+              {THERMAL_CONDITIONS.map((spec) => (
                 <MeasurementField
                   key={spec.key}
                   spec={spec}

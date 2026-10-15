@@ -10,10 +10,13 @@ network headed for Hydra compose, so everything about it is allowlisted
   schema dataclasses -- never paths, hydra internals, datasets, or run names;
 - only fields declared ``int`` / ``float`` / ``bool`` -- strings, lists, and
   nested groups are refused, which structurally rules out every enum the form
-  owns and every per-series weight table;
-- never a key the launch form or the series' saved model config already sets:
-  one value must have one home, and a silent precedence fight is a config bug
-  waiting to be reproduced.
+  owns and every per-series weight table -- unless the field table
+  (``naviernet.config.fields``) declares the key as an override dial, in which
+  case its declared kind, options and bounds are the gate (that is how the
+  acceptance thresholds and the named physics choices stay reachable);
+- never a key the launch form, the series' conditions or the series' saved
+  model config already sets: one value must have one home, and a silent
+  precedence fight is a config bug waiting to be reproduced.
 
 Every rejection names the offending token and where the value belongs.
 """
@@ -23,6 +26,7 @@ from __future__ import annotations
 import dataclasses
 import math
 
+from naviernet.config import fields as field_table
 from naviernet.config.schema import ModelConfig, TrainingConfig
 
 # Hard caps on volume, not values: the field is a handful of expert dials, not
@@ -36,9 +40,11 @@ MAX_TOKEN_LENGTH = 128
 MAX_MAGNITUDE = 1e9
 
 # Keys the launch form owns (mirrors the override list `_configure` builds in
-# run_manager.py -- keep the two in sync). Overriding one here would silently
-# fight the form control that claims to set it.
-FORM_OWNED_KEYS = frozenset(
+# run_manager.py -- keep the two in sync; the field table's form-owned entries
+# are added below, as `_form_overrides` emits them from the same table).
+# Overriding one here would silently fight the form control that claims to set
+# it.
+_HAND_WRITTEN_FORM_KEYS = frozenset(
     {
         "training.steps",
         "training.lr",
@@ -87,6 +93,9 @@ FORM_OWNED_KEYS = frozenset(
         "model.receding_cap",
     }
 )
+FORM_OWNED_KEYS = _HAND_WRITTEN_FORM_KEYS | {
+    spec.key for spec in field_table.specs(owner="form")
+}
 
 # Keys the series' saved model config owns (datasets.MODEL_ARCH_FIELDS): the
 # Physics & model stage is their home, and series_overrides() composes them
@@ -157,6 +166,10 @@ def _parse_token(token: str) -> tuple[str, str]:
 
 def _field_type(key: str) -> str:
     """The schema type of ``key``, after every allowlist gate."""
+    spec = field_table.by_key(key)
+    if spec is not None:
+        _reject_if_declared_elsewhere(spec)
+        return spec.kind
     group, dot, field = key.partition(".")
     if not dot or group not in _GROUPS:
         raise OverrideRejected(
@@ -183,6 +196,20 @@ def _field_type(key: str) -> str:
     return declared
 
 
+def _reject_if_declared_elsewhere(spec: field_table.FieldSpec) -> None:
+    """A field-table entry is overridable only when the overrides are its home."""
+    if spec.owner == "form":
+        raise OverrideRejected(
+            f"{spec.key!r} is set by the launch form; change it there instead of "
+            "overriding it, so the form always says what the run does"
+        )
+    if spec.owner == "series":
+        raise OverrideRejected(
+            f"{spec.key!r} belongs to the series' operating conditions; edit it on "
+            "the Datasets stage, so every run on the series sees one value"
+        )
+
+
 def _reject_if_owned(key: str) -> None:
     """Refuse a key that already has a home: one value, one owner."""
     if key in FORM_OWNED_KEYS:
@@ -199,6 +226,8 @@ def _reject_if_owned(key: str) -> None:
 
 def _parse_value(key: str, value: str, declared: str) -> str:
     """The value in canonical form, typed against the schema's declaration."""
+    if declared == "enum":
+        return _parse_choice(key, value)
     if declared == "bool":
         lowered = value.lower()
         if lowered not in ("true", "false"):
@@ -214,4 +243,24 @@ def _parse_value(key: str, value: str, declared: str) -> str:
         raise OverrideRejected(
             f"{key!r}={value!r} is outside the accepted magnitude (|v| <= {MAX_MAGNITUDE:g})"
         )
+    _check_declared_bounds(key, number)
     return repr(number)
+
+
+def _check_declared_bounds(key: str, number: float) -> None:
+    """A field-table dial also carries its own [lo, hi]."""
+    spec = field_table.by_key(key)
+    if spec is None or spec.lo is None or spec.hi is None:
+        return
+    if not spec.lo <= number <= spec.hi:
+        raise OverrideRejected(
+            f"{key!r} must be within [{spec.lo:g}, {spec.hi:g}], got {number!r}"
+        )
+
+
+def _parse_choice(key: str, value: str) -> str:
+    """One of the options the field table declares for ``key``, verbatim."""
+    options = field_table.by_key(key).options
+    if value not in options:
+        raise OverrideRejected(f"{key!r} must be one of {', '.join(options)}; got {value!r}")
+    return value

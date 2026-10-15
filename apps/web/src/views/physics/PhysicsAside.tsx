@@ -75,6 +75,13 @@ function EquationInfo({
             + field {fieldLabel(f)}
           </span>
         ))}
+        {/* Why the term is on: the configuration choice that admits it, as
+            the registry gates it, so the switch never has to be guessed at. */}
+        {eq.enabled_by && (
+          <span className="fchip mono" title="the choice that admits this term">
+            {eq.enabled_by}
+          </span>
+        )}
       </div>
       {shown.length > 0 && (
         <div className="groupsline">

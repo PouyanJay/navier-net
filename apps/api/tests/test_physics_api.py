@@ -198,3 +198,16 @@ def test_validation_drops_a_nan_nested_inside_residual_convergence(client):
     assert physics.residual_convergence["laplace"].ratio is None
     # And the whole payload really is serialisable as strict JSON.
     json.dumps(physics.model_dump(), allow_nan=False)
+
+
+def test_every_gated_equation_names_the_choice_that_admits_it(client):
+    """The registry's gate behind each equation, as the override that makes it,
+    so the UI can say why a term is on rather than only that it is."""
+    eqs = _by_id(client.get("/api/physics/sample").json())
+
+    assert eqs["brinkman"]["enabled_by"] == "model.momentum_closure=brinkman"
+    assert eqs["vapour_potential"]["enabled_by"] == "model.pressure_representation=two_phase"
+    assert eqs["energy_liquid"]["enabled_by"] == "model.thermal_model=sharp"
+    assert eqs["laplace"]["enabled_by"] == "model.sharp_interface=true"
+    assert eqs["mom"]["enabled_by"] == "model.sharp_interface=false"
+    assert eqs["vof"]["enabled_by"] is None

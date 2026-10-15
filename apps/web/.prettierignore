@@ -2,3 +2,7 @@ dist/
 .vite/
 test-results/
 playwright-report/
+
+# The field table is generated (scripts/export_field_table.py); its layout is the
+# generator's, not prettier's.
+src/lib/fieldTable.json

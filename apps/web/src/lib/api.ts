@@ -1,5 +1,7 @@
 /** Typed client for the naviernet API. Types mirror the backend response models. */
 
+import type { FieldSpec } from "./fields";
+
 export type RunStatus = "running" | "trained" | "failed" | "empty";
 
 export interface RunSummary {
@@ -207,6 +209,19 @@ export interface OperatingConditions {
   n_frames_usable: number;
   n_frames_event: number;
   U_ref_m_s: number | null;
+  /** Thermal conditions and heaters (the field table's conditions section;
+   * the sharp thermal model reads them). An optional one is null when unset. */
+  T_inlet_C: number | null;
+  T_init_C: number | null;
+  side_wall_thermal: "adiabatic" | "isothermal";
+  T_wall_C: number | null;
+  q_cavity_W_cm2: number | null;
+  heater_radius_um: number | null;
+  heater_on_ms: number | null;
+  cavity_y_fraction: number;
+  q_wall_mode: "fixed" | "fit";
+  q_wall_max_W_cm2: number;
+  dT_ref_K: number | null;
 }
 
 export interface ProjectSummary {
@@ -256,6 +271,19 @@ export interface ConditionsUpdate {
   flow_rate_mL_hr?: number;
   q_wall_W_cm2?: number;
   U_ref?: number;
+  /** Thermal conditions and heaters. A null clears an OPTIONAL one back to
+   * "not set" (its derived default); the server refuses a null elsewhere. */
+  T_inlet_C?: number | null;
+  T_init_C?: number | null;
+  side_wall_thermal?: "adiabatic" | "isothermal";
+  T_wall_C?: number | null;
+  q_cavity_W_cm2?: number | null;
+  heater_radius_um?: number | null;
+  heater_on_ms?: number | null;
+  cavity_y_fraction?: number;
+  q_wall_mode?: "fixed" | "fit";
+  q_wall_max_W_cm2?: number;
+  dT_ref_K?: number | null;
 }
 
 export interface ConditionsResponse {
@@ -374,6 +402,10 @@ export interface EquationState {
    * and this UI read one table instead of each branching on the flag.
    */
   mode: "any" | "diffuse" | "sharp";
+  /** The configuration choice that admits the equation, as the override that
+   * makes it (e.g. "model.momentum_closure=brinkman"); null for a term gated
+   * only by the fields the model trains. */
+  enabled_by: string | null;
 }
 
 export interface PhysicsState {
@@ -533,6 +565,28 @@ export interface RunLaunchRequest {
   /** Weight on the nose apex's 2-D displacement -- the one interface point with
    * an honest frame-to-frame correspondence. */
   fv_apex_weight: number;
+  /** The trusted-fields physics choices and training switches: one entry each
+   * on the field table (`lib/fields.ts`), whose options and defaults these
+   * mirror. Every default is the schema's, so an untouched request composes
+   * byte-for-byte. */
+  walls_at: "crop" | "physical";
+  wall_condition: "no_slip" | "no_penetration";
+  momentum_closure: "darcy" | "brinkman";
+  outlet_condition: "none" | "zero_gradient";
+  /** Requires sharp_interface (the vapour pressure exists only there). */
+  pressure_representation: "single" | "two_phase";
+  /** Requires the sharp front and the T field. */
+  thermal_model: "legacy" | "sharp";
+  /** Requires thermal_model "sharp" and collocation_time_bins > 0. */
+  source_mode: "free" | "thermal";
+  /** Requires front_geometry. */
+  mirror_symmetry: boolean;
+  mass_balance: boolean;
+  mass_balance_weight: number;
+  collocation_time_bins: number;
+  /** The causal schedule's convergence gate; null keeps the fixed annealing. */
+  causal_gate_min_weight: number | null;
+  log_chunk_residuals: boolean;
   /** Advanced overrides: `key=value` Hydra tokens for the schema's CLI-only
    * dials. Strictly allowlisted server-side (top-level training.* / model.*
    * scalar fields the form and the series config do not own); an invalid token
@@ -958,6 +1012,10 @@ export const api = {
 
   /** The catalogue of characterised working fluids for the new-series form. */
   listFluids: () => getJson<Fluid[]>("/api/fluids"),
+  /** The field table as the server declares it; the forms render from the
+   * committed copy in `lib/fields.ts`, and this is the same table for any
+   * other client. */
+  listFields: () => getJson<FieldSpec[]>("/api/config/fields"),
 };
 
 /** Direct artifact URLs (used as href / img src / video src, not fetched as JSON). */
