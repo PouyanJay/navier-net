@@ -435,6 +435,14 @@ class ModelConfig:
     # Width of the Gaussian that spreads the front flux into the source band, in
     # L_ref units. None = alpha_eps, the interface half-thickness.
     source_kernel_width: Optional[float] = None  # noqa: UP045
+    # Mirror symmetry about the channel centreline (trustworthy-fields WP5):
+    # every field network is averaged with its own reflection (u, p, T, s and
+    # the interface even, v odd) and the capsule's centreline is pinned to the
+    # axis, so the symmetry a symmetric channel implies holds exactly. A safety
+    # net for AFTER the physics passes its tests: switched on earlier it would
+    # hide the non-identifiability the audit exists to expose. Requires the
+    # front geometry (the axis is the run's wall span, which it carries).
+    mirror_symmetry: bool = False
 
 
 @dataclass

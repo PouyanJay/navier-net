@@ -100,6 +100,12 @@ def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
         return None
     x0, y0 = data.pin_anchor
     d = data.domain
+    if bool(getattr(cfg.model, "mirror_symmetry", False)):
+        # The root sits on the axis the fields are reflected about, not at the
+        # measured anchor (3 pixels off it on Series-1): the construction is
+        # symmetric by design, and so must be the point it hangs from.
+        y0 = 0.5 * (data.y_lo + data.y_hi)
+        log.info("mirror symmetry on: root height set to the channel centreline y*=%.4f", y0)
     log.info(
         "front geometry on: root (x*=%.4f, y*=%.4f), nose from x*=%.4f at rate %.3f, w0=%.4f",
         x0,
@@ -1881,6 +1887,11 @@ def _train_joint(
         raise NotImplementedError(
             "model.thermal_model=sharp is not yet supported for joint (multi-dataset) "
             "runs; use the legacy thermal model for the joint run."
+        )
+    if bool(getattr(cfg.model, "mirror_symmetry", False)):
+        # The mirror axis is one dataset's wall span; a joint run has one per dataset.
+        raise NotImplementedError(
+            "model.mirror_symmetry is not yet supported for joint (multi-dataset) runs."
         )
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)

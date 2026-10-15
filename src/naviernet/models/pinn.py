@@ -132,6 +132,7 @@ class BubblePINN(nn.Module):
         self._validate_liquid_film(cfg, names)
         self._validate_pressure_representation(cfg, names)
         self._validate_thermal(cfg, names)
+        self._validate_mirror_symmetry(cfg, geometry)
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -150,6 +151,7 @@ class BubblePINN(nn.Module):
                     root_delta=self.root_delta,
                     nose_shape=self.nose_shape,
                     nose_delta=self.nose_delta,
+                    mirror_axis=self.mirror_axis,
                 )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
@@ -311,6 +313,37 @@ class BubblePINN(nn.Module):
                 "model.theta_parameterization=free is not yet built under the sharp "
                 "thermal model; use the gated parameterisation."
             )
+
+    def _validate_mirror_symmetry(self, cfg, geometry: GeometryPriors | None) -> None:
+        """The mirror axis is the centre of the run's wall span, which the front
+        geometry's priors carry; without them there is no axis to reflect about."""
+        self.mirror_symmetry = bool(getattr(cfg.model, "mirror_symmetry", False))
+        self.mirror_axis: float | None = None
+        if not self.mirror_symmetry:
+            return
+        if not self.front_geometry or geometry is None:
+            raise ValueError(
+                "model.mirror_symmetry reflects every field about the channel centreline "
+                "of the run's wall span, which the front geometry carries, so it requires "
+                "model.front_geometry=true."
+            )
+        self.mirror_axis = 0.5 * (float(geometry.y_min) + float(geometry.y_max))
+
+    def _reflect(self, x: torch.Tensor) -> torch.Tensor:
+        """``(x, y, t) -> (x, 2 y_c - y, t)``: the point's mirror image across the axis."""
+        return torch.cat([x[:, :1], 2.0 * self.mirror_axis - x[:, 1:2], x[:, 2:]], dim=1)
+
+    def _even(self, net, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
+        """The net's Reynolds average over the mirror group: exactly even about the axis."""
+        if self.mirror_axis is None:
+            return net(x, c)
+        return 0.5 * (net(x, c) + net(self._reflect(x), c))
+
+    def _odd(self, net, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
+        """The net's odd projection: exactly odd about the axis (the transverse velocity)."""
+        if self.mirror_axis is None:
+            return net(x, c)
+        return 0.5 * (net(x, c) - net(self._reflect(x), c))
 
     def _init_heating(self, cfg, geometry: GeometryPriors | None) -> None:
         """The cavity heater's centre (the measured root, at the configured fraction
@@ -808,7 +841,7 @@ class BubblePINN(nn.Module):
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.nets["u"](x, c), self.nets["v"](x, c)
+        return self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The volumetric dilatation from phase change: the free ``s`` network, or
@@ -816,7 +849,7 @@ class BubblePINN(nn.Module):
         band (:meth:`thermal_source`)."""
         if self.source_mode == "thermal":
             return self.thermal_source(x, c)
-        return self.nets["s"](x, c)
+        return self._even(self.nets["s"], x, c)
 
     def thermal_source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """``s(x, t) = C_m sum_i g_i dl_i K_w(x - X_i(t))``: the liquid-side flux
@@ -887,7 +920,7 @@ class BubblePINN(nn.Module):
     def liquid_pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The liquid-side pressure: the ``p`` network itself. Identical to
         :meth:`pressure` under the single representation."""
-        return self._require("p")(x, c)
+        return self._even(self._require("p"), x, c)
 
     @property
     def r_int_star(self) -> torch.Tensor:
@@ -919,8 +952,8 @@ class BubblePINN(nn.Module):
         than flooring the whole field.
         """
         if self.thermal_model == "sharp":
-            return self._liquid_distance(x, c) * self._require("T")(x, c)
-        raw = torch.sigmoid(self._require("T")(x, c))
+            return self._liquid_distance(x, c) * self._even(self._require("T"), x, c)
+        raw = torch.sigmoid(self._even(self._require("T"), x, c))
         if self.depletable_superheat:
             return raw
         return self.theta_in + (1.0 - self.theta_in) * raw
