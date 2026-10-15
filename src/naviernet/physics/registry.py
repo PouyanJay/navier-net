@@ -34,6 +34,7 @@ from naviernet.physics.residuals import (
     NucleationPulse,
     StageAResiduals,
     boundary_losses,
+    brinkman_residuals,
     darcy_residuals,
     energy_residuals,
     footprint_source_penalty_sq,
@@ -68,12 +69,18 @@ class LossContext:
         groups: dict[str, float] | None = None,
         c: torch.Tensor | None = None,
         front_times: torch.Tensor | None = None,
+        outlet: torch.Tensor | None = None,
+        wall_condition: str = "no_slip",
     ) -> None:
         self.model = model
         self.x_coll = x_coll
         self.inlet = inlet
         self.walls = walls
         self.u_inlet = u_inlet
+        # The outlet batch (None when no outlet condition is imposed) and the
+        # side-wall condition the `bc` term applies (see residuals.boundary_losses).
+        self.outlet = outlet
+        self.wall_condition = wall_condition
         self.groups = groups
         # Times the interface conditions are sampled at (sharp-interface runs only);
         # the front itself is built lazily below, once per step, and shared by every
@@ -87,6 +94,7 @@ class LossContext:
         self._res_a: StageAResiduals | None = None
         self._mom: MomentumResiduals | None = None
         self._darcy: MomentumResiduals | None = None
+        self._brinkman: MomentumResiduals | None = None
         self._energy: EnergyResiduals | None = None
 
     @property
@@ -126,6 +134,12 @@ class LossContext:
         if self._darcy is None:
             self._darcy = darcy_residuals(self.model, self.x_coll, self.groups, c=self.c)
         return self._darcy
+
+    @property
+    def brinkman_res(self) -> MomentumResiduals:
+        if self._brinkman is None:
+            self._brinkman = brinkman_residuals(self.model, self.x_coll, self.groups, c=self.c)
+        return self._brinkman
 
     @property
     def energy_res(self) -> EnergyResiduals:
@@ -199,7 +213,16 @@ def _bc_term(ctx: LossContext) -> torch.Tensor:
     # The inlet temperature is anchored only when the superheat can leave it --
     # otherwise theta_in is already the field's floor and the condition is vacuous.
     theta_in = ctx.model.theta_in if getattr(ctx.model, "depletable_superheat", False) else None
-    return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet, ctx.c, theta_in)
+    return boundary_losses(
+        ctx.model,
+        ctx.inlet,
+        ctx.walls,
+        ctx.u_inlet,
+        ctx.c,
+        theta_in,
+        wall_condition=ctx.wall_condition,
+        outlet_x=ctx.outlet,
+    )
 
 
 def _mom_sq(ctx: LossContext) -> torch.Tensor:
@@ -209,6 +232,11 @@ def _mom_sq(ctx: LossContext) -> torch.Tensor:
 
 def _darcy_sq(ctx: LossContext) -> torch.Tensor:
     res = ctx.darcy_res
+    return res.mom_x**2 + res.mom_y**2
+
+
+def _brinkman_sq(ctx: LossContext) -> torch.Tensor:
+    res = ctx.brinkman_res
     return res.mom_x**2 + res.mom_y**2
 
 
@@ -283,6 +311,10 @@ class Equation:
     # REPLACES the |grad alpha| one, and two closures on the same field with
     # different distributions would fight. ``None`` = never displaced.
     unless_flag: str | None = None
+    # The momentum closure (``model.momentum_closure``) this equation belongs to:
+    # Darcy and Brinkman are two laws for the same balance, so exactly one is
+    # active. ``None`` = independent of the closure.
+    closure: str | None = None
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
     # Per-point squared residual (shape ``(n_coll, 1)``, non-negative) for the
     # collocation terms; ``term`` is its mean. ``None`` for boundary terms (bc), which
@@ -363,8 +395,24 @@ REGISTRY: tuple[Equation, ...] = (
         fields_added=("p",),
         groups=("hele_shaw", "mu_ratio"),
         mode="sharp",
+        closure="darcy",
         pointwise=_darcy_sq,
         term=_mean(_darcy_sq),
+    ),
+    Equation(
+        id="brinkman",
+        stage="B",
+        name="Brinkman (depth-averaged momentum with wall shear)",
+        tex=r"\nabla p = -C_\text{HS}\,\tilde{\mu}(\alpha)\,\mathbf{u}"
+        r" + \frac{\tilde{\mu}(\alpha)}{\mathrm{Re}}\nabla^2\mathbf{u}",
+        weight_key="brinkman",
+        fields_required=("phi", "u", "v", "p"),
+        fields_added=("p",),
+        groups=("hele_shaw", "mu_ratio", "Re"),
+        mode="sharp",
+        closure="brinkman",
+        pointwise=_brinkman_sq,
+        term=_mean(_brinkman_sq),
     ),
     Equation(
         id="kinematic",
@@ -495,7 +543,10 @@ REGISTRY: tuple[Equation, ...] = (
 
 
 def enabled_equations(
-    fields: Sequence[str], sharp_interface: bool = False, liquid_film: bool = False
+    fields: Sequence[str],
+    sharp_interface: bool = False,
+    liquid_film: bool = False,
+    momentum_closure: str = "darcy",
 ) -> list[Equation]:
     """The equations active for a model with the given fields, in registry order.
 
@@ -503,7 +554,9 @@ def enabled_equations(
     it admits the equations imposed on the explicit front and excludes the ones
     that only make sense over a smeared alpha. ``liquid_film`` opts in the film
     term (``model.liquid_film``), which exists only when the film field does.
-    Both default off, so every existing call site composes byte-for-byte.
+    ``momentum_closure`` picks the sharp-mode momentum law (``model.momentum_
+    closure``): Darcy or Brinkman, never both. Every default keeps existing call
+    sites composing byte-for-byte.
     """
     present = set(fields)
     allowed = {"any", "sharp" if sharp_interface else "diffuse"}
@@ -516,6 +569,7 @@ def enabled_equations(
         and e.mode in allowed
         and e.flag in on
         and e.unless_flag not in off
+        and e.closure in (None, momentum_closure)
         and set(e.fields_required) <= present
     ]
 

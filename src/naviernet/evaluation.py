@@ -180,6 +180,7 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
         cfg.model.fields,
         bool(getattr(cfg.model, "sharp_interface", False)),
         bool(getattr(cfg.model, "liquid_film", False)),
+        momentum_closure=str(getattr(cfg.model, "momentum_closure", "darcy")),
     )
     ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
     state = ckpt.get("state", {})

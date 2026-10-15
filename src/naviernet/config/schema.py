@@ -350,6 +350,27 @@ class ModelConfig:
     front_cap_samples: int = 16
     # Times per step the front is sampled at, spread over the training window.
     front_times: int = 16
+    # --- Domain and boundary choices (trustworthy-fields WP2). Every default keeps
+    # existing runs byte-for-byte; configs/model/trusted.yaml switches them on. ---
+    # Where the side walls are. "crop": the imaged ROI's edges, which sit a few
+    # pixels INSIDE the channel walls (today). "physical": the walls preprocessing
+    # detected (Domain.y_wall_lo/hi), so the wall samples, the inlet span, the
+    # uniform collocation and the capsule's width bound reach the channel.
+    walls_at: str = "crop"  # "crop" | "physical"
+    # The side-wall velocity condition. A first-order Darcy law admits only
+    # no-penetration (v = 0): adding no-slip gives zero Cauchy data on the wall,
+    # which forces a harmonic pressure to be constant everywhere; the published
+    # runs lost their inlet flux within one channel width. No-slip is admissible
+    # with the Brinkman closure, whose in-plane viscous term carries the O(h)
+    # wall layer (Brinkman 1949; Zeng, Yortsos & Salin 2003).
+    wall_condition: str = "no_slip"  # "no_slip" | "no_penetration"
+    # The depth-averaged momentum law in sharp mode: Darcy, or Darcy plus the
+    # Brinkman viscous term (1/Re) mu~ lap(u).
+    momentum_closure: str = "darcy"  # "darcy" | "brinkman"
+    # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
+    # The channel continues beyond the field of view and its pressure there is
+    # unknown, so no pressure condition is imposed.
+    outlet_condition: str = "none"  # "none" | "zero_gradient"
 
 
 @dataclass
@@ -367,6 +388,7 @@ class LossWeights:
     energy: float = 1.0  # Stage B: energy
     evap: float = 1.0  # Stage B: evaporation mass-closure penalty
     darcy: float = 1.0  # R4: depth-averaged momentum (replaces `mom` in sharp mode)
+    brinkman: float = 1.0  # WP2: Darcy + Brinkman momentum (replaces `darcy` when chosen)
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
     film: float = 1.0  # liquid film: deposition where the meniscus advances
@@ -579,6 +601,19 @@ class TrainingConfig:
     nose_bluntness_weight: float = 25.0
     # The nose sampling budget, mirroring root_cap_samples.
     nose_cap_samples: int = 48
+
+    # Cross-section mass balance (trustworthy-fields WP2): on a fixed quadrature,
+    # Q(x,t) - Q_in - int_0^x int s dy dx' = 0 at every station and time, so the
+    # axial volume flux is the inlet flux plus the vapour created upstream. The
+    # local residual div u = s says this only where it is sampled; the published
+    # runs lost the whole inlet flux within one channel width while their local
+    # residual looked moderate. Normalised by Q_in; outside causal weighting, RBA
+    # and the rebalancer like the other functionals. Off by default.
+    mass_balance: bool = False
+    mass_balance_weight: float = 1.0
+    mass_balance_stations: int = 32  # x-stations of the cumulative source integral
+    mass_balance_times: int = 8  # fixed time slices across the window
+    mass_balance_grid: int = 64  # transverse quadrature points, wall to wall
 
     seed: int = 0
     device: str = "cpu"

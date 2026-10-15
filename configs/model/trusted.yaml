@@ -27,3 +27,11 @@ sharp_interface: true
 nucleation_root: true
 root_attachment: true
 receding_cap: true
+
+# WP2: the domain walled at the channel, no-slip made admissible by the Brinkman
+# term, and an outlet condition for the channel that continues past the field
+# of view.
+walls_at: physical
+wall_condition: no_slip
+momentum_closure: brinkman
+outlet_condition: zero_gradient

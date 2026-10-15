@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -34,6 +35,7 @@ from naviernet.physics import (
     cap_supervision,
     front_velocity,
     kinematics,
+    mass_balance,
     nose_supervision,
     registry,
     root_supervision,
@@ -111,8 +113,10 @@ def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
         s0=data.initial_front,
         w0=data.initial_half_width,
         rate0=data.nose_rate,
-        y_min=d.y_min,
-        y_max=d.y_max,
+        # The run's wall span (crop edges or the physical walls, per
+        # model.walls_at): the capsule's width bound and centreline swing.
+        y_min=data.y_lo,
+        y_max=data.y_hi,
         t_min=d.t_min,
         t_max=d.t_max,
     )
@@ -126,6 +130,35 @@ def _sharp(cfg) -> bool:
 def _film(cfg) -> bool:
     """Whether this run carries the liquid film delta(u, t) on the front."""
     return bool(getattr(cfg.model, "liquid_film", False))
+
+
+def _closure(cfg) -> str:
+    """The sharp-mode momentum law this run solves: ``darcy`` or ``brinkman``."""
+    return str(getattr(cfg.model, "momentum_closure", "darcy"))
+
+
+class _BoundaryPlan(NamedTuple):
+    """The boundary choices the samplers and the ``bc`` term read every step."""
+
+    wall_condition: str
+    outlet: bool
+
+
+def _boundary_plan(cfg) -> _BoundaryPlan:
+    model_cfg = cfg.model
+    return _BoundaryPlan(
+        str(getattr(model_cfg, "wall_condition", "no_slip")),
+        str(getattr(model_cfg, "outlet_condition", "none")) != "none",
+    )
+
+
+def _mass_balance_plan(cfg, data: BubbleDataset, groups: dict, device):
+    """The cross-section mass-balance quadrature when the term is on, else None."""
+    if not bool(getattr(cfg.training, "mass_balance", False)):
+        return None
+    return mass_balance.build_plan(
+        data.domain, (data.y_lo, data.y_hi), groups, cfg.training, device
+    )
 
 
 def _front_times(cfg, data: BubbleDataset, device) -> torch.Tensor | None:
@@ -348,6 +381,41 @@ def _validate_training_config(cfg) -> None:
     _validate_root_supervision(tcfg, cfg.model)
     _validate_nose_supervision(tcfg, cfg.model)
     _validate_sharpening(tcfg, cfg.model.alpha_eps)
+    _validate_boundaries(cfg.model)
+
+
+_BOUNDARY_CHOICES = {
+    "walls_at": ("crop", "physical"),
+    "wall_condition": ("no_slip", "no_penetration"),
+    "momentum_closure": ("darcy", "brinkman"),
+    "outlet_condition": ("none", "zero_gradient"),
+}
+
+
+def _validate_boundaries(model_cfg) -> None:
+    """The domain and boundary choices: an unknown value fails at launch, and the
+    over-determined Darcy + no-slip pair (today's default) is allowed for existing
+    configs but warned about, since it has no exact solution."""
+    chosen = {
+        name: str(getattr(model_cfg, name, allowed[0]))
+        for name, allowed in _BOUNDARY_CHOICES.items()
+    }
+    for name, value in chosen.items():
+        if value not in _BOUNDARY_CHOICES[name]:
+            raise ValueError(
+                f"model.{name} must be one of {_BOUNDARY_CHOICES[name]}, got {value!r}"
+            )
+    darcy_active = (
+        chosen["momentum_closure"] == "darcy"
+        and "p" in model_cfg.fields
+        and bool(getattr(model_cfg, "sharp_interface", False))
+    )
+    if darcy_active and chosen["wall_condition"] == "no_slip":
+        log.warning(
+            "model.momentum_closure=darcy with model.wall_condition=no_slip is "
+            "over-determined: a first-order law admits only no-penetration at a wall. "
+            "Use momentum_closure=brinkman, or wall_condition=no_penetration."
+        )
 
 
 def _validate_root_supervision(tcfg, model_cfg) -> None:
@@ -1299,8 +1367,12 @@ def train(
     root_plan = _root_plan(cfg, data, device)
     nose_plan = _nose_plan(cfg, data, device)
     front_times = _front_times(cfg, data, device)
+    boundaries = _boundary_plan(cfg)
+    mass_plan = _mass_balance_plan(cfg, data, groups, device)
 
-    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg), _film(cfg))
+    equations = registry.enabled_equations(
+        cfg.model.fields, _sharp(cfg), _film(cfg), momentum_closure=_closure(cfg)
+    )
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -1394,6 +1466,7 @@ def train(
             else data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
+        outlet = data.sample_outlet(tcfg.n_bc, rng) if boundaries.outlet else None
 
         # Pressure-driven shape: solve the width modes at exactly the instants this
         # step will evaluate, so every point gets its own instant's solved bubble
@@ -1410,7 +1483,15 @@ def train(
             )
 
         ctx = registry.LossContext(
-            model, x_coll, inlet, walls, u_inlet, groups, front_times=front_times
+            model,
+            x_coll,
+            inlet,
+            walls,
+            u_inlet,
+            groups,
+            front_times=front_times,
+            outlet=outlet,
+            wall_condition=boundaries.wall_condition,
         )
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
@@ -1473,6 +1554,12 @@ def train(
                 cap_supervision.SupervisionContext(model, tcfg), nose_plan
             )
             total = total + nose_total
+        mass_record: dict[str, float] = {}
+        if mass_plan is not None:
+            # A functional on a fixed quadrature, outside the causal gate, RBA and
+            # the rebalancer, like the terms above.
+            mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
+            total = total + float(tcfg.mass_balance_weight) * mass_total
         total.backward()
         opt.step()
 
@@ -1482,6 +1569,7 @@ def train(
             record.update(fv_record)
             record.update(root_record)
             record.update(nose_record)
+            record.update(mass_record)
             record["step"] = step
             record["lr"] = lr
             record.update(_causal_record(plan, step))
@@ -1598,7 +1686,12 @@ def _load_joint_datasets(
 
 
 def _joint_losses(
-    model, contexts, equations, tcfg, rng
+    model,
+    contexts,
+    equations,
+    tcfg,
+    rng,
+    boundaries: _BoundaryPlan = _BoundaryPlan("no_slip", False),
 ) -> tuple[dict[str, torch.Tensor], list[CollocationBatch]]:
     """Each loss term averaged over the datasets, every dataset's residuals
     evaluated with its own conditioning row so one model fits them all.
@@ -1618,6 +1711,7 @@ def _joint_losses(
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
+        outlet = cx.data.sample_outlet(tcfg.n_bc, rng) if boundaries.outlet else None
 
         ctx = registry.LossContext(
             view,
@@ -1628,6 +1722,8 @@ def _joint_losses(
             cx.groups,
             c=cx.c,
             front_times=cx.front_times,
+            outlet=outlet,
+            wall_condition=boundaries.wall_condition,
         )
         c_data = cx.c.expand(x_data.shape[0], -1)
         per_term = {"data": ((view.alpha(x_data, c_data) - target) ** 2).mean()}
@@ -1734,8 +1830,16 @@ def _train_joint(
             "runs: its supervision channel is single-dataset. Run it on one "
             "dataset, or turn it off for the joint run."
         )
+    if bool(getattr(tcfg, "mass_balance", False)):
+        # Its quadrature is per dataset and not yet threaded through the joint
+        # contexts; raise rather than silently train without it.
+        raise NotImplementedError(
+            "training.mass_balance is not yet supported for joint (multi-dataset) "
+            "runs; run it on one dataset, or turn it off for the joint run."
+        )
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
+    boundaries = _boundary_plan(cfg)
 
     # The datasets actually supervised: held-out conditions (axis B) are loaded
     # only at evaluation, never here, so they contribute nothing to the loss. This
@@ -1756,7 +1860,9 @@ def _train_joint(
     model = BubblePINN(cfg, n_cond=N_COND, geometry=contexts[0].geometry).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
-    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg), _film(cfg))
+    equations = registry.enabled_equations(
+        cfg.model.fields, _sharp(cfg), _film(cfg), momentum_closure=_closure(cfg)
+    )
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -1792,7 +1898,7 @@ def _train_joint(
             group["lr"] = lr
         opt.zero_grad()
 
-        losses, coll_batches = _joint_losses(model, contexts, equations, tcfg, rng)
+        losses, coll_batches = _joint_losses(model, contexts, equations, tcfg, rng, boundaries)
 
         # Skip rebalancing on the handoff step: its weights are about to be reset.
         if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(

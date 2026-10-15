@@ -48,6 +48,10 @@ log_chunk_residuals: true
 
 root_supervision: true
 
+# WP2: the cross-section mass balance, scored on a fixed quadrature.
+mass_balance: true
+mass_balance_weight: 1.0
+
 seed: 0
 device: cpu
 log_every: 500

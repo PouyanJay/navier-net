@@ -145,6 +145,8 @@ class BubbleDataset:
             y_wall_lo=y_wall_lo,
             y_wall_hi=y_wall_hi,
         )
+        # The transverse span this run's samplers and geometry use as "the channel".
+        self.y_lo, self.y_hi = self._wall_span()
 
         n_t, n_y, n_x = self.alpha.shape
         ti, yi, xi = np.meshgrid(np.arange(n_t), np.arange(n_y), np.arange(n_x), indexing="ij")
@@ -184,6 +186,27 @@ class BubbleDataset:
                 self.cfg.dataset,
             )
             return float(self.y[0]), float(self.y[-1])
+
+    def _wall_span(self) -> tuple[float, float]:
+        """Where this run's side walls are (``model.walls_at``): the channel walls
+        preprocessing detected (``"physical"``) or the crop edges (``"crop"``).
+
+        A physical-wall run on an archive that never recorded its walls fails here
+        rather than silently training at the crop: the fallback in
+        :meth:`_wall_positions` is for reading old data, not for walling a run.
+        """
+        where = str(getattr(self.cfg.model, "walls_at", "crop"))
+        if where == "crop":
+            return self.domain.y_min, self.domain.y_max
+        if where != "physical":
+            raise ValueError(f"model.walls_at must be 'crop' or 'physical', got {where!r}")
+        if "y_wall_lo_star" not in self.meta:
+            raise ValueError(
+                f"model.walls_at=physical needs the wall positions preprocessing records, "
+                f"and {self.cfg.dataset}'s archive predates them -- re-run "
+                f"`naviernet stage=preprocess dataset={self.cfg.dataset}`."
+            )
+        return self.domain.y_wall_lo, self.domain.y_wall_hi
 
     def _split_rows(self, fraction: float, strategy: str) -> list[int]:
         """Rows of the event held out as the axis-A validation split.
@@ -492,7 +515,7 @@ class BubbleDataset:
         uniform = np.stack(
             [
                 rng.uniform(d.x_min, d.x_max, n_uniform),
-                rng.uniform(d.y_min, d.y_max, n_uniform),
+                rng.uniform(self.y_lo, self.y_hi, n_uniform),
                 rng.uniform(d.t_min, d.t_max, n_uniform),
             ],
             axis=1,
@@ -507,15 +530,20 @@ class BubbleDataset:
         return np.concatenate([uniform, near_interface], axis=0)
 
     def sample_boundary(self, n: int, rng) -> tuple[torch.Tensor, torch.Tensor]:
-        """Inlet points (``x*=0``) and side-wall points (``y*=y_min`` or ``y_max``)."""
+        """Inlet points (``x*=0``) and side-wall points (``y*`` at either wall of
+        this run's span, see :meth:`_wall_span`)."""
         d = self.domain
         t = rng.uniform(d.t_min, d.t_max, n).astype(np.float32)
 
         inlet = np.stack(
-            [np.zeros(n, np.float32), rng.uniform(d.y_min, d.y_max, n).astype(np.float32), t],
+            [
+                np.zeros(n, np.float32),
+                rng.uniform(self.y_lo, self.y_hi, n).astype(np.float32),
+                t,
+            ],
             axis=1,
         )
-        wall_y = np.where(rng.random(n) < 0.5, d.y_min, d.y_max).astype(np.float32)
+        wall_y = np.where(rng.random(n) < 0.5, self.y_lo, self.y_hi).astype(np.float32)
         walls = np.stack(
             [rng.uniform(d.x_min, d.x_max, n).astype(np.float32), wall_y, t], axis=1
         )
@@ -523,6 +551,20 @@ class BubbleDataset:
             torch.tensor(inlet, device=self.device),
             torch.tensor(walls, device=self.device),
         )
+
+    def sample_outlet(self, n: int, rng) -> torch.Tensor:
+        """Outlet points (``x* = x_max``) across the wall span, as a differentiable
+        leaf: the outlet condition is on the velocity's streamwise gradient."""
+        d = self.domain
+        outlet = np.stack(
+            [
+                np.full(n, d.x_max, np.float32),
+                rng.uniform(self.y_lo, self.y_hi, n).astype(np.float32),
+                rng.uniform(d.t_min, d.t_max, n).astype(np.float32),
+            ],
+            axis=1,
+        )
+        return torch.tensor(outlet, device=self.device, requires_grad=True)
 
     def frame_grid(self, frame: int, stride: int = 2):
         """Full pixel grid of one frame: ``(points, ground_truth, grid_shape)``."""

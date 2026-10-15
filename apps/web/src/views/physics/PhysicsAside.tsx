@@ -24,6 +24,8 @@ const DESC: Record<string, string> = {
   mom: "Depth-averaged (Hele-Shaw) momentum with wall drag and surface tension; unlocks pressure. Mixture ρ̃, μ̃ and Re, We come from the selected fluid.",
   darcy:
     "Depth-averaged momentum reduced to Darcy drag, imposed on the explicit front.",
+  brinkman:
+    "Darcy drag plus the Brinkman in-plane viscous term, which carries the wall layer that makes no-slip side walls admissible. Replaces Darcy when the series chooses it.",
   kinematic:
     "The front moves with the normal component of the velocity it is immersed in.",
   laplace:

@@ -132,8 +132,15 @@ def boundary_losses(
     u_inlet: float,
     c: torch.Tensor | None = None,
     theta_in: torch.Tensor | None = None,
+    wall_condition: str = "no_slip",
+    outlet_x: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Inlet plug velocity and no-slip side walls (Stage A: velocity only).
+    """Inlet plug velocity, the side-wall condition, and the outlet condition.
+
+    ``wall_condition`` is ``"no_slip"`` (both components vanish at the wall) or
+    ``"no_penetration"`` (only the wall-normal ``v``; the tangential velocity is
+    free, which is all a first-order Darcy law can honour). ``outlet_x``, when
+    given, adds :func:`outlet_loss` at those points.
 
     ``theta_in`` adds the inlet temperature condition. It is passed only when the
     superheat is depletable: with the default parameterization ``theta_in`` is
@@ -146,9 +153,27 @@ def boundary_losses(
 
     inlet = ((u_in - u_inlet) ** 2).mean() + (v_in**2).mean()
     wall = (u_wall**2).mean() + (v_wall**2).mean()
+    if wall_condition == "no_penetration":
+        wall = (v_wall**2).mean()
     if theta_in is not None:
         inlet = inlet + ((model.temperature(inlet_x, _ctx(c, inlet_x)) - theta_in) ** 2).mean()
-    return inlet + wall
+    total = inlet + wall
+    if outlet_x is not None:
+        total = total + outlet_loss(model, outlet_x, c)
+    return total
+
+
+def outlet_loss(model, outlet_x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+    """Zero streamwise velocity gradient at the outlet, ``mean(u_x^2 + v_x^2)``.
+
+    The channel continues beyond the field of view, so the flow leaves the imaged
+    region as it arrived there. The outlet pressure is unknown and left free.
+    ``outlet_x`` must carry ``requires_grad`` (the sampler sets it).
+    """
+    u, v = model.velocity(outlet_x, _ctx(c, outlet_x))
+    u_x, _, _ = gradients(u, outlet_x)
+    v_x, _, _ = gradients(v, outlet_x)
+    return (u_x**2).mean() + (v_x**2).mean()
 
 
 # --- Stage B: momentum + surface tension, energy + evaporation --------------
@@ -440,6 +465,33 @@ def darcy_residuals(
     u, v = model.velocity(x, cx)
     p_x, p_y, _ = gradients(model.pressure(x, cx), x)
     return MomentumResiduals(p_x + drag * u, p_y + drag * v, torch.zeros_like(u))
+
+
+def brinkman_residuals(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> MomentumResiduals:
+    """Depth-averaged momentum with the Brinkman in-plane viscous term::
+
+        grad p = -C_HS mu*(alpha) u + (mu*(alpha) / Re) lap(u)
+
+    :func:`darcy_residuals` is first order in ``u`` and can honour only a
+    no-penetration condition at a side wall. The viscous term restores the O(h)
+    wall layer in which the tangential velocity falls to zero (Brinkman 1949; Zeng,
+    Yortsos & Salin 2003 for Hele-Shaw cells), so no-slip side walls become
+    admissible. Away from the walls, where ``lap(u)`` is small, it is Darcy.
+    Same return shape as the other momentum families; ``kappa`` stays zero.
+    """
+    cx = _ctx(c, x)
+    alpha = model.alpha(x, cx)
+    drag = confinement_drag(alpha, groups)
+    viscosity = mixture(alpha, groups["mu_ratio"]) / groups["Re"]
+    u, v = model.velocity(x, cx)
+    p_x, p_y, _ = gradients(model.pressure(x, cx), x)
+    return MomentumResiduals(
+        p_x + drag * u - viscosity * _laplacian(u, x),
+        p_y + drag * v - viscosity * _laplacian(v, x),
+        torch.zeros_like(u),
+    )
 
 
 # Dynamic correction to the gap-direction capillary pressure across an advancing

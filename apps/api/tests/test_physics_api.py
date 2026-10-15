@@ -24,6 +24,7 @@ def test_physics_lists_the_registry_equations_with_state(client):
         "energy",
         "evap",
         "darcy",
+        "brinkman",
         "kinematic",
         "laplace",
         "film",
