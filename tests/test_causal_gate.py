@@ -27,6 +27,30 @@ def test_gated_eps_holds_until_every_chunk_weight_clears_the_gate():
     assert schedule.min_weight == pytest.approx(1.0)
 
 
+def test_an_unarmed_gate_records_the_weights_but_holds_eps():
+    """While a collocation term is held at zero the weights describe a loss the
+    physics is absent from, so a clear gate must not advance the schedule."""
+    schedule = CausalSchedule(SCHEDULE, first_step=1, last_step=100, gate=0.99)
+
+    schedule.observe(torch.tensor([1.0, 1.0, 0.995]), armed=False)
+
+    assert schedule.eps(50) == pytest.approx(0.01)
+    assert schedule.min_weight == pytest.approx(0.995), "the record still shows the weights"
+    schedule.observe(torch.tensor([1.0, 1.0, 0.995]), armed=True)
+    assert schedule.eps(50) == pytest.approx(1.0), "the same weights advance it once armed"
+
+
+def test_the_gate_is_armed_only_once_every_collocation_term_is_in_the_loss():
+    from naviernet.training import _gate_armed, _loss_schedule
+
+    tcfg = make_config(["training.stage_b_warmup_steps=10"]).training
+    keys = frozenset({"vof", "div", "src", "darcy"})
+
+    assert not _gate_armed(_loss_schedule(5, tcfg, ("darcy",)), keys), "warm-up: Darcy at 0"
+    assert _gate_armed(_loss_schedule(11, tcfg, ("darcy",)), keys), "after the warm-up"
+    assert _gate_armed(_loss_schedule(5, tcfg, ()), keys), "no Stage-B term to wait for"
+
+
 def test_ungated_schedule_is_the_fixed_per_step_annealing():
     schedule = CausalSchedule(SCHEDULE, first_step=1, last_step=300, gate=None)
     schedule.observe(torch.tensor([1.0, 1.0]))  # a clear gate must not move a fixed schedule
