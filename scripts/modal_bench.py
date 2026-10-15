@@ -152,9 +152,13 @@ def _unpack(run_name: str, payload: bytes) -> Path:
 @app.local_entrypoint()
 def main(mode: str = "time", seeds: str = "0,1,2", gpu: str = GPU) -> None:
     """``time`` measures the per-step cost; ``bench`` runs the seeds in parallel."""
-    options = {"gpu": gpu}
+    # The functions as declared, unless another card is asked for: a function
+    # re-optioned at run time is a separate object, and only the declared one
+    # has been seen to dispatch a `.map` promptly.
+    timing = time_steps if gpu == GPU else time_steps.with_options(gpu=gpu)
+    runner = bench if gpu == GPU else bench.with_options(gpu=gpu)
     if mode == "time":
-        per_step = time_steps.with_options(**options).remote(0)
+        per_step = timing.remote(0)
         print(
             f"per step: {per_step:.2f} s -> 12000 steps in about {per_step * 12000 / 60:.0f} min"
         )
@@ -162,8 +166,9 @@ def main(mode: str = "time", seeds: str = "0,1,2", gpu: str = GPU) -> None:
     if mode != "bench":
         raise SystemExit("mode must be 'time' or 'bench'")
     wanted = [int(s) for s in seeds.split(",") if s.strip()]
-    for run_name, payload in bench.with_options(**options).map(wanted):
-        print(f"downloaded {_unpack(run_name, payload)}")
+    print(f"dispatching seeds {wanted} on {gpu}", flush=True)
+    for run_name, payload in runner.map(wanted, order_outputs=False):
+        print(f"downloaded {_unpack(run_name, payload)}", flush=True)
 
 
 if __name__ == "__main__":
