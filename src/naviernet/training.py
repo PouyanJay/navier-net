@@ -841,10 +841,18 @@ class CausalSchedule:
             return 0.0
         return float(self.values[self.index])
 
-    def observe(self, weights: torch.Tensor) -> None:
-        """Record this step's causal weights and advance ``eps`` once all clear the gate."""
+    def observe(self, weights: torch.Tensor, armed: bool = True) -> None:
+        """Record this step's causal weights and, while ``armed``, advance ``eps``
+        once all clear the gate.
+
+        Unarmed while a collocation term is still held at zero (the Stage-B
+        warm-up, the evaporation curriculum): the weights then describe a loss
+        the physics is absent from, and the Stage-A terms alone pass any gate.
+        The first WP1 benchmark advanced eps to 1.0 inside the warm-up, and every
+        late chunk's weight collapsed to ~0.01 the moment Stage B engaged.
+        """
         self.min_weight = float(weights.min())
-        if self.gate is None or self.index >= len(self.values) - 1:
+        if not armed or self.gate is None or self.index >= len(self.values) - 1:
             return
         if self.min_weight > self.gate:
             self.index += 1
@@ -1243,8 +1251,15 @@ def _causal_collocation(
         eps = _causal_eps(step, plan.first_step, plan.last_step, tcfg.causal_eps_schedule)
         return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
     causal_weights = _causal_weights(chunk_losses, plan.causal.eps(step))
-    plan.causal.observe(causal_weights)
+    plan.causal.observe(causal_weights, armed=_gate_armed(schedule, plan.coll_keys))
     return (causal_weights * chunk_losses).mean()
+
+
+def _gate_armed(schedule: dict[str, float], coll_keys: frozenset[str]) -> bool:
+    """Whether every collocation term is in the loss the causal gate judges: a
+    term at multiplier zero (warm-up gated, or at the foot of its curriculum)
+    is absent from the chunk losses, so their weights say nothing about it."""
+    return all(schedule.get(key, 1.0) > 0.0 for key in coll_keys)
 
 
 def _total_loss(
