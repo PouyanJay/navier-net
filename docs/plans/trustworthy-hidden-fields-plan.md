@@ -388,6 +388,11 @@ debugging with their closed pull requests.
   four fast cores progressed at a fifth of the WP1 pace, and the authors chose the
   full-chain acceptance run instead (see the revised sequence). Their partial logs
   stay under `outputs/`.
+- 2026-10-15, step cost: the causal collocation loss is now read off the step's
+  own residuals instead of sixteen separate per-chunk passes plus a uniform pass
+  (001f0d5): 1.1 -> 0.45 s per step of the trusted recipe on the Mac, same numbers.
+  A rented A10 through Modal (`scripts/modal_bench.py`) costs about 1.2 s per step,
+  limited by Python-side small-op overhead on its vCPU, not by the card.
 - 2026-10-15, WP2 (#4): physical walls, Brinkman no-slip, outlet, mass balance.
   Joint runs refuse the mass balance for now.
 - 2026-10-15, WP3 (#5): two-phase pressure, curl-free vapour. Joint runs refuse it.
