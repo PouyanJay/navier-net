@@ -108,6 +108,24 @@ def detect_walls(cfg, paths: RunPaths) -> Calibration:
     return Calibration(top, bottom, float(um_per_px), (y0, y1))
 
 
+def wall_positions_star(calibration: Calibration, l_ref_um: float) -> dict[str, float]:
+    """The channel walls in ``y*``, on the same pixel-centre convention as ``y_star``.
+
+    The walls sit OUTSIDE the retained ROI (the trimmed margins), so a model that
+    puts its wall conditions here is walled at the channel, not at the image crop.
+    By construction of the calibration they are exactly ``channel_width`` apart.
+    """
+    pixel = calibration.um_per_px / l_ref_um
+    roi_top = calibration.roi[0]
+    lower = (calibration.wall_top - roi_top + 0.5) * pixel
+    upper = (calibration.wall_bottom - roi_top + 0.5) * pixel
+    return {
+        "y_wall_lo_star": float(lower),
+        "y_wall_hi_star": float(upper),
+        "y_center_star": float(0.5 * (lower + upper)),
+    }
+
+
 def _fill_holes(component: np.ndarray) -> np.ndarray:
     """Fill enclosed holes by flood-filling the background from a padded corner."""
     padded = np.pad(component, 1)
@@ -393,6 +411,9 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         "um_per_px": um_per_px,
         "wall_rows": [calibration.wall_top, calibration.wall_bottom],
         "y_roi": list(calibration.roi),
+        # The walls' own positions, so a run can be walled at the channel rather
+        # than at the crop (see BubbleDataset.domain).
+        **wall_positions_star(calibration, l_ref),
         "L_ref_um": l_ref,
         "U_ref": cfg.scales.U_ref,
         "t_ref_ms": t_ref_ms,
