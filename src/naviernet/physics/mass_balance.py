@@ -38,19 +38,27 @@ class MassBalancePlan:
     q_in: float
 
 
-def build_plan(domain, span: tuple[float, float], groups, tcfg, device) -> MassBalancePlan:
-    """``mass_balance_times`` slices across the window, ``mass_balance_stations``
-    x-stations across the domain, ``mass_balance_grid`` points across ``span``
-    (the wall-to-wall span the run's samplers use). ``Q_in`` is the inlet plug
-    velocity over that same span, so the balance is consistent with the inlet
-    condition the model is given."""
+def build_plan(
+    domain,
+    span: tuple[float, float],
+    groups,
+    tcfg,
+    device,
+    at_times: torch.Tensor | None = None,
+) -> MassBalancePlan:
+    """``mass_balance_times`` slices across the window (or the given
+    ``at_times``), ``mass_balance_stations`` x-stations across the domain,
+    ``mass_balance_grid`` points across ``span`` (the wall-to-wall span the run's
+    samplers use). ``Q_in`` is the inlet plug velocity over that same span, so the
+    balance is consistent with the inlet condition the model is given."""
     lo, hi = span
-    n_times, n_stations, n_grid = (
-        int(tcfg.mass_balance_times),
-        int(tcfg.mass_balance_stations),
-        int(tcfg.mass_balance_grid),
+    n_stations, n_grid = int(tcfg.mass_balance_stations), int(tcfg.mass_balance_grid)
+    times = (
+        torch.linspace(domain.t_min, domain.t_max, int(tcfg.mass_balance_times))
+        if at_times is None
+        else at_times.reshape(-1)
     )
-    times = torch.linspace(domain.t_min, domain.t_max, n_times)
+    n_times = int(times.numel())
     stations = torch.linspace(domain.x_min, domain.x_max, n_stations)
     ys = torch.linspace(lo, hi, n_grid)
     grid_t, grid_x, grid_y = torch.meshgrid(times, stations, ys, indexing="ij")

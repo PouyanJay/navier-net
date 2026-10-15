@@ -95,6 +95,15 @@ class RunPaths:
         return self.output_dir / "metrics.json"
 
     @property
+    def audit_json(self) -> Path:
+        return self.output_dir / "audit.json"
+
+    @property
+    def audit_fields_npz(self) -> Path:
+        """The audit's field snapshots, read by the seed-ensemble test."""
+        return self.output_dir / "audit_fields.npz"
+
+    @property
     def trajectory_json(self) -> Path:
         return self.output_dir / "trajectory.json"
 

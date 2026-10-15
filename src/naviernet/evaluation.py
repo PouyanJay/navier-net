@@ -255,6 +255,11 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
 
     paths.metrics_json.write_text(json.dumps(report, indent=2))
     log.info("metrics written to %s", paths.metrics_json)
+    if bool(getattr(cfg.evaluation, "audit", False)):
+        from naviernet.audit import audit_run
+
+        report["audit"] = audit_run(cfg, model, data, paths)["verdicts"]
+        paths.metrics_json.write_text(json.dumps(report, indent=2))
     return report
 
 

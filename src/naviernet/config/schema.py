@@ -689,10 +689,29 @@ class TrainingConfig:
 
 
 @dataclass
+class AcceptanceConfig:
+    """Thresholds a hidden field must meet before it is trusted (WP6): seed
+    agreement, mirror symmetry, residuals on the audit grid, the cross-section
+    flux balance and the heat budget. Each is a fraction or a correlation."""
+
+    seed_corr_min: float = 0.95  # min cross-seed correlation of each field
+    mirror_max: float = 0.05  # max symmetry-breaking fraction of a hidden field
+    residual_rms_max: float = 0.05  # max RMS of any collocation residual
+    flux_tol: float = 0.05  # max |Q - Q_in - created upstream| / Q_in at any station
+    heat_budget_tol: float = 0.30  # max spread between the latent-power estimates
+
+
+@dataclass
 class EvaluationConfig:
     stride: int = 4  # pixel stride for gridded prediction
     n_traj_points: int = 61  # timesteps on the continuous nose trajectory
     threshold: float = 0.5  # alpha level defining the interface
+    # The acceptance audit written beside metrics.json by `evaluate` (WP6): every
+    # event frame on an audit_nx x audit_ny grid centred on the channel.
+    audit: bool = True
+    audit_nx: int = 129
+    audit_ny: int = 49
+    acceptance: AcceptanceConfig = field(default_factory=AcceptanceConfig)
 
 
 @dataclass
