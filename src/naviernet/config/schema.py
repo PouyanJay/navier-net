@@ -371,6 +371,16 @@ class ModelConfig:
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.
     outlet_condition: str = "none"  # "none" | "zero_gradient"
+    # How the pressure field is represented (trustworthy-fields WP3). "single":
+    # one network for both phases (today), which has to fake the Young-Laplace
+    # discontinuity with steep gradients the momentum residual then punishes.
+    # "two_phase": the uniform vapour pressure p_v(t) inside the bubble and the
+    # liquid network outside, blended by the (detached) indicator, so the jump
+    # is built in: the Laplace condition reads the liquid branch on the front,
+    # the momentum law is scored in the liquid, and the vapour velocity is made
+    # curl-free (the Darcy law with a uniform vapour pressure). Requires
+    # `sharp_interface` (p_v exists only there).
+    pressure_representation: str = "single"  # "single" | "two_phase"
 
 
 @dataclass
@@ -389,6 +399,7 @@ class LossWeights:
     evap: float = 1.0  # Stage B: evaporation mass-closure penalty
     darcy: float = 1.0  # R4: depth-averaged momentum (replaces `mom` in sharp mode)
     brinkman: float = 1.0  # WP2: Darcy + Brinkman momentum (replaces `darcy` when chosen)
+    vapour_potential: float = 1.0  # WP3: curl-free vapour velocity under the two-phase pressure
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
     film: float = 1.0  # liquid film: deposition where the meniscus advances

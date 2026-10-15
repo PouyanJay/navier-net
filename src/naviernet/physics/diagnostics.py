@@ -27,6 +27,7 @@ from naviernet.physics.residuals import (
     IN_PLANE_WEIGHT,
     jump_gap_curvature,
     jump_total_curvature,
+    liquid_pressure,
     pressure_implied_curvature,
 )
 from naviernet.physics.root import root_report
@@ -219,7 +220,7 @@ def _laplace_errors(model, front, groups: dict[str, float]) -> tuple[float, floa
         return float("nan"), float("nan")
     with torch.no_grad():
         capillary = (jump_total_curvature(model, front, groups) / groups["We"]).detach()
-        liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
+        liquid = liquid_pressure(model, front.points, None) + model.film_offset(front.on_cap)
         residual = (_vapour_pressure(model, front) - liquid - capillary).abs()
 
     # The nose cap: the far closure, where curvature is largest and the jump is

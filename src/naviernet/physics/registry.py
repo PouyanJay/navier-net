@@ -43,6 +43,7 @@ from naviernet.physics.residuals import (
     momentum_residuals,
     source_penalty_sq,
     stage_a_residuals,
+    vapour_potential_residual,
 )
 
 
@@ -95,6 +96,7 @@ class LossContext:
         self._mom: MomentumResiduals | None = None
         self._darcy: MomentumResiduals | None = None
         self._brinkman: MomentumResiduals | None = None
+        self._vapour_potential: torch.Tensor | None = None
         self._energy: EnergyResiduals | None = None
 
     @property
@@ -140,6 +142,14 @@ class LossContext:
         if self._brinkman is None:
             self._brinkman = brinkman_residuals(self.model, self.x_coll, self.groups, c=self.c)
         return self._brinkman
+
+    @property
+    def vapour_potential_res(self) -> torch.Tensor:
+        if self._vapour_potential is None:
+            self._vapour_potential = vapour_potential_residual(
+                self.model, self.x_coll, c=self.c
+            )
+        return self._vapour_potential
 
     @property
     def energy_res(self) -> EnergyResiduals:
@@ -238,6 +248,10 @@ def _darcy_sq(ctx: LossContext) -> torch.Tensor:
 def _brinkman_sq(ctx: LossContext) -> torch.Tensor:
     res = ctx.brinkman_res
     return res.mom_x**2 + res.mom_y**2
+
+
+def _vapour_potential_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.vapour_potential_res**2
 
 
 def _kinematic_term(ctx: LossContext) -> torch.Tensor:
@@ -415,6 +429,20 @@ REGISTRY: tuple[Equation, ...] = (
         term=_mean(_brinkman_sq),
     ),
     Equation(
+        id="vapour_potential",
+        stage="B",
+        name="Curl-free vapour velocity",
+        tex=r"\alpha\left(\frac{\partial v}{\partial x} - \frac{\partial u}{\partial y}\right) = 0",
+        weight_key="vapour_potential",
+        fields_required=("phi", "u", "v"),
+        mode="sharp",
+        # Only under the two-phase pressure, where the uniform vapour pressure
+        # makes the Darcy law inside the bubble say nothing about its velocity.
+        flag="two_phase_pressure",
+        pointwise=_vapour_potential_sq,
+        term=_mean(_vapour_potential_sq),
+    ),
+    Equation(
         id="kinematic",
         stage="B",
         name="Kinematic condition",
@@ -547,6 +575,7 @@ def enabled_equations(
     sharp_interface: bool = False,
     liquid_film: bool = False,
     momentum_closure: str = "darcy",
+    two_phase_pressure: bool = False,
 ) -> list[Equation]:
     """The equations active for a model with the given fields, in registry order.
 
@@ -555,12 +584,14 @@ def enabled_equations(
     that only make sense over a smeared alpha. ``liquid_film`` opts in the film
     term (``model.liquid_film``), which exists only when the film field does.
     ``momentum_closure`` picks the sharp-mode momentum law (``model.momentum_
-    closure``): Darcy or Brinkman, never both. Every default keeps existing call
-    sites composing byte-for-byte.
+    closure``): Darcy or Brinkman, never both. ``two_phase_pressure`` opts in the
+    curl-free vapour velocity (``model.pressure_representation=two_phase``). Every
+    default keeps existing call sites composing byte-for-byte.
     """
     present = set(fields)
     allowed = {"any", "sharp" if sharp_interface else "diffuse"}
     on = {None} | ({"liquid_film"} if liquid_film else set())
+    on |= {"two_phase_pressure"} if two_phase_pressure else set()
     off = {"liquid_film"} if liquid_film else set()
     return [
         e

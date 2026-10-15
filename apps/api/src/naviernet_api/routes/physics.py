@@ -26,10 +26,15 @@ def _physics_state(settings: Settings, dataset: str) -> PhysicsState:
     sharp = bool(getattr(cfg.model, "sharp_interface", False))
     film = bool(getattr(cfg.model, "liquid_film", False))
     closure = str(getattr(cfg.model, "momentum_closure", "darcy"))
+    two_phase = str(getattr(cfg.model, "pressure_representation", "single")) == "two_phase"
     active = {
         e.id
         for e in enabled_equations(
-            fields, sharp_interface=sharp, liquid_film=film, momentum_closure=closure
+            fields,
+            sharp_interface=sharp,
+            liquid_film=film,
+            momentum_closure=closure,
+            two_phase_pressure=two_phase,
         )
     }
     weights = cfg.training.weights

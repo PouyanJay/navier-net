@@ -416,6 +416,42 @@ def energy_residuals(
 # --- R4: sharp-interface conditions on the explicit front --------------------
 
 
+def liquid_pressure(model, x: torch.Tensor, cx: torch.Tensor | None) -> torch.Tensor:
+    """The liquid-side pressure the momentum law and the jump condition read: the
+    liquid branch under the two-phase representation, the one field otherwise.
+    A model without the accessor (a test stand-in) is read through ``pressure``."""
+    branch = getattr(model, "liquid_pressure", None)
+    return branch(x, cx) if branch is not None else model.pressure(x, cx)
+
+
+def liquid_weight(model, alpha: torch.Tensor) -> torch.Tensor | float:
+    """``1 - alpha`` (detached) under the two-phase pressure, so the momentum law is
+    scored where the liquid pressure is defined; 1 everywhere otherwise."""
+    if getattr(model, "pressure_representation", "single") == "two_phase":
+        return 1.0 - alpha.detach()
+    return 1.0
+
+
+def vapour_potential_residual(
+    model, x: torch.Tensor, c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """``alpha (v_x - u_y)``: the vapour velocity is curl-free, ``(N, 1)``.
+
+    Under the two-phase pressure the vapour pressure is uniform, so the Darcy
+    law inside the bubble says nothing about the vapour velocity (its drag is
+    1/37 of the liquid's) and leaves it free -- the null space the audit found.
+    The same law also says the velocity is a gradient; imposing that directly,
+    with the kinematic condition on the front, makes the vapour flow the unique
+    potential flow. Weighted by the (detached) indicator, so it acts in the
+    vapour and fades through the interface band.
+    """
+    cx = _ctx(c, x)
+    u, v = model.velocity(x, cx)
+    _, u_y, _ = gradients(u, x)
+    v_x, _, _ = gradients(v, x)
+    return model.alpha(x, cx).detach() * (v_x - u_y)
+
+
 def darcy_residuals(
     model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
 ) -> MomentumResiduals:
@@ -461,10 +497,14 @@ def darcy_residuals(
     there is no curvature in this balance.
     """
     cx = _ctx(c, x)
-    drag = confinement_drag(model.alpha(x, cx), groups)
+    alpha = model.alpha(x, cx)
+    drag = confinement_drag(alpha, groups)
+    weight = liquid_weight(model, alpha)
     u, v = model.velocity(x, cx)
-    p_x, p_y, _ = gradients(model.pressure(x, cx), x)
-    return MomentumResiduals(p_x + drag * u, p_y + drag * v, torch.zeros_like(u))
+    p_x, p_y, _ = gradients(liquid_pressure(model, x, cx), x)
+    return MomentumResiduals(
+        weight * (p_x + drag * u), weight * (p_y + drag * v), torch.zeros_like(u)
+    )
 
 
 def brinkman_residuals(
@@ -485,11 +525,12 @@ def brinkman_residuals(
     alpha = model.alpha(x, cx)
     drag = confinement_drag(alpha, groups)
     viscosity = mixture(alpha, groups["mu_ratio"]) / groups["Re"]
+    weight = liquid_weight(model, alpha)
     u, v = model.velocity(x, cx)
-    p_x, p_y, _ = gradients(model.pressure(x, cx), x)
+    p_x, p_y, _ = gradients(liquid_pressure(model, x, cx), x)
     return MomentumResiduals(
-        p_x + drag * u - viscosity * _laplacian(u, x),
-        p_y + drag * v - viscosity * _laplacian(v, x),
+        weight * (p_x + drag * u - viscosity * _laplacian(u, x)),
+        weight * (p_y + drag * v - viscosity * _laplacian(v, x)),
         torch.zeros_like(u),
     )
 
@@ -652,7 +693,7 @@ def _liquid_pressure(model, front, groups: dict[str, float]) -> torch.Tensor:
     jump condition select a station. A detached forcing -- the geometry
     answers it through the curvature side of the jump.
     """
-    liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
+    liquid = liquid_pressure(model, front.points, None) + model.film_offset(front.on_cap)
     if getattr(model, "liquid_film", False):
         liquid = liquid + film_surface_pressure(model, front, groups)
     return liquid

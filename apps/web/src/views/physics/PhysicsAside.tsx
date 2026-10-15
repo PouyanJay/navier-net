@@ -26,6 +26,8 @@ const DESC: Record<string, string> = {
     "Depth-averaged momentum reduced to Darcy drag, imposed on the explicit front.",
   brinkman:
     "Darcy drag plus the Brinkman in-plane viscous term, which carries the wall layer that makes no-slip side walls admissible. Replaces Darcy when the series chooses it.",
+  vapour_potential:
+    "Under the two-phase pressure the vapour pressure is uniform, so the vapour velocity is made curl-free: with the kinematic condition on the front it becomes the unique potential flow.",
   kinematic:
     "The front moves with the normal component of the velocity it is immersed in.",
   laplace:

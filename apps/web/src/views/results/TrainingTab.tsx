@@ -24,6 +24,7 @@ const TERM_LABELS: Record<string, { family: Family; label: string }> = {
   bc: { family: "core", label: "bc · inlet/walls" },
   darcy: { family: "interface", label: "darcy · depth-averaged momentum" },
   brinkman: { family: "interface", label: "brinkman · momentum with wall shear" },
+  vapour_potential: { family: "interface", label: "vapour_potential · curl-free vapour" },
   mass_bal: { family: "extra", label: "mass_bal · cross-section flux balance" },
   laplace: { family: "interface", label: "laplace · Young–Laplace jump" },
   kinematic: { family: "interface", label: "kinematic · front condition" },

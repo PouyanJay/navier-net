@@ -10,8 +10,8 @@ import type { PhysicsModel } from "./usePhysicsModel";
    the objective above it. */
 const LINKS: Record<FieldName, string[]> = {
   phi: ["data", "vof", "div", "mom", "darcy", "brinkman", "laplace"],
-  u: ["vof", "div", "bc", "mom", "darcy", "brinkman", "kinematic"],
-  v: ["vof", "div", "bc", "mom", "darcy", "brinkman", "kinematic"],
+  u: ["vof", "div", "bc", "mom", "darcy", "brinkman", "vapour_potential", "kinematic"],
+  v: ["vof", "div", "bc", "mom", "darcy", "brinkman", "vapour_potential", "kinematic"],
   s: ["div", "energy"],
   p: ["mom", "darcy", "brinkman", "laplace"],
   T: ["energy"],
@@ -25,6 +25,7 @@ const RES_LABEL: Record<string, string> = {
   mom: "r_mom",
   darcy: "r_darcy",
   brinkman: "r_brinkman · Darcy + wall shear",
+  vapour_potential: "r_curl · curl-free vapour",
   kinematic: "r_kin · v_n = u·n",
   laplace: "r_YL · curvature jump",
   energy: "r_energy",
@@ -40,6 +41,7 @@ const RES_ORDER = [
   "mom",
   "darcy",
   "brinkman",
+  "vapour_potential",
   "kinematic",
   "laplace",
   "energy",

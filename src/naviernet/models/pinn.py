@@ -129,6 +129,7 @@ class BubblePINN(nn.Module):
         self._validate_pressure_shape(cfg)
         self._validate_film_pressure(cfg)
         self._validate_liquid_film(cfg, names)
+        self._validate_pressure_representation(cfg, names)
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -235,6 +236,26 @@ class BubblePINN(nn.Module):
                 "model.film_pressure corrects the Young-Laplace jump on the front, "
                 "so it requires model.sharp_interface=true -- enable it, or turn "
                 "model.film_pressure off."
+            )
+
+    def _validate_pressure_representation(self, cfg, names: list[str]) -> None:
+        """The two-phase pressure blends the vapour scalar with the liquid net, so
+        it needs both: the sharp-interface unknown ``p_v(t)`` and the ``p`` field."""
+        self.pressure_representation = str(
+            getattr(cfg.model, "pressure_representation", "single")
+        )
+        if self.pressure_representation not in ("single", "two_phase"):
+            raise ValueError(
+                "model.pressure_representation must be 'single' or 'two_phase', got "
+                f"{self.pressure_representation!r}."
+            )
+        if self.pressure_representation == "single":
+            return
+        if not self.sharp_interface or "p" not in names:
+            raise ValueError(
+                "model.pressure_representation=two_phase blends the vapour pressure "
+                "p_v(t) with the liquid pressure network, so it requires "
+                "model.sharp_interface=true and the 'p' field."
             )
 
     def _init_vapor_pressure(self) -> None:
@@ -704,7 +725,22 @@ class BubblePINN(nn.Module):
         return self.nets["s"](x, c)
 
     def pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        """Stage B. Raises if the pressure field was not configured."""
+        """The pressure field. Stage B; raises if the pressure field was not configured.
+
+        Under the two-phase representation this is the physical field: the uniform
+        vapour pressure inside the bubble, the liquid network outside, blended by
+        the DETACHED indicator so the blend can never reshape the interface. The
+        momentum law and the jump condition read :meth:`liquid_pressure` instead.
+        """
+        liquid = self.liquid_pressure(x, c)
+        if self.pressure_representation == "single":
+            return liquid
+        vapour_fraction = self.alpha(x, c).detach()
+        return vapour_fraction * self.p_vapor(x[:, 2:3]) + (1.0 - vapour_fraction) * liquid
+
+    def liquid_pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        """The liquid-side pressure: the ``p`` network itself. Identical to
+        :meth:`pressure` under the single representation."""
         return self._require("p")(x, c)
 
     @property
@@ -830,6 +866,9 @@ class BoundPINN:
 
     def pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.pressure(x, c if c is not None else self._ctx(x))
+
+    def liquid_pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.liquid_pressure(x, c if c is not None else self._ctx(x))
 
     def temperature(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.temperature(x, c if c is not None else self._ctx(x))

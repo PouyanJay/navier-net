@@ -137,6 +137,11 @@ def _closure(cfg) -> str:
     return str(getattr(cfg.model, "momentum_closure", "darcy"))
 
 
+def _two_phase(cfg) -> bool:
+    """Whether this run represents the pressure per phase (p_v inside, p_l outside)."""
+    return str(getattr(cfg.model, "pressure_representation", "single")) == "two_phase"
+
+
 class _BoundaryPlan(NamedTuple):
     """The boundary choices the samplers and the ``bc`` term read every step."""
 
@@ -1371,7 +1376,11 @@ def train(
     mass_plan = _mass_balance_plan(cfg, data, groups, device)
 
     equations = registry.enabled_equations(
-        cfg.model.fields, _sharp(cfg), _film(cfg), momentum_closure=_closure(cfg)
+        cfg.model.fields,
+        _sharp(cfg),
+        _film(cfg),
+        momentum_closure=_closure(cfg),
+        two_phase_pressure=_two_phase(cfg),
     )
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
@@ -1837,6 +1846,13 @@ def _train_joint(
             "training.mass_balance is not yet supported for joint (multi-dataset) "
             "runs; run it on one dataset, or turn it off for the joint run."
         )
+    if _two_phase(cfg):
+        # The blend reads the indicator inside the model, where a joint run's
+        # per-dataset anchors are not bound; raise rather than blend the wrong front.
+        raise NotImplementedError(
+            "model.pressure_representation=two_phase is not yet supported for joint "
+            "(multi-dataset) runs; use the single representation for the joint run."
+        )
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
     boundaries = _boundary_plan(cfg)
@@ -1861,7 +1877,11 @@ def _train_joint(
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
     equations = registry.enabled_equations(
-        cfg.model.fields, _sharp(cfg), _film(cfg), momentum_closure=_closure(cfg)
+        cfg.model.fields,
+        _sharp(cfg),
+        _film(cfg),
+        momentum_closure=_closure(cfg),
+        two_phase_pressure=_two_phase(cfg),
     )
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)

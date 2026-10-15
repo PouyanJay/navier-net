@@ -35,3 +35,7 @@ walls_at: physical
 wall_condition: no_slip
 momentum_closure: brinkman
 outlet_condition: zero_gradient
+
+# WP3: the vapour pressure inside the bubble, the liquid network outside, with
+# the Young-Laplace jump built in and a curl-free vapour velocity.
+pressure_representation: two_phase
