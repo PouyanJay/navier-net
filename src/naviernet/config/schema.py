@@ -466,6 +466,19 @@ class TrainingConfig:
     # domain; it stays at the full domain afterwards (so late frames get real
     # full-weight training). Only used when causal_mode="march".
     causal_march_full_frac: float = 0.5
+    # Convergence gate on the eps schedule (the rule in arXiv:2203.07404 that the
+    # fixed per-step annealing above lacks): eps advances to the next schedule value
+    # only once EVERY time chunk's causal weight exceeds this threshold at the
+    # current eps. None keeps the fixed annealing. Measured without the gate on the
+    # representative run: Stage-B chunk losses of O(1-30) drove every weight but
+    # the first chunk's to exactly zero, so the PDE residuals received no gradient
+    # after ~0.5 ms of the event for the whole physics stage.
+    causal_gate_min_weight: Optional[float] = None  # noqa: UP045 -- OmegaConf needs Optional
+    # Per-time-chunk residual diagnostics: at every logged step, each collocation
+    # term's plain mean over each time chunk is appended to the run's record, so a
+    # residual left unenforced at late times is visible in the run's own history
+    # (and in metrics.json). Off keeps the history byte-for-byte as it was.
+    log_chunk_residuals: bool = False
     # Problem 2 -- loss-weighting scheme. "gradnorm" is the gradient-norm rebalancer
     # (unbounded; ratchets to the 1e3 cap on long runs); "rba" is bounded residual-
     # based attention (arXiv:2307.00379). Default keeps existing behaviour until

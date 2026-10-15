@@ -1,0 +1,53 @@
+# Trusted-fields optimisation (docs/plans/trustworthy-hidden-fields-plan.md, WP1):
+# the Stage-B objective with the training defects of the 2026-10 audit removed.
+#
+# - The causal eps schedule is GATED: eps only tightens once every time chunk's
+#   weight clears 0.99, so late times are never silently dropped from the PDE
+#   residuals (the representative run trained them on the first ~0.5 ms only).
+# - A longer physics stage with a slower learning-rate decay, rebalanced every
+#   500 steps, so the hidden fields get a fair chance to converge after the
+#   Stage-B restart.
+# - Per-time-chunk residuals are logged, so the run's own record shows when in
+#   the event each equation held.
+
+defaults:
+  - base_training
+
+steps: 12000
+lr: 2.0e-3
+lr_halflife: 2500
+
+n_data: 3072
+n_coll: 3072
+n_bc: 512
+collocation_time_bins: 8
+
+holdout_frame: -1
+val_fraction: 0.1
+val_strategy: tail
+
+weights:
+  data: 10.0
+  vof: 1.0
+  div: 1.0
+  src: 0.1
+  bc: 5.0
+  mom: 1.0
+  energy: 1.0
+  evap: 1.0
+
+rebalance_every: 500
+curriculum_steps: 0
+stage_b_warmup_steps: 3000
+
+causal_weighting: true
+causal_time_chunks: 16
+causal_eps_schedule: [0.01, 0.1, 1.0, 10.0]
+causal_gate_min_weight: 0.99
+log_chunk_residuals: true
+
+root_supervision: true
+
+seed: 0
+device: cpu
+log_every: 500

@@ -717,6 +717,83 @@ def _causal_eps(step: int, first_step: int, last_step: int, schedule: list[float
     return float(schedule[min(len(schedule) - 1, int(frac * len(schedule)))])
 
 
+@dataclass
+class CausalSchedule:
+    """The causal ``eps`` for each step.
+
+    Without a gate this is the fixed per-step annealing of :func:`_causal_eps`.
+    With one, ``eps`` holds its current schedule value until every time chunk's
+    causal weight clears the gate, then advances (Wang et al.'s stopping rule).
+    The weight observed each step is kept so the run's record can show how much
+    of the time window the residual terms actually trained on.
+    """
+
+    values: list[float]
+    first_step: int
+    last_step: int
+    gate: float | None
+    index: int = 0
+    min_weight: float = 1.0
+
+    def eps(self, step: int) -> float:
+        if self.gate is None:
+            return _causal_eps(step, self.first_step, self.last_step, self.values)
+        if not self.values:
+            return 0.0
+        return float(self.values[self.index])
+
+    def observe(self, weights: torch.Tensor) -> None:
+        """Record this step's causal weights and advance ``eps`` once all clear the gate."""
+        self.min_weight = float(weights.min())
+        if self.gate is None or self.index >= len(self.values) - 1:
+            return
+        if self.min_weight > self.gate:
+            self.index += 1
+            log.info(
+                "causal eps advanced to %.3g (every chunk weight > %.2f)",
+                self.eps(0),
+                self.gate,
+            )
+
+
+def _causal_schedule(
+    tcfg, first_step: int, last_step: int, state: dict
+) -> CausalSchedule | None:
+    """The run's causal schedule, resumed at the gate index the checkpoint saved;
+    ``None`` when the soft causal weighting is off (uniform, or time-marching)."""
+    if not tcfg.causal_weighting or tcfg.causal_mode != "weight":
+        return None
+    return CausalSchedule(
+        values=list(tcfg.causal_eps_schedule),
+        first_step=first_step,
+        last_step=last_step,
+        gate=tcfg.causal_gate_min_weight,
+        index=int(state.get("causal_index", 0)),
+    )
+
+
+def _causal_record(plan: _LossPlan, step: int) -> dict[str, float]:
+    """The causal state worth a line in the history: nothing when the weighting is off."""
+    if plan.causal is None:
+        return {}
+    return {"causal_eps": plan.causal.eps(step), "causal_min_weight": plan.causal.min_weight}
+
+
+def _chunk_diagnostics(model, x_coll, groups, coll_equations, n_chunks: int) -> dict:
+    """Each collocation term's plain mean in each time chunk, keyed by weight key,
+    with the chunks' mid-times under ``"t"``: the per-slice table that makes a
+    residual left unenforced at late times visible in the run's own record.
+    Evaluated on the step's own batch, so it costs one extra collocation pass at
+    the logging cadence only."""
+    report: dict[str, list[float]] = {"t": []}
+    for chunk in _time_chunks(x_coll, n_chunks):
+        ctx = registry.LossContext(model, chunk, groups=groups)
+        report["t"].append(float(chunk.detach()[:, 2].mean()))
+        for eq in coll_equations:
+            report.setdefault(eq.weight_key, []).append(float(eq.term(ctx).detach()))
+    return report
+
+
 def _time_chunks(x_coll: torch.Tensor, n_chunks: int) -> list[torch.Tensor]:
     """``x_coll`` split into ``n_chunks`` time-ordered batches (ascending in the time
     column, index 2).
@@ -766,7 +843,25 @@ def _causal_collocation_loss(
     deliberate Phase-1/Phase-2 isolation (the rebalancer still sees plain means);
     Phase 2 collapses the two passes when it replaces the gradient-norm rebalancer.
     """
-    chunk_losses = torch.stack(
+    chunk_losses = _chunk_losses(
+        model, x_coll, groups, c, coll_equations, weights, schedule, n_chunks
+    )
+    return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
+
+
+def _chunk_losses(
+    model,
+    x_coll: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None,
+    coll_equations,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    n_chunks: int,
+) -> torch.Tensor:
+    """``L_r(t_i)``: the per-term weighted, scheduled collocation loss in each
+    time-ordered chunk, shape ``(n_chunks,)``, with gradient."""
+    return torch.stack(
         [
             sum(
                 weights[eq.weight_key]
@@ -777,7 +872,6 @@ def _causal_collocation_loss(
             for chunk in _time_chunks(x_coll, n_chunks)
         ]
     )
-    return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
 
 
 def _march_active_bins(progress: float, n_chunks: int, full_frac: float) -> int:
@@ -869,6 +963,9 @@ class _LossPlan:
     first_step: int
     last_step: int
     tcfg: object
+    # The soft causal weighting's eps policy (gated or fixed); None when it is off.
+    # Mutable on purpose: the gate index is run state, persisted with the checkpoint.
+    causal: CausalSchedule | None = None
 
 
 CAUSAL_MODES = ("weight", "march")
@@ -1033,8 +1130,7 @@ def _causal_collocation(
             progress,
             tcfg.causal_march_full_frac,
         )
-    eps = _causal_eps(step, plan.first_step, plan.last_step, tcfg.causal_eps_schedule)
-    return _causal_collocation_loss(
+    chunk_losses = _chunk_losses(
         model,
         x_coll,
         groups,
@@ -1043,8 +1139,13 @@ def _causal_collocation(
         weights,
         schedule,
         tcfg.causal_time_chunks,
-        eps,
     )
+    if plan.causal is None:
+        eps = _causal_eps(step, plan.first_step, plan.last_step, tcfg.causal_eps_schedule)
+        return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
+    causal_weights = _causal_weights(chunk_losses, plan.causal.eps(step))
+    plan.causal.observe(causal_weights)
+    return (causal_weights * chunk_losses).mean()
 
 
 def _total_loss(
@@ -1258,7 +1359,14 @@ def train(
 
     first_step = state["done"] + 1
     last_step = state["done"] + steps
-    plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
+    plan = _LossPlan(
+        coll_equations,
+        coll_keys,
+        first_step,
+        last_step,
+        tcfg,
+        _causal_schedule(tcfg, first_step, last_step, state),
+    )
     _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step)
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
@@ -1376,6 +1484,16 @@ def train(
             record.update(nose_record)
             record["step"] = step
             record["lr"] = lr
+            record.update(_causal_record(plan, step))
+            if tcfg.log_chunk_residuals:
+                state.setdefault("chunk_hist", []).append(
+                    {
+                        "step": step,
+                        **_chunk_diagnostics(
+                            model, x_coll, groups, coll_equations, tcfg.causal_time_chunks
+                        ),
+                    }
+                )
             state["hist"].append(record)
             if on_log is not None:
                 on_log(dict(record))
@@ -1388,6 +1506,7 @@ def train(
 
     state["done"] += steps
     state["w"] = weights
+    state["causal_index"] = plan.causal.index if plan.causal is not None else 0
     if rba:
         state["attention"] = attention  # persist per-point attention for resume
         state["rba_pool"] = x_pool  # persist the pool the attention aligns to (RAR evolves it)
@@ -1649,7 +1768,14 @@ def _train_joint(
     reset_weights = _initial_state(cfg, equations)["w"]  # config defaults, for the handoff
     first_step = state["done"] + 1
     last_step = state["done"] + steps
-    plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
+    plan = _LossPlan(
+        coll_equations,
+        coll_keys,
+        first_step,
+        last_step,
+        tcfg,
+        _causal_schedule(tcfg, first_step, last_step, state),
+    )
     log.info(
         "joint training steps %d-%d on %s over %s%s",
         first_step,
@@ -1701,6 +1827,7 @@ def _train_joint(
             record.update(fv_record)
             record["step"] = step
             record["lr"] = lr
+            record.update(_causal_record(plan, step))
             state["hist"].append(record)
             if on_log is not None:
                 on_log(dict(record))
@@ -1713,6 +1840,7 @@ def _train_joint(
 
     state["done"] += steps
     state["w"] = weights
+    state["causal_index"] = plan.causal.index if plan.causal is not None else 0
     torch.save(
         {
             "model": model.state_dict(),

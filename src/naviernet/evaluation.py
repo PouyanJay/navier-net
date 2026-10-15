@@ -191,6 +191,10 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
         # reading the wrong one averages the window where the term was inert.
         int(state.get("stage_b_warmup_steps", cfg.training.stage_b_warmup_steps)),
     )
+    # The last per-time-chunk residual table the run logged (training.log_chunk_
+    # residuals), so metrics.json shows WHEN in the event each equation held.
+    chunk_hist = state.get("chunk_hist") or []
+    block["chunk_residuals"] = chunk_hist[-1] if chunk_hist else None
     return block
 
 

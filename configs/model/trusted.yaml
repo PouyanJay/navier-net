@@ -1,0 +1,29 @@
+# Trusted-fields architecture (docs/plans/trustworthy-hidden-fields-plan.md):
+# the representative run's model (root-bench-full), kept as the benchmark's
+# starting point so every later package changes one thing against it. The
+# physics choices the later packages add (walls, Brinkman, two-phase pressure,
+# the thermal rebuild) are switched on here as they land.
+
+defaults:
+  - base_model
+
+hidden: 112
+layers: 6
+
+fourier_feats: 80
+fourier_scale: 3.0
+
+alpha_eps: 0.05
+nodewise_activation: true
+
+fields: [phi, u, v, s, T, p]
+
+per_field:
+  p: { hidden: 149, layers: 8 }
+  T: { hidden: 149, layers: 8 }
+
+front_geometry: true
+sharp_interface: true
+nucleation_root: true
+root_attachment: true
+receding_cap: true
