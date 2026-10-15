@@ -365,6 +365,15 @@ Each package is merged only when its gate passes on three seeds of `Series-1-w30
 - 2026-10-15, WP1 (#3): gated causal schedule, per-chunk residual record, trusted
   recipes. Benchmark `trust-wp1-s{0,1,2}` launched from a frozen worktree of the
   WP1 commit.
+- 2026-10-15, WP1 benchmark result (`trust-wp1-s{0,1,2}`, reported on #3): gate
+  FAILED on the old physics. IoU 0.974-0.976 (validation frame 0.965-0.968); seed
+  correlation u 0.88, v 0.69, p 0.64, T -0.36, s 0.64; audit mirror 0.55-0.72,
+  residual RMS 1.6-1.9, flux defect 4.3-4.9, heat spread 0.28-0.74; per-chunk Darcy
+  up to 7. The record showed the causal gate advancing inside the Stage-A warm-up
+  (fixed in #10: the gate is armed only once every collocation term is in the loss)
+  and the gradient-norm rebalancer driving the Darcy weight to 0.03-0.8 while the
+  kinematic weight climbed to 300-900. The WP2 bench onwards runs from a worktree
+  at the #10 commit (`navier-net-bench`).
 - 2026-10-15, WP2 (#4): physical walls, Brinkman no-slip, outlet, mass balance.
   Joint runs refuse the mass balance for now.
 - 2026-10-15, WP3 (#5): two-phase pressure, curl-free vapour. Joint runs refuse it.
