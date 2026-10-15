@@ -19,6 +19,7 @@ the optimising backward pass, and its gradients are discarded.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -890,15 +891,26 @@ def _chunk_diagnostics(model, x_coll, groups, coll_equations, n_chunks: int) -> 
     """Each collocation term's plain mean in each time chunk, keyed by weight key,
     with the chunks' mid-times under ``"t"``: the per-slice table that makes a
     residual left unenforced at late times visible in the run's own record.
-    Evaluated on the step's own batch, so it costs one extra collocation pass at
-    the logging cadence only."""
-    report: dict[str, list[float]] = {"t": []}
-    for chunk in _time_chunks(x_coll, n_chunks):
-        ctx = registry.LossContext(model, chunk, groups=groups)
-        report["t"].append(float(chunk.detach()[:, 2].mean()))
-        for eq in coll_equations:
-            report.setdefault(eq.weight_key, []).append(float(eq.term(ctx).detach()))
+    Evaluated on the step's own batch in one pass, so it costs one extra
+    collocation evaluation at the logging cadence only."""
+    ordered, bounds = _time_ordered(x_coll, n_chunks)
+    ctx = registry.LossContext(model, ordered, groups=groups)
+    times = ordered.detach()[:, 2]
+    report: dict[str, list[float]] = {"t": [float(times[lo:hi].mean()) for lo, hi in bounds]}
+    for eq in coll_equations:
+        per_point = eq.pointwise(ctx).detach()
+        report[eq.weight_key] = [float(per_point[lo:hi].mean()) for lo, hi in bounds]
     return report
+
+
+def _time_ordered(
+    x_coll: torch.Tensor, n_chunks: int
+) -> tuple[torch.Tensor, list[tuple[int, int]]]:
+    """``x_coll`` sorted by time (column 2) as one fresh leaf, and the ``[lo, hi)``
+    bounds of its ``n_chunks`` contiguous, near-equal, time-ordered chunks --
+    the same chunks :func:`_time_chunks` returns as separate batches."""
+    ordered = x_coll.detach()[torch.argsort(x_coll.detach()[:, 2])].clone().requires_grad_(True)
+    return ordered, _chunk_bounds(ordered.shape[0], n_chunks)
 
 
 def _time_chunks(x_coll: torch.Tensor, n_chunks: int) -> list[torch.Tensor]:
@@ -950,35 +962,45 @@ def _causal_collocation_loss(
     deliberate Phase-1/Phase-2 isolation (the rebalancer still sees plain means);
     Phase 2 collapses the two passes when it replaces the gradient-norm rebalancer.
     """
-    chunk_losses = _chunk_losses(
-        model, x_coll, groups, c, coll_equations, weights, schedule, n_chunks
-    )
+    ctx = registry.LossContext(model, x_coll, groups=groups, c=c)
+    chunk_losses = _chunk_losses(ctx, coll_equations, weights, schedule, n_chunks)
     return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
 
 
 def _chunk_losses(
-    model,
-    x_coll: torch.Tensor,
-    groups: dict[str, float],
-    c: torch.Tensor | None,
+    ctx: registry.LossContext,
     coll_equations,
     weights: dict[str, float],
     schedule: dict[str, float],
     n_chunks: int,
 ) -> torch.Tensor:
     """``L_r(t_i)``: the per-term weighted, scheduled collocation loss in each
-    time-ordered chunk, shape ``(n_chunks,)``, with gradient."""
-    return torch.stack(
-        [
-            sum(
-                weights[eq.weight_key]
-                * schedule.get(eq.weight_key, 1.0)
-                * eq.term(registry.LossContext(model, chunk, groups=groups, c=c))
-                for eq in coll_equations
-            )
-            for chunk in _time_chunks(x_coll, n_chunks)
-        ]
-    )
+    time-ordered chunk, shape ``(n_chunks,)``, with gradient.
+
+    No evaluation of its own: every term's per-point residual is read off the
+    step's context (whose residual bundles are already computed and cached for
+    the plain means) and reduced chunk by chunk in time order. The networks and
+    the residuals are pointwise, so each chunk's mean is exactly what evaluating
+    that chunk alone gives (held by a test). The 2026-10 profile put over half
+    of a step in the ``n_chunks`` separate passes this replaces, each over a
+    batch too small to fill a core, with the thermal source's front rebuilt in
+    every one.
+    """
+    order = torch.argsort(ctx.x_coll.detach()[:, 2])
+    per_point = sum(
+        weights[eq.weight_key] * schedule.get(eq.weight_key, 1.0) * eq.pointwise(ctx)
+        for eq in coll_equations
+    )[order]
+    bounds = _chunk_bounds(len(order), n_chunks)
+    return torch.stack([per_point[lo:hi].mean() for lo, hi in bounds])
+
+
+def _chunk_bounds(n_points: int, n_chunks: int) -> list[tuple[int, int]]:
+    """The ``[lo, hi)`` bounds of ``n_chunks`` contiguous, near-equal chunks of
+    ``n_points`` ordered points: the chunks :func:`_time_chunks` returns."""
+    sizes = [c.shape[0] for c in torch.chunk(torch.empty(n_points), max(1, n_chunks))]
+    edges = [0, *itertools.accumulate(sizes)]
+    return [(lo, hi) for lo, hi in zip(edges[:-1], edges[1:], strict=True) if hi > lo]
 
 
 def _march_active_bins(progress: float, n_chunks: int, full_frac: float) -> int:
@@ -1047,12 +1069,20 @@ def _weighted_sum(
 class CollocationBatch:
     """One dataset's collocation batch for the causal pass: the model to evaluate
     it with (that dataset's pin-bound view on a joint hard-pin run, the plain model
-    otherwise), the points, and the dataset's groups/conditioning row."""
+    otherwise), the points, the dataset's groups/conditioning row, and the step's
+    loss context over those points, whose cached residuals the pass reuses."""
 
     model: BubblePINN | BoundPINN
     x: torch.Tensor
     groups: dict
     c: torch.Tensor | None
+    ctx: registry.LossContext | None = None
+
+    def context(self) -> registry.LossContext:
+        """The step's context, or a fresh one over the batch when none was kept."""
+        if self.ctx is None:
+            self.ctx = registry.LossContext(self.model, self.x, groups=self.groups, c=self.c)
+        return self.ctx
 
 
 @dataclass(frozen=True)
@@ -1211,25 +1241,23 @@ def _rba_collocation_loss(
 
 
 def _causal_collocation(
-    model,
-    x_coll: torch.Tensor,
-    groups: dict[str, float],
-    c: torch.Tensor | None,
+    batch: CollocationBatch,
     weights: dict[str, float],
     schedule: dict[str, float],
     step: int,
     plan: _LossPlan,
 ) -> torch.Tensor:
     """One dataset's causal collocation loss, dispatched on ``causal_mode``: the soft
-    per-time ``weight`` variant or the ``march`` time-curriculum."""
+    per-time ``weight`` variant (read off the batch's own context, so the step
+    evaluates the collocation residuals once) or the ``march`` time-curriculum."""
     tcfg = plan.tcfg
     if tcfg.causal_mode == "march":
         progress = (step - plan.first_step) / max(1, plan.last_step - plan.first_step)
         return _time_march_collocation_loss(
-            model,
-            x_coll,
-            groups,
-            c,
+            batch.model,
+            batch.x,
+            batch.groups,
+            batch.c,
             plan.coll_equations,
             weights,
             schedule,
@@ -1238,14 +1266,7 @@ def _causal_collocation(
             tcfg.causal_march_full_frac,
         )
     chunk_losses = _chunk_losses(
-        model,
-        x_coll,
-        groups,
-        c,
-        plan.coll_equations,
-        weights,
-        schedule,
-        tcfg.causal_time_chunks,
+        batch.context(), plan.coll_equations, weights, schedule, tcfg.causal_time_chunks
     )
     if plan.causal is None:
         eps = _causal_eps(step, plan.first_step, plan.last_step, tcfg.causal_eps_schedule)
@@ -1278,15 +1299,13 @@ def _total_loss(
     collocation batches (a single batch for a single-dataset run), while the supervised
     (``data``) and boundary (``bc``) terms keep their uniform contribution. ``losses``
     -- the plain per-term means -- is never touched here, so logging and the
-    gradient-norm rebalancer see the same quantities either way.
+    gradient-norm rebalancer see the same quantities either way; the soft weighting
+    reads the same residuals through each batch's context, so it adds no pass.
     """
     if not plan.tcfg.causal_weighting:
         return _weighted_sum(losses, weights, schedule)
     coll = torch.stack(
-        [
-            _causal_collocation(b.model, b.x, b.groups, b.c, weights, schedule, step, plan)
-            for b in coll_batches
-        ]
+        [_causal_collocation(b, weights, schedule, step, plan) for b in coll_batches]
     ).mean()
     return coll + _weighted_sum(losses, weights, schedule, skip=plan.coll_keys)
 
@@ -1548,7 +1567,7 @@ def train(
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
-        coll_batches = [CollocationBatch(model, x_coll, groups, None)]  # single dataset
+        coll_batches = [CollocationBatch(model, x_coll, groups, None, ctx)]  # single dataset
 
         # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
         # bounded per-point attention below. Skip the handoff step: weights reset there.
@@ -1784,7 +1803,7 @@ def _joint_losses(
 
         for name, loss in per_term.items():
             aggregate[name] = loss if name not in aggregate else aggregate[name] + loss
-        coll_batches.append(CollocationBatch(view, x_coll, cx.groups, cx.c))
+        coll_batches.append(CollocationBatch(view, x_coll, cx.groups, cx.c, ctx))
 
     n = len(contexts)
     return {name: loss / n for name, loss in aggregate.items()}, coll_batches

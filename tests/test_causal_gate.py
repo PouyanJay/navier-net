@@ -124,3 +124,37 @@ def test_history_is_unchanged_when_the_diagnostics_are_off(tmp_path):
 
     assert "chunk_hist" not in state
     assert not {"causal_eps", "causal_min_weight"} & state["hist"][-1].keys()
+
+
+def test_one_pass_chunk_losses_equal_the_per_chunk_evaluation():
+    """The chunk losses come from one evaluation of the time-ordered batch; each
+    chunk's value must equal what evaluating that chunk on its own gives."""
+    from naviernet.models.pinn import BubblePINN
+    from naviernet.physics import registry
+    from naviernet.physics.groups import compute_groups
+    from naviernet.training import _chunk_losses, _time_chunks
+
+    cfg = make_config(["model.hidden=8", "model.layers=2", "model.fourier_feats=4"])
+    torch.manual_seed(0)
+    model = BubblePINN(cfg)
+    groups = compute_groups(cfg)
+    equations = registry.collocation_equations(registry.enabled_equations(cfg.model.fields))
+    weights = {eq.weight_key: 1.0 + i for i, eq in enumerate(equations)}
+    x_coll = torch.rand(37, 3, requires_grad=True)  # 37: the chunks are unequal
+
+    ctx = registry.LossContext(model, x_coll, groups=groups)
+    one_pass = _chunk_losses(ctx, equations, weights, {}, 4)
+
+    per_chunk = torch.stack(
+        [
+            sum(
+                weights[eq.weight_key]
+                * eq.term(registry.LossContext(model, chunk, groups=groups))
+                for eq in equations
+            )
+            for chunk in _time_chunks(x_coll, 4)
+        ]
+    )
+    assert one_pass.shape == (4,)
+    assert torch.allclose(one_pass, per_chunk, rtol=1e-5, atol=1e-7)
+    assert one_pass.requires_grad
