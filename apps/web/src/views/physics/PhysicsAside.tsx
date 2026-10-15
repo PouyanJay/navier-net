@@ -35,6 +35,12 @@ const DESC: Record<string, string> = {
   energy:
     "Wall heating with an interfacial mass–energy closure; unlocks temperature. Pe and the saturation properties come from the selected fluid.",
   evap: "One evaporation flux closes the continuity source and removes latent heat.",
+  energy_liquid:
+    "The liquid's energy equation with the interface held at saturation, so the latent heat is a boundary condition rather than a sink. Heated by the background flux and the cavity disk where there is liquid.",
+  theta_bc:
+    "The inlet temperature, the liquid's temperature before the first frame, and adiabatic or isothermal side walls, from the series' conditions.",
+  evap_flux:
+    "The free source is pulled, both ways, to the evaporation flux through the front: the liquid-side temperature gradient, spread over the interface band with the mass-conservation factor.",
 };
 
 const fieldLabel = (f: string) => FIELDS[f as FieldName]?.label ?? f;

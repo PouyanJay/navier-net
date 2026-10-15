@@ -55,6 +55,28 @@ class ExperimentConfig:
 
     notes: str = ""
 
+    # --- Thermal conditions and heating (trustworthy-fields WP4). Every field is
+    # optional so an existing series composes unchanged; the sharp thermal model
+    # (model.thermal_model=sharp) reads them. Temperatures in degrees C. ---
+    T_inlet_C: Optional[float] = None  # noqa: UP045 -- liquid at the inlet; None = saturation
+    T_init_C: Optional[float] = None  # noqa: UP045 -- the whole liquid before frame 1
+    side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
+    T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
+    # The cavity heater: a disk of this radius around the nucleation cavity at this
+    # flux, on for the whole event unless heater_on_ms gates it. None = no disk.
+    q_cavity_W_cm2: Optional[float] = None  # noqa: UP045
+    heater_radius_um: Optional[float] = None  # noqa: UP045
+    heater_on_ms: Optional[float] = None  # noqa: UP045
+    # The cavity's position across the channel, as a fraction of the wall-to-wall
+    # span from the lower wall (0.5 = centreline). Its streamwise position is the
+    # measured root anchor.
+    cavity_y_fraction: float = 0.5
+    # The uniform background wall flux is q_wall_W_cm2 ("fixed"), or that value is
+    # the initial guess of ONE fitted scalar bounded by q_wall_max_W_cm2 ("fit"),
+    # constrained by the observed growth through the thermal chain.
+    q_wall_mode: str = "fixed"  # "fixed" | "fit"
+    q_wall_max_W_cm2: float = 10.0
+
 
 @dataclass
 class FluidConfig:
@@ -132,6 +154,10 @@ class ScalesConfig:
 
     L_ref_um: float = MISSING
     U_ref: float = MISSING  # m/s; measured nose-speed scale
+    # The superheat scale dT_ref in kelvin. None: the initial superheat
+    # T_init_C - T_sat_C when the series gives T_init_C, else the conduction scale
+    # q''_w h / (2 k_l) the legacy thermal model uses.
+    dT_ref_K: Optional[float] = None  # noqa: UP045 -- OmegaConf needs Optional
 
 
 @dataclass
@@ -381,6 +407,34 @@ class ModelConfig:
     # curl-free (the Darcy law with a uniform vapour pressure). Requires
     # `sharp_interface` (p_v exists only there).
     pressure_representation: str = "single"  # "single" | "two_phase"
+    # --- The thermal model (trustworthy-fields WP4). ---
+    # "legacy": the diffuse energy equation with the |grad alpha| latent sink, the
+    # kinetic (Schrage-type) closure through a learned resistance, and the inlet
+    # floor on theta (today). "sharp": the liquid-only energy equation with the
+    # interface AT saturation, inlet, initial and side-wall conditions from the
+    # experiment, and the evaporation flux taken from the liquid-side temperature
+    # gradient on the explicit front, so one mass flux drives both the latent
+    # heat and the vapour volume. Requires the front geometry, the sharp
+    # interface and the T field.
+    thermal_model: str = "legacy"  # "legacy" | "sharp"
+    # The interface temperature under the sharp model: saturation (conduction-
+    # limited evaporation, no fitted resistance). The kinetic route lives in the
+    # legacy model for now.
+    interface_temperature: str = "saturation"  # "saturation" | "kinetic"
+    # How theta is built under the sharp model: "gated" multiplies the T network
+    # by the (smoothed) distance into the liquid, so theta is exactly zero in
+    # the vapour and on the front and may go below saturation in the liquid.
+    theta_parameterization: str = "gated"  # "gated" | "free"
+    # Smoothing width of that distance gate, in L_ref units: a numerical choice,
+    # kept well below the thermal layer it must not blur (~0.02-0.04 here).
+    theta_gate_width: float = 0.005
+    # Where the continuity source comes from. "free": the s network, pulled toward
+    # the thermal flux two-way by the evap_flux closure. "thermal": s IS the
+    # interface flux spread over the band, no s network in the loop.
+    source_mode: str = "free"  # "free" | "thermal"
+    # Width of the Gaussian that spreads the front flux into the source band, in
+    # L_ref units. None = alpha_eps, the interface half-thickness.
+    source_kernel_width: Optional[float] = None  # noqa: UP045
 
 
 @dataclass
@@ -400,6 +454,9 @@ class LossWeights:
     darcy: float = 1.0  # R4: depth-averaged momentum (replaces `mom` in sharp mode)
     brinkman: float = 1.0  # WP2: Darcy + Brinkman momentum (replaces `darcy` when chosen)
     vapour_potential: float = 1.0  # WP3: curl-free vapour velocity under the two-phase pressure
+    energy_liquid: float = 1.0  # WP4: liquid energy equation of the sharp thermal model
+    theta_bc: float = 1.0  # WP4: inlet, initial and side-wall temperature conditions
+    evap_flux: float = 1.0  # WP4: free source pulled to the interface flux, two-way
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
     film: float = 1.0  # liquid film: deposition where the meniscus advances

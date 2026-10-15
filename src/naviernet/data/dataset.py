@@ -552,6 +552,20 @@ class BubbleDataset:
             torch.tensor(walls, device=self.device),
         )
 
+    def sample_initial(self, n: int, rng) -> torch.Tensor:
+        """Points at the first instant across the domain and the wall span, for the
+        initial temperature condition."""
+        d = self.domain
+        initial = np.stack(
+            [
+                rng.uniform(d.x_min, d.x_max, n).astype(np.float32),
+                rng.uniform(self.y_lo, self.y_hi, n).astype(np.float32),
+                np.full(n, d.t_min, np.float32),
+            ],
+            axis=1,
+        )
+        return torch.tensor(initial, device=self.device)
+
     def sample_outlet(self, n: int, rng) -> torch.Tensor:
         """Outlet points (``x* = x_max``) across the wall span, as a differentiable
         leaf: the outlet condition is on the velocity's streamwise gradient."""

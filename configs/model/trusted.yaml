@@ -20,7 +20,10 @@ fields: [phi, u, v, s, T, p]
 
 per_field:
   p: { hidden: 149, layers: 8 }
-  T: { hidden: 149, layers: 8 }
+  # The temperature net must resolve the thermal layer at the interface,
+  # sqrt(t*/Pe) ~ 0.02-0.04 L_ref here, so it gets a higher Fourier scale than
+  # the smooth fields (a tuning item of WP4; see the plan).
+  T: { hidden: 149, layers: 8, fourier_scale: 20.0 }
 
 front_geometry: true
 sharp_interface: true
@@ -39,3 +42,11 @@ outlet_condition: zero_gradient
 # WP3: the vapour pressure inside the bubble, the liquid network outside, with
 # the Young-Laplace jump built in and a curl-free vapour velocity.
 pressure_representation: two_phase
+
+# WP4: the interface at saturation, the liquid energy equation with the series'
+# inlet, initial and wall conditions and its two heaters, and the continuity
+# source taken from the evaporation flux through the front.
+thermal_model: sharp
+interface_temperature: saturation
+theta_parameterization: gated
+source_mode: thermal

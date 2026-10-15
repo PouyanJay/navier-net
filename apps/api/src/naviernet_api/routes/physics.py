@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from naviernet.physics.registry import REGISTRY, enabled_equations
+from naviernet.physics.registry import REGISTRY, enabled_equations, flags_from
 from naviernet_api.models import EquationState, PhysicsState, PhysicsUpdate
 from naviernet_api.services import datasets as datasets_service
 from naviernet_api.services.config_service import compose_cfg, compute_groups_for
@@ -24,19 +24,7 @@ def _physics_state(settings: Settings, dataset: str) -> PhysicsState:
     cfg = compose_cfg(dataset, overrides=overrides)
     fields = list(cfg.model.fields)
     sharp = bool(getattr(cfg.model, "sharp_interface", False))
-    film = bool(getattr(cfg.model, "liquid_film", False))
-    closure = str(getattr(cfg.model, "momentum_closure", "darcy"))
-    two_phase = str(getattr(cfg.model, "pressure_representation", "single")) == "two_phase"
-    active = {
-        e.id
-        for e in enabled_equations(
-            fields,
-            sharp_interface=sharp,
-            liquid_film=film,
-            momentum_closure=closure,
-            two_phase_pressure=two_phase,
-        )
-    }
+    active = {e.id for e in enabled_equations(fields, **flags_from(cfg.model))}
     weights = cfg.training.weights
     equations = [
         EquationState(

@@ -34,6 +34,7 @@ from naviernet.models.pinn import BoundPINN, BubblePINN
 from naviernet.physics import (
     cap_supervision,
     front_velocity,
+    heating,
     kinematics,
     mass_balance,
     nose_supervision,
@@ -140,6 +141,11 @@ def _closure(cfg) -> str:
 def _two_phase(cfg) -> bool:
     """Whether this run represents the pressure per phase (p_v inside, p_l outside)."""
     return str(getattr(cfg.model, "pressure_representation", "single")) == "two_phase"
+
+
+def _sharp_thermal(cfg) -> bool:
+    """Whether this run solves the sharp thermal model (interface at saturation)."""
+    return str(getattr(cfg.model, "thermal_model", "legacy")) == "sharp"
 
 
 class _BoundaryPlan(NamedTuple):
@@ -387,6 +393,20 @@ def _validate_training_config(cfg) -> None:
     _validate_nose_supervision(tcfg, cfg.model)
     _validate_sharpening(tcfg, cfg.model.alpha_eps)
     _validate_boundaries(cfg.model)
+    _validate_thermal_training(tcfg, cfg.model)
+
+
+def _validate_thermal_training(tcfg, model_cfg) -> None:
+    """A thermal source rebuilds the front once per distinct collocation instant,
+    so the batch's times must be binned; an unbinned batch has one instant per
+    point and would cost thousands of fronts a step."""
+    thermal_source = str(getattr(model_cfg, "source_mode", "free")) == "thermal"
+    if thermal_source and int(tcfg.collocation_time_bins) <= 0:
+        raise ValueError(
+            "model.source_mode=thermal builds the front at every distinct collocation "
+            "instant, so it needs training.collocation_time_bins > 0 (the trusted recipe "
+            "uses 8)."
+        )
 
 
 _BOUNDARY_CHOICES = {
@@ -1374,14 +1394,14 @@ def train(
     front_times = _front_times(cfg, data, device)
     boundaries = _boundary_plan(cfg)
     mass_plan = _mass_balance_plan(cfg, data, groups, device)
+    thermal = _sharp_thermal(cfg)
+    if thermal:
+        log.info(
+            "background flux by energy balance: %s",
+            _fmt(heating.estimate_background_flux(data, cfg, groups)),
+        )
 
-    equations = registry.enabled_equations(
-        cfg.model.fields,
-        _sharp(cfg),
-        _film(cfg),
-        momentum_closure=_closure(cfg),
-        two_phase_pressure=_two_phase(cfg),
-    )
+    equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -1476,6 +1496,7 @@ def train(
         )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
         outlet = data.sample_outlet(tcfg.n_bc, rng) if boundaries.outlet else None
+        initial = data.sample_initial(tcfg.n_bc, rng) if thermal else None
 
         # Pressure-driven shape: solve the width modes at exactly the instants this
         # step will evaluate, so every point gets its own instant's solved bubble
@@ -1501,6 +1522,7 @@ def train(
             front_times=front_times,
             outlet=outlet,
             wall_condition=boundaries.wall_condition,
+            initial=initial,
         )
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
@@ -1853,6 +1875,13 @@ def _train_joint(
             "model.pressure_representation=two_phase is not yet supported for joint "
             "(multi-dataset) runs; use the single representation for the joint run."
         )
+    if _sharp_thermal(cfg):
+        # Its gate, heater centre and initial batch are per dataset and not yet
+        # threaded through the joint contexts.
+        raise NotImplementedError(
+            "model.thermal_model=sharp is not yet supported for joint (multi-dataset) "
+            "runs; use the legacy thermal model for the joint run."
+        )
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
     boundaries = _boundary_plan(cfg)
@@ -1876,13 +1905,7 @@ def _train_joint(
     model = BubblePINN(cfg, n_cond=N_COND, geometry=contexts[0].geometry).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
-    equations = registry.enabled_equations(
-        cfg.model.fields,
-        _sharp(cfg),
-        _film(cfg),
-        momentum_closure=_closure(cfg),
-        two_phase_pressure=_two_phase(cfg),
-    )
+    equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)

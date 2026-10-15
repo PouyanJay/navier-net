@@ -41,6 +41,7 @@ from typing import NamedTuple
 import torch
 
 from naviernet.physics.film import film_surface_pressure
+from naviernet.physics.heating import wall_heating
 
 
 class StageAResiduals(NamedTuple):
@@ -413,6 +414,92 @@ def energy_residuals(
     return EnergyResiduals(energy, src_closure, delta)
 
 
+# --- WP4: the sharp thermal model -------------------------------------------
+#
+# The interface is AT saturation, so the latent heat is a boundary condition
+# rather than a volumetric sink: the liquid loses heat by conduction into the
+# front, and that flux, g = d theta/dn on the liquid side, is the one mass flux
+# that creates vapour volume (``groups["mass_flux_to_source"] * g`` per unit
+# front length) and moves the interface relative to the liquid
+# (``groups["mass_flux_to_speed"] * g``). Under the gated parameterisation theta
+# is exactly zero on the front and in the vapour, so no interface or vapour
+# penalty is needed; the liquid energy equation below is weighted by the liquid
+# fraction so it is scored where it holds.
+
+
+def energy_liquid_residual(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """``(1 - alpha) [theta_t + u.grad theta - lap(theta)/Pe - q*(x,y,t)(1 - alpha)]``.
+
+    The heating ``q*`` is the background flux (times its fitted scale) plus the
+    cavity disk, gated by liquid contact; the latent sink is absent because the
+    interface temperature is the boundary condition that carries it.
+    """
+    cx = _ctx(c, x)
+    alpha = model.alpha(x, cx)
+    theta = model.temperature(x, cx)
+    u, v = model.velocity(x, cx)
+    t_x, t_y, t_t = gradients(theta, x)
+    heat = wall_heating(x, groups, model.heater_centre, model.q_wall_scale)
+    residual = (
+        t_t + u * t_x + v * t_y - _laplacian(theta, x) / groups["Pe"] - heat * (1.0 - alpha)
+    )
+    return (1.0 - alpha.detach()) * residual
+
+
+class ThermalBatches(NamedTuple):
+    """The sampled points the temperature conditions are scored on: the inlet
+    line, the first instant, and the side walls (a leaf, for the adiabatic
+    gradient)."""
+
+    inlet: torch.Tensor
+    initial: torch.Tensor
+    walls: torch.Tensor
+
+
+def thermal_boundary_losses(
+    model, groups: dict[str, float], batches: ThermalBatches, c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """The inlet temperature, the initial liquid temperature (where there is
+    liquid), and the side-wall condition: adiabatic (``theta_y = 0``) unless the
+    series gives a wall temperature."""
+    inlet = (
+        (model.temperature(batches.inlet, _ctx(c, batches.inlet)) - groups["theta_inlet"]) ** 2
+    ).mean()
+    total = inlet
+    if "theta_init" in groups:
+        cx = _ctx(c, batches.initial)
+        liquid = 1.0 - model.alpha(batches.initial, cx).detach()
+        total = (
+            total
+            + (
+                liquid * (model.temperature(batches.initial, cx) - groups["theta_init"]) ** 2
+            ).mean()
+        )
+    walls = batches.walls.detach().clone().requires_grad_(True)
+    theta_wall = model.temperature(walls, _ctx(c, walls))
+    if "theta_wall" in groups:
+        return total + ((theta_wall - groups["theta_wall"]) ** 2).mean()
+    _, theta_y, _ = gradients(theta_wall, walls)
+    return total + (theta_y**2).mean()
+
+
+def evap_flux_closure(model, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+    """``s_net - s_thermal``: the free source must be the interface flux spread
+    over the band. Nothing is detached, so the flux can also learn from the
+    growth the source carries (the two-way coupling the legacy closure lacked)."""
+    cx = _ctx(c, x)
+    return model.nets["s"](x, cx) - model.thermal_source(x, cx)
+
+
+def interface_mass_flux(model, front, groups: dict[str, float]) -> torch.Tensor:
+    """The liquid-side kinematic correction on the front, ``(N, 1)``:
+    ``mass_flux_to_speed * g``. O(1e-3) of the front speed here, kept so the
+    kinematic condition and the source agree about the same evaporation."""
+    return groups["mass_flux_to_speed"] * model.interface_flux_at(front)
+
+
 # --- R4: sharp-interface conditions on the explicit front --------------------
 
 
@@ -631,17 +718,21 @@ def jump_total_curvature(model, front, groups: dict[str, float]) -> torch.Tensor
     return IN_PLANE_WEIGHT * front.kappa_par + jump_gap_curvature(model, front, groups)
 
 
-def kinematic_residual(model, front, c: torch.Tensor | None = None) -> torch.Tensor:
+def kinematic_residual(
+    model, front, c: torch.Tensor | None = None, mass_flux: torch.Tensor | None = None
+) -> torch.Tensor:
     """The kinematic condition on the explicit interface, per sample ``(N, 1)``::
 
-        v_n = u . n
+        v_n = u . n  (+ the liquid-side mass-flux correction, when given)
 
     The front advances at the normal component of the local fluid velocity. Only
     the normal component can move it: a tangential slip along the interface
     transports nothing across it, which is why this is projected rather than
-    compared component-wise. (Phase change contributes no extra interface
-    velocity here -- under the Hardt-Wondra treatment its source lives OFF the
-    interface, the same reason the VOF residual is a pure advection.)
+    compared component-wise. Under the legacy treatment phase change contributes
+    no extra interface velocity (the source lives OFF the interface, the same
+    reason the VOF residual is a pure advection); the sharp thermal model passes
+    :func:`interface_mass_flux` so the front also recedes from the liquid at the
+    rate the evaporation flux demands.
 
     The front-sampled counterpart of the ``vof`` collocation residual, and the
     reason it is worth having twice: ``vof`` is evaluated at bulk points, where
@@ -649,7 +740,10 @@ def kinematic_residual(model, front, c: torch.Tensor | None = None) -> torch.Ten
     every sample is on the interface, so every sample constrains it.
     """
     u, v = model.velocity(front.points, _ctx(c, front.points))
-    return front.normal_speed - (u * front.normal[:, 0:1] + v * front.normal[:, 1:2])
+    advance = u * front.normal[:, 0:1] + v * front.normal[:, 1:2]
+    if mass_flux is not None:
+        advance = advance + mass_flux
+    return front.normal_speed - advance
 
 
 def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:

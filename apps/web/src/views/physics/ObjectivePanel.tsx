@@ -22,6 +22,9 @@ const TERM_HUE: Record<string, FieldName> = {
   laplace: "p",
   energy: "T",
   evap: "T",
+  energy_liquid: "T",
+  theta_bc: "T",
+  evap_flux: "s",
 };
 
 /** Short symbol for a term, as it is written in the loss. */
@@ -39,6 +42,9 @@ const TERM_SYMBOL: Record<string, string> = {
   laplace: "r_YL",
   energy: "r_energy",
   evap: "r_evap",
+  energy_liquid: "r_energy_l",
+  theta_bc: "L_theta",
+  evap_flux: "r_flux",
 };
 
 /**

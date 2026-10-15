@@ -147,17 +147,25 @@ def compute_groups(cfg) -> dict[str, float]:
     # evaporation mass closure can, because the source it ties theta to is
     # observed through the bubble's growth.
     q_wall = exp.q_wall_W_cm2 * 1e4  # W/cm^2 -> W/m^2
-    groups["dT_ref"] = q_wall * (h / 2.0) / fluid.k_l
+    groups["dT_ref"] = _reference_superheat(cfg, q_wall * (h / 2.0) / fluid.k_l)
     # Stefan/Jakob number at the actual superheat (generalises Ja_per_5K).
     groups["Ja"] = fluid.cp_l * groups["dT_ref"] / fluid.h_lv
     # Depth-averaged wall heat source in the non-dimensional energy equation.
-    groups["q_wall_star"] = (
-        q_wall / (fluid.rho_l * fluid.cp_l * u * groups["dT_ref"]) * (length / h)
-    )
+    groups["q_wall_star"] = _wall_source_star(q_wall, fluid, u, groups["dT_ref"], length, h)
+    groups.update(_thermal_conditions(cfg, groups["dT_ref"]))
+    groups.update(_heating(cfg, fluid, u, groups["dT_ref"], length, h, t_ref))
 
     # Property ratios entering the mixture rules
     groups["rho_ratio"] = fluid.rho_l / fluid.rho_v
     groups["mu_ratio"] = fluid.mu_l / fluid.mu_v
+
+    # One interfacial mass flux drives both the latent heat and the vapour volume
+    # (the WP4 derivation, docs/plans/trustworthy-hidden-fields-plan.md). With the
+    # dimensionless flux g = d theta/dn on the liquid side of the front:
+    #   volume source   s = mass_flux_to_source * g * (interface length density)
+    #   interface speed V_n = u.n + mass_flux_to_speed * g       (liquid side)
+    groups["mass_flux_to_speed"] = groups["Ja"] / groups["Pe"]
+    groups["mass_flux_to_source"] = groups["mass_flux_to_speed"] * (groups["rho_ratio"] - 1.0)
 
     # Confinement closures
     # Depth-averaged Hele-Shaw drag coefficient for a channel of height H.
@@ -238,6 +246,84 @@ def compute_groups(cfg) -> dict[str, float]:
         groups["wetting_ca_crit"] = voinov**3 / (9.0 * COX_VOINOV_LOG)
 
     return groups
+
+
+def _reference_superheat(cfg, conduction_scale_K: float) -> float:
+    """``dT_ref`` in kelvin: the configured scale, else the initial superheat the
+    series gives, else the wall-conduction scale of the legacy thermal model."""
+    configured = getattr(cfg.scales, "dT_ref_K", None)
+    if configured is not None:
+        return float(configured)
+    t_init = getattr(cfg.experiment, "T_init_C", None)
+    if t_init is None:
+        return conduction_scale_K
+    superheat = float(t_init) - float(cfg.experiment.T_sat_C)
+    if superheat <= 0:
+        raise ValueError(
+            f"experiment.T_init_C={t_init} is not above T_sat_C={cfg.experiment.T_sat_C}; "
+            "set scales.dT_ref_K explicitly to use a subcooled initial liquid."
+        )
+    return superheat
+
+
+def _wall_source_star(q_wall: float, fluid, u: float, dt_ref: float, length: float, h: float):
+    """A wall flux ``q_wall`` [W/m^2] through the depth ``h`` as a dimensionless
+    volumetric source in the energy equation."""
+    return q_wall / (fluid.rho_l * fluid.cp_l * u * dt_ref) * (length / h)
+
+
+def _thermal_conditions(cfg, dt_ref: float) -> dict[str, float]:
+    """The sharp thermal model's boundary values as superheats on ``dT_ref``:
+    the inlet (saturation when the series gives none), the initial liquid, and
+    an isothermal side wall. Absent inputs leave their keys out."""
+    exp = cfg.experiment
+    t_sat = float(exp.T_sat_C)
+    t_inlet = getattr(exp, "T_inlet_C", None)
+    conditions = {
+        "theta_inlet": (float(t_inlet) - t_sat) / dt_ref if t_inlet is not None else 0.0
+    }
+    t_init = getattr(exp, "T_init_C", None)
+    if t_init is not None:
+        conditions["theta_init"] = (float(t_init) - t_sat) / dt_ref
+    t_wall = getattr(exp, "T_wall_C", None)
+    if str(getattr(exp, "side_wall_thermal", "adiabatic")) == "isothermal":
+        if t_wall is None:
+            raise ValueError(
+                "experiment.side_wall_thermal=isothermal needs experiment.T_wall_C."
+            )
+        conditions["theta_wall"] = (float(t_wall) - t_sat) / dt_ref
+    return conditions
+
+
+def _heating(cfg, fluid, u: float, dt_ref: float, length: float, h: float, t_ref: float):
+    """The cavity heater disk and the fitted background flux's bound, dimensionless."""
+    exp = cfg.experiment
+    heating: dict[str, float] = {}
+    q_cavity = getattr(exp, "q_cavity_W_cm2", None)
+    radius = getattr(exp, "heater_radius_um", None)
+    if (q_cavity is None) != (radius is None):
+        raise ValueError(
+            "experiment.q_cavity_W_cm2 and experiment.heater_radius_um go together: "
+            "the cavity heater needs both its flux and its footprint radius."
+        )
+    if q_cavity is not None:
+        heating["q_cavity_star"] = _wall_source_star(
+            float(q_cavity) * 1e4, fluid, u, dt_ref, length, h
+        )
+        heating["heater_radius_star"] = float(radius) * 1e-6 / length
+    on_ms = getattr(exp, "heater_on_ms", None)
+    if on_ms is not None:
+        heating["heater_on_star"] = float(on_ms) / t_ref
+    heating["cavity_y_fraction"] = float(getattr(exp, "cavity_y_fraction", 0.5))
+    if str(getattr(exp, "q_wall_mode", "fixed")) == "fit":
+        q_max = float(getattr(exp, "q_wall_max_W_cm2", 10.0))
+        if q_max <= float(exp.q_wall_W_cm2):
+            raise ValueError(
+                f"experiment.q_wall_max_W_cm2={q_max} must exceed the initial guess "
+                f"experiment.q_wall_W_cm2={exp.q_wall_W_cm2} in fit mode."
+            )
+        heating["q_wall_max_scale"] = q_max / float(exp.q_wall_W_cm2)
+    return heating
 
 
 def _optional_molar_mass(fluid) -> float | None:

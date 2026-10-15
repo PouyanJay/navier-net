@@ -18,6 +18,7 @@ from collections.abc import Sequence
 
 import torch
 import torch.nn as nn
+from torch.func import functional_call
 
 from naviernet.models.film import LiquidFilm
 from naviernet.models.geometry import (
@@ -130,6 +131,7 @@ class BubblePINN(nn.Module):
         self._validate_film_pressure(cfg)
         self._validate_liquid_film(cfg, names)
         self._validate_pressure_representation(cfg, names)
+        self._validate_thermal(cfg, names)
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -162,6 +164,7 @@ class BubblePINN(nn.Module):
         self._init_liquid_film(cfg)
         # After the film for tidiness; consumes no RNG (zero-init scalars).
         self._init_root_attachment()
+        self._init_heating(cfg, geometry)
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -257,6 +260,93 @@ class BubblePINN(nn.Module):
                 "p_v(t) with the liquid pressure network, so it requires "
                 "model.sharp_interface=true and the 'p' field."
             )
+
+    def _validate_thermal(self, cfg, names: list[str]) -> None:
+        """The sharp thermal model's composition, rejected before any net is built.
+
+        It gates theta by the distance into the liquid and reads the evaporation
+        flux on the explicit front, so it needs the front geometry, the sharp
+        interface and the T field. The kinetic interface and the free
+        parameterisation are declared but not yet built under it (the legacy
+        model carries the kinetic route), and are refused by name.
+        """
+        model_cfg = cfg.model
+        self.thermal_model = str(getattr(model_cfg, "thermal_model", "legacy"))
+        self.interface_temperature = str(
+            getattr(model_cfg, "interface_temperature", "saturation")
+        )
+        self.theta_parameterization = str(getattr(model_cfg, "theta_parameterization", "gated"))
+        self.theta_gate_width = float(getattr(model_cfg, "theta_gate_width", 0.005))
+        self.source_mode = str(getattr(model_cfg, "source_mode", "free"))
+        kernel = getattr(model_cfg, "source_kernel_width", None)
+        self.source_kernel_width = float(kernel if kernel is not None else model_cfg.alpha_eps)
+        for name, value, allowed in (
+            ("thermal_model", self.thermal_model, ("legacy", "sharp")),
+            ("interface_temperature", self.interface_temperature, ("saturation", "kinetic")),
+            ("theta_parameterization", self.theta_parameterization, ("gated", "free")),
+            ("source_mode", self.source_mode, ("free", "thermal")),
+        ):
+            if value not in allowed:
+                raise ValueError(f"model.{name} must be one of {allowed}, got {value!r}")
+        if self.thermal_model == "legacy":
+            if self.source_mode == "thermal":
+                raise ValueError(
+                    "model.source_mode=thermal takes the source from the interface flux "
+                    "of the sharp thermal model, so it requires model.thermal_model=sharp."
+                )
+            return
+        if "T" not in names or not self.front_geometry or not self.sharp_interface:
+            raise ValueError(
+                "model.thermal_model=sharp gates theta by the distance into the liquid and "
+                "reads the evaporation flux on the explicit front, so it requires the 'T' "
+                "field, model.front_geometry=true and model.sharp_interface=true."
+            )
+        if self.interface_temperature != "saturation":
+            raise NotImplementedError(
+                "model.interface_temperature=kinetic is not yet built under the sharp "
+                "thermal model; the legacy model carries the kinetic (resistance) route."
+            )
+        if self.theta_parameterization != "gated":
+            raise NotImplementedError(
+                "model.theta_parameterization=free is not yet built under the sharp "
+                "thermal model; use the gated parameterisation."
+            )
+
+    def _init_heating(self, cfg, geometry: GeometryPriors | None) -> None:
+        """The cavity heater's centre (the measured root, at the configured fraction
+        of the wall span) and the background flux's fitted scale, one bounded
+        scalar that starts exactly at 1 (no RNG)."""
+        self.q_wall_mode = str(getattr(cfg.experiment, "q_wall_mode", "fixed"))
+        if self.q_wall_mode not in ("fixed", "fit"):
+            raise ValueError(
+                f"experiment.q_wall_mode must be 'fixed' or 'fit', got {self.q_wall_mode!r}"
+            )
+        if self.q_wall_mode == "fit":
+            if self.thermal_model != "sharp":
+                raise ValueError(
+                    "experiment.q_wall_mode=fit is read by the sharp thermal model's energy "
+                    "equation; with model.thermal_model=legacy the fitted flux would never "
+                    "be trained. Use the sharp model, or q_wall_mode=fixed."
+                )
+            self._q_wall_max_scale = float(compute_groups(cfg)["q_wall_max_scale"])
+            self._q_wall_scale_raw = nn.Parameter(torch.zeros(1))
+        self.heater_centre: tuple[float, float] | None = None
+        if geometry is not None:
+            fraction = float(getattr(cfg.experiment, "cavity_y_fraction", 0.5))
+            self.heater_centre = (
+                float(geometry.x_root),
+                float(geometry.y_min + fraction * (geometry.y_max - geometry.y_min)),
+            )
+
+    @property
+    def q_wall_scale(self):
+        """The background wall flux as a multiple of the configured value: 1 when
+        fixed; a trained scalar in ``(0, q_wall_max / q_wall)`` when fitted,
+        sigmoid-bounded and shifted so the zero-init raw lands exactly on 1."""
+        if self.q_wall_mode == "fixed":
+            return 1.0
+        cap = self._q_wall_max_scale
+        return cap * torch.sigmoid(self._q_wall_scale_raw + logit(1.0 / cap))
 
     def _init_vapor_pressure(self) -> None:
         """``p_v(t)``: the vapour interior's pressure, one scalar per time.
@@ -721,8 +811,64 @@ class BubblePINN(nn.Module):
         return self.nets["u"](x, c), self.nets["v"](x, c)
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-        """Inferred volumetric dilatation from phase change."""
+        """The volumetric dilatation from phase change: the free ``s`` network, or
+        under ``model.source_mode=thermal`` the interface flux spread over the
+        band (:meth:`thermal_source`)."""
+        if self.source_mode == "thermal":
+            return self.thermal_source(x, c)
         return self.nets["s"](x, c)
+
+    def thermal_source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        """``s(x, t) = C_m sum_i g_i dl_i K_w(x - X_i(t))``: the liquid-side flux
+        through the front at each point's instant, carried into the interface
+        band by a normalised Gaussian, so the source integrates to exactly
+        ``C_m`` times the flux integrated along the front (the Hardt-Wondra
+        distribution with a kernel in place of the Helmholtz solve).
+
+        The front's points and arclength weights are detached: the geometry is
+        shaped by the images and the interface conditions, never through this
+        side door. The flux itself keeps its gradient, so the temperature learns
+        from the growth the source has to carry. Points are grouped by their
+        instant, so a batch whose times are binned costs one front per bin.
+        """
+        groups = compute_groups(self.cfg)
+        coefficient = groups["mass_flux_to_source"]
+        sigma = self.source_kernel_width
+        source = torch.zeros_like(x[:, :1])
+        instants, inverse = torch.unique(x[:, 2].detach(), return_inverse=True)
+        for k, instant in enumerate(instants):
+            members = inverse == k
+            flux, weights, points = self._front_flux(instant, c)
+            offsets = x[members, :2].unsqueeze(1) - points.unsqueeze(0)
+            kernel = torch.exp(-(offsets**2).sum(dim=-1) / (2.0 * sigma**2))
+            kernel = kernel / (2.0 * torch.pi * sigma**2)
+            source[members] = coefficient * (kernel * (flux * weights).T).sum(
+                dim=1, keepdim=True
+            )
+        return source
+
+    def interface_flux_at(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
+        """``g = d theta/dn`` on the liquid side at the front samples, ``(N, 1)``,
+        by autograd of the temperature at the (detached) sample positions along
+        the outward normal; the gradient flows to the temperature net only."""
+        leaf = front.points.detach().clone().requires_grad_(True)
+        theta = self.temperature(leaf, c)
+        gradient = torch.autograd.grad(theta.sum(), leaf, create_graph=True)[0][:, :2]
+        return (gradient * front.normal.detach()).sum(dim=1, keepdim=True)
+
+    def _front_flux(
+        self, instant: torch.Tensor, c: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """``(flux, arclength weights, xy)`` of the front at one instant."""
+        model_cfg = self.cfg.model
+        n_body, n_cap = int(model_cfg.front_body_samples), int(model_cfg.front_cap_samples)
+        front = self.front(instant.reshape(1, 1), n_body, n_cap, c)
+        points = front.points.detach()[:, :2]
+        return (
+            self.interface_flux_at(front, c),
+            _arclength_weights(points, n_body, n_cap),
+            points,
+        )
 
     def pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The pressure field. Stage B; raises if the pressure field was not configured.
@@ -772,10 +918,32 @@ class BubblePINN(nn.Module):
         grow. ``theta_in`` then anchors the inlet as a boundary condition rather
         than flooring the whole field.
         """
+        if self.thermal_model == "sharp":
+            return self._liquid_distance(x, c) * self._require("T")(x, c)
         raw = torch.sigmoid(self._require("T")(x, c))
         if self.depletable_superheat:
             return raw
         return self.theta_in + (1.0 - self.theta_in) * raw
+
+    def _liquid_distance(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
+        """The (smoothed) distance into the liquid, ``0.5 (sqrt(phi^2 + d^2) - phi)``:
+        zero in the vapour and on the front, ``-phi`` in the liquid. The gate the
+        sharp thermal model multiplies the T net by, so theta is exactly saturated
+        at the interface and may fall below it in the liquid."""
+        phi = self._phi_with_frozen_geometry(x, c)
+        width = self.theta_gate_width
+        return 0.5 * (torch.sqrt(phi**2 + width**2) - phi)
+
+    def _phi_with_frozen_geometry(
+        self, x: torch.Tensor, c: torch.Tensor | None
+    ) -> torch.Tensor:
+        """``phi(x)`` with the geometry's parameters detached but its dependence on
+        ``x`` kept: the temperature's spatial derivatives see the interface, while
+        no thermal term can move it through the gate."""
+        geometry = self.nets["phi"]
+        frozen = {name: value.detach() for name, value in geometry.named_parameters()}
+        frozen.update(dict(geometry.named_buffers()))
+        return functional_call(geometry, frozen, (x, c))
 
     def _require(self, name: str) -> nn.Module:
         if name not in self.nets:
@@ -795,6 +963,26 @@ class BubblePINN(nn.Module):
         or front-geometry run, that dataset's measured anchors -- bound (joint
         training/eval/viz)."""
         return BoundPINN(self, c, pin=pin, geometry=geometry)
+
+
+def _arclength_weights(points: torch.Tensor, n_body: int, n_cap: int) -> torch.Tensor:
+    """Trapezoid weights along the front, ``(N, 1)``, from the sampler's layout:
+    the upper and lower profiles then the two caps, each ordered along its own
+    curve. An open end carries half a spacing beyond its last sample, which is
+    how the profiles (which exclude the seams) reach the caps (which include them)."""
+    weights = []
+    start = 0
+    for count in (n_body, n_body, n_cap, n_cap):
+        segment = points[start : start + count]
+        start += count
+        spacing = (segment[1:] - segment[:-1]).norm(dim=1)
+        weight = torch.zeros(count, device=points.device, dtype=points.dtype)
+        weight[:-1] = weight[:-1] + 0.5 * spacing
+        weight[1:] = weight[1:] + 0.5 * spacing
+        weight[0] = weight[0] + 0.5 * spacing[0]
+        weight[-1] = weight[-1] + 0.5 * spacing[-1]
+        weights.append(weight)
+    return torch.cat(weights).unsqueeze(1)
 
 
 class BoundPINN:
@@ -869,6 +1057,12 @@ class BoundPINN:
 
     def liquid_pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.liquid_pressure(x, c if c is not None else self._ctx(x))
+
+    def thermal_source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.thermal_source(x, c if c is not None else self._ctx(x))
+
+    def interface_flux_at(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.interface_flux_at(front, c if c is not None else self._c)
 
     def temperature(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.temperature(x, c if c is not None else self._ctx(x))

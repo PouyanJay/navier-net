@@ -1,0 +1,53 @@
+# Series-1 re-calibrated at the 300 um channel width, with the thermal
+# conditions and the two heaters the authors specified for the trustworthy-
+# fields rebuild (docs/plans/trustworthy-hidden-fields-plan.md). Run against the
+# Series-1-w300 archive:
+#
+#   naviernet dataset=Series-1-w300 experiment=trusted_w300 model=trusted training=trusted
+#
+# `highest_t` stays as it was, so the published runs and the paper's figure
+# scripts keep composing the configuration they were made with.
+
+defaults:
+  - base_experiment
+
+name: trusted_w300
+
+fluid: ${fluid.name}
+T_sat_C: ${fluid.T_sat_C}
+
+# The uniform background heater: the energy-balance estimate of what the
+# measured growth needs (0.45 W/cm2 for this series) is the starting value of
+# ONE fitted scalar, bounded above by q_wall_max_W_cm2.
+q_wall_W_cm2: 0.45
+q_wall_mode: fit
+q_wall_max_W_cm2: 5.0
+
+# The cavity heater: a 100 um disk at the nucleation cavity on the centreline,
+# on for the whole event.
+q_cavity_W_cm2: 2.0
+heater_radius_um: 100.0
+cavity_y_fraction: 0.5
+
+# Thermal conditions: the inlet liquid at saturation (the fluid's 56.6 C), the
+# whole liquid at 58 C before the first frame, adiabatic side walls.
+T_inlet_C: ${fluid.T_sat_C}
+T_init_C: 58.0
+side_wall_thermal: adiabatic
+
+flow_rate_mL_hr: 5.0
+
+channel_width_um: 300.0
+channel_height_um: 150.0
+
+dt_frame_ms: 0.5
+flow_direction: right_to_left
+
+n_frames_raw: 12
+n_frames_usable: 11
+n_frames_event: 10
+
+notes: >-
+  The Series-1 frames at the 300 um calibration (the stored Series-1 archive
+  used 291 um). Frame 11 is truncated by the field-of-view edge; frame 12
+  belongs to the next ebullition cycle and is excluded.

@@ -176,15 +176,7 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
     from naviernet.physics import diagnostics, registry
 
     block = diagnostics.physics_report(model, data)
-    equations = registry.enabled_equations(
-        cfg.model.fields,
-        bool(getattr(cfg.model, "sharp_interface", False)),
-        bool(getattr(cfg.model, "liquid_film", False)),
-        momentum_closure=str(getattr(cfg.model, "momentum_closure", "darcy")),
-        two_phase_pressure=(
-            str(getattr(cfg.model, "pressure_representation", "single")) == "two_phase"
-        ),
-    )
+    equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
     ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
     state = ckpt.get("state", {})
     block["residual_convergence"] = diagnostics.residual_convergence(
@@ -199,6 +191,23 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
     # residuals), so metrics.json shows WHEN in the event each equation held.
     chunk_hist = state.get("chunk_hist") or []
     block["chunk_residuals"] = chunk_hist[-1] if chunk_hist else None
+    return block
+
+
+def _heating_block(cfg, model, data) -> dict | None:
+    """The sharp thermal model's heating: the fitted background flux in W/cm2
+    beside the energy-balance estimate it started from, or ``None`` for a run on
+    the legacy thermal model."""
+    if getattr(model, "thermal_model", "legacy") != "sharp":
+        return None
+    from naviernet.physics import heating
+    from naviernet.physics.groups import compute_groups
+
+    block = heating.estimate_background_flux(data, cfg, compute_groups(cfg))
+    scale = model.q_wall_scale
+    block["q_wall_scale"] = float(scale) if isinstance(scale, float) else float(scale.detach())
+    block["q_wall_fit_W_cm2"] = float(cfg.experiment.q_wall_W_cm2) * block["q_wall_scale"]
+    block["q_wall_mode"] = model.q_wall_mode
     return block
 
 
@@ -232,6 +241,7 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
         "nose_speed_star": mean_speed_star,
         "nose_speed_mm_s": mean_speed_star * cfg.scales.U_ref * 1e3,
         "physics": _physics_block(cfg, model, data, paths),
+        "heating": _heating_block(cfg, model, data),
     }
 
     log.info("IoU per frame: %s", {k: round(v, 3) for k, v in ious.items()})

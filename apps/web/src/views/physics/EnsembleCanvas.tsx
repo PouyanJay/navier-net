@@ -12,9 +12,9 @@ const LINKS: Record<FieldName, string[]> = {
   phi: ["data", "vof", "div", "mom", "darcy", "brinkman", "laplace"],
   u: ["vof", "div", "bc", "mom", "darcy", "brinkman", "vapour_potential", "kinematic"],
   v: ["vof", "div", "bc", "mom", "darcy", "brinkman", "vapour_potential", "kinematic"],
-  s: ["div", "energy"],
+  s: ["div", "energy", "evap_flux"],
   p: ["mom", "darcy", "brinkman", "laplace"],
-  T: ["energy"],
+  T: ["energy", "energy_liquid", "theta_bc", "evap_flux"],
 };
 
 const RES_LABEL: Record<string, string> = {
@@ -29,6 +29,9 @@ const RES_LABEL: Record<string, string> = {
   kinematic: "r_kin · v_n = u·n",
   laplace: "r_YL · curvature jump",
   energy: "r_energy",
+  energy_liquid: "r_energy_l · liquid, interface saturated",
+  theta_bc: "L_theta · inlet, initial, walls",
+  evap_flux: "r_flux · source from the front flux",
 };
 
 /* Hub order, matching the registry so the diagram and the objective list the
@@ -45,6 +48,9 @@ const RES_ORDER = [
   "kinematic",
   "laplace",
   "energy",
+  "energy_liquid",
+  "theta_bc",
+  "evap_flux",
 ];
 
 const X = { in: 58, ff: 205, net: 385, hub: 950 };

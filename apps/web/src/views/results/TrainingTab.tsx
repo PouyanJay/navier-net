@@ -31,6 +31,9 @@ const TERM_LABELS: Record<string, { family: Family; label: string }> = {
   mom: { family: "interface", label: "mom · 2-D momentum" },
   energy: { family: "extra", label: "energy · wall heating" },
   evap: { family: "extra", label: "evap · phase-change closure" },
+  energy_liquid: { family: "extra", label: "energy_liquid · liquid energy, saturated interface" },
+  theta_bc: { family: "extra", label: "theta_bc · temperature conditions" },
+  evap_flux: { family: "extra", label: "evap_flux · source from the front flux" },
   fv_normal: { family: "extra", label: "fv_normal · measured front speed" },
   fv_apex: { family: "extra", label: "fv_apex · nose displacement" },
 };

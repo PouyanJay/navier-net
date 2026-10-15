@@ -347,3 +347,26 @@ renders from it.
 WP0 -> WP1 -> WP2 -> WP3 -> WP4 -> WP6 (audit can be built in parallel from WP1) ->
 WP5 -> WP7 (UI follows each package's schema change) -> WP8.
 Each package is merged only when its gate passes on three seeds of `Series-1-w300`.
+
+## Implementation log
+
+- 2026-10-15, WP0 (#2): baseline tag `baseline-2026-10-15`; wall positions in the
+  tensor meta and on `Domain`; `Series-1-w300` preprocessed at 300 um (1.685 um/px,
+  walls 1.000 apart). The archive carries `n_frames_event = 10` (the CLI's
+  `highest_t` value); every benchmark in this series uses that same archive so the
+  packages compare like for like. An 11-event-frame archive for the manuscript is a
+  WP8 item.
+- 2026-10-15, WP1 (#3): gated causal schedule, per-chunk residual record, trusted
+  recipes. Benchmark `trust-wp1-s{0,1,2}` launched from a frozen worktree of the
+  WP1 commit.
+- 2026-10-15, WP2 (#4): physical walls, Brinkman no-slip, outlet, mass balance.
+  Joint runs refuse the mass balance for now.
+- 2026-10-15, WP3 (#5): two-phase pressure, curl-free vapour. Joint runs refuse it.
+- 2026-10-15, WP4: sharp thermal model built with `interface_temperature =
+  saturation` and `theta_parameterization = gated`; the kinetic interface and the
+  free parameterisation are declared in the schema but refused by name until built
+  (the legacy model carries the kinetic route). The thermal source needs binned
+  collocation times. `configs/experiment/trusted_w300.yaml` holds the authors'
+  thermal conditions and heaters; `highest_t` is untouched so the published runs
+  and the paper scripts keep composing what they were made with. Joint runs refuse
+  the sharp thermal model.

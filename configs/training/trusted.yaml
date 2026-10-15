@@ -37,6 +37,9 @@ weights:
   evap: 1.0
   brinkman: 1.0
   vapour_potential: 1.0
+  energy_liquid: 1.0
+  theta_bc: 1.0
+  evap_flux: 1.0
 
 rebalance_every: 500
 curriculum_steps: 0
