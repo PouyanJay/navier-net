@@ -62,20 +62,14 @@ class ExperimentConfig:
     T_init_C: Optional[float] = None  # noqa: UP045 -- the whole liquid before frame 1
     side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
     T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
-    # The cavity heater: a disk of this radius around the nucleation cavity at this
-    # flux, on for the whole event unless heater_on_ms gates it. None = no disk.
-    q_cavity_W_cm2: Optional[float] = None  # noqa: UP045
-    heater_radius_um: Optional[float] = None  # noqa: UP045
-    heater_on_ms: Optional[float] = None  # noqa: UP045
-    # The cavity's position across the channel, as a fraction of the wall-to-wall
-    # span from the lower wall (0.5 = centreline). Its streamwise position is the
-    # measured root anchor.
-    cavity_y_fraction: float = 0.5
-    # The uniform background wall flux is q_wall_W_cm2 ("fixed"), or that value is
-    # the initial guess of ONE fitted scalar bounded by q_wall_max_W_cm2 ("fit"),
-    # constrained by the observed growth through the thermal chain.
-    q_wall_mode: str = "fixed"  # "fixed" | "fit"
-    q_wall_max_W_cm2: float = 10.0
+    # Film evaporation under the bubble (model.footprint_evaporation): the wall
+    # flux under the footprint evaporates the liquid film the bubble leaves on
+    # the heated wall, over the share of the footprint that is still wet.
+    # "fixed" uses wet_fraction as given; "fit" starts ONE bounded scalar there
+    # (strictly inside (0, 1)) and lets the observed growth set it through the
+    # chain. Reported beside the value the energy balance of the masks implies.
+    wet_fraction_mode: str = "fixed"  # "fixed" | "fit"
+    wet_fraction: float = 1.0  # 0..1; the wet share of the footprint
 
 
 @dataclass
@@ -435,6 +429,17 @@ class ModelConfig:
     # Width of the Gaussian that spreads the front flux into the source band, in
     # L_ref units. None = alpha_eps, the interface half-thickness.
     source_kernel_width: Optional[float] = None  # noqa: UP045
+    # Film evaporation under the bubble, the growth mechanism of confined flow
+    # boiling: the series' wall flux under the footprint evaporates the liquid
+    # film at the wet fraction and creates vapour there, a volumetric source
+    # footprint_source_star * f_wet * alpha added to the thermal source. The same
+    # flux heats the liquid where there is liquid (the energy equation's
+    # (1 - alpha) gate), so one wall flux is split by phase. Measured on
+    # Series-1, the wall flux under the footprint alone pays for the growth from
+    # about 1.5 ms on; the first full-chain benchmark, which let only the
+    # outline's conduction flux create vapour, found the no-evaporation solution.
+    # Requires the sharp thermal model. Off by default.
+    footprint_evaporation: bool = False
     # Mirror symmetry about the channel centreline (trustworthy-fields WP5):
     # every field network is averaged with its own reflection (u, p, T, s and
     # the interface even, v odd) and the capsule's centreline is pinned to the
@@ -551,6 +556,21 @@ class TrainingConfig:
     # rebalancer had raised the energy term's weight to 80 (3.5 on the seeds that
     # held), and the next 500 steps took every residual up four orders.
     grad_clip: float = 0.0
+    # Cap on every rebalanced weight as a multiple of the data weight (0 = the
+    # fixed 1e3 ceiling alone). The gradient-norm rebalancer ratchets a term
+    # whose gradient is small up to the ceiling; the first full-chain benchmark
+    # ended with Brinkman at 1000 and energy at 253 against data at 10, and the
+    # images lost the vote: the outline drifted off the masks while every
+    # residual improved. The images are the measurement, so no physics term may
+    # outweigh them by more than this.
+    rebalance_max_ratio: float = 0.0
+    # The outline guard: every this many steps after the warm-up the per-frame
+    # IoU against the masks is measured (0 = off), and a run whose mean IoU has
+    # fallen more than outline_guard_drop below the warm-up's own fit is stopped
+    # there, checkpoint written, instead of finishing hours later as a failure.
+    # The warm-up's fit is recorded at the step the physics engages.
+    outline_guard_every: int = 0
+    outline_guard_drop: float = 0.05
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See
@@ -710,13 +730,22 @@ class TrainingConfig:
 class AcceptanceConfig:
     """Thresholds a hidden field must meet before it is trusted (WP6): seed
     agreement, mirror symmetry, residuals on the audit grid, the cross-section
-    flux balance and the heat budget. Each is a fraction or a correlation."""
+    flux balance, the heat budget, and the outline against the masks. Each is a
+    fraction, a correlation, or a length on L_ref."""
 
     seed_corr_min: float = 0.95  # min cross-seed correlation of each field
     mirror_max: float = 0.05  # max symmetry-breaking fraction of a hidden field
     residual_rms_max: float = 0.05  # max RMS of any collocation residual
     flux_tol: float = 0.05  # max |Q - Q_in - created upstream| / Q_in at any station
     heat_budget_tol: float = 0.30  # max spread between the latent-power estimates
+    # The outline: the per-frame IoU against the masks may fall neither below
+    # this floor nor more than iou_drop_max below the warm-up's own fit of that
+    # frame, and the nose may sit no farther than nose_tol (L_ref units) from
+    # the measured nose at any frame. A run that fails here is rejected whatever
+    # its residuals say: the images are the measurement.
+    iou_min: float = 0.85
+    iou_drop_max: float = 0.05
+    nose_tol: float = 0.1
 
 
 @dataclass

@@ -153,7 +153,7 @@ def compute_groups(cfg) -> dict[str, float]:
     # Depth-averaged wall heat source in the non-dimensional energy equation.
     groups["q_wall_star"] = _wall_source_star(q_wall, fluid, u, groups["dT_ref"], length, h)
     groups.update(_thermal_conditions(cfg, groups["dT_ref"]))
-    groups.update(_heating(cfg, fluid, u, groups["dT_ref"], length, h, t_ref))
+    groups.update(_film_evaporation(cfg, fluid, u, length, h))
 
     # Property ratios entering the mixture rules
     groups["rho_ratio"] = fluid.rho_l / fluid.rho_v
@@ -295,35 +295,37 @@ def _thermal_conditions(cfg, dt_ref: float) -> dict[str, float]:
     return conditions
 
 
-def _heating(cfg, fluid, u: float, dt_ref: float, length: float, h: float, t_ref: float):
-    """The cavity heater disk and the fitted background flux's bound, dimensionless."""
+def _film_evaporation(cfg, fluid, u: float, length: float, h: float) -> dict[str, float]:
+    """The footprint film-evaporation source per unit wet fraction, and the wet
+    fraction's declared start, dimensionless (``model.footprint_evaporation``).
+
+    The wall flux under the bubble evaporates the film at ``q'' f_wet`` per unit
+    footprint area. The vapour volume that creates, less the liquid it consumes,
+    ``q'' f_wet (1/rho_v - 1/rho_l) / h_lv`` per unit area and time, dilates the
+    depth-averaged velocity over the channel height ``h``; on ``U_ref/L_ref`` that
+    is the coefficient below times ``f_wet`` wherever there is vapour.
+    """
     exp = cfg.experiment
-    heating: dict[str, float] = {}
-    q_cavity = getattr(exp, "q_cavity_W_cm2", None)
-    radius = getattr(exp, "heater_radius_um", None)
-    if (q_cavity is None) != (radius is None):
+    q_wall = float(exp.q_wall_W_cm2) * 1e4  # W/cm^2 -> W/m^2
+    specific_volume = 1.0 / fluid.rho_v - 1.0 / fluid.rho_l
+    mode = str(getattr(exp, "wet_fraction_mode", "fixed"))
+    wet = float(getattr(exp, "wet_fraction", 1.0))
+    if mode not in ("fixed", "fit"):
+        raise ValueError(f"experiment.wet_fraction_mode must be 'fixed' or 'fit', got {mode!r}")
+    if not 0.0 <= wet <= 1.0:
         raise ValueError(
-            "experiment.q_cavity_W_cm2 and experiment.heater_radius_um go together: "
-            "the cavity heater needs both its flux and its footprint radius."
+            f"experiment.wet_fraction={wet} must lie in [0, 1] (a share of the footprint)"
         )
-    if q_cavity is not None:
-        heating["q_cavity_star"] = _wall_source_star(
-            float(q_cavity) * 1e4, fluid, u, dt_ref, length, h
+    if mode == "fit" and not 0.0 < wet < 1.0:
+        raise ValueError(
+            f"experiment.wet_fraction={wet} must lie strictly inside (0, 1) in fit mode: the "
+            "fitted scalar is sigmoid-bounded and starts exactly there, so an end of the "
+            "interval has no gradient to move off."
         )
-        heating["heater_radius_star"] = float(radius) * 1e-6 / length
-    on_ms = getattr(exp, "heater_on_ms", None)
-    if on_ms is not None:
-        heating["heater_on_star"] = float(on_ms) / t_ref
-    heating["cavity_y_fraction"] = float(getattr(exp, "cavity_y_fraction", 0.5))
-    if str(getattr(exp, "q_wall_mode", "fixed")) == "fit":
-        q_max = float(getattr(exp, "q_wall_max_W_cm2", 10.0))
-        if q_max <= float(exp.q_wall_W_cm2):
-            raise ValueError(
-                f"experiment.q_wall_max_W_cm2={q_max} must exceed the initial guess "
-                f"experiment.q_wall_W_cm2={exp.q_wall_W_cm2} in fit mode."
-            )
-        heating["q_wall_max_scale"] = q_max / float(exp.q_wall_W_cm2)
-    return heating
+    return {
+        "footprint_source_star": q_wall * specific_volume * length / (fluid.h_lv * h * u),
+        "wet_fraction_init": wet,
+    }
 
 
 def _optional_molar_mass(fluid) -> float | None:

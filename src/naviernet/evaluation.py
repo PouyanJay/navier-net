@@ -195,19 +195,22 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
 
 
 def _heating_block(cfg, model, data) -> dict | None:
-    """The sharp thermal model's heating: the fitted background flux in W/cm2
-    beside the energy-balance estimate it started from, or ``None`` for a run on
-    the legacy thermal model."""
+    """The sharp thermal model's heating: the energy budget of the measured
+    growth against the series' wall flux, and the wet fraction of the footprint
+    (fitted or fixed) beside the value that budget implies; ``None`` for a run
+    on the legacy thermal model."""
     if getattr(model, "thermal_model", "legacy") != "sharp":
         return None
     from naviernet.physics import heating
     from naviernet.physics.groups import compute_groups
 
-    block = heating.estimate_background_flux(data, cfg, compute_groups(cfg))
-    scale = model.q_wall_scale
-    block["q_wall_scale"] = float(scale) if isinstance(scale, float) else float(scale.detach())
-    block["q_wall_fit_W_cm2"] = float(cfg.experiment.q_wall_W_cm2) * block["q_wall_scale"]
-    block["q_wall_mode"] = model.q_wall_mode
+    block = heating.growth_budget(data, cfg, compute_groups(cfg))
+    block["q_wall_W_cm2"] = float(cfg.experiment.q_wall_W_cm2)
+    block["footprint_evaporation"] = bool(getattr(model, "footprint_evaporation", False))
+    if block["footprint_evaporation"]:
+        wet = model.wet_fraction
+        block["wet_fraction"] = float(wet) if isinstance(wet, float) else float(wet.detach())
+        block["wet_fraction_mode"] = model.wet_fraction_mode
     return block
 
 

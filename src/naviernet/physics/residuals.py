@@ -41,7 +41,6 @@ from typing import NamedTuple
 import torch
 
 from naviernet.physics.film import film_surface_pressure
-from naviernet.physics.heating import wall_heating
 
 
 class StageAResiduals(NamedTuple):
@@ -430,18 +429,19 @@ def energy_residuals(
 def energy_liquid_residual(
     model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
 ) -> torch.Tensor:
-    """``(1 - alpha) [theta_t + u.grad theta - lap(theta)/Pe - q*(x,y,t)(1 - alpha)]``.
+    """``(1 - alpha) [theta_t + u.grad theta - lap(theta)/Pe - q* (1 - alpha)]``.
 
-    The heating ``q*`` is the background flux (times its fitted scale) plus the
-    cavity disk, gated by liquid contact; the latent sink is absent because the
-    interface temperature is the boundary condition that carries it.
+    The heating ``q*`` is the series' wall flux, gated by liquid contact: under
+    the bubble the same flux evaporates the film instead (the footprint source
+    on the model), so one wall flux is split by phase. The latent sink is absent
+    because the interface temperature is the boundary condition that carries it.
     """
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
     theta = model.temperature(x, cx)
     u, v = model.velocity(x, cx)
     t_x, t_y, t_t = gradients(theta, x)
-    heat = wall_heating(x, groups, model.heater_centre, model.q_wall_scale)
+    heat = groups["q_wall_star"]
     residual = (
         t_t + u * t_x + v * t_y - _laplacian(theta, x) / groups["Pe"] - heat * (1.0 - alpha)
     )

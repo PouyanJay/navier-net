@@ -238,9 +238,12 @@ def _div_sq(ctx: LossContext) -> torch.Tensor:
 
 def _src_sq(ctx: LossContext) -> torch.Tensor:
     # Which region is forbidden to the source depends on the film: without it,
-    # mass off the interface band is unphysical; with it, the films evaporate
-    # across the whole footprint and only the outside liquid stays forbidden.
-    if getattr(ctx.model, "liquid_film", False):
+    # mass off the interface band is unphysical; with it (the 1-D film field, or
+    # the footprint's film evaporation), the films evaporate across the whole
+    # footprint and only the outside liquid stays forbidden.
+    if getattr(ctx.model, "liquid_film", False) or getattr(
+        ctx.model, "footprint_evaporation", False
+    ):
         with torch.no_grad():
             c = None if ctx.c is None else ctx.c.expand(ctx.x_coll.shape[0], -1)
             vapour = ctx.model.alpha(ctx.x_coll, c)
@@ -615,6 +618,13 @@ REGISTRY: tuple[Equation, ...] = (
         mode="sharp",
         flag="sharp_thermal",
         on_collocation=False,  # evaluated on the inlet, initial and wall batches
+        # NOT rebalanced. These are the series' measured temperatures (the
+        # liquid at 58 C before the first frame, the inlet), as much data as the
+        # masks are. Pinned to gradient parity, the first full-chain benchmark
+        # let the physics erase the initial superheat (the condition's loss sat
+        # at 0.76 while the temperature flattened to saturation everywhere).
+        # Their weight is the configured one, held at the data term's.
+        rebalanced=False,
         term=_theta_bc_term,
     ),
     Equation(

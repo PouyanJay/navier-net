@@ -1,5 +1,6 @@
-"""The sharp thermal model: conditions, heating, the gated temperature, and the
-continuity source taken from the evaporation flux through the front."""
+"""The sharp thermal model: conditions, the wall flux split by phase, the gated
+temperature, the continuity source taken from the evaporation flux through the
+front, and the film evaporation under the footprint."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BubblePINN
 from naviernet.physics import registry
 from naviernet.physics.groups import compute_groups
-from naviernet.physics.heating import estimate_background_flux, heater_footprint
+from naviernet.physics.heating import growth_budget
 from naviernet.physics.residuals import (
     ThermalBatches,
     energy_liquid_residual,
@@ -25,8 +26,11 @@ STAGE_B_FIELDS = ("phi", "u", "v", "s", "p", "T")
 THERMAL_SERIES = [
     "experiment.T_inlet_C=56.6",
     "experiment.T_init_C=58.0",
-    "experiment.q_cavity_W_cm2=2.0",
-    "experiment.heater_radius_um=100",
+]
+FOOTPRINT = [
+    "model.footprint_evaporation=true",
+    "experiment.wet_fraction_mode=fit",
+    "experiment.wet_fraction=0.8",
 ]
 SHARP_THERMAL = [
     "model=stage_b",
@@ -43,11 +47,37 @@ def test_groups_take_the_superheat_scale_from_the_initial_liquid():
     assert groups["dT_ref"] == pytest.approx(58.0 - 56.6)
     assert groups["theta_inlet"] == pytest.approx(0.0)
     assert groups["theta_init"] == pytest.approx(1.0)
-    assert groups["heater_radius_star"] == pytest.approx(100.0 / 300.0)
-    assert groups["q_cavity_star"] > 0
     assert groups["mass_flux_to_source"] == pytest.approx(
         groups["Ja"] / groups["Pe"] * (groups["rho_ratio"] - 1.0)
     )
+
+
+def test_the_footprint_source_coefficient_is_the_wall_flux_over_the_latent_heat():
+    """``q'' (1/rho_v - 1/rho_l) L / (h_lv H U)``: the vapour volume the wall flux
+    under the bubble creates per unit footprint, as a dilatation on U/L."""
+    cfg = make_config(["experiment.q_wall_W_cm2=2.0"])
+    fluid, exp, scales = cfg.fluid, cfg.experiment, cfg.scales
+
+    groups = compute_groups(cfg)
+
+    expected = (
+        2.0e4
+        * (1.0 / fluid.rho_v - 1.0 / fluid.rho_l)
+        * scales.L_ref_um
+        * 1e-6
+        / (fluid.h_lv * exp.channel_height_um * 1e-6 * scales.U_ref)
+    )
+    assert groups["footprint_source_star"] == pytest.approx(expected)
+    assert groups["wet_fraction_init"] == 1.0, "the schema's intact film"
+
+
+def test_a_fitted_wet_fraction_must_start_strictly_inside_the_interval():
+    with pytest.raises(ValueError, match="strictly inside"):
+        compute_groups(make_config(["experiment.wet_fraction_mode=fit"]))
+    with pytest.raises(ValueError, match="wet_fraction=1.5"):
+        compute_groups(make_config(["experiment.wet_fraction=1.5"]))
+    with pytest.raises(ValueError, match="wet_fraction_mode"):
+        compute_groups(make_config(["experiment.wet_fraction_mode=guess"]))
 
 
 def test_a_configured_superheat_scale_overrides_the_initial_liquid():
@@ -62,24 +92,7 @@ def test_a_legacy_series_keeps_the_conduction_scale_and_no_initial_condition(cfg
 
     assert groups["dT_ref"] == pytest.approx(28.74, rel=1e-3)
     assert groups["theta_inlet"] == 0.0
-    assert "theta_init" not in groups and "q_cavity_star" not in groups
-
-
-def test_heater_disk_integrates_to_its_area_and_switches_off_after_its_time():
-    radius = 0.2
-    groups = {"heater_radius_star": radius, "heater_on_star": 0.5}
-    axis = torch.linspace(-0.5, 0.5, 401)
-    grid_x, grid_y = torch.meshgrid(axis, axis, indexing="ij")
-    cell = float(axis[1] - axis[0]) ** 2
-
-    def at(time: float) -> torch.Tensor:
-        points = torch.stack(
-            [grid_x.ravel(), grid_y.ravel(), torch.full_like(grid_x.ravel(), time)], dim=1
-        )
-        return heater_footprint(points, groups, (0.0, 0.0))
-
-    assert float(at(0.1).sum()) * cell == pytest.approx(np.pi * radius**2, rel=0.02)
-    assert float(at(0.9).abs().max()) == 0.0, "gated off after heater_on_star"
+    assert "theta_init" not in groups
 
 
 def _model(tmp_path, overrides):
@@ -150,9 +163,6 @@ def test_thermal_source_is_concentrated_on_the_interface_band(tmp_path):
 
 class _LiquidField:
     """A liquid-only stand-in with a given temperature and velocity."""
-
-    heater_centre = (0.0, 0.0)
-    q_wall_scale = 1.0
 
     def __init__(self, theta, u=None, v=None) -> None:
         self._theta = theta
@@ -235,36 +245,99 @@ def test_flags_from_reads_every_registry_gate():
     }
 
 
-def test_background_flux_estimate_is_the_energy_balance_of_the_growth(tmp_path):
-    cfg, paths = staged_capsule_run(tmp_path, THERMAL_SERIES)
+def test_growth_budget_is_the_energy_balance_of_the_growth(tmp_path):
+    cfg, paths = staged_capsule_run(tmp_path, [*THERMAL_SERIES, "experiment.q_wall_W_cm2=2.0"])
     data = BubbleDataset(cfg, paths)
 
-    estimate = estimate_background_flux(data, cfg, compute_groups(cfg))
+    budget = growth_budget(data, cfg, compute_groups(cfg))
 
-    assert estimate["latent_power_mW_mean"] > 0, "the capsule grows"
-    assert estimate["cavity_power_mW"] == pytest.approx(2.0 * 1e4 * np.pi * (100e-6) ** 2 * 1e3)
-    assert estimate["q_wall_estimate_W_cm2"] >= 0
-
-
-def test_fitted_background_flux_starts_at_the_configured_value_and_stays_bounded(tmp_path):
-    fit = [
-        "experiment.q_wall_mode=fit",
-        "experiment.q_wall_W_cm2=0.5",
-        "experiment.q_wall_max_W_cm2=5.0",
+    assert budget["latent_power_mW_mean"] > 0, "the capsule grows"
+    areas = [
+        float(((data.alpha[i] > 0.5) & (data.valid[i] > 0)).sum()) for i in range(data.n_event)
     ]
-    _, _, model = _model(tmp_path, [*SHARP_THERMAL, *fit])
+    pixel = float(data.x[1] - data.x[0]) * float(data.y[1] - data.y[0]) * (300e-6) ** 2
+    assert budget["footprint_power_mW"] == pytest.approx(
+        [2.0e4 * a * pixel * 1e3 for a in areas], rel=1e-6
+    )
+    assert all(0.0 <= f <= 1.0 for f in budget["implied_wet_fraction"])
+    assert 0.0 < budget["wet_fraction_estimate"] <= 1.0
 
-    assert float(model.q_wall_scale) == pytest.approx(1.0, abs=1e-6)
+
+def test_fitted_wet_fraction_starts_at_its_declared_value_and_stays_bounded(tmp_path):
+    _, _, model = _model(tmp_path, [*SHARP_THERMAL, *FOOTPRINT])
+
+    assert float(model.wet_fraction) == pytest.approx(0.8, abs=1e-6)
     with torch.no_grad():
-        model._q_wall_scale_raw.fill_(100.0)
-        assert float(model.q_wall_scale) <= 10.0
-        model._q_wall_scale_raw.fill_(-100.0)
-        assert float(model.q_wall_scale) >= 0.0
+        model._wet_fraction_raw.fill_(100.0)
+        assert float(model.wet_fraction) <= 1.0
+        model._wet_fraction_raw.fill_(-100.0)
+        assert float(model.wet_fraction) >= 0.0
 
 
-def test_fitted_background_flux_needs_the_sharp_thermal_model(tmp_path):
-    with pytest.raises(ValueError, match="q_wall_mode=fit"):
-        _model(tmp_path, ["model=stage_b", "experiment.q_wall_mode=fit"])
+def test_a_fixed_wet_fraction_is_the_declared_value_and_trains_nothing(tmp_path):
+    fixed = ["model.footprint_evaporation=true", "experiment.wet_fraction=0.5"]
+    _, _, model = _model(tmp_path, [*SHARP_THERMAL, *fixed])
+
+    assert model.wet_fraction == 0.5
+    assert not hasattr(model, "_wet_fraction_raw")
+
+
+def test_footprint_evaporation_needs_the_sharp_thermal_model(tmp_path):
+    with pytest.raises(ValueError, match="footprint_evaporation"):
+        _model(tmp_path, ["model=stage_b", "model.footprint_evaporation=true"])
+
+
+def test_footprint_source_is_the_wall_flux_under_the_bubble(tmp_path):
+    """``footprint_source_star * f_wet * alpha``: the source integrates to the
+    coefficient times the wet fraction times the vapour area, it is zero in the
+    liquid, and the thermal source carries it."""
+    cfg, data, model = _model(
+        tmp_path,
+        [
+            *SHARP_THERMAL,
+            "model.source_mode=thermal",
+            "model.footprint_evaporation=true",
+            "experiment.wet_fraction=0.5",
+        ],
+    )
+    groups = compute_groups(cfg)
+    t = float(data.t[1])
+    xs, ys = torch.linspace(0.0, 2.0, 241), torch.linspace(0.0, 1.0, 121)
+    grid_x, grid_y = torch.meshgrid(xs, ys, indexing="ij")
+    points = torch.stack(
+        [grid_x.ravel(), grid_y.ravel(), torch.full_like(grid_x.ravel(), t)], dim=1
+    )
+
+    footprint = model.footprint_source(points).detach().reshape(241, 121)
+    vapour = model.alpha(points).detach().reshape(241, 121)
+    integral = float(torch.trapezoid(torch.trapezoid(footprint, ys, dim=1), xs))
+    area = float(torch.trapezoid(torch.trapezoid(vapour, ys, dim=1), xs))
+
+    assert integral == pytest.approx(groups["footprint_source_star"] * 0.5 * area, rel=1e-4)
+    # The far liquid: alpha's sigmoid tail, not the source, sets the residue.
+    far = torch.tensor([[0.05, 0.05, t]])
+    assert model.footprint_source(far).item() == pytest.approx(
+        groups["footprint_source_star"] * 0.5 * model.alpha(far).item(), rel=1e-5
+    )
+    assert model.alpha(far).item() < 1e-3
+    inside = torch.tensor([[0.5, 0.5, t]])  # the capsule's axis, 2.4 eps from the front
+    assert model.footprint_source(inside).item() == pytest.approx(
+        groups["footprint_source_star"] * 0.5 * model.alpha(inside).item(), rel=1e-5
+    )
+    assert model.alpha(inside).item() > 0.9
+    assert torch.allclose(model.source(points), model.thermal_source(points))
+
+
+def test_footprint_source_cannot_move_the_geometry_but_trains_the_wet_fraction(tmp_path):
+    _, data, model = _model(tmp_path, [*SHARP_THERMAL, *FOOTPRINT])
+    torch.manual_seed(1)
+    x = torch.rand(32, 3) * torch.tensor([2.0, 1.0, 0.5])
+
+    model.footprint_source(x).sum().backward()
+
+    geometry = list(model.nets["phi"].parameters())
+    assert all(p.grad is None or torch.all(p.grad == 0) for p in geometry)
+    assert model._wet_fraction_raw.grad is not None and model._wet_fraction_raw.grad.item() != 0
 
 
 def test_sharp_thermal_requires_the_front_and_the_t_field(tmp_path):
@@ -278,8 +351,7 @@ def test_a_sharp_thermal_run_trains_and_logs_its_terms(tmp_path):
         [
             *SHARP_THERMAL,
             "model.source_mode=thermal",
-            "experiment.q_wall_mode=fit",
-            "experiment.q_wall_W_cm2=0.5",
+            *FOOTPRINT,
             "training.collocation_time_bins=2",
             "training.log_every=1",
         ],
@@ -288,9 +360,10 @@ def test_a_sharp_thermal_run_trains_and_logs_its_terms(tmp_path):
     _, _, state = train(cfg, paths)
 
     record = state["hist"][-1]
-    assert {"energy_liquid", "theta_bc"} <= record.keys()
+    assert {"energy_liquid", "theta_bc", "grad_norm"} <= record.keys()
     assert not {"energy", "evap", "src", "evap_flux"} & record.keys()
     assert all(np.isfinite(v) for v in record.values())
+    assert record["grad_norm"] > 0
 
 
 def test_thermal_source_requires_binned_collocation_times(tmp_path):

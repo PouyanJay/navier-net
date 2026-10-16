@@ -166,7 +166,7 @@ class BubblePINN(nn.Module):
         self._init_liquid_film(cfg)
         # After the film for tidiness; consumes no RNG (zero-init scalars).
         self._init_root_attachment()
-        self._init_heating(cfg, geometry)
+        self._init_film_evaporation(cfg)
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -348,41 +348,55 @@ class BubblePINN(nn.Module):
             return net(x, c)
         return 0.5 * (net(x, c) - net(self._reflect(x), c))
 
-    def _init_heating(self, cfg, geometry: GeometryPriors | None) -> None:
-        """The cavity heater's centre (the measured root, at the configured fraction
-        of the wall span) and the background flux's fitted scale, one bounded
-        scalar that starts exactly at 1 (no RNG)."""
-        self.q_wall_mode = str(getattr(cfg.experiment, "q_wall_mode", "fixed"))
-        if self.q_wall_mode not in ("fixed", "fit"):
+    def _init_film_evaporation(self, cfg) -> None:
+        """Film evaporation under the footprint (``model.footprint_evaporation``):
+        the source coefficient from the groups, and the wet fraction, declared
+        or ONE bounded trained scalar that starts exactly at its declared value
+        (no RNG)."""
+        self.footprint_evaporation = bool(getattr(cfg.model, "footprint_evaporation", False))
+        if not self.footprint_evaporation:
+            return
+        if self.thermal_model != "sharp":
             raise ValueError(
-                f"experiment.q_wall_mode must be 'fixed' or 'fit', got {self.q_wall_mode!r}"
+                "model.footprint_evaporation splits the series' wall flux by phase with the "
+                "sharp thermal model's energy equation (the liquid's share heats the liquid, "
+                "the footprint's share evaporates the film), so it requires "
+                "model.thermal_model=sharp."
             )
-        if self.q_wall_mode == "fit":
-            if self.thermal_model != "sharp":
-                raise ValueError(
-                    "experiment.q_wall_mode=fit is read by the sharp thermal model's energy "
-                    "equation; with model.thermal_model=legacy the fitted flux would never "
-                    "be trained. Use the sharp model, or q_wall_mode=fixed."
-                )
-            self._q_wall_max_scale = float(compute_groups(cfg)["q_wall_max_scale"])
-            self._q_wall_scale_raw = nn.Parameter(torch.zeros(1))
-        self.heater_centre: tuple[float, float] | None = None
-        if geometry is not None:
-            fraction = float(getattr(cfg.experiment, "cavity_y_fraction", 0.5))
-            self.heater_centre = (
-                float(geometry.x_root),
-                float(geometry.y_min + fraction * (geometry.y_max - geometry.y_min)),
-            )
+        groups = compute_groups(cfg)
+        self._footprint_source_star = float(groups["footprint_source_star"])
+        self._wet_fraction_init = float(groups["wet_fraction_init"])
+        self.wet_fraction_mode = str(getattr(cfg.experiment, "wet_fraction_mode", "fixed"))
+        if self.wet_fraction_mode == "fit":
+            self._wet_fraction_raw = nn.Parameter(torch.zeros(1))
 
     @property
-    def q_wall_scale(self):
-        """The background wall flux as a multiple of the configured value: 1 when
-        fixed; a trained scalar in ``(0, q_wall_max / q_wall)`` when fitted,
-        sigmoid-bounded and shifted so the zero-init raw lands exactly on 1."""
-        if self.q_wall_mode == "fixed":
-            return 1.0
-        cap = self._q_wall_max_scale
-        return cap * torch.sigmoid(self._q_wall_scale_raw + logit(1.0 / cap))
+    def wet_fraction(self):
+        """The wet share of the footprint: the declared value when fixed; when
+        fitted, a trained scalar sigmoid-bounded in (0, 1) and shifted so the
+        zero-init raw lands exactly on the declared start."""
+        if not self.footprint_evaporation:
+            raise RuntimeError(
+                "wet_fraction needs the footprint source: this model was built with "
+                "model.footprint_evaporation=false."
+            )
+        if self.wet_fraction_mode == "fixed":
+            return self._wet_fraction_init
+        return torch.sigmoid(self._wet_fraction_raw + logit(self._wet_fraction_init))
+
+    def footprint_source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        """``footprint_source_star * f_wet * alpha``: the vapour the wall flux
+        under the bubble creates by evaporating the film, ``(N, 1)``; zero when
+        the feature is off.
+
+        The indicator is detached: the footprint reads the geometry and must not
+        reshape it through this side door. The images, the interface conditions
+        and the measured front velocity shape the front; the source creates the
+        volume the velocity field then has to carry through it.
+        """
+        if not self.footprint_evaporation:
+            return torch.zeros_like(x[:, :1])
+        return self._footprint_source_star * self.wet_fraction * self.alpha(x, c).detach()
 
     def _init_vapor_pressure(self) -> None:
         """``p_v(t)``: the vapour interior's pressure, one scalar per time.
@@ -875,6 +889,10 @@ class BubblePINN(nn.Module):
         side door. The flux itself keeps its gradient, so the temperature learns
         from the growth the source has to carry. Points are grouped by their
         instant, so a batch whose times are binned costs one front per bin.
+
+        Under ``model.footprint_evaporation`` the film's source
+        (:meth:`footprint_source`) is added: the wall flux under the bubble
+        creates vapour across the footprint, the outline flux along the front.
         """
         groups = compute_groups(self.cfg)
         coefficient = groups["mass_flux_to_source"]
@@ -890,7 +908,7 @@ class BubblePINN(nn.Module):
             source[members] = coefficient * (kernel * (flux * weights).T).sum(
                 dim=1, keepdim=True
             )
-        return source
+        return source + self.footprint_source(x, c)
 
     def interface_flux_at(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
         """``g = d theta/dn`` on the liquid side at the front samples, ``(N, 1)``,
@@ -1105,6 +1123,9 @@ class BoundPINN:
 
     def thermal_source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.thermal_source(x, c if c is not None else self._ctx(x))
+
+    def footprint_source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._model.footprint_source(x, c if c is not None else self._ctx(x))
 
     def interface_flux_at(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
         return self._model.interface_flux_at(front, c if c is not None else self._c)
