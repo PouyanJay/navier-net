@@ -41,7 +41,7 @@ export const RECIPES: RecipeMeta[] = [
     label: "Trusted fields",
     evidence: "audited chain",
     detail:
-      "Sets the sharp treatment with physical walls, Brinkman no-slip, an outlet, the two-phase pressure, the sharp thermal model and the mass balance: the chain the hidden fields are audited under (configs/model/trusted.yaml).",
+      "Sets the sharp treatment with physical walls, Brinkman no-slip, an outlet, the two-phase pressure, the sharp thermal model with film evaporation under the bubble, the mass balance, the measured front velocity and the outline guard: the chain the hidden fields are audited under (configs/model/trusted.yaml).",
   },
   {
     name: "best-heldout",
@@ -101,6 +101,9 @@ const TRUSTED_STAMP = trustedRecipe as Partial<SolverFormState>;
  * back on by hand. */
 export const TRUSTED_CAUSAL_GATE = TRUSTED_STAMP.causal_gate_min_weight ?? 0.99;
 export const TRUSTED_TIME_BINS = TRUSTED_STAMP.collocation_time_bins || 8;
+/** The cadence the trusted recipe gives the outline guard: what the rail
+ * restores when the guard is switched back on by hand. */
+export const TRUSTED_GUARD_EVERY = TRUSTED_STAMP.outline_guard_every || 500;
 
 const trustedState = (): SolverFormState => ({
   ...FORM_DEFAULTS,
@@ -131,6 +134,7 @@ export const SWITCH_LABELS: [keyof SolverFormState, string][] = [
   ["mirror_symmetry", "mirror symmetry"],
   ["mass_balance", "mass balance"],
   ["log_chunk_residuals", "chunk residuals"],
+  ["footprint_evaporation", "film evaporation"],
 ];
 
 /** The physics choices that are a pick among options; a departure reads as
@@ -202,6 +206,14 @@ const VALUE_LABELS: {
     label: "causal gate",
     gate: (form) =>
       form.causal_weighting && form.causal_gate_min_weight != null,
+  },
+  { key: "rebalance_max_ratio", label: "weight cap" },
+  { key: "grad_clip", label: "grad clip" },
+  { key: "outline_guard_every", label: "outline guard" },
+  {
+    key: "outline_guard_drop",
+    label: "guard drop",
+    gate: (form) => form.outline_guard_every > 0,
   },
 ];
 

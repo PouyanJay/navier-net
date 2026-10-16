@@ -103,9 +103,12 @@ export interface RunMetrics {
   audit?: Record<string, AuditVerdict>;
 }
 
+/** One acceptance verdict: the worst value over the event frames against the
+ * threshold it must stay below (`max`) or above (`min`). */
 export interface AuditVerdict {
   worst: number;
-  max: number;
+  max?: number;
+  min?: number;
   pass: boolean;
 }
 
@@ -217,18 +220,15 @@ export interface OperatingConditions {
   n_frames_usable: number;
   n_frames_event: number;
   U_ref_m_s: number | null;
-  /** Thermal conditions and heaters (the field table's conditions section;
-   * the sharp thermal model reads them). An optional one is null when unset. */
+  /** Thermal conditions and the film under the bubble (the field table's
+   * conditions section; the sharp thermal model reads them). An optional one
+   * is null when unset. */
   T_inlet_C: number | null;
   T_init_C: number | null;
   side_wall_thermal: "adiabatic" | "isothermal";
   T_wall_C: number | null;
-  q_cavity_W_cm2: number | null;
-  heater_radius_um: number | null;
-  heater_on_ms: number | null;
-  cavity_y_fraction: number;
-  q_wall_mode: "fixed" | "fit";
-  q_wall_max_W_cm2: number;
+  wet_fraction_mode: "fixed" | "fit";
+  wet_fraction: number;
   dT_ref_K: number | null;
 }
 
@@ -279,18 +279,15 @@ export interface ConditionsUpdate {
   flow_rate_mL_hr?: number;
   q_wall_W_cm2?: number;
   U_ref?: number;
-  /** Thermal conditions and heaters. A null clears an OPTIONAL one back to
-   * "not set" (its derived default); the server refuses a null elsewhere. */
+  /** Thermal conditions and the film under the bubble. A null clears an
+   * OPTIONAL one back to "not set" (its derived default); the server refuses
+   * a null elsewhere. */
   T_inlet_C?: number | null;
   T_init_C?: number | null;
   side_wall_thermal?: "adiabatic" | "isothermal";
   T_wall_C?: number | null;
-  q_cavity_W_cm2?: number | null;
-  heater_radius_um?: number | null;
-  heater_on_ms?: number | null;
-  cavity_y_fraction?: number;
-  q_wall_mode?: "fixed" | "fit";
-  q_wall_max_W_cm2?: number;
+  wet_fraction_mode?: "fixed" | "fit";
+  wet_fraction?: number;
   dT_ref_K?: number | null;
 }
 
@@ -587,6 +584,8 @@ export interface RunLaunchRequest {
   thermal_model: "legacy" | "sharp";
   /** Requires thermal_model "sharp" and collocation_time_bins > 0. */
   source_mode: "free" | "thermal";
+  /** Film evaporation under the bubble; requires thermal_model "sharp". */
+  footprint_evaporation: boolean;
   /** Requires front_geometry. */
   mirror_symmetry: boolean;
   mass_balance: boolean;
@@ -595,6 +594,15 @@ export interface RunLaunchRequest {
   /** The causal schedule's convergence gate; null keeps the fixed annealing. */
   causal_gate_min_weight: number | null;
   log_chunk_residuals: boolean;
+  /** The images as the binding measurement: the cap on every rebalanced
+   * physics weight as a multiple of the data weight (0 keeps the fixed
+   * ceiling), the bound on the step's gradient norm (0 is none), and the
+   * outline guard (every so many steps after the warm-up, 0 is off; needs a
+   * Stage-B series) with the drop in mean IoU it tolerates. */
+  rebalance_max_ratio: number;
+  grad_clip: number;
+  outline_guard_every: number;
+  outline_guard_drop: number;
   /** Advanced overrides: `key=value` Hydra tokens for the schema's CLI-only
    * dials. Strictly allowlisted server-side (top-level training.* / model.*
    * scalar fields the form and the series config do not own); an invalid token

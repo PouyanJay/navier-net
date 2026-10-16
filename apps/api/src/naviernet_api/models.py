@@ -166,18 +166,15 @@ class OperatingConditions(BaseModel):
     n_frames_usable: int
     n_frames_event: int
     U_ref_m_s: float | None = None  # reference velocity (nondimensionalisation)
-    # Thermal conditions and heaters (the field table's conditions section; the
-    # sharp thermal model reads them). An optional one is None when not set.
+    # Thermal conditions and the film under the bubble (the field table's
+    # conditions section; the sharp thermal model reads them). An optional one
+    # is None when not set.
     T_inlet_C: float | None
     T_init_C: float | None
     side_wall_thermal: str
     T_wall_C: float | None
-    q_cavity_W_cm2: float | None
-    heater_radius_um: float | None
-    heater_on_ms: float | None
-    cavity_y_fraction: float
-    q_wall_mode: str
-    q_wall_max_W_cm2: float
+    wet_fraction_mode: str
+    wet_fraction: float
     dT_ref_K: float | None
 
 
@@ -243,20 +240,17 @@ class ConditionsUpdate(BaseModel):
     flow_rate_mL_hr: float | None = None
     q_wall_W_cm2: float | None = None
     U_ref: float | None = None  # reference velocity (scales.U_ref)
-    # Thermal conditions and heaters. For an OPTIONAL condition an explicit null
-    # clears the saved value back to "not set" (the derived default); a null on
-    # a required one is refused. The options mirror the field table, which the
-    # service validates against (test_defaults_parity holds the two equal).
+    # Thermal conditions and the film under the bubble. For an OPTIONAL
+    # condition an explicit null clears the saved value back to "not set" (the
+    # derived default); a null on a required one is refused. The options mirror
+    # the field table, which the service validates against
+    # (test_defaults_parity holds the two equal).
     T_inlet_C: float | None = None
     T_init_C: float | None = None
     side_wall_thermal: Literal["adiabatic", "isothermal"] | None = None
     T_wall_C: float | None = None
-    q_cavity_W_cm2: float | None = None
-    heater_radius_um: float | None = None
-    heater_on_ms: float | None = None
-    cavity_y_fraction: float | None = None
-    q_wall_mode: Literal["fixed", "fit"] | None = None
-    q_wall_max_W_cm2: float | None = None
+    wet_fraction_mode: Literal["fixed", "fit"] | None = None
+    wet_fraction: float | None = None
     dT_ref_K: float | None = None
 
 
@@ -576,6 +570,10 @@ class RunLaunchRequest(BaseModel):
     # The continuity source taken from the evaporation flux through the front.
     # Requires the sharp thermal model and binned collocation times.
     source_mode: Literal["free", "thermal"] = "free"
+    # Film evaporation under the bubble: the wall flux under the footprint
+    # evaporates the film at the series' wet fraction and creates vapour there.
+    # Requires the sharp thermal model.
+    footprint_evaporation: bool = False
     # Every field exactly even (v odd) about the channel centreline. Requires
     # front_geometry; for after the physics passes its tests without it.
     mirror_symmetry: bool = False
@@ -587,6 +585,15 @@ class RunLaunchRequest(BaseModel):
     # The causal schedule's convergence gate; None keeps the fixed annealing.
     causal_gate_min_weight: float | None = Field(default=None, ge=0.0, le=1.0)
     log_chunk_residuals: bool = False
+    # The images as the binding measurement: no rebalanced physics weight above
+    # this multiple of the data weight (0 = the fixed ceiling alone), a bound on
+    # the step's gradient norm (0 = none), and the outline guard that stops a
+    # run whose fit of the masks has fallen more than the drop below its
+    # warm-up's (0 = off; needs the Stage-B warm-up the launcher sets).
+    rebalance_max_ratio: float = Field(default=0.0, ge=0.0, le=1e4)
+    grad_clip: float = Field(default=0.0, ge=0.0, le=1e4)
+    outline_guard_every: int = Field(default=0, ge=0, le=100000)
+    outline_guard_drop: float = Field(default=0.05, ge=0.0, le=1.0)
     # Advanced overrides: the bridge to the schema's CLI-only dials (rba_gamma,
     # kin_grid, fv_smooth_px, ...). Free-form `key=value` Hydra overrides,
     # STRICTLY allowlisted in services/overrides.py: top-level training.* /
@@ -706,6 +713,12 @@ class RunLaunchRequest(BaseModel):
                 "source_mode=thermal rebuilds the front once per distinct collocation "
                 "instant, so it needs collocation_time_bins > 0 (the trusted recipe uses 8)"
             )
+        if self.footprint_evaporation and self.thermal_model != "sharp":
+            raise ValueError(
+                "footprint_evaporation splits the series' wall flux by phase with the sharp "
+                "thermal model's energy equation -- set thermal_model=sharp, or turn "
+                "footprint_evaporation off"
+            )
         return self
 
     def _check_single_dataset_physics(self) -> RunLaunchRequest:
@@ -715,7 +728,9 @@ class RunLaunchRequest(BaseModel):
             "mass_balance": self.mass_balance,
             "pressure_representation=two_phase": self.pressure_representation == "two_phase",
             "thermal_model=sharp": self.thermal_model == "sharp",
+            "footprint_evaporation": self.footprint_evaporation,
             "mirror_symmetry": self.mirror_symmetry,
+            "outline_guard_every": self.outline_guard_every > 0,
         }
         asked = [name for name, on in joint_blockers.items() if on]
         if asked:

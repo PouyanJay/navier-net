@@ -60,6 +60,7 @@ export interface SolverFormState {
   pressure_representation: "single" | "two_phase";
   thermal_model: "legacy" | "sharp";
   source_mode: "free" | "thermal";
+  footprint_evaporation: boolean;
   mirror_symmetry: boolean;
   mass_balance: boolean;
   mass_balance_weight: number;
@@ -67,6 +68,12 @@ export interface SolverFormState {
   /** The causal schedule's convergence gate; null keeps the fixed annealing. */
   causal_gate_min_weight: number | null;
   log_chunk_residuals: boolean;
+  /** The images as the binding measurement: the physics weight cap, the
+   * gradient clip and the outline guard (0 = off) with its tolerated drop. */
+  rebalance_max_ratio: number;
+  grad_clip: number;
+  outline_guard_every: number;
+  outline_guard_drop: number;
   /** Advanced overrides as raw text; parsed to `overrides` at launch. */
   overridesText: string;
 }
@@ -179,12 +186,17 @@ export const FORM_DEFAULTS: SolverFormState = {
   pressure_representation: "single",
   thermal_model: "legacy",
   source_mode: "free",
+  footprint_evaporation: false,
   mirror_symmetry: false,
   mass_balance: false,
   mass_balance_weight: 1,
   collocation_time_bins: 0,
   causal_gate_min_weight: null,
   log_chunk_residuals: false,
+  rebalance_max_ratio: 0,
+  grad_clip: 0,
+  outline_guard_every: 0,
+  outline_guard_drop: 0.05,
   overridesText: "",
 };
 

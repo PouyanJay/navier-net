@@ -93,6 +93,7 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       pressure_representation: "single",
       thermal_model: "legacy",
       source_mode: "free",
+      footprint_evaporation: false,
       mirror_symmetry: false,
     };
   }
@@ -110,6 +111,7 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       pressure_representation: "single",
       thermal_model: "legacy",
       source_mode: "free",
+      footprint_evaporation: false,
     };
   }
   // The sharp rung comes with its recommended companion: the film-pressure

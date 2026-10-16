@@ -4,7 +4,15 @@ import { CheckRow, UnrunRow } from "./CheckRow";
 
 export type { AuditVerdict } from "../../lib/api";
 
-const VERDICT_IDS = ["mirror", "residuals", "flux", "heat"] as const;
+const VERDICT_IDS = [
+  "outline",
+  "outline_drop",
+  "nose",
+  "mirror",
+  "residuals",
+  "flux",
+  "heat",
+] as const;
 type VerdictId = (typeof VERDICT_IDS)[number];
 
 /** What a run's metrics say about each acceptance test: the verdict, or why
@@ -15,11 +23,15 @@ export type AuditVerdicts = Record<
   AuditVerdict | "absent" | "unreadable"
 >;
 
+/** A verdict as written: the worst value against the threshold it must stay
+ * below (`max`) or above (`min`); one of the two must be there. */
 function readVerdict(entry: unknown): AuditVerdict | "unreadable" {
   if (!entry || typeof entry !== "object") return "unreadable";
-  const { worst, max, pass } = entry as Record<string, unknown>;
-  if (typeof worst !== "number" || typeof max !== "number") return "unreadable";
-  return { worst, max, pass: pass === true };
+  const { worst, max, min, pass } = entry as Record<string, unknown>;
+  if (typeof worst !== "number") return "unreadable";
+  if (typeof max === "number") return { worst, max, pass: pass === true };
+  if (typeof min === "number") return { worst, min, pass: pass === true };
+  return "unreadable";
 }
 
 /** The acceptance verdicts a run recorded, read defensively: the metrics are
@@ -39,6 +51,24 @@ export function auditVerdicts(
 
 /** What each verdict measured, in the interface's own voice. */
 const ROWS: { id: VerdictId; name: string; detail: string }[] = [
+  {
+    id: "outline",
+    name: "Outline against the masks",
+    detail:
+      "lowest IoU between the model's bubble and the segmented frame, over every event frame",
+  },
+  {
+    id: "outline_drop",
+    name: "Outline held from the warm-up",
+    detail:
+      "largest drop of a frame's IoU below the fit the warm-up reached before the physics engaged",
+  },
+  {
+    id: "nose",
+    name: "Nose position",
+    detail:
+      "largest distance between the model's nose and the measured nose, in channel widths",
+  },
   {
     id: "mirror",
     name: "Mirror symmetry",
@@ -60,7 +90,7 @@ const ROWS: { id: VerdictId; name: string; detail: string }[] = [
     id: "heat",
     name: "Heat budget",
     detail:
-      "spread between the latent power the growth needs, the heaters supply and the interface flux carries",
+      "spread between the latent power the growth needs, the source integrates to, and the film and the interface flux carry",
   },
 ];
 
@@ -70,8 +100,10 @@ const fmt = (value: number) => value.toPrecision(3);
 /**
  * The acceptance audit: the tests a hidden field must pass before it is
  * trusted, each against the threshold the run's own config set
- * (`evaluation.acceptance.*`). Seed agreement is the one test a single run
- * cannot make; it belongs to a seed sweep.
+ * (`evaluation.acceptance.*`). The outline rows come first: the images are
+ * the measurement, and a run that fails them is rejected whatever its
+ * residuals say. Seed agreement is the one test a single run cannot make; it
+ * belongs to a seed sweep.
  */
 export function AcceptancePanel({ audit }: { audit: AuditVerdicts | null }) {
   const measured = audit
@@ -117,7 +149,10 @@ export function AcceptancePanel({ audit }: { audit: AuditVerdicts | null }) {
                 name: row.name,
                 detail: row.detail,
                 value: fmt(verdict.worst),
-                against: `≤ ${fmt(verdict.max)}`,
+                against:
+                  verdict.min != null
+                    ? `≥ ${fmt(verdict.min)}`
+                    : `≤ ${fmt(verdict.max ?? NaN)}`,
                 ok: verdict.pass,
               }}
             />

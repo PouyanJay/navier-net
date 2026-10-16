@@ -15,6 +15,11 @@ const AUDIT = {
   flux: { worst: 0.02, max: 0.05, pass: true },
   heat: { worst: 0.4, max: 0.3, pass: false },
 };
+const OUTLINE = {
+  outline: { worst: 0.91, min: 0.85, pass: true },
+  outline_drop: { worst: 0.08, max: 0.05, pass: false },
+  nose: { worst: 0.04, max: 0.1, pass: true },
+};
 
 /** Metrics as a file on disk may hold them: any shape at all. */
 const metricsOf = (body: unknown) => body as RunMetrics;
@@ -32,6 +37,18 @@ describe("auditVerdicts", () => {
     expect(auditVerdicts({ iou_mean: 0.9 })).toBeNull();
     expect(auditVerdicts(null)).toBeNull();
     expect(auditVerdicts(metricsOf({ audit: "yes" }))).toBeNull();
+  });
+
+  it("reads a verdict held above a floor as well as one held below a cap", () => {
+    const verdicts = auditVerdicts({ audit: { ...AUDIT, ...OUTLINE } });
+    expect(verdicts?.outline).toEqual({ worst: 0.91, min: 0.85, pass: true });
+    expect(verdicts?.nose).toEqual({ worst: 0.04, max: 0.1, pass: true });
+    // A verdict with neither threshold is not a verdict.
+    expect(
+      auditVerdicts(
+        metricsOf({ audit: { outline: { worst: 0.9, pass: true } } }),
+      )?.outline,
+    ).toBe("unreadable");
   });
 
   it("reads a partial or malformed audit as missing tests, never as passes", () => {
@@ -61,6 +78,34 @@ describe("AcceptancePanel", () => {
     expect(
       screen.getByText("Seed agreement").closest(".check-row"),
     ).toHaveClass("unrun");
+  });
+
+  it("puts the outline first and states a floor as a floor", () => {
+    render(
+      <AcceptancePanel
+        audit={auditVerdicts({ audit: { ...AUDIT, ...OUTLINE } })}
+      />,
+    );
+
+    expect(screen.getByText("4 of 7 pass")).toBeInTheDocument();
+    const rows = Array.from(document.querySelectorAll(".check-row b")).map(
+      (b) => b.textContent,
+    );
+    expect(rows.slice(0, 3)).toEqual([
+      "Outline against the masks",
+      "Outline held from the warm-up",
+      "Nose position",
+    ]);
+    const outline = screen
+      .getByText("Outline against the masks")
+      .closest(".check-row")!;
+    expect(outline).toHaveAttribute("data-ok", "true");
+    expect(outline).toHaveTextContent("≥ 0.850");
+    const drop = screen
+      .getByText("Outline held from the warm-up")
+      .closest(".check-row")!;
+    expect(drop).toHaveAttribute("data-ok", "false");
+    expect(drop).toHaveTextContent("≤ 0.0500");
   });
 
   it("says when a run recorded no audit instead of showing four failures", () => {

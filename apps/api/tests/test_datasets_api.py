@@ -671,7 +671,8 @@ def test_service_rejects_an_overlong_label(repo_root):
         datasets_service.save_series_label(settings, "sample", "x" * 81)
 
 
-# --- thermal conditions and heaters (the field table's conditions section) ---
+# --- thermal conditions and the film under the bubble (the field table's
+# --- conditions section) ---
 
 
 def test_thermal_conditions_start_unset_and_save_as_typed(client):
@@ -680,7 +681,8 @@ def test_thermal_conditions_start_unset_and_save_as_typed(client):
     assert detail["conditions"]["T_inlet_C"] is None
     assert detail["conditions"]["T_init_C"] is None
     assert detail["conditions"]["side_wall_thermal"] == "adiabatic"
-    assert detail["conditions"]["q_wall_mode"] == "fixed"
+    assert detail["conditions"]["wet_fraction_mode"] == "fixed"
+    assert detail["conditions"]["wet_fraction"] == pytest.approx(1.0)
 
     r = client.patch(
         "/api/datasets/sample/conditions",
@@ -688,9 +690,8 @@ def test_thermal_conditions_start_unset_and_save_as_typed(client):
             "T_init_C": 58.0,
             "side_wall_thermal": "isothermal",
             "T_wall_C": 60.0,
-            "q_cavity_W_cm2": 2.0,
-            "heater_radius_um": 100.0,
-            "q_wall_mode": "fit",
+            "wet_fraction_mode": "fit",
+            "wet_fraction": 0.8,
         },
     )
     assert r.status_code == 200, r.text
@@ -698,36 +699,36 @@ def test_thermal_conditions_start_unset_and_save_as_typed(client):
     assert saved["T_init_C"] == pytest.approx(58.0)
     assert saved["side_wall_thermal"] == "isothermal"
     assert saved["T_wall_C"] == pytest.approx(60.0)
-    assert saved["q_cavity_W_cm2"] == pytest.approx(2.0)
-    assert saved["heater_radius_um"] == pytest.approx(100.0)
-    assert saved["q_wall_mode"] == "fit"
+    assert saved["wet_fraction_mode"] == "fit"
+    assert saved["wet_fraction"] == pytest.approx(0.8)
     # Nothing it did not touch moved.
     assert saved["T_inlet_C"] is None
     assert saved["q_wall_W_cm2"] == pytest.approx(detail["conditions"]["q_wall_W_cm2"])
 
 
 def test_a_thermal_choice_outside_its_options_is_refused_by_name(client):
-    r = client.patch("/api/datasets/sample/conditions", json={"q_wall_mode": "guess"})
+    r = client.patch("/api/datasets/sample/conditions", json={"wet_fraction_mode": "guess"})
     assert r.status_code == 422  # the request model carries the options
 
-    r = client.patch("/api/datasets/sample/conditions", json={"cavity_y_fraction": 1.5})
+    r = client.patch("/api/datasets/sample/conditions", json={"wet_fraction": 1.5})
     assert r.status_code == 400
-    assert "cavity_y_fraction" in r.json()["detail"]
+    assert "wet_fraction" in r.json()["detail"]
 
 
 def test_an_inconsistent_combination_is_refused_before_it_is_saved(client):
     """Each value is within its bounds; together they do not compose (isothermal
-    walls need their temperature; a cavity flux needs a radius). The edit is a
-    400 naming the gap, and nothing is written, so the groups still serve."""
+    walls need their temperature; a fitted wet fraction cannot start at an end
+    of its interval). The edit is a 400 naming the gap, and nothing is written,
+    so the groups still serve."""
     r = client.patch(
         "/api/datasets/sample/conditions", json={"side_wall_thermal": "isothermal"}
     )
     assert r.status_code == 400
     assert "T_wall_C" in r.json()["detail"]
 
-    r = client.patch("/api/datasets/sample/conditions", json={"q_cavity_W_cm2": 2.0})
+    r = client.patch("/api/datasets/sample/conditions", json={"wet_fraction_mode": "fit"})
     assert r.status_code == 400
-    assert "heater_radius_um" in r.json()["detail"]
+    assert "strictly inside" in r.json()["detail"]
 
     assert client.get("/api/datasets/sample").json()["conditions"]["side_wall_thermal"] == (
         "adiabatic"

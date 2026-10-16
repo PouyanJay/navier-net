@@ -70,12 +70,8 @@ const DETAIL = {
     T_init_C: 58,
     side_wall_thermal: "adiabatic",
     T_wall_C: null,
-    q_cavity_W_cm2: null,
-    heater_radius_um: null,
-    heater_on_ms: null,
-    cavity_y_fraction: 0.5,
-    q_wall_mode: "fixed",
-    q_wall_max_W_cm2: 10,
+    wet_fraction_mode: "fixed",
+    wet_fraction: 1,
     dT_ref_K: null,
   },
 };
@@ -550,8 +546,8 @@ describe("DatasetsView", () => {
     expect(initial).toHaveValue(58);
     expect(dialog.getByLabelText(/Inlet temperature/)).toHaveValue(null);
     fireEvent.change(initial, { target: { value: "" } });
-    fireEvent.change(dialog.getByLabelText(/Heater on for/), {
-      target: { value: "2.5" },
+    fireEvent.change(dialog.getByLabelText(/Wet fraction value/), {
+      target: { value: "0.8" },
     });
     fireEvent.click(dialog.getByRole("button", { name: /Save/ }));
 
@@ -559,7 +555,7 @@ describe("DatasetsView", () => {
     // Clearing travels as an explicit null; untouched fields do not travel.
     expect(calls.conditionPatches[0]).toEqual({
       T_init_C: null,
-      heater_on_ms: 2.5,
+      wet_fraction: 0.8,
     });
   });
 
@@ -1603,7 +1599,7 @@ describe("new series conditions", () => {
     // Exactly these: the filled measurements, the operating defaults and the
     // thermal choices at their defaults. An optional condition left "not set"
     // is not sent at all, so a new series never inherits another series'
-    // temperatures or heaters.
+    // temperatures.
     expect(calls.conditionPatches).toEqual([
       {
         dt_frame_ms: 0.25,
@@ -1614,9 +1610,8 @@ describe("new series conditions", () => {
         flow_rate_mL_hr: 5,
         U_ref: 0.2,
         side_wall_thermal: "adiabatic",
-        cavity_y_fraction: 0.5,
-        q_wall_mode: "fixed",
-        q_wall_max_W_cm2: 10,
+        wet_fraction_mode: "fixed",
+        wet_fraction: 1,
       },
     ]);
   });
@@ -1630,7 +1625,7 @@ describe("new series conditions", () => {
       [/Channel width/, "400"],
       [/Channel height/, "150"],
       [/Initial liquid temperature/, "58"],
-      [/Cavity heater flux/, "2"],
+      [/Wet fraction value/, "0.8"],
     ] as const) {
       fireEvent.change(form.getByLabelText(label), { target: { value } });
     }
@@ -1638,7 +1633,7 @@ describe("new series conditions", () => {
 
     await waitFor(() => expect(calls.conditionPatches).toHaveLength(1));
     expect(calls.conditionPatches[0]).toEqual(
-      expect.objectContaining({ T_init_C: 58, q_cavity_W_cm2: 2 }),
+      expect.objectContaining({ T_init_C: 58, wet_fraction: 0.8 }),
     );
   });
 

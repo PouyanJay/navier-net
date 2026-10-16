@@ -139,8 +139,8 @@ GEOMETRY_AND_FLOW: tuple[FieldSpec, ...] = (
         "float",
         *_SERIES,
         help=(
-            "the uniform background flux along the channel: the setpoint, or the "
-            "initial guess when it is fitted"
+            "the series' wall flux, uniform over the heated wall: it heats the liquid "
+            "where there is liquid and evaporates the film under the bubble"
         ),
         unit="W/cm²",
         lo=_FLUX_W_CM2[0],
@@ -206,70 +206,27 @@ THERMAL: tuple[FieldSpec, ...] = (
         optional=True,
     ),
     FieldSpec(
-        "experiment.q_cavity_W_cm2",
-        "Cavity heater flux",
-        "float",
-        *_SERIES,
-        help="the disk heater around the nucleation cavity; not set means no disk",
-        unit="W/cm²",
-        lo=0.0,
-        hi=_FLUX_W_CM2[1],
-        optional=True,
-    ),
-    FieldSpec(
-        "experiment.heater_radius_um",
-        "Cavity heater radius",
-        "float",
-        *_SERIES,
-        help="radius of the heated disk around the cavity",
-        unit="µm",
-        lo=1e-3,
-        hi=_LENGTH_UM[1],
-        optional=True,
-    ),
-    FieldSpec(
-        "experiment.heater_on_ms",
-        "Heater on for",
-        "float",
-        *_SERIES,
-        help=(
-            "how long the cavity heater stays on after the first frame; not set "
-            "means the whole event"
-        ),
-        unit="ms",
-        lo=0.0,
-        hi=1e6,
-        optional=True,
-    ),
-    FieldSpec(
-        "experiment.cavity_y_fraction",
-        "Cavity position across the channel",
-        "float",
-        *_SERIES,
-        help="fraction of the wall-to-wall span from the lower wall; 0.5 is the centreline",
-        lo=_FRACTION[0],
-        hi=_FRACTION[1],
-    ),
-    FieldSpec(
-        "experiment.q_wall_mode",
-        "Background flux",
+        "experiment.wet_fraction_mode",
+        "Wet fraction",
         "enum",
         *_SERIES,
         help=(
-            "fixed at the wall heat flux, or fitted as one bounded scalar constrained "
-            "by the observed growth"
+            "the wet share of the footprint the wall flux evaporates: fixed at the "
+            "value below, or fitted as one bounded scalar that starts there"
         ),
         options=("fixed", "fit"),
     ),
     FieldSpec(
-        "experiment.q_wall_max_W_cm2",
-        "Background flux cap",
+        "experiment.wet_fraction",
+        "Wet fraction value",
         "float",
         *_SERIES,
-        help="upper bound of the fitted background flux",
-        unit="W/cm²",
-        lo=_FLUX_W_CM2[0],
-        hi=_FLUX_W_CM2[1],
+        help=(
+            "the share of the bubble's footprint still covered by liquid film; the "
+            "fixed value, or the fit's start (strictly inside 0 and 1)"
+        ),
+        lo=_FRACTION[0],
+        hi=_FRACTION[1],
     ),
     FieldSpec(
         "scales.dT_ref_K",
@@ -370,6 +327,17 @@ PHYSICS: tuple[FieldSpec, ...] = (
             "itself spread over the front"
         ),
         options=("free", "thermal"),
+    ),
+    FieldSpec(
+        "model.footprint_evaporation",
+        "Film evaporation under the bubble",
+        "bool",
+        "physics",
+        "form",
+        help=(
+            "the wall flux under the footprint evaporates the liquid film at the wet "
+            "fraction and creates vapour there: the growth mechanism of confined boiling"
+        ),
     ),
     FieldSpec(
         "model.mirror_symmetry",
@@ -498,6 +466,52 @@ TRAINING: tuple[FieldSpec, ...] = (
         ),
     ),
     FieldSpec(
+        "training.rebalance_max_ratio",
+        "Physics weight cap",
+        "float",
+        "training",
+        "form",
+        help=(
+            "no rebalanced physics weight may exceed this multiple of the data weight; "
+            "0 keeps the fixed ceiling alone"
+        ),
+        lo=_WEIGHT[0],
+        hi=_WEIGHT[1],
+    ),
+    FieldSpec(
+        "training.grad_clip",
+        "Gradient clip",
+        "float",
+        "training",
+        "form",
+        help="bound on the total gradient norm per step; 0 is no clipping",
+        lo=_WEIGHT[0],
+        hi=_WEIGHT[1],
+    ),
+    FieldSpec(
+        "training.outline_guard_every",
+        "Outline guard",
+        "int",
+        "training",
+        "form",
+        help=(
+            "measure the fit of the masks every this many steps after the warm-up and "
+            "stop a run that has drifted; 0 is off"
+        ),
+        lo=0,
+        hi=100000,
+    ),
+    FieldSpec(
+        "training.outline_guard_drop",
+        "Outline guard drop",
+        "float",
+        "training",
+        "form",
+        help="the mean IoU may fall at most this far below the warm-up's fit",
+        lo=_FRACTION[0],
+        hi=_FRACTION[1],
+    ),
+    FieldSpec(
         "training.mass_balance_stations",
         "Mass balance stations",
         "int",
@@ -602,6 +616,34 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         "float",
         *_GATE,
         help="maximum spread between the latent-power estimates",
+        lo=_TOLERANCE[0],
+        hi=_TOLERANCE[1],
+    ),
+    FieldSpec(
+        "evaluation.acceptance.iou_min",
+        "Outline floor",
+        "float",
+        *_GATE,
+        help="minimum IoU against the mask at every event frame",
+        lo=_FRACTION[0],
+        hi=_FRACTION[1],
+    ),
+    FieldSpec(
+        "evaluation.acceptance.iou_drop_max",
+        "Outline drop",
+        "float",
+        *_GATE,
+        help="how far below the warm-up's fit a frame's IoU may end",
+        lo=_FRACTION[0],
+        hi=_FRACTION[1],
+    ),
+    FieldSpec(
+        "evaluation.acceptance.nose_tol",
+        "Nose tolerance",
+        "float",
+        *_GATE,
+        help="maximum distance between the predicted and the measured nose at any frame",
+        unit="L_ref",
         lo=_TOLERANCE[0],
         hi=_TOLERANCE[1],
     ),

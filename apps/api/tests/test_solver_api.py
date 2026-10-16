@@ -959,6 +959,9 @@ def test_the_physics_choices_default_to_the_schema_and_compose_when_asked(
         ({"mirror_symmetry": True, "front_geometry": False}, "front_geometry"),
         ({"pressure_representation": "two_phase", "sharp_interface": False}, "sharp_interface"),
         ({"walls_at": "lattice"}, "walls_at"),
+        ({"footprint_evaporation": True, "thermal_model": "legacy"}, "thermal_model=sharp"),
+        ({"rebalance_max_ratio": -1.0}, "rebalance_max_ratio"),
+        ({"outline_guard_drop": 1.5}, "outline_guard_drop"),
     ],
 )
 def test_launch_rejects_an_inconsistent_physics_choice_naming_the_fix(
@@ -969,6 +972,39 @@ def test_launch_rejects_an_inconsistent_physics_choice_naming_the_fix(
     # The messages, not the whole body: a 422 echoes the payload, whose keys
     # would match the reason on their own.
     assert reason in _messages(r)
+
+
+def test_launch_rejects_the_outline_guard_on_a_series_without_a_warm_up(client):
+    """The guard holds a run to its warm-up's fit, and the launcher sets a
+    warm-up only for a Stage-B series; a Stage-A series has no floor to hold."""
+    r = client.post("/api/runs", json={**TINY_RUN, "outline_guard_every": 100})
+    assert r.status_code == 422
+    assert "warm-up" in _messages(r)
+
+
+def test_launch_composes_the_images_binding_switches(client: TestClient, repo_root: Path):
+    """The weight cap, the gradient clip and the guard's drop reach the run's
+    config as the form sent them."""
+    run_id = client.post(
+        "/api/runs",
+        json={
+            **TINY_RUN,
+            "rebalance_max_ratio": 3.0,
+            "grad_clip": 5.0,
+            "outline_guard_drop": 0.02,
+        },
+    ).json()["run_id"]
+    events = read_stream(client, run_id)
+    assert final_status(events)["state"] == "done", final_status(events)
+
+    cfg = yaml.safe_load(
+        (repo_root / "outputs" / run_id / ".hydra" / "config.yaml").read_text()
+    )
+    assert cfg["training"]["rebalance_max_ratio"] == pytest.approx(3.0)
+    assert cfg["training"]["grad_clip"] == pytest.approx(5.0)
+    assert cfg["training"]["outline_guard_every"] == 0
+    assert cfg["training"]["outline_guard_drop"] == pytest.approx(0.02)
+    assert cfg["model"]["footprint_evaporation"] is False
 
 
 def _messages(response) -> str:

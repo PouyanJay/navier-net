@@ -3,7 +3,11 @@ import { OptionalPhysicsIcon } from "../../components/icons";
 import { fieldByName, fieldOptions, optionLabel } from "../../lib/fields";
 import type { SolverFormState } from "./form";
 import { treatmentOf } from "./formulation";
-import { TRUSTED_CAUSAL_GATE, TRUSTED_TIME_BINS } from "./recipes";
+import {
+  TRUSTED_CAUSAL_GATE,
+  TRUSTED_GUARD_EVERY,
+  TRUSTED_TIME_BINS,
+} from "./recipes";
 import { Caution, SubLabel, SwitchRow, ValueRow } from "./Rows";
 import type { SeriesCapability } from "./useSeriesCapability";
 
@@ -52,6 +56,7 @@ export function PhysicsChoicesBand({
   const summary = [
     form.walls_at === "physical" ? "physical walls" : "crop walls",
     optionLabel(form.momentum_closure),
+    form.footprint_evaporation ? "film evaporation" : null,
     form.mass_balance ? "mass balance" : null,
   ]
     .filter(Boolean)
@@ -148,11 +153,12 @@ function RepresentationGroup({
         name="thermal_model"
         form={form}
         onForm={(patch) =>
-          // The thermal source exists only under the sharp model.
+          // The thermal source and the film under the bubble exist only
+          // under the sharp model.
           onForm(
             patch.thermal_model === "sharp"
               ? patch
-              : { ...patch, source_mode: "free" },
+              : { ...patch, source_mode: "free", footprint_evaporation: false },
           )
         }
         locked={locked || sharpThermalBlocked}
@@ -198,6 +204,19 @@ function RepresentationGroup({
         max={boundsOf("collocation_time_bins").max}
         step={1}
         disabled={locked}
+      />
+      <SwitchRow
+        label={labelOf("footprint_evaporation")}
+        hint="the wall flux under the footprint evaporates the film · what grows the bubble"
+        verdict={{ tone: "recipe" }}
+        checked={form.footprint_evaporation}
+        onChange={(footprint_evaporation) => onForm({ footprint_evaporation })}
+        disabled={locked || !sharpThermal}
+        reason={
+          sharpThermal
+            ? undefined
+            : "Film evaporation splits the wall flux by phase with the sharp thermal model's energy equation; choose the sharp thermal model."
+        }
       />
       <SwitchRow
         label={labelOf("mirror_symmetry")}
@@ -277,6 +296,61 @@ function BalancesGroup({ form, onForm, locked }: GroupProps) {
         onChange={(log_chunk_residuals) => onForm({ log_chunk_residuals })}
         disabled={locked}
       />
+      <SubLabel note="the images are the measurement">
+        Outline and weights
+      </SubLabel>
+      <ValueRow
+        label={labelOf("rebalance_max_ratio")}
+        hint="× the data weight · 0 keeps the fixed ceiling"
+        value={form.rebalance_max_ratio}
+        onChange={(rebalance_max_ratio) => onForm({ rebalance_max_ratio })}
+        min={boundsOf("rebalance_max_ratio").min}
+        max={boundsOf("rebalance_max_ratio").max}
+        step={1}
+        disabled={locked}
+      />
+      <ValueRow
+        label={labelOf("grad_clip")}
+        hint="total gradient norm per step · 0 is none"
+        value={form.grad_clip}
+        onChange={(grad_clip) => onForm({ grad_clip })}
+        min={boundsOf("grad_clip").min}
+        max={boundsOf("grad_clip").max}
+        step={1}
+        disabled={locked}
+      />
+      <SwitchRow
+        label={labelOf("outline_guard_every")}
+        hint="stop a run whose fit of the masks drifts below its warm-up's"
+        verdict={{ tone: "recipe" }}
+        checked={form.outline_guard_every > 0}
+        onChange={(on) =>
+          onForm({ outline_guard_every: on ? TRUSTED_GUARD_EVERY : 0 })
+        }
+        disabled={locked}
+      >
+        <ValueRow
+          label="Check every"
+          hint="steps after the warm-up"
+          value={form.outline_guard_every}
+          onChange={(outline_guard_every) => onForm({ outline_guard_every })}
+          min={1}
+          max={boundsOf("outline_guard_every").max}
+          step={100}
+          suffix="steps"
+          disabled={locked}
+        />
+        <ValueRow
+          label={labelOf("outline_guard_drop")}
+          hint="largest drop of the mean IoU below the warm-up's fit"
+          value={form.outline_guard_drop}
+          onChange={(outline_guard_drop) => onForm({ outline_guard_drop })}
+          min={boundsOf("outline_guard_drop").min}
+          max={boundsOf("outline_guard_drop").max}
+          step={0.01}
+          disabled={locked}
+        />
+      </SwitchRow>
     </>
   );
 }

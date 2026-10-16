@@ -1397,10 +1397,16 @@ describe("SolverView physics choices", () => {
     expect(body.thermal_model).toBe("sharp");
     expect(body.source_mode).toBe("thermal");
     expect(body.collocation_time_bins).toBe(8);
+    expect(body.footprint_evaporation).toBe(true);
     expect(body.mass_balance).toBe(true);
+    expect(body.front_velocity).toBe(true);
     expect(body.causal_weighting).toBe(true);
     expect(body.causal_gate_min_weight).toBe(0.99);
     expect(body.log_chunk_residuals).toBe(true);
+    expect(body.rebalance_max_ratio).toBe(10);
+    expect(body.grad_clip).toBe(50);
+    expect(body.outline_guard_every).toBe(500);
+    expect(body.outline_guard_drop).toBe(0.05);
   });
 
   it("drops the sharp thermal model and the two-phase pressure with the sharp rung", async () => {
@@ -1418,6 +1424,7 @@ describe("SolverView physics choices", () => {
     expect(body.pressure_representation).toBe("single");
     expect(body.thermal_model).toBe("legacy");
     expect(body.source_mode).toBe("free");
+    expect(body.footprint_evaporation).toBe(false);
     // Choices that do not read the front survive the step down.
     expect(body.walls_at).toBe("physical");
     expect(body.mass_balance).toBe(true);
@@ -1655,8 +1662,9 @@ describe("SolverView verdict chips", () => {
     // Liquid film, free end caps, growth constraints, front velocity, RAR:
     // exact, so an accidental tone flip on any of the five fails here.
     expect(screen.getAllByText("benched ∅")).toHaveLength(5);
-    // Depletable superheat, two-way evaporation, the per-chunk residual record.
-    expect(screen.getAllByText("default on")).toHaveLength(3);
+    // Depletable superheat, two-way evaporation, the per-chunk residual
+    // record, film evaporation under the bubble, the outline guard.
+    expect(screen.getAllByText("default on")).toHaveLength(5);
   });
 
   it("keeps the unbenched tone for options with no numbers yet", async () => {

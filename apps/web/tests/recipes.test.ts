@@ -43,8 +43,13 @@ describe("recipe stamped states", () => {
     expect(state.pressure_representation).toBe("two_phase");
     expect(state.thermal_model).toBe("sharp");
     expect(state.source_mode).toBe("thermal");
+    expect(state.footprint_evaporation).toBe(true);
     expect(state.collocation_time_bins).toBeGreaterThan(0);
     expect(state.mass_balance).toBe(true);
+    expect(state.front_velocity).toBe(true);
+    expect(state.rebalance_max_ratio).toBe(10);
+    expect(state.grad_clip).toBe(50);
+    expect(state.outline_guard_every).toBe(500);
     expect(state.causal_weighting).toBe(true);
     expect(state.causal_gate_min_weight).toBe(0.99);
     expect(state.log_chunk_residuals).toBe(true);
@@ -179,6 +184,7 @@ describe("recipeDiff", () => {
       pressure_representation: "single" as const,
       thermal_model: "legacy" as const,
       source_mode: "free" as const,
+      footprint_evaporation: false,
     };
     expect(recipeDiff(form, "trusted")).toEqual(["treatment → explicit front"]);
   });
