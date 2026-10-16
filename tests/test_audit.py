@@ -90,6 +90,25 @@ def test_mass_balance_plan_can_be_built_at_given_instants(tmp_path):
     assert torch.all(plan.points[:, 2] == 0.25)
 
 
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs a second device")
+def test_mass_balance_plan_accepts_instants_on_another_device(tmp_path):
+    """The audit hands the plan a time tensor on the model's device; the plan
+    must not mix it with its own CPU grids (the GPU audit crashed on that)."""
+    cfg, paths = staged_capsule_run(tmp_path)
+    data = BubbleDataset(cfg, paths)
+
+    plan = mass_balance.build_plan(
+        data.domain,
+        (data.y_lo, data.y_hi),
+        compute_groups(cfg),
+        cfg.training,
+        "mps",
+        at_times=torch.tensor([0.25], device="mps"),
+    )
+
+    assert plan.points.device.type == "mps" and plan.n_times == 1
+
+
 def test_audit_of_a_trained_run_reports_every_test_with_verdicts(tmp_path):
     cfg, paths = staged_capsule_run(tmp_path, SHARP_THERMAL)
     train(cfg, paths)

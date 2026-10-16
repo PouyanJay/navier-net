@@ -53,10 +53,13 @@ def build_plan(
     balance is consistent with the inlet condition the model is given."""
     lo, hi = span
     n_stations, n_grid = int(tcfg.mass_balance_stations), int(tcfg.mass_balance_grid)
+    # Built on the CPU whatever device ``at_times`` lives on (the audit passes a
+    # tensor on the model's device), then moved as one: meshgrid refuses mixed
+    # devices, which took the GPU audit down after a full run.
     times = (
         torch.linspace(domain.t_min, domain.t_max, int(tcfg.mass_balance_times))
         if at_times is None
-        else at_times.reshape(-1)
+        else at_times.detach().reshape(-1).cpu()
     )
     n_times = int(times.numel())
     stations = torch.linspace(domain.x_min, domain.x_max, n_stations)
