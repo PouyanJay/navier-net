@@ -17,6 +17,7 @@ TWO_STAGE = [
     "model.front_geometry=true",
     "training.stage_b_warmup_steps=2",
     "training.freeze_geometry=true",
+    "training.frozen_weighting=equalised",
     "training.rebalance_every=1",
     "training.log_every=1",
 ]
@@ -106,6 +107,31 @@ def test_equalising_against_the_physics_reference_converges_on_one_contribution(
 
     contributions = [weights[k] * norms[k] for k in terms]
     assert max(contributions) / min(contributions) == pytest.approx(1.0, rel=1e-3)
+
+
+def test_fixed_weighting_holds_the_physics_at_its_configured_weights(tmp_path):
+    """The default after the freeze: no rebalancing, so every physics weight is
+    the configured one at the end of the run."""
+    overrides = [o for o in TWO_STAGE if "frozen_weighting" not in o]
+    cfg, paths = staged_capsule_run(tmp_path, [*overrides, "training.steps=5"])
+
+    _, _, state = training.train(cfg, paths)
+
+    configured = training._initial_state(cfg, _equations(cfg))["w"]
+    assert state["w"] == configured
+
+
+def test_an_unknown_frozen_weighting_is_refused(tmp_path):
+    cfg, paths = staged_capsule_run(tmp_path, [*TWO_STAGE, "training.frozen_weighting=equal"])
+
+    with pytest.raises(ValueError, match="frozen_weighting"):
+        training.train(cfg, paths)
+
+
+def _equations(cfg):
+    from naviernet.physics import registry
+
+    return registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
 
 
 def test_freezing_needs_a_warm_up(tmp_path):

@@ -61,12 +61,19 @@ What it gives up:
   last frame) is decided by the fit, not by the physics.
 - It cannot show that the physics causes the growth. The shape is an input.
 
-Implementation: `training.freeze_geometry` (on in the trusted recipe). With the
-images out of the loss, the balancer equalises the physics terms among
-themselves. Early evidence from `trust-wpf6-s0`: the outline holds at 0.973 as
-intended, but equal pull per term turns the momentum weight down (0.26) because
-its gradient is the largest. If the final audit confirms this, stage 2 should
-hold every physics term at its configured weight instead of rebalancing.
+Implementation: `training.freeze_geometry` (on in the trusted recipe).
+
+First run, `trust-wpf6-s0` (seed 0, 12000 steps, balancer equalising the physics
+terms among themselves): the outline held at the warm-up's fit (IoU 0.955 to
+0.98, drop 0), the nose error fell to 13 µm, and the shape the jump condition
+asks for fell from 159 to 41 pixels (90th percentile; the body's median from 143
+to 19). The gate still fails: equalising turned the momentum weight down to 0.26
+because its gradient is the largest, and the Brinkman residual doubled (0.6
+against 0.27 in the coupled run); mirror breaking is unchanged (u 0.56, v 0.86,
+T 0.49); the energy residual peaks at the first frame (3.4), where the 58 °C
+liquid meets the 56.6 °C interface with no thermal layer yet. Since then
+`training.frozen_weighting` defaults to `fixed`: every physics term at its
+configured weight, never rebalanced, once the outline is frozen.
 
 ## The validation gate between stage 2 and stage 3
 

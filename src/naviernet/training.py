@@ -441,6 +441,11 @@ def _validate_rebalance_cap(tcfg) -> None:
 def _validate_freeze_geometry(tcfg, model_cfg) -> None:
     """The geometry is frozen at the warm-up's fit, so there must be a warm-up
     to fit it, and an explicit geometry to freeze."""
+    weighting = str(getattr(tcfg, "frozen_weighting", "fixed"))
+    if weighting not in ("fixed", "equalised"):
+        raise ValueError(
+            f"training.frozen_weighting must be 'fixed' or 'equalised', got {weighting!r}"
+        )
     if not bool(getattr(tcfg, "freeze_geometry", False)):
         return
     if int(tcfg.stage_b_warmup_steps) <= 0:
@@ -1807,8 +1812,12 @@ def train(
         # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
         # bounded per-point attention below. Skip the handoff step: weights reset there.
         frozen = _geometry_frozen(step, tcfg, stage_b_keys)
+        # Once the geometry is frozen the physics terms keep their configured
+        # weights unless the run asks for them to be equalised.
+        held = frozen and str(getattr(tcfg, "frozen_weighting", "fixed")) == "fixed"
         if (
             not rba
+            and not held
             and step % tcfg.rebalance_every == 0
             and not _stage_b_engages_at(step, tcfg, stage_b_keys)
         ):

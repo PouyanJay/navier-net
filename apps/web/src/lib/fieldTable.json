@@ -645,6 +645,26 @@
     "default": false
   },
   {
+    "key": "training.frozen_weighting",
+    "label": "Weights after the freeze",
+    "kind": "enum",
+    "section": "training",
+    "owner": "override",
+    "help": "once the outline is frozen: each physics term at its configured weight, or rebalanced to equal gradient contributions",
+    "unit": "",
+    "options": [
+      "fixed",
+      "equalised"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "frozen_weighting",
+    "default": "fixed"
+  },
+  {
     "key": "training.quadrature_jitter",
     "label": "Jitter the quadrature times",
     "kind": "bool",

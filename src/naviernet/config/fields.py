@@ -523,6 +523,19 @@ TRAINING: tuple[FieldSpec, ...] = (
         ),
     ),
     FieldSpec(
+        "training.frozen_weighting",
+        "Weights after the freeze",
+        "enum",
+        "training",
+        "override",
+        help=(
+            "once the outline is frozen: each physics term at its configured weight, or "
+            "rebalanced to equal gradient contributions"
+        ),
+        options=("fixed", "equalised"),
+        advanced=True,
+    ),
+    FieldSpec(
         "training.quadrature_jitter",
         "Jitter the quadrature times",
         "bool",

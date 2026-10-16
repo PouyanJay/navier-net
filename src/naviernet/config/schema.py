@@ -595,6 +595,13 @@ class TrainingConfig:
     # velocity, the root and nose supervision) are not evaluated once it is
     # frozen. Needs a warm-up (stage_b_warmup_steps > 0) and the front geometry.
     freeze_geometry: bool = False
+    # How the physics terms are weighted once the geometry is frozen. "fixed":
+    # each at its configured weight, never rebalanced. "equalised": rebalanced
+    # to equal gradient contributions (the median of the weighted norms is the
+    # reference). The first two-stage seed ran equalised and turned the
+    # momentum weight down to 0.26 (its gradient is the largest), and its
+    # Brinkman residual doubled against the coupled run's.
+    frozen_weighting: str = "fixed"  # "fixed" | "equalised"
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See
