@@ -147,17 +147,25 @@ def compute_groups(cfg) -> dict[str, float]:
     # evaporation mass closure can, because the source it ties theta to is
     # observed through the bubble's growth.
     q_wall = exp.q_wall_W_cm2 * 1e4  # W/cm^2 -> W/m^2
-    groups["dT_ref"] = q_wall * (h / 2.0) / fluid.k_l
+    groups["dT_ref"] = _reference_superheat(cfg, q_wall * (h / 2.0) / fluid.k_l)
     # Stefan/Jakob number at the actual superheat (generalises Ja_per_5K).
     groups["Ja"] = fluid.cp_l * groups["dT_ref"] / fluid.h_lv
     # Depth-averaged wall heat source in the non-dimensional energy equation.
-    groups["q_wall_star"] = (
-        q_wall / (fluid.rho_l * fluid.cp_l * u * groups["dT_ref"]) * (length / h)
-    )
+    groups["q_wall_star"] = _wall_source_star(q_wall, fluid, u, groups["dT_ref"], length, h)
+    groups.update(_thermal_conditions(cfg, groups["dT_ref"]))
+    groups.update(_film_evaporation(cfg, fluid, u, length, h))
 
     # Property ratios entering the mixture rules
     groups["rho_ratio"] = fluid.rho_l / fluid.rho_v
     groups["mu_ratio"] = fluid.mu_l / fluid.mu_v
+
+    # One interfacial mass flux drives both the latent heat and the vapour volume
+    # (the WP4 derivation, docs/plans/trustworthy-hidden-fields-plan.md). With the
+    # dimensionless flux g = d theta/dn on the liquid side of the front:
+    #   volume source   s = mass_flux_to_source * g * (interface length density)
+    #   interface speed V_n = u.n + mass_flux_to_speed * g       (liquid side)
+    groups["mass_flux_to_speed"] = groups["Ja"] / groups["Pe"]
+    groups["mass_flux_to_source"] = groups["mass_flux_to_speed"] * (groups["rho_ratio"] - 1.0)
 
     # Confinement closures
     # Depth-averaged Hele-Shaw drag coefficient for a channel of height H.
@@ -238,6 +246,86 @@ def compute_groups(cfg) -> dict[str, float]:
         groups["wetting_ca_crit"] = voinov**3 / (9.0 * COX_VOINOV_LOG)
 
     return groups
+
+
+def _reference_superheat(cfg, conduction_scale_K: float) -> float:
+    """``dT_ref`` in kelvin: the configured scale, else the initial superheat the
+    series gives, else the wall-conduction scale of the legacy thermal model."""
+    configured = getattr(cfg.scales, "dT_ref_K", None)
+    if configured is not None:
+        return float(configured)
+    t_init = getattr(cfg.experiment, "T_init_C", None)
+    if t_init is None:
+        return conduction_scale_K
+    superheat = float(t_init) - float(cfg.experiment.T_sat_C)
+    if superheat <= 0:
+        raise ValueError(
+            f"experiment.T_init_C={t_init} is not above T_sat_C={cfg.experiment.T_sat_C}; "
+            "set scales.dT_ref_K explicitly to use a subcooled initial liquid."
+        )
+    return superheat
+
+
+def _wall_source_star(q_wall: float, fluid, u: float, dt_ref: float, length: float, h: float):
+    """A wall flux ``q_wall`` [W/m^2] through the depth ``h`` as a dimensionless
+    volumetric source in the energy equation."""
+    return q_wall / (fluid.rho_l * fluid.cp_l * u * dt_ref) * (length / h)
+
+
+def _thermal_conditions(cfg, dt_ref: float) -> dict[str, float]:
+    """The sharp thermal model's boundary values as superheats on ``dT_ref``:
+    the inlet (saturation when the series gives none), the initial liquid, and
+    an isothermal side wall. Absent inputs leave their keys out."""
+    exp = cfg.experiment
+    t_sat = float(exp.T_sat_C)
+    t_inlet = getattr(exp, "T_inlet_C", None)
+    conditions = {
+        "theta_inlet": (float(t_inlet) - t_sat) / dt_ref if t_inlet is not None else 0.0
+    }
+    t_init = getattr(exp, "T_init_C", None)
+    if t_init is not None:
+        conditions["theta_init"] = (float(t_init) - t_sat) / dt_ref
+    t_wall = getattr(exp, "T_wall_C", None)
+    if str(getattr(exp, "side_wall_thermal", "adiabatic")) == "isothermal":
+        if t_wall is None:
+            raise ValueError(
+                "experiment.side_wall_thermal=isothermal needs experiment.T_wall_C."
+            )
+        conditions["theta_wall"] = (float(t_wall) - t_sat) / dt_ref
+    return conditions
+
+
+def _film_evaporation(cfg, fluid, u: float, length: float, h: float) -> dict[str, float]:
+    """The footprint film-evaporation source per unit wet fraction, and the wet
+    fraction's declared start, dimensionless (``model.footprint_evaporation``).
+
+    The wall flux under the bubble evaporates the film at ``q'' f_wet`` per unit
+    footprint area. The vapour volume that creates, less the liquid it consumes,
+    ``q'' f_wet (1/rho_v - 1/rho_l) / h_lv`` per unit area and time, dilates the
+    depth-averaged velocity over the channel height ``h``; on ``U_ref/L_ref`` that
+    is the coefficient below times ``f_wet`` wherever there is vapour.
+    """
+    exp = cfg.experiment
+    q_wall = float(exp.q_wall_W_cm2) * 1e4  # W/cm^2 -> W/m^2
+    specific_volume = 1.0 / fluid.rho_v - 1.0 / fluid.rho_l
+    mode = str(getattr(exp, "wet_fraction_mode", "fixed"))
+    wet = float(getattr(exp, "wet_fraction", 1.0))
+    if mode not in ("fixed", "fit"):
+        raise ValueError(f"experiment.wet_fraction_mode must be 'fixed' or 'fit', got {mode!r}")
+    if not 0.0 <= wet <= 1.0:
+        raise ValueError(
+            f"experiment.wet_fraction={wet} must lie in [0, 1] (a share of the footprint)"
+        )
+    if mode == "fit" and not 0.0 < wet < 1.0:
+        raise ValueError(
+            f"experiment.wet_fraction={wet} must lie strictly inside (0, 1) in fit mode: the "
+            "fitted scalar is sigmoid-bounded and starts exactly there, so an end of the "
+            "interval has no gradient to move off."
+        )
+    return {
+        "footprint_source_star": q_wall * specific_volume * length / (fluid.h_lv * h * u),
+        "wet_fraction_init": wet,
+    }
 
 
 def _optional_molar_mass(fluid) -> float | None:

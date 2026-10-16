@@ -22,7 +22,10 @@ from functools import cached_property
 import numpy as np
 import torch
 
+from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
+
+log = get_logger(__name__)
 
 # The alpha level defining the interface itself: alpha = sigmoid(phi/eps) is 0.5
 # exactly on phi's zero contour. This is a definition, NOT the tunable IoU
@@ -62,10 +65,20 @@ class Domain:
     t_min: float
     t_max: float
     x_pin: float  # streamwise station of the pinned nucleation cavity
+    # The channel walls in y*, from preprocessing's wall detection. They lie OUTSIDE
+    # the retained crop ``[y_min, y_max]`` by the trimmed margins, so wall conditions
+    # placed here are at the channel, not at the image edge.
+    y_wall_lo: float
+    y_wall_hi: float
 
     @property
     def area(self) -> float:
         return (self.x_max - self.x_min) * (self.y_max - self.y_min)
+
+    @property
+    def y_center(self) -> float:
+        """The channel centreline in y*: the mirror axis of a symmetric problem."""
+        return 0.5 * (self.y_wall_lo + self.y_wall_hi)
 
 
 class BubbleDataset:
@@ -120,6 +133,7 @@ class BubbleDataset:
             float(cfg.training.val_fraction), str(cfg.training.val_strategy)
         )
 
+        y_wall_lo, y_wall_hi = self._wall_positions()
         self.domain = Domain(
             x_min=float(self.x[0]),
             x_max=float(self.x[-1]),
@@ -128,7 +142,11 @@ class BubbleDataset:
             t_min=float(self.t[0]),
             t_max=float(self.t[-1]),
             x_pin=float(self.meta["x_pin_star"]),
+            y_wall_lo=y_wall_lo,
+            y_wall_hi=y_wall_hi,
         )
+        # The transverse span this run's samplers and geometry use as "the channel".
+        self.y_lo, self.y_hi = self._wall_span()
 
         n_t, n_y, n_x = self.alpha.shape
         ti, yi, xi = np.meshgrid(np.arange(n_t), np.arange(n_y), np.arange(n_x), indexing="ij")
@@ -150,6 +168,45 @@ class BubbleDataset:
         self._train_idx = np.where(trainable)[0]
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
+
+    def _wall_positions(self) -> tuple[float, float]:
+        """The channel walls in y*, as preprocessing recorded them.
+
+        An archive written before the walls were recorded falls back to the crop
+        edges, with a warning: the dataset still loads, and a run on it is
+        explicitly a crop-walled run until the series is re-preprocessed.
+        """
+        try:
+            return float(self.meta["y_wall_lo_star"]), float(self.meta["y_wall_hi_star"])
+        except KeyError:
+            log.warning(
+                "%s has no wall positions in its meta; walls fall back to the crop "
+                "edges. Re-run `naviernet stage=preprocess dataset=%s` to record them.",
+                self.cfg.dataset,
+                self.cfg.dataset,
+            )
+            return float(self.y[0]), float(self.y[-1])
+
+    def _wall_span(self) -> tuple[float, float]:
+        """Where this run's side walls are (``model.walls_at``): the channel walls
+        preprocessing detected (``"physical"``) or the crop edges (``"crop"``).
+
+        A physical-wall run on an archive that never recorded its walls fails here
+        rather than silently training at the crop: the fallback in
+        :meth:`_wall_positions` is for reading old data, not for walling a run.
+        """
+        where = str(getattr(self.cfg.model, "walls_at", "crop"))
+        if where == "crop":
+            return self.domain.y_min, self.domain.y_max
+        if where != "physical":
+            raise ValueError(f"model.walls_at must be 'crop' or 'physical', got {where!r}")
+        if "y_wall_lo_star" not in self.meta:
+            raise ValueError(
+                f"model.walls_at=physical needs the wall positions preprocessing records, "
+                f"and {self.cfg.dataset}'s archive predates them -- re-run "
+                f"`naviernet stage=preprocess dataset={self.cfg.dataset}`."
+            )
+        return self.domain.y_wall_lo, self.domain.y_wall_hi
 
     def _split_rows(self, fraction: float, strategy: str) -> list[int]:
         """Rows of the event held out as the axis-A validation split.
@@ -458,7 +515,7 @@ class BubbleDataset:
         uniform = np.stack(
             [
                 rng.uniform(d.x_min, d.x_max, n_uniform),
-                rng.uniform(d.y_min, d.y_max, n_uniform),
+                rng.uniform(self.y_lo, self.y_hi, n_uniform),
                 rng.uniform(d.t_min, d.t_max, n_uniform),
             ],
             axis=1,
@@ -473,15 +530,20 @@ class BubbleDataset:
         return np.concatenate([uniform, near_interface], axis=0)
 
     def sample_boundary(self, n: int, rng) -> tuple[torch.Tensor, torch.Tensor]:
-        """Inlet points (``x*=0``) and side-wall points (``y*=y_min`` or ``y_max``)."""
+        """Inlet points (``x*=0``) and side-wall points (``y*`` at either wall of
+        this run's span, see :meth:`_wall_span`)."""
         d = self.domain
         t = rng.uniform(d.t_min, d.t_max, n).astype(np.float32)
 
         inlet = np.stack(
-            [np.zeros(n, np.float32), rng.uniform(d.y_min, d.y_max, n).astype(np.float32), t],
+            [
+                np.zeros(n, np.float32),
+                rng.uniform(self.y_lo, self.y_hi, n).astype(np.float32),
+                t,
+            ],
             axis=1,
         )
-        wall_y = np.where(rng.random(n) < 0.5, d.y_min, d.y_max).astype(np.float32)
+        wall_y = np.where(rng.random(n) < 0.5, self.y_lo, self.y_hi).astype(np.float32)
         walls = np.stack(
             [rng.uniform(d.x_min, d.x_max, n).astype(np.float32), wall_y, t], axis=1
         )
@@ -489,6 +551,34 @@ class BubbleDataset:
             torch.tensor(inlet, device=self.device),
             torch.tensor(walls, device=self.device),
         )
+
+    def sample_initial(self, n: int, rng) -> torch.Tensor:
+        """Points at the first instant across the domain and the wall span, for the
+        initial temperature condition."""
+        d = self.domain
+        initial = np.stack(
+            [
+                rng.uniform(d.x_min, d.x_max, n).astype(np.float32),
+                rng.uniform(self.y_lo, self.y_hi, n).astype(np.float32),
+                np.full(n, d.t_min, np.float32),
+            ],
+            axis=1,
+        )
+        return torch.tensor(initial, device=self.device)
+
+    def sample_outlet(self, n: int, rng) -> torch.Tensor:
+        """Outlet points (``x* = x_max``) across the wall span, as a differentiable
+        leaf: the outlet condition is on the velocity's streamwise gradient."""
+        d = self.domain
+        outlet = np.stack(
+            [
+                np.full(n, d.x_max, np.float32),
+                rng.uniform(self.y_lo, self.y_hi, n).astype(np.float32),
+                rng.uniform(d.t_min, d.t_max, n).astype(np.float32),
+            ],
+            axis=1,
+        )
+        return torch.tensor(outlet, device=self.device, requires_grad=True)
 
     def frame_grid(self, frame: int, stride: int = 2):
         """Full pixel grid of one frame: ``(points, ground_truth, grid_shape)``."""

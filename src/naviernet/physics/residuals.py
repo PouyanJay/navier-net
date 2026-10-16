@@ -132,8 +132,15 @@ def boundary_losses(
     u_inlet: float,
     c: torch.Tensor | None = None,
     theta_in: torch.Tensor | None = None,
+    wall_condition: str = "no_slip",
+    outlet_x: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Inlet plug velocity and no-slip side walls (Stage A: velocity only).
+    """Inlet plug velocity, the side-wall condition, and the outlet condition.
+
+    ``wall_condition`` is ``"no_slip"`` (both components vanish at the wall) or
+    ``"no_penetration"`` (only the wall-normal ``v``; the tangential velocity is
+    free, which is all a first-order Darcy law can honour). ``outlet_x``, when
+    given, adds :func:`outlet_loss` at those points.
 
     ``theta_in`` adds the inlet temperature condition. It is passed only when the
     superheat is depletable: with the default parameterization ``theta_in`` is
@@ -146,9 +153,27 @@ def boundary_losses(
 
     inlet = ((u_in - u_inlet) ** 2).mean() + (v_in**2).mean()
     wall = (u_wall**2).mean() + (v_wall**2).mean()
+    if wall_condition == "no_penetration":
+        wall = (v_wall**2).mean()
     if theta_in is not None:
         inlet = inlet + ((model.temperature(inlet_x, _ctx(c, inlet_x)) - theta_in) ** 2).mean()
-    return inlet + wall
+    total = inlet + wall
+    if outlet_x is not None:
+        total = total + outlet_loss(model, outlet_x, c)
+    return total
+
+
+def outlet_loss(model, outlet_x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+    """Zero streamwise velocity gradient at the outlet, ``mean(u_x^2 + v_x^2)``.
+
+    The channel continues beyond the field of view, so the flow leaves the imaged
+    region as it arrived there. The outlet pressure is unknown and left free.
+    ``outlet_x`` must carry ``requires_grad`` (the sampler sets it).
+    """
+    u, v = model.velocity(outlet_x, _ctx(c, outlet_x))
+    u_x, _, _ = gradients(u, outlet_x)
+    v_x, _, _ = gradients(v, outlet_x)
+    return (u_x**2).mean() + (v_x**2).mean()
 
 
 # --- Stage B: momentum + surface tension, energy + evaporation --------------
@@ -388,7 +413,130 @@ def energy_residuals(
     return EnergyResiduals(energy, src_closure, delta)
 
 
+# --- WP4: the sharp thermal model -------------------------------------------
+#
+# The interface is AT saturation, so the latent heat is a boundary condition
+# rather than a volumetric sink: the liquid loses heat by conduction into the
+# front, and that flux, g = d theta/dn on the liquid side, is the one mass flux
+# that creates vapour volume (``groups["mass_flux_to_source"] * g`` per unit
+# front length) and moves the interface relative to the liquid
+# (``groups["mass_flux_to_speed"] * g``). Under the gated parameterisation theta
+# is exactly zero on the front and in the vapour, so no interface or vapour
+# penalty is needed; the liquid energy equation below is weighted by the liquid
+# fraction so it is scored where it holds.
+
+
+def energy_liquid_residual(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """``(1 - alpha) [theta_t + u.grad theta - lap(theta)/Pe - q* (1 - alpha)]``.
+
+    The heating ``q*`` is the series' wall flux, gated by liquid contact: under
+    the bubble the same flux evaporates the film instead (the footprint source
+    on the model), so one wall flux is split by phase. The latent sink is absent
+    because the interface temperature is the boundary condition that carries it.
+    """
+    cx = _ctx(c, x)
+    alpha = model.alpha(x, cx)
+    theta = model.temperature(x, cx)
+    u, v = model.velocity(x, cx)
+    t_x, t_y, t_t = gradients(theta, x)
+    heat = groups["q_wall_star"]
+    residual = (
+        t_t + u * t_x + v * t_y - _laplacian(theta, x) / groups["Pe"] - heat * (1.0 - alpha)
+    )
+    return (1.0 - alpha.detach()) * residual
+
+
+class ThermalBatches(NamedTuple):
+    """The sampled points the temperature conditions are scored on: the inlet
+    line, the first instant, and the side walls (a leaf, for the adiabatic
+    gradient)."""
+
+    inlet: torch.Tensor
+    initial: torch.Tensor
+    walls: torch.Tensor
+
+
+def thermal_boundary_losses(
+    model, groups: dict[str, float], batches: ThermalBatches, c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """The inlet temperature, the initial liquid temperature (where there is
+    liquid), and the side-wall condition: adiabatic (``theta_y = 0``) unless the
+    series gives a wall temperature."""
+    inlet = (
+        (model.temperature(batches.inlet, _ctx(c, batches.inlet)) - groups["theta_inlet"]) ** 2
+    ).mean()
+    total = inlet
+    if "theta_init" in groups:
+        cx = _ctx(c, batches.initial)
+        liquid = 1.0 - model.alpha(batches.initial, cx).detach()
+        total = (
+            total
+            + (
+                liquid * (model.temperature(batches.initial, cx) - groups["theta_init"]) ** 2
+            ).mean()
+        )
+    walls = batches.walls.detach().clone().requires_grad_(True)
+    theta_wall = model.temperature(walls, _ctx(c, walls))
+    if "theta_wall" in groups:
+        return total + ((theta_wall - groups["theta_wall"]) ** 2).mean()
+    _, theta_y, _ = gradients(theta_wall, walls)
+    return total + (theta_y**2).mean()
+
+
+def evap_flux_closure(model, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+    """``s_net - s_thermal``: the free source must be the interface flux spread
+    over the band. Nothing is detached, so the flux can also learn from the
+    growth the source carries (the two-way coupling the legacy closure lacked)."""
+    cx = _ctx(c, x)
+    return model.nets["s"](x, cx) - model.thermal_source(x, cx)
+
+
+def interface_mass_flux(model, front, groups: dict[str, float]) -> torch.Tensor:
+    """The liquid-side kinematic correction on the front, ``(N, 1)``:
+    ``mass_flux_to_speed * g``. O(1e-3) of the front speed here, kept so the
+    kinematic condition and the source agree about the same evaporation."""
+    return groups["mass_flux_to_speed"] * model.interface_flux_at(front)
+
+
 # --- R4: sharp-interface conditions on the explicit front --------------------
+
+
+def liquid_pressure(model, x: torch.Tensor, cx: torch.Tensor | None) -> torch.Tensor:
+    """The liquid-side pressure the momentum law and the jump condition read: the
+    liquid branch under the two-phase representation, the one field otherwise.
+    A model without the accessor (a test stand-in) is read through ``pressure``."""
+    branch = getattr(model, "liquid_pressure", None)
+    return branch(x, cx) if branch is not None else model.pressure(x, cx)
+
+
+def liquid_weight(model, alpha: torch.Tensor) -> torch.Tensor | float:
+    """``1 - alpha`` (detached) under the two-phase pressure, so the momentum law is
+    scored where the liquid pressure is defined; 1 everywhere otherwise."""
+    if getattr(model, "pressure_representation", "single") == "two_phase":
+        return 1.0 - alpha.detach()
+    return 1.0
+
+
+def vapour_potential_residual(
+    model, x: torch.Tensor, c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """``alpha (v_x - u_y)``: the vapour velocity is curl-free, ``(N, 1)``.
+
+    Under the two-phase pressure the vapour pressure is uniform, so the Darcy
+    law inside the bubble says nothing about the vapour velocity (its drag is
+    1/37 of the liquid's) and leaves it free -- the null space the audit found.
+    The same law also says the velocity is a gradient; imposing that directly,
+    with the kinematic condition on the front, makes the vapour flow the unique
+    potential flow. Weighted by the (detached) indicator, so it acts in the
+    vapour and fades through the interface band.
+    """
+    cx = _ctx(c, x)
+    u, v = model.velocity(x, cx)
+    _, u_y, _ = gradients(u, x)
+    v_x, _, _ = gradients(v, x)
+    return model.alpha(x, cx).detach() * (v_x - u_y)
 
 
 def darcy_residuals(
@@ -436,10 +584,42 @@ def darcy_residuals(
     there is no curvature in this balance.
     """
     cx = _ctx(c, x)
-    drag = confinement_drag(model.alpha(x, cx), groups)
+    alpha = model.alpha(x, cx)
+    drag = confinement_drag(alpha, groups)
+    weight = liquid_weight(model, alpha)
     u, v = model.velocity(x, cx)
-    p_x, p_y, _ = gradients(model.pressure(x, cx), x)
-    return MomentumResiduals(p_x + drag * u, p_y + drag * v, torch.zeros_like(u))
+    p_x, p_y, _ = gradients(liquid_pressure(model, x, cx), x)
+    return MomentumResiduals(
+        weight * (p_x + drag * u), weight * (p_y + drag * v), torch.zeros_like(u)
+    )
+
+
+def brinkman_residuals(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> MomentumResiduals:
+    """Depth-averaged momentum with the Brinkman in-plane viscous term::
+
+        grad p = -C_HS mu*(alpha) u + (mu*(alpha) / Re) lap(u)
+
+    :func:`darcy_residuals` is first order in ``u`` and can honour only a
+    no-penetration condition at a side wall. The viscous term restores the O(h)
+    wall layer in which the tangential velocity falls to zero (Brinkman 1949; Zeng,
+    Yortsos & Salin 2003 for Hele-Shaw cells), so no-slip side walls become
+    admissible. Away from the walls, where ``lap(u)`` is small, it is Darcy.
+    Same return shape as the other momentum families; ``kappa`` stays zero.
+    """
+    cx = _ctx(c, x)
+    alpha = model.alpha(x, cx)
+    drag = confinement_drag(alpha, groups)
+    viscosity = mixture(alpha, groups["mu_ratio"]) / groups["Re"]
+    weight = liquid_weight(model, alpha)
+    u, v = model.velocity(x, cx)
+    p_x, p_y, _ = gradients(liquid_pressure(model, x, cx), x)
+    return MomentumResiduals(
+        weight * (p_x + drag * u - viscosity * _laplacian(u, x)),
+        weight * (p_y + drag * v - viscosity * _laplacian(v, x)),
+        torch.zeros_like(u),
+    )
 
 
 # Dynamic correction to the gap-direction capillary pressure across an advancing
@@ -538,17 +718,21 @@ def jump_total_curvature(model, front, groups: dict[str, float]) -> torch.Tensor
     return IN_PLANE_WEIGHT * front.kappa_par + jump_gap_curvature(model, front, groups)
 
 
-def kinematic_residual(model, front, c: torch.Tensor | None = None) -> torch.Tensor:
+def kinematic_residual(
+    model, front, c: torch.Tensor | None = None, mass_flux: torch.Tensor | None = None
+) -> torch.Tensor:
     """The kinematic condition on the explicit interface, per sample ``(N, 1)``::
 
-        v_n = u . n
+        v_n = u . n  (+ the liquid-side mass-flux correction, when given)
 
     The front advances at the normal component of the local fluid velocity. Only
     the normal component can move it: a tangential slip along the interface
     transports nothing across it, which is why this is projected rather than
-    compared component-wise. (Phase change contributes no extra interface
-    velocity here -- under the Hardt-Wondra treatment its source lives OFF the
-    interface, the same reason the VOF residual is a pure advection.)
+    compared component-wise. Under the legacy treatment phase change contributes
+    no extra interface velocity (the source lives OFF the interface, the same
+    reason the VOF residual is a pure advection); the sharp thermal model passes
+    :func:`interface_mass_flux` so the front also recedes from the liquid at the
+    rate the evaporation flux demands.
 
     The front-sampled counterpart of the ``vof`` collocation residual, and the
     reason it is worth having twice: ``vof`` is evaluated at bulk points, where
@@ -556,7 +740,10 @@ def kinematic_residual(model, front, c: torch.Tensor | None = None) -> torch.Ten
     every sample is on the interface, so every sample constrains it.
     """
     u, v = model.velocity(front.points, _ctx(c, front.points))
-    return front.normal_speed - (u * front.normal[:, 0:1] + v * front.normal[:, 1:2])
+    advance = u * front.normal[:, 0:1] + v * front.normal[:, 1:2]
+    if mass_flux is not None:
+        advance = advance + mass_flux
+    return front.normal_speed - advance
 
 
 def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:
@@ -600,7 +787,7 @@ def _liquid_pressure(model, front, groups: dict[str, float]) -> torch.Tensor:
     jump condition select a station. A detached forcing -- the geometry
     answers it through the curvature side of the jump.
     """
-    liquid = model.pressure(front.points) + model.film_offset(front.on_cap)
+    liquid = liquid_pressure(model, front.points, None) + model.film_offset(front.on_cap)
     if getattr(model, "liquid_film", False):
         liquid = liquid + film_surface_pressure(model, front, groups)
     return liquid

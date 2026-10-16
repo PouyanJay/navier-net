@@ -8,13 +8,17 @@ import {
   ALL_CONDITIONS,
   BAKED_KEYS,
   type ConditionInputs,
-  type ConditionKey,
+  type ConditionSpec,
+  conditionValue,
   DEFAULT_FLUID_ID,
   FluidSelect,
+  inputsFrom,
   MeasurementField,
   OPERATING_CONDITIONS,
-  parseCondition,
+  parseConditions,
   REQUIRED_CONDITIONS,
+  TABLE_CONDITIONS,
+  toConditionsUpdate,
   useFluids,
 } from "./conditions";
 
@@ -28,19 +32,6 @@ interface EditConditionsModalProps {
 // Keep in sync with LabelUpdate.label (max_length) in apps/api .../models.py.
 const MAX_LABEL_LEN = 80;
 
-/** The current conditions as form strings. U_ref is reported as `U_ref_m_s`. */
-function initialInputs(detail: DatasetDetail): ConditionInputs {
-  const c = detail.conditions;
-  return {
-    dt_frame_ms: String(c.dt_frame_ms),
-    channel_width_um: String(c.channel_width_um),
-    channel_height_um: String(c.channel_height_um),
-    q_wall_W_cm2: String(c.q_wall_W_cm2),
-    flow_rate_mL_hr: String(c.flow_rate_mL_hr),
-    U_ref: c.U_ref_m_s == null ? "" : String(c.U_ref_m_s),
-  };
-}
-
 /** Edit an existing series' operating conditions. Cheap fields apply on save;
  * editing a tensor-baked field on a processed series warns that a re-preprocess
  * is required (and would mark a trained run stale). T_sat stays derived from the
@@ -53,7 +44,12 @@ export function EditConditionsModal({
 }: EditConditionsModalProps) {
   const fluids = useFluids();
   const [fluidId, setFluidId] = useState<string | null>(null);
-  const initial = useMemo(() => initialInputs(detail), [detail]);
+  // The saved conditions as form strings (an unset optional one reads "").
+  const initial = useMemo<ConditionInputs>(
+    () => inputsFrom(detail.conditions),
+    [detail],
+  );
+  const original = useMemo(() => parseConditions(initial), [initial]);
   const [conditions, setConditions] = useState<ConditionInputs>(initial);
   // The editable display name; the id (detail.id) is the immutable filesystem key.
   const [label, setLabel] = useState(detail.label ?? "");
@@ -61,8 +57,8 @@ export function EditConditionsModal({
   const [error, setError] = useState<string | null>(null);
 
   /** A field's saved (original) value, or null when it was unset/out of range. */
-  const originalValue = (spec: (typeof ALL_CONDITIONS)[number]) =>
-    parseCondition(initial[spec.key], spec.min, spec.max);
+  const originalValue = (spec: ConditionSpec) =>
+    conditionValue(spec, initial[spec.key]);
 
   // The detail carries the fluid's display name; map it back to the group id the
   // API expects, once the catalogue has loaded.
@@ -76,31 +72,21 @@ export function EditConditionsModal({
     setFluidId(match?.id ?? fluidList[0]?.id ?? DEFAULT_FLUID_ID);
   }, [fluidList, fluidId, detail.conditions.fluid]);
 
-  const parsed = ALL_CONDITIONS.map((spec) => ({
-    spec,
-    value: parseCondition(conditions[spec.key], spec.min, spec.max),
-  }));
-  const conditionsValid = parsed.every((entry) => entry.value !== null);
+  const parsed = parseConditions(conditions);
+  const conditionsValid = parsed.every((entry) => entry.valid);
   const fluidReady = fluidList.length > 0 && fluidId !== null;
 
   /** A baked field the user has changed on already-processed tensors. */
-  function bakedNote(key: ConditionKey): string | undefined {
-    if (!detail.processed || !BAKED_KEYS.has(key)) return undefined;
-    const spec = ALL_CONDITIONS.find((s) => s.key === key)!;
-    const current = parseCondition(conditions[key], spec.min, spec.max);
+  function bakedNote(spec: ConditionSpec): string | undefined {
+    if (!detail.processed || !BAKED_KEYS.has(spec.key)) return undefined;
+    const current = conditionValue(spec, conditions[spec.key]);
     if (current === null || current === originalValue(spec)) return undefined;
     return "Baked into the tensors. Saving requires a re-preprocess.";
   }
 
-  /** Only the fields the user actually changed, so an edit to one condition
-   * never re-sends (and re-bakes) the others. */
+  /** Only the fields the user actually changed (and the fluid, if changed). */
   function changedUpdates(): ConditionsUpdate {
-    const updates: ConditionsUpdate = {};
-    for (const { spec, value } of parsed) {
-      if (value !== null && value !== originalValue(spec)) {
-        updates[spec.key] = value;
-      }
-    }
+    const updates = toConditionsUpdate(parsed, original);
     const originalFluidId = fluidList.find(
       (f) => f.name === detail.conditions.fluid,
     )?.id;
@@ -146,19 +132,16 @@ export function EditConditionsModal({
     }
   }
 
-  const field = (key: ConditionKey) => {
-    const spec = ALL_CONDITIONS.find((s) => s.key === key)!;
-    return (
-      <MeasurementField
-        key={key}
-        spec={spec}
-        value={conditions[key]}
-        disabled={saving}
-        bakedNote={bakedNote(key)}
-        onChange={(next) => setConditions((c) => ({ ...c, [key]: next }))}
-      />
-    );
-  };
+  const field = (spec: ConditionSpec) => (
+    <MeasurementField
+      key={spec.key}
+      spec={spec}
+      value={conditions[spec.key]}
+      disabled={saving}
+      bakedNote={bakedNote(spec)}
+      onChange={(next) => setConditions((c) => ({ ...c, [spec.key]: next }))}
+    />
+  );
 
   // Portalled to the body, like ConfirmDeleteDialog: this dialog opens from the
   // collapsible series rail, and a modal a layout change can hide is not a modal.
@@ -208,9 +191,7 @@ export function EditConditionsModal({
               Measurements{" "}
               <span>frame interval & width bake into the tensors</span>
             </h3>
-            <div className="frm">
-              {REQUIRED_CONDITIONS.map((s) => field(s.key))}
-            </div>
+            <div className="frm">{REQUIRED_CONDITIONS.map(field)}</div>
           </div>
 
           <div className="modal-section">
@@ -224,8 +205,18 @@ export function EditConditionsModal({
                 disabled={saving}
                 onChange={setFluidId}
               />
-              {OPERATING_CONDITIONS.map((s) => field(s.key))}
+              {OPERATING_CONDITIONS.map(field)}
             </div>
+          </div>
+
+          <div className="modal-section">
+            <h3 className="modal-section-hd">
+              Thermal conditions &amp; heating{" "}
+              <span>
+                read by the sharp thermal model · empty keeps the default
+              </span>
+            </h3>
+            <div className="frm">{TABLE_CONDITIONS.map(field)}</div>
           </div>
 
           {error && <Callout tone="error">{error}</Callout>}

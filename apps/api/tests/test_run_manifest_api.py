@@ -228,3 +228,31 @@ def test_deleting_a_project_takes_its_own_runs_and_leaves_anothers(repo_root: Pa
 
     assert not mine.exists()
     assert theirs.is_dir()
+
+
+def test_the_manifest_digests_the_config_snapshot_it_was_launched_with(
+    client: TestClient, repo_root: Path
+):
+    """A run is matched to its exact inputs: the manifest's digest is that of
+    the snapshot beside it, without the run's own name."""
+    run_id = client.post("/api/runs", json=TINY_RUN).json()["run_id"]
+    read_stream(client, run_id)
+
+    from naviernet_api.services.run_manager import config_digest
+    from omegaconf import OmegaConf
+
+    run_dir = repo_root / "outputs" / run_id
+    manifest = json.loads((run_dir / "run.json").read_text())
+    snapshot = OmegaConf.load(run_dir / ".hydra" / "config.yaml")
+    assert manifest["schema_version"] == 2
+    assert manifest["config_sha256"] == config_digest(snapshot)
+    # The digest is of the inputs, not of the run's name: the same snapshot
+    # under another run name digests the same, and a changed input does not.
+    assert (
+        config_digest(OmegaConf.merge(snapshot, {"run_name": "another"}))
+        == (manifest["config_sha256"])
+    )
+    assert (
+        config_digest(OmegaConf.merge(snapshot, {"training": {"seed": 7}}))
+        != (manifest["config_sha256"])
+    )

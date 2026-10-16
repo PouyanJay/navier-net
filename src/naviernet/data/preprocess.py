@@ -35,9 +35,11 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 import scipy.signal as ss
+from omegaconf import OmegaConf
 from PIL import Image
 from scipy.ndimage import gaussian_filter, map_coordinates
 
+from naviernet.config.fields import specs as field_specs
 from naviernet.data.contour import DEFAULT_WAVELENGTH_PX, fair_closed_contour
 from naviernet.physics.groups import compute_groups
 from naviernet.utils.logging import get_logger
@@ -45,18 +47,21 @@ from naviernet.utils.paths import RunPaths
 
 # The condition fields baked into the preprocessed tensors: the frame interval
 # sets the time axis, the channel width sets um/px, and the reference velocity
-# sets the reference time. This is the single source of truth for "what a
-# re-preprocess is needed for" -- the API imports it (see datasets service) so
-# the two never drift. Everything else only feeds the dimensionless groups.
-BAKED_CONDITION_FIELDS: tuple[str, ...] = ("dt_frame_ms", "channel_width_um", "U_ref")
+# sets the reference time. Declared on the field table (``baked=True``), which
+# is the single source of truth for "what a re-preprocess is needed for"; the
+# API reads the same table, so the two never drift. Everything else only feeds
+# the dimensionless groups.
+BAKED_CONDITION_FIELDS: tuple[str, ...] = tuple(
+    spec.name for spec in field_specs(section="conditions") if spec.baked
+)
 
 
 def baked_conditions(cfg) -> dict[str, float]:
     """The values of the tensor-baked condition fields for a composed config."""
     return {
-        "dt_frame_ms": cfg.experiment.dt_frame_ms,
-        "channel_width_um": cfg.experiment.channel_width_um,
-        "U_ref": cfg.scales.U_ref,
+        spec.name: float(OmegaConf.select(cfg, spec.key, throw_on_missing=True))
+        for spec in field_specs(section="conditions")
+        if spec.baked
     }
 
 
@@ -106,6 +111,24 @@ def detect_walls(cfg, paths: RunPaths) -> Calibration:
         y1,
     )
     return Calibration(top, bottom, float(um_per_px), (y0, y1))
+
+
+def wall_positions_star(calibration: Calibration, l_ref_um: float) -> dict[str, float]:
+    """The channel walls in ``y*``, on the same pixel-centre convention as ``y_star``.
+
+    The walls sit OUTSIDE the retained ROI (the trimmed margins), so a model that
+    puts its wall conditions here is walled at the channel, not at the image crop.
+    By construction of the calibration they are exactly ``channel_width`` apart.
+    """
+    pixel = calibration.um_per_px / l_ref_um
+    roi_top = calibration.roi[0]
+    lower = (calibration.wall_top - roi_top + 0.5) * pixel
+    upper = (calibration.wall_bottom - roi_top + 0.5) * pixel
+    return {
+        "y_wall_lo_star": float(lower),
+        "y_wall_hi_star": float(upper),
+        "y_center_star": float(0.5 * (lower + upper)),
+    }
 
 
 def _fill_holes(component: np.ndarray) -> np.ndarray:
@@ -393,6 +416,9 @@ def preprocess(cfg, paths: RunPaths) -> dict:
         "um_per_px": um_per_px,
         "wall_rows": [calibration.wall_top, calibration.wall_bottom],
         "y_roi": list(calibration.roi),
+        # The walls' own positions, so a run can be walled at the channel rather
+        # than at the crop (see BubbleDataset.domain).
+        **wall_positions_star(calibration, l_ref),
         "L_ref_um": l_ref,
         "U_ref": cfg.scales.U_ref,
         "t_ref_ms": t_ref_ms,

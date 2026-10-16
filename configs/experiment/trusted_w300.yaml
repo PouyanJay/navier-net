@@ -1,0 +1,56 @@
+# Series-1 re-calibrated at the 300 um channel width, with the thermal
+# conditions the authors specified for the trustworthy-fields rebuild
+# (docs/plans/trustworthy-hidden-fields-plan.md). Run against the Series-1-w300
+# archive:
+#
+#   naviernet dataset=Series-1-w300 experiment=trusted_w300 model=trusted training=trusted
+#
+# `highest_t` stays as it was, so the published runs and the paper's figure
+# scripts keep composing the configuration they were made with.
+
+defaults:
+  - base_experiment
+
+name: trusted_w300
+
+fluid: ${fluid.name}
+T_sat_C: ${fluid.T_sat_C}
+
+# One wall flux, the series' own nominal 2 W/cm2, uniform over the heated wall.
+# Under liquid it heats the liquid; under the bubble it evaporates the liquid
+# film (model.footprint_evaporation), which is what grows the bubble. The
+# invented heaters of the first rebuild (a fitted uniform background flux plus
+# a 100 um cavity disk) are gone: they let the fit switch the growth off.
+q_wall_W_cm2: 2.0
+
+# The wet share of the footprint: ONE fitted scalar bounded in (0, 1), started
+# at what the energy balance of the measured growth implies for this series
+# (`heating.growth_budget`: the latent need, 3.2 to 2.4 mW, over the wall power
+# under the footprint, 2.1 to 3.8 mW, capped at 1 and averaged over the event).
+# Reported in metrics.json beside that estimate.
+wet_fraction_mode: fit
+wet_fraction: 0.88
+
+# Thermal conditions: the whole liquid at 58 C before the first frame, the
+# inlet at the same 58 C (not measured separately; a step to saturation at the
+# inlet cannot reach the bubble within the 4.5 ms event), adiabatic side walls.
+T_inlet_C: 58.0
+T_init_C: 58.0
+side_wall_thermal: adiabatic
+
+flow_rate_mL_hr: 5.0
+
+channel_width_um: 300.0
+channel_height_um: 150.0
+
+dt_frame_ms: 0.5
+flow_direction: right_to_left
+
+n_frames_raw: 12
+n_frames_usable: 11
+n_frames_event: 10
+
+notes: >-
+  The Series-1 frames at the 300 um calibration (the stored Series-1 archive
+  used 291 um). Frame 11 is truncated by the field-of-view edge; frame 12
+  belongs to the next ebullition cycle and is excluded.

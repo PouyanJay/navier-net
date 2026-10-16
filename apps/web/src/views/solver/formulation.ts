@@ -89,6 +89,12 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       nose_shape: false,
       root_attachment: false,
       receding_cap: false,
+      // The trusted-fields choices that read the front or the jump.
+      pressure_representation: "single",
+      thermal_model: "legacy",
+      source_mode: "free",
+      footprint_evaporation: false,
+      mirror_symmetry: false,
     };
   }
   if (name === "front") {
@@ -101,6 +107,11 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       // These live IN the Young-Laplace jump, which this rung does not impose.
       root_attachment: false,
       receding_cap: false,
+      // So do the two-phase pressure and the sharp thermal model.
+      pressure_representation: "single",
+      thermal_model: "legacy",
+      source_mode: "free",
+      footprint_evaporation: false,
     };
   }
   // The sharp rung comes with its recommended companion: the film-pressure

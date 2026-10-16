@@ -6,6 +6,7 @@ import { treatmentMeta, treatmentOf } from "./formulation";
 import { LaunchDock } from "./LaunchDock";
 import { ObjectiveBand } from "./ObjectiveBand";
 import { PhysicsBand } from "./PhysicsBand";
+import { PhysicsChoicesBand } from "./PhysicsChoicesBand";
 import { RecipeBand } from "./RecipeBand";
 import { recipeDiff, recipeMeta, type RecipeName } from "./recipes";
 import { RunBand, type LaunchMode } from "./RunBand";
@@ -32,12 +33,13 @@ interface SolverAsideProps {
 }
 
 /**
- * The Solver's rail: a recipe, four bands, and a launch dock.
+ * The Solver's rail: a recipe, five bands, and a launch dock.
  *
  * The recipe answers the question that comes before any knob (what should this
- * run be?); the bands answer the four that follow, in the order a run is
- * decided: what it trains on, what physics it is given, what it is scored on,
- * and how the optimizer walks that score. Nothing that does not apply to the
+ * run be?); the bands answer the ones that follow, in the order a run is
+ * decided: what it trains on, what physics it is given (the interface, then
+ * the walls, pressure, temperature and balances), what it is scored on, and
+ * how the optimizer walks that score. Nothing that does not apply to the
  * current choices is rendered at all.
  */
 export function SolverAside({
@@ -89,6 +91,12 @@ export function SolverAside({
         locked={running}
       />
       <PhysicsBand
+        form={form}
+        onForm={onForm}
+        capability={capability}
+        locked={fixed}
+      />
+      <PhysicsChoicesBand
         form={form}
         onForm={onForm}
         capability={capability}

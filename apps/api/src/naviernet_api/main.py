@@ -18,7 +18,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from naviernet_api.routes import datasets, fluids, model, physics, projects, runs, sweeps
+from naviernet_api.routes import (
+    config,
+    datasets,
+    fluids,
+    model,
+    physics,
+    projects,
+    runs,
+    sweeps,
+)
 from naviernet_api.settings import get_settings
 
 
@@ -51,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(model.router)
     app.include_router(physics.router)
     app.include_router(fluids.router)
+    app.include_router(config.router)
     _mount_web_app(app, settings.web_dist_dir)
     return app
 

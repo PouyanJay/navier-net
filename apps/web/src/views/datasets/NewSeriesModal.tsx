@@ -6,14 +6,17 @@ import { useToast } from "../../components/Toast";
 import { api, type ProjectSummary } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 import {
-  ALL_CONDITIONS,
   type ConditionInputs,
+  type ConditionSpec,
   DEFAULT_FLUID_ID,
   FluidSelect,
+  initialInputs,
   MeasurementField,
   OPERATING_CONDITIONS,
-  parseCondition,
+  parseConditions,
   REQUIRED_CONDITIONS,
+  TABLE_CONDITIONS,
+  toConditionsUpdate,
   useFluids,
 } from "./conditions";
 
@@ -21,15 +24,9 @@ const POLL_INTERVAL_MS = 1000;
 const SERIES_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 /** Measurements start empty (must be entered); operating conditions start at
- * their defaults and are edited to override. */
-const INITIAL_CONDITIONS: ConditionInputs = {
-  dt_frame_ms: "",
-  channel_width_um: "",
-  channel_height_um: "",
-  q_wall_W_cm2: "2.0",
-  flow_rate_mL_hr: "5.0",
-  U_ref: "0.20",
-};
+ * their defaults and are edited to override; optional thermal conditions
+ * start "not set". */
+const INITIAL_CONDITIONS: ConditionInputs = initialInputs();
 
 type Phase = "form" | "uploading" | "preprocessing";
 
@@ -71,11 +68,8 @@ export function NewSeriesModal({
   const fluidReady = fluidList.length > 0;
 
   const validName = SERIES_ID_RE.test(name) && !project.datasets.includes(name);
-  const parsed = ALL_CONDITIONS.map((spec) => ({
-    spec,
-    value: parseCondition(conditions[spec.key], spec.min, spec.max),
-  }));
-  const conditionsValid = parsed.every((entry) => entry.value !== null);
+  const parsed = parseConditions(conditions);
+  const conditionsValid = parsed.every((entry) => entry.valid);
 
   // The pipeline reports states, not percentages; poll until it settles.
   useEffect(() => {
@@ -124,9 +118,7 @@ export function NewSeriesModal({
       // built from another series' conditions.
       await api.updateConditions(name, {
         fluid: fluidId,
-        ...Object.fromEntries(
-          parsed.map((entry) => [entry.spec.key, entry.value ?? undefined]),
-        ),
+        ...toConditionsUpdate(parsed),
       });
     } catch (err) {
       setError(
@@ -159,6 +151,16 @@ export function NewSeriesModal({
   }
 
   const busy = phase !== "form";
+
+  const field = (spec: ConditionSpec) => (
+    <MeasurementField
+      key={spec.key}
+      spec={spec}
+      value={conditions[spec.key]}
+      disabled={busy}
+      onChange={(next) => setConditions((c) => ({ ...c, [spec.key]: next }))}
+    />
+  );
 
   // Portalled to the body, like ConfirmDeleteDialog: this dialog opens from the
   // collapsible series rail, and a modal a layout change can hide is not a modal.
@@ -224,19 +226,7 @@ export function NewSeriesModal({
               Measurements{" "}
               <span>frame interval & width bake into the tensors</span>
             </h3>
-            <div className="frm">
-              {REQUIRED_CONDITIONS.map((spec) => (
-                <MeasurementField
-                  key={spec.key}
-                  spec={spec}
-                  value={conditions[spec.key]}
-                  disabled={busy}
-                  onChange={(next) =>
-                    setConditions((c) => ({ ...c, [spec.key]: next }))
-                  }
-                />
-              ))}
-            </div>
+            <div className="frm">{REQUIRED_CONDITIONS.map(field)}</div>
           </div>
 
           <div className="modal-section">
@@ -250,18 +240,18 @@ export function NewSeriesModal({
                 disabled={busy}
                 onChange={setFluidId}
               />
-              {OPERATING_CONDITIONS.map((spec) => (
-                <MeasurementField
-                  key={spec.key}
-                  spec={spec}
-                  value={conditions[spec.key]}
-                  disabled={busy}
-                  onChange={(next) =>
-                    setConditions((c) => ({ ...c, [spec.key]: next }))
-                  }
-                />
-              ))}
+              {OPERATING_CONDITIONS.map(field)}
             </div>
+          </div>
+
+          <div className="modal-section">
+            <h3 className="modal-section-hd">
+              Thermal conditions &amp; heating{" "}
+              <span>
+                read by the sharp thermal model · empty keeps the default
+              </span>
+            </h3>
+            <div className="frm">{TABLE_CONDITIONS.map(field)}</div>
           </div>
 
           {phase !== "form" && (

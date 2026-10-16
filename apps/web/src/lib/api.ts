@@ -97,6 +97,19 @@ export interface RunMetrics {
   heldout_datasets?: string[];
   val_iou_mean?: number | null; // joint: mean of training series' validation IoU
   transfer?: TransferMetrics | null; // held-out series, scored over every frame
+  /** The acceptance audit's verdicts (audit.json), written by the evaluate
+   * stage since WP6: the worst value over every event frame against the
+   * threshold the run's config set. Absent on runs that wrote no audit. */
+  audit?: Record<string, AuditVerdict>;
+}
+
+/** One acceptance verdict: the worst value over the event frames against the
+ * threshold it must stay below (`max`) or above (`min`). */
+export interface AuditVerdict {
+  worst: number;
+  max?: number;
+  min?: number;
+  pass: boolean;
 }
 
 /** The single generalization number to headline for a run: the single-dataset
@@ -207,6 +220,16 @@ export interface OperatingConditions {
   n_frames_usable: number;
   n_frames_event: number;
   U_ref_m_s: number | null;
+  /** Thermal conditions and the film under the bubble (the field table's
+   * conditions section; the sharp thermal model reads them). An optional one
+   * is null when unset. */
+  T_inlet_C: number | null;
+  T_init_C: number | null;
+  side_wall_thermal: "adiabatic" | "isothermal";
+  T_wall_C: number | null;
+  wet_fraction_mode: "fixed" | "fit";
+  wet_fraction: number;
+  dT_ref_K: number | null;
 }
 
 export interface ProjectSummary {
@@ -256,6 +279,16 @@ export interface ConditionsUpdate {
   flow_rate_mL_hr?: number;
   q_wall_W_cm2?: number;
   U_ref?: number;
+  /** Thermal conditions and the film under the bubble. A null clears an
+   * OPTIONAL one back to "not set" (its derived default); the server refuses
+   * a null elsewhere. */
+  T_inlet_C?: number | null;
+  T_init_C?: number | null;
+  side_wall_thermal?: "adiabatic" | "isothermal";
+  T_wall_C?: number | null;
+  wet_fraction_mode?: "fixed" | "fit";
+  wet_fraction?: number;
+  dT_ref_K?: number | null;
 }
 
 export interface ConditionsResponse {
@@ -374,6 +407,10 @@ export interface EquationState {
    * and this UI read one table instead of each branching on the flag.
    */
   mode: "any" | "diffuse" | "sharp";
+  /** The configuration choice that admits the equation, as the override that
+   * makes it (e.g. "model.momentum_closure=brinkman"); null for a term gated
+   * only by the fields the model trains. */
+  enabled_by: string | null;
 }
 
 export interface PhysicsState {
@@ -533,6 +570,39 @@ export interface RunLaunchRequest {
   /** Weight on the nose apex's 2-D displacement -- the one interface point with
    * an honest frame-to-frame correspondence. */
   fv_apex_weight: number;
+  /** The trusted-fields physics choices and training switches: one entry each
+   * on the field table (`lib/fields.ts`), whose options and defaults these
+   * mirror. Every default is the schema's, so an untouched request composes
+   * byte-for-byte. */
+  walls_at: "crop" | "physical";
+  wall_condition: "no_slip" | "no_penetration";
+  momentum_closure: "darcy" | "brinkman";
+  outlet_condition: "none" | "zero_gradient";
+  /** Requires sharp_interface (the vapour pressure exists only there). */
+  pressure_representation: "single" | "two_phase";
+  /** Requires the sharp front and the T field. */
+  thermal_model: "legacy" | "sharp";
+  /** Requires thermal_model "sharp" and collocation_time_bins > 0. */
+  source_mode: "free" | "thermal";
+  /** Film evaporation under the bubble; requires thermal_model "sharp". */
+  footprint_evaporation: boolean;
+  /** Requires front_geometry. */
+  mirror_symmetry: boolean;
+  mass_balance: boolean;
+  mass_balance_weight: number;
+  collocation_time_bins: number;
+  /** The causal schedule's convergence gate; null keeps the fixed annealing. */
+  causal_gate_min_weight: number | null;
+  log_chunk_residuals: boolean;
+  /** The images as the binding measurement: the cap on every rebalanced
+   * physics weight as a multiple of the data weight (0 keeps the fixed
+   * ceiling), the bound on the step's gradient norm (0 is none), and the
+   * outline guard (every so many steps after the warm-up, 0 is off; needs a
+   * Stage-B series) with the drop in mean IoU it tolerates. */
+  rebalance_max_ratio: number;
+  grad_clip: number;
+  outline_guard_every: number;
+  outline_guard_drop: number;
   /** Advanced overrides: `key=value` Hydra tokens for the schema's CLI-only
    * dials. Strictly allowlisted server-side (top-level training.* / model.*
    * scalar fields the form and the series config do not own); an invalid token

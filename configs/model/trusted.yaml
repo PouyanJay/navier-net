@@ -1,0 +1,66 @@
+# Trusted-fields architecture (docs/plans/trustworthy-hidden-fields-plan.md):
+# the representative run's model (root-bench-full), kept as the benchmark's
+# starting point so every later package changes one thing against it. The
+# physics choices the later packages add (walls, Brinkman, two-phase pressure,
+# the thermal rebuild) are switched on here as they land.
+
+defaults:
+  - base_model
+
+hidden: 112
+layers: 6
+
+fourier_feats: 80
+fourier_scale: 3.0
+
+alpha_eps: 0.05
+nodewise_activation: true
+
+fields: [phi, u, v, s, T, p]
+
+per_field:
+  p: { hidden: 149, layers: 8 }
+  # The temperature net carries the thermal layer at the outline, sqrt(t*/Pe)
+  # ~ 0.02-0.04 L_ref here, whose conduction flux pays for the early growth
+  # the wall flux under the footprint cannot (about a third of it in the first
+  # millisecond). Lowered from 20: the stiff second derivatives of the scale-20
+  # features were the term that diverged one seed in three once the rebalancer
+  # had raised the energy weight; 10 still resolves the layer to within a
+  # factor of two, and the footprint source, which needs no layer, carries the
+  # rest of the growth. 3 (the smooth-field value) would read the outline flux
+  # an order of magnitude low.
+  T: { hidden: 149, layers: 8, fourier_scale: 10.0 }
+
+front_geometry: true
+sharp_interface: true
+nucleation_root: true
+root_attachment: true
+receding_cap: true
+
+# WP2: the domain walled at the channel, no-slip made admissible by the Brinkman
+# term, and an outlet condition for the channel that continues past the field
+# of view.
+walls_at: physical
+wall_condition: no_slip
+momentum_closure: brinkman
+outlet_condition: zero_gradient
+
+# WP3: the vapour pressure inside the bubble, the liquid network outside, with
+# the Young-Laplace jump built in and a curl-free vapour velocity.
+pressure_representation: two_phase
+
+# WP4: the interface at saturation, the liquid energy equation with the series'
+# inlet, initial and wall conditions and its wall flux, and the continuity
+# source taken from the evaporation flux through the front.
+thermal_model: sharp
+interface_temperature: saturation
+theta_parameterization: gated
+source_mode: thermal
+
+# The growth mechanism: the wall flux under the bubble evaporates the liquid
+# film across the footprint (at the series' wet fraction) and creates vapour
+# there. Without it the only vapour came from the outline's conduction flux,
+# and the first full-chain benchmark found the solution with no evaporation at
+# all: a flat temperature, a zero source and a nose at a third of the measured
+# speed.
+footprint_evaporation: true

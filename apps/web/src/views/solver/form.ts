@@ -50,6 +50,30 @@ export interface SolverFormState {
   front_velocity: boolean;
   fv_weight: number;
   fv_apex_weight: number;
+  /** The trusted-fields physics choices and training switches, one field-table
+   * entry each (`lib/fields.ts`; `fieldTable.test.ts` holds these defaults
+   * equal to the table's). */
+  walls_at: "crop" | "physical";
+  wall_condition: "no_slip" | "no_penetration";
+  momentum_closure: "darcy" | "brinkman";
+  outlet_condition: "none" | "zero_gradient";
+  pressure_representation: "single" | "two_phase";
+  thermal_model: "legacy" | "sharp";
+  source_mode: "free" | "thermal";
+  footprint_evaporation: boolean;
+  mirror_symmetry: boolean;
+  mass_balance: boolean;
+  mass_balance_weight: number;
+  collocation_time_bins: number;
+  /** The causal schedule's convergence gate; null keeps the fixed annealing. */
+  causal_gate_min_weight: number | null;
+  log_chunk_residuals: boolean;
+  /** The images as the binding measurement: the physics weight cap, the
+   * gradient clip and the outline guard (0 = off) with its tolerated drop. */
+  rebalance_max_ratio: number;
+  grad_clip: number;
+  outline_guard_every: number;
+  outline_guard_drop: number;
   /** Advanced overrides as raw text; parsed to `overrides` at launch. */
   overridesText: string;
 }
@@ -152,6 +176,27 @@ export const FORM_DEFAULTS: SolverFormState = {
   // rebalancer, and at 1 they are measurably inert.
   fv_weight: 10,
   fv_apex_weight: 10,
+  // The trusted-fields choices at the schema's defaults: today's physics, so
+  // an untouched form composes byte-for-byte what it did before they existed.
+  // The trusted recipe (recipes.ts) is where they switch on together.
+  walls_at: "crop",
+  wall_condition: "no_slip",
+  momentum_closure: "darcy",
+  outlet_condition: "none",
+  pressure_representation: "single",
+  thermal_model: "legacy",
+  source_mode: "free",
+  footprint_evaporation: false,
+  mirror_symmetry: false,
+  mass_balance: false,
+  mass_balance_weight: 1,
+  collocation_time_bins: 0,
+  causal_gate_min_weight: null,
+  log_chunk_residuals: false,
+  rebalance_max_ratio: 0,
+  grad_clip: 0,
+  outline_guard_every: 0,
+  outline_guard_drop: 0.05,
   overridesText: "",
 };
 

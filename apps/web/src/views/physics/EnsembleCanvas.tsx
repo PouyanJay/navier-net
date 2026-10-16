@@ -9,12 +9,12 @@ import type { PhysicsModel } from "./usePhysicsModel";
    diagram draws whichever is actually admitted, so it never disagrees with
    the objective above it. */
 const LINKS: Record<FieldName, string[]> = {
-  phi: ["data", "vof", "div", "mom", "darcy", "laplace"],
-  u: ["vof", "div", "bc", "mom", "darcy", "kinematic"],
-  v: ["vof", "div", "bc", "mom", "darcy", "kinematic"],
-  s: ["div", "energy"],
-  p: ["mom", "darcy", "laplace"],
-  T: ["energy"],
+  phi: ["data", "vof", "div", "mom", "darcy", "brinkman", "laplace"],
+  u: ["vof", "div", "bc", "mom", "darcy", "brinkman", "vapour_potential", "kinematic"],
+  v: ["vof", "div", "bc", "mom", "darcy", "brinkman", "vapour_potential", "kinematic"],
+  s: ["div", "energy", "evap_flux"],
+  p: ["mom", "darcy", "brinkman", "laplace"],
+  T: ["energy", "energy_liquid", "theta_bc", "evap_flux"],
 };
 
 const RES_LABEL: Record<string, string> = {
@@ -24,9 +24,14 @@ const RES_LABEL: Record<string, string> = {
   bc: "L_bc · inlet + walls",
   mom: "r_mom",
   darcy: "r_darcy",
+  brinkman: "r_brinkman · Darcy + wall shear",
+  vapour_potential: "r_curl · curl-free vapour",
   kinematic: "r_kin · v_n = u·n",
   laplace: "r_YL · curvature jump",
   energy: "r_energy",
+  energy_liquid: "r_energy_l · liquid, interface saturated",
+  theta_bc: "L_theta · inlet, initial, walls",
+  evap_flux: "r_flux · source from the front flux",
 };
 
 /* Hub order, matching the registry so the diagram and the objective list the
@@ -38,9 +43,14 @@ const RES_ORDER = [
   "bc",
   "mom",
   "darcy",
+  "brinkman",
+  "vapour_potential",
   "kinematic",
   "laplace",
   "energy",
+  "energy_liquid",
+  "theta_bc",
+  "evap_flux",
 ];
 
 const X = { in: 58, ff: 205, net: 385, hub: 950 };

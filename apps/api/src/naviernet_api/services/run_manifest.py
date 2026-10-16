@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from naviernet.utils.logging import get_logger
-from naviernet_api.models import RunManifest
+from naviernet_api.models import RunLaunchRequest, RunManifest
 from naviernet_api.settings import Settings
 
 log = get_logger(__name__)
@@ -34,8 +34,9 @@ MANIFEST_FILE = "run.json"
 
 # The version this module writes. A file claiming a HIGHER version was written by
 # a newer server against a layout this one does not know, so it is ignored rather
-# than half-read.
-SCHEMA_VERSION = 1
+# than half-read. v2 added `config_sha256`, the digest of the config snapshot,
+# so a run is matched to its exact inputs.
+SCHEMA_VERSION = 2
 
 # Dataset names become path segments (`data/processed/<name>`), so they carry the
 # same allowlist the run and dataset ids do (SECURITY.md §3). The manifest is
@@ -49,13 +50,14 @@ def _now() -> str:
 
 def write(
     output_dir: Path,
-    *,
     run_id: str,
-    project_id: str | None,
-    datasets: list[str],
-    heldout_datasets: list[str],
+    request: RunLaunchRequest,
+    *,
+    config_sha256: str | None = None,
 ) -> RunManifest:
-    """Record the run's identity beside its artifacts, and return it.
+    """Record the run's identity beside its artifacts, and return it: the
+    project the launch resolved, the series the request spans, and the digest
+    of the inputs it composed to.
 
     Write-then-rename, like the project files: a crash mid-write cannot leave a
     truncated manifest that would read as a run belonging nowhere.
@@ -63,17 +65,18 @@ def write(
     manifest = RunManifest(
         schema_version=SCHEMA_VERSION,
         run_id=run_id,
-        project_id=project_id,
-        datasets=list(datasets),
-        heldout_datasets=list(heldout_datasets),
+        project_id=request.project,
+        datasets=request.resolved_datasets(),
+        heldout_datasets=list(request.heldout_datasets or []),
         created_at=_now(),
+        config_sha256=config_sha256,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / MANIFEST_FILE
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(manifest.model_dump_json(indent=2))
     tmp.replace(path)
-    log.info("wrote manifest for run %s (project %s)", run_id, project_id or "-")
+    log.info("wrote manifest for run %s (project %s)", run_id, request.project or "-")
     return manifest
 
 

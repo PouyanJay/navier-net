@@ -669,3 +669,101 @@ def test_service_rejects_an_overlong_label(repo_root):
     settings = Settings(repo_root=repo_root)
     with pytest.raises(ConditionsError, match="at most"):
         datasets_service.save_series_label(settings, "sample", "x" * 81)
+
+
+# --- thermal conditions and the film under the bubble (the field table's
+# --- conditions section) ---
+
+
+def test_thermal_conditions_start_unset_and_save_as_typed(client):
+    detail = client.get("/api/datasets/sample").json()
+    # A series nobody described inherits no other series' temperatures.
+    assert detail["conditions"]["T_inlet_C"] is None
+    assert detail["conditions"]["T_init_C"] is None
+    assert detail["conditions"]["side_wall_thermal"] == "adiabatic"
+    assert detail["conditions"]["wet_fraction_mode"] == "fixed"
+    assert detail["conditions"]["wet_fraction"] == pytest.approx(1.0)
+
+    r = client.patch(
+        "/api/datasets/sample/conditions",
+        json={
+            "T_init_C": 58.0,
+            "side_wall_thermal": "isothermal",
+            "T_wall_C": 60.0,
+            "wet_fraction_mode": "fit",
+            "wet_fraction": 0.8,
+        },
+    )
+    assert r.status_code == 200, r.text
+    saved = r.json()["conditions"]
+    assert saved["T_init_C"] == pytest.approx(58.0)
+    assert saved["side_wall_thermal"] == "isothermal"
+    assert saved["T_wall_C"] == pytest.approx(60.0)
+    assert saved["wet_fraction_mode"] == "fit"
+    assert saved["wet_fraction"] == pytest.approx(0.8)
+    # Nothing it did not touch moved.
+    assert saved["T_inlet_C"] is None
+    assert saved["q_wall_W_cm2"] == pytest.approx(detail["conditions"]["q_wall_W_cm2"])
+
+
+def test_a_thermal_choice_outside_its_options_is_refused_by_name(client):
+    r = client.patch("/api/datasets/sample/conditions", json={"wet_fraction_mode": "guess"})
+    assert r.status_code == 422  # the request model carries the options
+
+    r = client.patch("/api/datasets/sample/conditions", json={"wet_fraction": 1.5})
+    assert r.status_code == 400
+    assert "wet_fraction" in r.json()["detail"]
+
+
+def test_an_inconsistent_combination_is_refused_before_it_is_saved(client):
+    """Each value is within its bounds; together they do not compose (isothermal
+    walls need their temperature; a fitted wet fraction cannot start at an end
+    of its interval). The edit is a 400 naming the gap, and nothing is written,
+    so the groups still serve."""
+    r = client.patch(
+        "/api/datasets/sample/conditions", json={"side_wall_thermal": "isothermal"}
+    )
+    assert r.status_code == 400
+    assert "T_wall_C" in r.json()["detail"]
+
+    r = client.patch("/api/datasets/sample/conditions", json={"wet_fraction_mode": "fit"})
+    assert r.status_code == 400
+    assert "strictly inside" in r.json()["detail"]
+
+    assert client.get("/api/datasets/sample").json()["conditions"]["side_wall_thermal"] == (
+        "adiabatic"
+    )
+    assert client.get("/api/datasets/sample/groups").status_code == 200
+
+
+def test_an_explicit_null_clears_an_optional_condition_only(client):
+    client.patch("/api/datasets/sample/conditions", json={"T_init_C": 58.0})
+    assert client.get("/api/datasets/sample").json()["conditions"]["T_init_C"] == pytest.approx(
+        58.0
+    )
+
+    r = client.patch("/api/datasets/sample/conditions", json={"T_init_C": None})
+    assert r.status_code == 200
+    assert r.json()["conditions"]["T_init_C"] is None
+
+    r = client.patch("/api/datasets/sample/conditions", json={"channel_height_um": None})
+    assert r.status_code == 400
+    assert "cannot be cleared" in r.json()["detail"]
+
+
+def test_thermal_conditions_reach_every_compose_site(repo_root):
+    settings = Settings(repo_root=repo_root)
+    datasets_service.save_conditions(
+        settings,
+        "sample",
+        {"T_init_C": 58.0, "side_wall_thermal": "isothermal", "T_wall_C": 60.0},
+    )
+
+    overrides = datasets_service.conditions_overrides(settings, "sample")
+
+    assert "experiment.T_init_C=58.0" in overrides
+    assert "experiment.side_wall_thermal=isothermal" in overrides
+    assert "experiment.T_wall_C=60.0" in overrides
+    cfg = compose_cfg("sample", overrides=datasets_service.series_overrides(settings, "sample"))
+    assert cfg.experiment.T_init_C == pytest.approx(58.0)
+    assert cfg.experiment.side_wall_thermal == "isothermal"

@@ -261,8 +261,13 @@ class GeometricInterface(nn.Module):
         root_delta: float = 0.6,
         nose_shape: bool = False,
         nose_delta: float = 0.6,
+        mirror_axis: float | None = None,
     ):
         super().__init__()
+        # Mirror symmetry (model.mirror_symmetry): the centreline is pinned to this
+        # axis, so the capsule, whose radius profile is one function of (u, t), is
+        # exactly symmetric about it. None leaves the centreline learned.
+        self.mirror_axis = mirror_axis
         # The REFERENCE dataset's anchors. A single-dataset run has only these; a
         # joint run passes each dataset's own per call (see `priors=` below) and
         # uses these solely to set the nets' initial scales.
@@ -477,6 +482,11 @@ class GeometricInterface(nn.Module):
         and swinging no further than the nearer channel wall."""
         ctx = ctx or GeometryContext()
         anchors = self._anchors(ctx)
+        if self.mirror_axis is not None:
+            # Constant, but written through ``xi`` (quadratically, so even the
+            # SECOND derivative the profile frame takes stays connected to the
+            # graph and comes out zero rather than refused by autograd).
+            return self.mirror_axis + 0.0 * xi**2
         raw = self.center_net(_with_context(torch.cat([xi, t], dim=1), ctx.c))
         amplitude = min(anchors.y_root - anchors.y_min, anchors.y_max - anchors.y_root)
         return anchors.y_root + amplitude * torch.tanh(raw)

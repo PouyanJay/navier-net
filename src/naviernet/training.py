@@ -19,8 +19,10 @@ the optimising backward pass, and its gradients are discarded.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -33,7 +35,9 @@ from naviernet.models.pinn import BoundPINN, BubblePINN
 from naviernet.physics import (
     cap_supervision,
     front_velocity,
+    heating,
     kinematics,
+    mass_balance,
     nose_supervision,
     registry,
     root_supervision,
@@ -97,6 +101,12 @@ def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
         return None
     x0, y0 = data.pin_anchor
     d = data.domain
+    if bool(getattr(cfg.model, "mirror_symmetry", False)):
+        # The root sits on the axis the fields are reflected about, not at the
+        # measured anchor (3 pixels off it on Series-1): the construction is
+        # symmetric by design, and so must be the point it hangs from.
+        y0 = 0.5 * (data.y_lo + data.y_hi)
+        log.info("mirror symmetry on: root height set to the channel centreline y*=%.4f", y0)
     log.info(
         "front geometry on: root (x*=%.4f, y*=%.4f), nose from x*=%.4f at rate %.3f, w0=%.4f",
         x0,
@@ -111,8 +121,10 @@ def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
         s0=data.initial_front,
         w0=data.initial_half_width,
         rate0=data.nose_rate,
-        y_min=d.y_min,
-        y_max=d.y_max,
+        # The run's wall span (crop edges or the physical walls, per
+        # model.walls_at): the capsule's width bound and centreline swing.
+        y_min=data.y_lo,
+        y_max=data.y_hi,
         t_min=d.t_min,
         t_max=d.t_max,
     )
@@ -128,20 +140,82 @@ def _film(cfg) -> bool:
     return bool(getattr(cfg.model, "liquid_film", False))
 
 
-def _front_times(cfg, data: BubbleDataset, device) -> torch.Tensor | None:
+def _closure(cfg) -> str:
+    """The sharp-mode momentum law this run solves: ``darcy`` or ``brinkman``."""
+    return str(getattr(cfg.model, "momentum_closure", "darcy"))
+
+
+def _two_phase(cfg) -> bool:
+    """Whether this run represents the pressure per phase (p_v inside, p_l outside)."""
+    return str(getattr(cfg.model, "pressure_representation", "single")) == "two_phase"
+
+
+def _sharp_thermal(cfg) -> bool:
+    """Whether this run solves the sharp thermal model (interface at saturation)."""
+    return str(getattr(cfg.model, "thermal_model", "legacy")) == "sharp"
+
+
+class _BoundaryPlan(NamedTuple):
+    """The boundary choices the samplers and the ``bc`` term read every step."""
+
+    wall_condition: str
+    outlet: bool
+
+
+def _boundary_plan(cfg) -> _BoundaryPlan:
+    model_cfg = cfg.model
+    return _BoundaryPlan(
+        str(getattr(model_cfg, "wall_condition", "no_slip")),
+        str(getattr(model_cfg, "outlet_condition", "none")) != "none",
+    )
+
+
+def _mass_balance_plan(cfg, data: BubbleDataset, groups: dict, device, rng=None):
+    """The cross-section mass-balance quadrature when the term is on, else None.
+    With ``rng`` (``training.quadrature_jitter``) its instants are a fresh
+    stratified draw, so the balance is scored across the window rather than at
+    the same eight instants every step."""
+    if not bool(getattr(cfg.training, "mass_balance", False)):
+        return None
+    at_times = None
+    if rng is not None:
+        at_times = torch.tensor(
+            _stratified_times(data.domain, int(cfg.training.mass_balance_times), rng)
+        )
+    return mass_balance.build_plan(
+        data.domain, (data.y_lo, data.y_hi), groups, cfg.training, device, at_times=at_times
+    )
+
+
+def _stratified_times(domain, n: int, rng) -> np.ndarray:
+    """One instant drawn inside each of ``n`` equal strata of the window, in
+    order: the window stays covered and no instant is ever the same twice."""
+    edges = np.linspace(domain.t_min, domain.t_max, n + 1)
+    return rng.uniform(edges[:-1], edges[1:]).astype(np.float32)
+
+
+def _front_times(cfg, data: BubbleDataset, device, rng=None) -> torch.Tensor | None:
     """The times the interface conditions are sampled at, or ``None`` when the run
     is not sharp-interface.
 
-    A fixed, uniform sweep of the training window rather than a random draw: the
-    front is one smooth curve per time, so what matters is covering the window,
-    and a deterministic grid makes the term reproducible across resume.
+    Without ``rng``, a fixed uniform sweep of the window. With it
+    (``training.quadrature_jitter``), a fresh stratified draw each step: the
+    first full-chain seed satisfied the Young-Laplace condition at the sixteen
+    fixed instants and violated it between them three to one.
     """
     if not _sharp(cfg):
         return None
     d = data.domain
-    return torch.linspace(d.t_min, d.t_max, int(cfg.model.front_times), device=device).reshape(
-        -1, 1
-    )
+    n = int(cfg.model.front_times)
+    if rng is not None:
+        return torch.tensor(_stratified_times(d, n, rng), device=device).reshape(-1, 1)
+    return torch.linspace(d.t_min, d.t_max, n, device=device).reshape(-1, 1)
+
+
+def _jitter_rng(tcfg, rng):
+    """The rng the quadrature draws from under ``training.quadrature_jitter``,
+    else None (fixed grids). The step rng, so a resumed run continues the draw."""
+    return rng if bool(getattr(tcfg, "quadrature_jitter", False)) else None
 
 
 def _architecture_record(cfg) -> dict:
@@ -348,6 +422,84 @@ def _validate_training_config(cfg) -> None:
     _validate_root_supervision(tcfg, cfg.model)
     _validate_nose_supervision(tcfg, cfg.model)
     _validate_sharpening(tcfg, cfg.model.alpha_eps)
+    _validate_boundaries(cfg.model)
+    _validate_thermal_training(tcfg, cfg.model)
+    _validate_rebalance_cap(tcfg)
+    _validate_outline_guard(tcfg)
+
+
+def _validate_rebalance_cap(tcfg) -> None:
+    """A negative cap is a typo, not a choice."""
+    if float(getattr(tcfg, "rebalance_max_ratio", 0.0)) < 0.0:
+        raise ValueError(
+            f"training.rebalance_max_ratio={tcfg.rebalance_max_ratio} must be >= 0 "
+            "(0 keeps the fixed ceiling alone)."
+        )
+
+
+def _validate_outline_guard(tcfg) -> None:
+    """The guard's floor is the warm-up's fit, so it needs a warm-up to record one;
+    a drop must be a non-negative tolerance."""
+    every = int(getattr(tcfg, "outline_guard_every", 0))
+    if every < 0:
+        raise ValueError(f"training.outline_guard_every={every} must be >= 0 (0 = off)")
+    if float(getattr(tcfg, "outline_guard_drop", 0.0)) < 0.0:
+        raise ValueError(
+            f"training.outline_guard_drop={tcfg.outline_guard_drop} must be >= 0 (an IoU tolerance)"
+        )
+    if every > 0 and int(tcfg.stage_b_warmup_steps) <= 0:
+        raise ValueError(
+            "training.outline_guard_every holds the run to the IoU its warm-up reached, so it "
+            "needs training.stage_b_warmup_steps > 0 to record that fit; set a warm-up, or "
+            "turn the guard off."
+        )
+
+
+def _validate_thermal_training(tcfg, model_cfg) -> None:
+    """A thermal source rebuilds the front once per distinct collocation instant,
+    so the batch's times must be binned; an unbinned batch has one instant per
+    point and would cost thousands of fronts a step."""
+    thermal_source = str(getattr(model_cfg, "source_mode", "free")) == "thermal"
+    if thermal_source and int(tcfg.collocation_time_bins) <= 0:
+        raise ValueError(
+            "model.source_mode=thermal builds the front at every distinct collocation "
+            "instant, so it needs training.collocation_time_bins > 0 (the trusted recipe "
+            "uses 8)."
+        )
+
+
+_BOUNDARY_CHOICES = {
+    "walls_at": ("crop", "physical"),
+    "wall_condition": ("no_slip", "no_penetration"),
+    "momentum_closure": ("darcy", "brinkman"),
+    "outlet_condition": ("none", "zero_gradient"),
+}
+
+
+def _validate_boundaries(model_cfg) -> None:
+    """The domain and boundary choices: an unknown value fails at launch, and the
+    over-determined Darcy + no-slip pair (today's default) is allowed for existing
+    configs but warned about, since it has no exact solution."""
+    chosen = {
+        name: str(getattr(model_cfg, name, allowed[0]))
+        for name, allowed in _BOUNDARY_CHOICES.items()
+    }
+    for name, value in chosen.items():
+        if value not in _BOUNDARY_CHOICES[name]:
+            raise ValueError(
+                f"model.{name} must be one of {_BOUNDARY_CHOICES[name]}, got {value!r}"
+            )
+    darcy_active = (
+        chosen["momentum_closure"] == "darcy"
+        and "p" in model_cfg.fields
+        and bool(getattr(model_cfg, "sharp_interface", False))
+    )
+    if darcy_active and chosen["wall_condition"] == "no_slip":
+        log.warning(
+            "model.momentum_closure=darcy with model.wall_condition=no_slip is "
+            "over-determined: a first-order law admits only no-penetration at a wall. "
+            "Use momentum_closure=brinkman, or wall_condition=no_penetration."
+        )
 
 
 def _validate_root_supervision(tcfg, model_cfg) -> None:
@@ -717,6 +869,102 @@ def _causal_eps(step: int, first_step: int, last_step: int, schedule: list[float
     return float(schedule[min(len(schedule) - 1, int(frac * len(schedule)))])
 
 
+@dataclass
+class CausalSchedule:
+    """The causal ``eps`` for each step.
+
+    Without a gate this is the fixed per-step annealing of :func:`_causal_eps`.
+    With one, ``eps`` holds its current schedule value until every time chunk's
+    causal weight clears the gate, then advances (Wang et al.'s stopping rule).
+    The weight observed each step is kept so the run's record can show how much
+    of the time window the residual terms actually trained on.
+    """
+
+    values: list[float]
+    first_step: int
+    last_step: int
+    gate: float | None
+    index: int = 0
+    min_weight: float = 1.0
+
+    def eps(self, step: int) -> float:
+        if self.gate is None:
+            return _causal_eps(step, self.first_step, self.last_step, self.values)
+        if not self.values:
+            return 0.0
+        return float(self.values[self.index])
+
+    def observe(self, weights: torch.Tensor, armed: bool = True) -> None:
+        """Record this step's causal weights and, while ``armed``, advance ``eps``
+        once all clear the gate.
+
+        Unarmed while a collocation term is still held at zero (the Stage-B
+        warm-up, the evaporation curriculum): the weights then describe a loss
+        the physics is absent from, and the Stage-A terms alone pass any gate.
+        The first WP1 benchmark advanced eps to 1.0 inside the warm-up, and every
+        late chunk's weight collapsed to ~0.01 the moment Stage B engaged.
+        """
+        self.min_weight = float(weights.min())
+        if not armed or self.gate is None or self.index >= len(self.values) - 1:
+            return
+        if self.min_weight > self.gate:
+            self.index += 1
+            log.info(
+                "causal eps advanced to %.3g (every chunk weight > %.2f)",
+                self.eps(0),
+                self.gate,
+            )
+
+
+def _causal_schedule(
+    tcfg, first_step: int, last_step: int, state: dict
+) -> CausalSchedule | None:
+    """The run's causal schedule, resumed at the gate index the checkpoint saved;
+    ``None`` when the soft causal weighting is off (uniform, or time-marching)."""
+    if not tcfg.causal_weighting or tcfg.causal_mode != "weight":
+        return None
+    return CausalSchedule(
+        values=list(tcfg.causal_eps_schedule),
+        first_step=first_step,
+        last_step=last_step,
+        gate=tcfg.causal_gate_min_weight,
+        index=int(state.get("causal_index", 0)),
+    )
+
+
+def _causal_record(plan: _LossPlan, step: int) -> dict[str, float]:
+    """The causal state worth a line in the history: nothing when the weighting is off."""
+    if plan.causal is None:
+        return {}
+    return {"causal_eps": plan.causal.eps(step), "causal_min_weight": plan.causal.min_weight}
+
+
+def _chunk_diagnostics(model, x_coll, groups, coll_equations, n_chunks: int) -> dict:
+    """Each collocation term's plain mean in each time chunk, keyed by weight key,
+    with the chunks' mid-times under ``"t"``: the per-slice table that makes a
+    residual left unenforced at late times visible in the run's own record.
+    Evaluated on the step's own batch in one pass, so it costs one extra
+    collocation evaluation at the logging cadence only."""
+    ordered, bounds = _time_ordered(x_coll, n_chunks)
+    ctx = registry.LossContext(model, ordered, groups=groups)
+    times = ordered.detach()[:, 2]
+    report: dict[str, list[float]] = {"t": [float(times[lo:hi].mean()) for lo, hi in bounds]}
+    for eq in coll_equations:
+        per_point = eq.pointwise(ctx).detach()
+        report[eq.weight_key] = [float(per_point[lo:hi].mean()) for lo, hi in bounds]
+    return report
+
+
+def _time_ordered(
+    x_coll: torch.Tensor, n_chunks: int
+) -> tuple[torch.Tensor, list[tuple[int, int]]]:
+    """``x_coll`` sorted by time (column 2) as one fresh leaf, and the ``[lo, hi)``
+    bounds of its ``n_chunks`` contiguous, near-equal, time-ordered chunks --
+    the same chunks :func:`_time_chunks` returns as separate batches."""
+    ordered = x_coll.detach()[torch.argsort(x_coll.detach()[:, 2])].clone().requires_grad_(True)
+    return ordered, _chunk_bounds(ordered.shape[0], n_chunks)
+
+
 def _time_chunks(x_coll: torch.Tensor, n_chunks: int) -> list[torch.Tensor]:
     """``x_coll`` split into ``n_chunks`` time-ordered batches (ascending in the time
     column, index 2).
@@ -766,18 +1014,45 @@ def _causal_collocation_loss(
     deliberate Phase-1/Phase-2 isolation (the rebalancer still sees plain means);
     Phase 2 collapses the two passes when it replaces the gradient-norm rebalancer.
     """
-    chunk_losses = torch.stack(
-        [
-            sum(
-                weights[eq.weight_key]
-                * schedule.get(eq.weight_key, 1.0)
-                * eq.term(registry.LossContext(model, chunk, groups=groups, c=c))
-                for eq in coll_equations
-            )
-            for chunk in _time_chunks(x_coll, n_chunks)
-        ]
-    )
+    ctx = registry.LossContext(model, x_coll, groups=groups, c=c)
+    chunk_losses = _chunk_losses(ctx, coll_equations, weights, schedule, n_chunks)
     return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
+
+
+def _chunk_losses(
+    ctx: registry.LossContext,
+    coll_equations,
+    weights: dict[str, float],
+    schedule: dict[str, float],
+    n_chunks: int,
+) -> torch.Tensor:
+    """``L_r(t_i)``: the per-term weighted, scheduled collocation loss in each
+    time-ordered chunk, shape ``(n_chunks,)``, with gradient.
+
+    No evaluation of its own: every term's per-point residual is read off the
+    step's context (whose residual bundles are already computed and cached for
+    the plain means) and reduced chunk by chunk in time order. The networks and
+    the residuals are pointwise, so each chunk's mean is exactly what evaluating
+    that chunk alone gives (held by a test). The 2026-10 profile put over half
+    of a step in the ``n_chunks`` separate passes this replaces, each over a
+    batch too small to fill a core, with the thermal source's front rebuilt in
+    every one.
+    """
+    order = torch.argsort(ctx.x_coll.detach()[:, 2])
+    per_point = sum(
+        weights[eq.weight_key] * schedule.get(eq.weight_key, 1.0) * eq.pointwise(ctx)
+        for eq in coll_equations
+    )[order]
+    bounds = _chunk_bounds(len(order), n_chunks)
+    return torch.stack([per_point[lo:hi].mean() for lo, hi in bounds])
+
+
+def _chunk_bounds(n_points: int, n_chunks: int) -> list[tuple[int, int]]:
+    """The ``[lo, hi)`` bounds of ``n_chunks`` contiguous, near-equal chunks of
+    ``n_points`` ordered points: the chunks :func:`_time_chunks` returns."""
+    sizes = [c.shape[0] for c in torch.chunk(torch.empty(n_points), max(1, n_chunks))]
+    edges = [0, *itertools.accumulate(sizes)]
+    return [(lo, hi) for lo, hi in zip(edges[:-1], edges[1:], strict=True) if hi > lo]
 
 
 def _march_active_bins(progress: float, n_chunks: int, full_frac: float) -> int:
@@ -846,12 +1121,20 @@ def _weighted_sum(
 class CollocationBatch:
     """One dataset's collocation batch for the causal pass: the model to evaluate
     it with (that dataset's pin-bound view on a joint hard-pin run, the plain model
-    otherwise), the points, and the dataset's groups/conditioning row."""
+    otherwise), the points, the dataset's groups/conditioning row, and the step's
+    loss context over those points, whose cached residuals the pass reuses."""
 
     model: BubblePINN | BoundPINN
     x: torch.Tensor
     groups: dict
     c: torch.Tensor | None
+    ctx: registry.LossContext | None = None
+
+    def context(self) -> registry.LossContext:
+        """The step's context, or a fresh one over the batch when none was kept."""
+        if self.ctx is None:
+            self.ctx = registry.LossContext(self.model, self.x, groups=self.groups, c=self.c)
+        return self.ctx
 
 
 @dataclass(frozen=True)
@@ -869,6 +1152,9 @@ class _LossPlan:
     first_step: int
     last_step: int
     tcfg: object
+    # The soft causal weighting's eps policy (gated or fixed); None when it is off.
+    # Mutable on purpose: the gate index is run state, persisted with the checkpoint.
+    causal: CausalSchedule | None = None
 
 
 CAUSAL_MODES = ("weight", "march")
@@ -1007,25 +1293,23 @@ def _rba_collocation_loss(
 
 
 def _causal_collocation(
-    model,
-    x_coll: torch.Tensor,
-    groups: dict[str, float],
-    c: torch.Tensor | None,
+    batch: CollocationBatch,
     weights: dict[str, float],
     schedule: dict[str, float],
     step: int,
     plan: _LossPlan,
 ) -> torch.Tensor:
     """One dataset's causal collocation loss, dispatched on ``causal_mode``: the soft
-    per-time ``weight`` variant or the ``march`` time-curriculum."""
+    per-time ``weight`` variant (read off the batch's own context, so the step
+    evaluates the collocation residuals once) or the ``march`` time-curriculum."""
     tcfg = plan.tcfg
     if tcfg.causal_mode == "march":
         progress = (step - plan.first_step) / max(1, plan.last_step - plan.first_step)
         return _time_march_collocation_loss(
-            model,
-            x_coll,
-            groups,
-            c,
+            batch.model,
+            batch.x,
+            batch.groups,
+            batch.c,
             plan.coll_equations,
             weights,
             schedule,
@@ -1033,18 +1317,22 @@ def _causal_collocation(
             progress,
             tcfg.causal_march_full_frac,
         )
-    eps = _causal_eps(step, plan.first_step, plan.last_step, tcfg.causal_eps_schedule)
-    return _causal_collocation_loss(
-        model,
-        x_coll,
-        groups,
-        c,
-        plan.coll_equations,
-        weights,
-        schedule,
-        tcfg.causal_time_chunks,
-        eps,
+    chunk_losses = _chunk_losses(
+        batch.context(), plan.coll_equations, weights, schedule, tcfg.causal_time_chunks
     )
+    if plan.causal is None:
+        eps = _causal_eps(step, plan.first_step, plan.last_step, tcfg.causal_eps_schedule)
+        return (_causal_weights(chunk_losses, eps) * chunk_losses).mean()
+    causal_weights = _causal_weights(chunk_losses, plan.causal.eps(step))
+    plan.causal.observe(causal_weights, armed=_gate_armed(schedule, plan.coll_keys))
+    return (causal_weights * chunk_losses).mean()
+
+
+def _gate_armed(schedule: dict[str, float], coll_keys: frozenset[str]) -> bool:
+    """Whether every collocation term is in the loss the causal gate judges: a
+    term at multiplier zero (warm-up gated, or at the foot of its curriculum)
+    is absent from the chunk losses, so their weights say nothing about it."""
+    return all(schedule.get(key, 1.0) > 0.0 for key in coll_keys)
 
 
 def _total_loss(
@@ -1063,15 +1351,13 @@ def _total_loss(
     collocation batches (a single batch for a single-dataset run), while the supervised
     (``data``) and boundary (``bc``) terms keep their uniform contribution. ``losses``
     -- the plain per-term means -- is never touched here, so logging and the
-    gradient-norm rebalancer see the same quantities either way.
+    gradient-norm rebalancer see the same quantities either way; the soft weighting
+    reads the same residuals through each batch's context, so it adds no pass.
     """
     if not plan.tcfg.causal_weighting:
         return _weighted_sum(losses, weights, schedule)
     coll = torch.stack(
-        [
-            _causal_collocation(b.model, b.x, b.groups, b.c, weights, schedule, step, plan)
-            for b in coll_batches
-        ]
+        [_causal_collocation(b, weights, schedule, step, plan) for b in coll_batches]
     ).mean()
     return coll + _weighted_sum(losses, weights, schedule, skip=plan.coll_keys)
 
@@ -1121,6 +1407,110 @@ def _release_nose_dof(model) -> None:
     log.info("nose DOF released: w_nose(t) may move")
 
 
+def _clip_gradients(model, tcfg) -> torch.Tensor:
+    """Bound the step a gradient spike can take (``training.grad_clip`` > 0) and
+    return the total gradient norm before any clipping, for the run's record.
+    A tensor, not a float: reading it every step would sync a GPU run every
+    step, so the log branch converts it on its own cadence."""
+    limit = float(getattr(tcfg, "grad_clip", 0.0))
+    bound = limit if limit > 0.0 else float("inf")
+    return torch.nn.utils.clip_grad_norm_(model.parameters(), bound)
+
+
+class OutlineDrift(RuntimeError):
+    """The outline guard stopped the run: its fit of the masks fell further below
+    the warm-up's than ``training.outline_guard_drop`` allows."""
+
+
+def _outline_fit(cfg, model, data) -> dict[str, float]:
+    """The per-frame IoU against the masks, keyed by camera frame (as strings, so
+    the record survives a round trip through JSON)."""
+    from naviernet.evaluation import iou_report
+
+    report = iou_report(cfg, model, data)
+    return {str(frame): float(iou) for frame, iou in report["iou_per_frame"].items()}
+
+
+def _record_warmup_fit(cfg, model, data, state: dict) -> None:
+    """At the step the physics engages: the warm-up's fit of every frame, the
+    floor the outline guard and the audit's outline verdict hold the run to."""
+    state["warmup_iou"] = _outline_fit(cfg, model, data)
+    log.info(
+        "warm-up fit recorded: IoU mean %.3f, min %.3f",
+        float(np.mean(list(state["warmup_iou"].values()))),
+        min(state["warmup_iou"].values()),
+    )
+
+
+def _require_guard_arms(tcfg, stage_b_keys, state: dict, first_step: int) -> None:
+    """A guard that could never fire is a switch that does nothing: it needs
+    Stage-B physics to engage after the warm-up (that is the step the floor is
+    recorded at), and a run resumed past that step needs the record."""
+    if int(getattr(tcfg, "outline_guard_every", 0)) <= 0:
+        return
+    if not stage_b_keys:
+        raise ValueError(
+            "training.outline_guard_every holds the run to the fit its warm-up reached "
+            "before the Stage-B physics engaged, and this model has no Stage-B physics to "
+            "engage. Turn the guard off, or train the physics."
+        )
+    if first_step > int(tcfg.stage_b_warmup_steps) and not state.get("warmup_iou"):
+        log.warning(
+            "outline guard: this run was resumed past its warm-up without a record of the "
+            "warm-up's fit, so the guard cannot fire; the audit's outline_drop verdict is "
+            "absent for the same reason."
+        )
+
+
+def _outline_drifted(cfg, model, data, state: dict, step: int, stage_b_keys) -> bool:
+    """The outline guard (``training.outline_guard_every``): every so many steps
+    after the warm-up, measure the fit and append it to the run's record; True
+    when its mean has fallen more than ``outline_guard_drop`` below the warm-up's."""
+    tcfg = cfg.training
+    every = int(getattr(tcfg, "outline_guard_every", 0))
+    if every <= 0 or step % every or not stage_b_keys or step <= tcfg.stage_b_warmup_steps:
+        return False
+    reference = state.get("warmup_iou")
+    if not reference:
+        return False
+    fit = _outline_fit(cfg, model, data)
+    mean = float(np.mean(list(fit.values())))
+    floor = float(np.mean(list(reference.values()))) - float(tcfg.outline_guard_drop)
+    record = {"step": step, "iou_mean": mean, "iou_min": min(fit.values()), "floor": floor}
+    state.setdefault("outline_hist", []).append(record)
+    log.info("step %5d | outline guard: IoU mean %.3f (floor %.3f)", step, mean, floor)
+    return mean < floor
+
+
+def _drift_message(state: dict) -> str:
+    last = state["outline_hist"][-1]
+    return (
+        f"outline guard stopped the run at step {last['step']}: IoU mean {last['iou_mean']:.3f} "
+        f"fell below the floor {last['floor']:.3f} set by the warm-up's fit minus "
+        "training.outline_guard_drop; the checkpoint at this step is kept. The physics "
+        "overrode the images: look at the rebalanced weights and the residuals in the log."
+    )
+
+
+def _engage_thermal_source(model, step: int, tcfg, stage_b_keys: tuple[str, ...]) -> None:
+    """Hold the thermal source back through the Stage-A warm-up.
+
+    While the Stage-B terms are gated to zero the energy equation and the
+    temperature conditions are not in the loss, so a source read from the
+    temperature's gradient would let continuity alone shape the temperature:
+    the first full-chain benchmark's temperature reached the thousands during
+    its warm-up and the physics never recovered. The free ``s`` carries the
+    warm-up, as in the legacy Stage A, and the thermal source takes over at the
+    step the physics engages. A model without the attribute (a joint view) is
+    left alone; the joint trainer refuses the thermal model anyway.
+    """
+    if not hasattr(model, "thermal_source_engaged"):
+        return
+    model.thermal_source_engaged = not (
+        bool(stage_b_keys) and step <= tcfg.stage_b_warmup_steps
+    )
+
+
 def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     """True only at the one step the warm-up hands off to Stage-B physics -- where
     the optimiser is restarted. Never true when the warm-up is disabled
@@ -1144,17 +1534,35 @@ def _restart_for_stage_b(
     return torch.optim.Adam(model.parameters(), lr=lr), dict(reset_weights)
 
 
+# The rebalanced weights' fixed bounds: a floor so a term never vanishes from
+# the objective, and a ceiling a runaway ratchet stops at.
+REBALANCE_FLOOR = 1e-2
+REBALANCE_CEILING = 1e3
+
+
 def _rebalance(
     weights: dict[str, float],
     norms: dict[str, float],
     terms: tuple[str, ...] = REBALANCED_TERMS,
+    max_ratio: float = 0.0,
 ) -> None:
-    """Nudge weights so each term's gradient matches the data term's. In place."""
+    """Nudge weights so each term's gradient matches the data term's. In place.
+
+    ``max_ratio`` (``training.rebalance_max_ratio``) caps every rebalanced weight
+    at that multiple of the data weight, under the fixed ceiling: the images are
+    the measurement, and no physics term may outweigh them by more than it. Zero
+    keeps the fixed ceiling alone.
+    """
     reference = norms["data"] * weights["data"]
+    ceiling = REBALANCE_CEILING
+    if max_ratio > 0.0:
+        ceiling = min(ceiling, max_ratio * weights["data"])
     for name in terms:
         target = reference / norms[name]
         # Half-step towards the target: full steps oscillate.
-        weights[name] = float(np.clip(0.5 * weights[name] + 0.5 * target, 1e-2, 1e3))
+        weights[name] = float(
+            np.clip(0.5 * weights[name] + 0.5 * target, REBALANCE_FLOOR, ceiling)
+        )
 
 
 def train(
@@ -1198,8 +1606,16 @@ def train(
     root_plan = _root_plan(cfg, data, device)
     nose_plan = _nose_plan(cfg, data, device)
     front_times = _front_times(cfg, data, device)
+    boundaries = _boundary_plan(cfg)
+    mass_plan = _mass_balance_plan(cfg, data, groups, device)
+    thermal = _sharp_thermal(cfg)
+    if thermal:
+        log.info(
+            "energy budget of the measured growth: %s",
+            _fmt(heating.budget_summary(heating.growth_budget(data, cfg, groups))),
+        )
 
-    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg), _film(cfg))
+    equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -1258,8 +1674,16 @@ def train(
 
     first_step = state["done"] + 1
     last_step = state["done"] + steps
-    plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
+    plan = _LossPlan(
+        coll_equations,
+        coll_keys,
+        first_step,
+        last_step,
+        tcfg,
+        _causal_schedule(tcfg, first_step, last_step, state),
+    )
     _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step)
+    _require_guard_arms(tcfg, stage_b_keys, state, first_step)
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
@@ -1286,6 +1710,8 @@ def train(
             else data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         )
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
+        outlet = data.sample_outlet(tcfg.n_bc, rng) if boundaries.outlet else None
+        initial = data.sample_initial(tcfg.n_bc, rng) if thermal else None
 
         # Pressure-driven shape: solve the width modes at exactly the instants this
         # step will evaluate, so every point gets its own instant's solved bubble
@@ -1301,13 +1727,26 @@ def train(
                 cfg,
             )
 
+        _engage_thermal_source(model, step, tcfg, stage_b_keys)
+        if _jitter_rng(tcfg, rng) is not None:
+            front_times = _front_times(cfg, data, device, rng)
+            mass_plan = _mass_balance_plan(cfg, data, groups, device, rng)
         ctx = registry.LossContext(
-            model, x_coll, inlet, walls, u_inlet, groups, front_times=front_times
+            model,
+            x_coll,
+            inlet,
+            walls,
+            u_inlet,
+            groups,
+            front_times=front_times,
+            outlet=outlet,
+            wall_condition=boundaries.wall_condition,
+            initial=initial,
         )
         losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
-        coll_batches = [CollocationBatch(model, x_coll, groups, None)]  # single dataset
+        coll_batches = [CollocationBatch(model, x_coll, groups, None, ctx)]  # single dataset
 
         # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
         # bounded per-point attention below. Skip the handoff step: weights reset there.
@@ -1316,13 +1755,21 @@ def train(
             and step % tcfg.rebalance_every == 0
             and not _stage_b_engages_at(step, tcfg, stage_b_keys)
         ):
-            _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
+            _rebalance(
+                weights,
+                _gradient_norms(model, losses, opt),
+                rebalanced,
+                float(tcfg.rebalance_max_ratio),
+            )
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
         if _stage_b_engages_at(step, tcfg, stage_b_keys):
             # Engage Stage-B physics on the interface the warm-up converged, from a
-            # clean optimiser (see _restart_for_stage_b). The nose DOF releases
-            # first, so the fresh optimiser sees it trainable.
+            # clean optimiser (see _restart_for_stage_b). The warm-up's fit is
+            # recorded first (the floor the outline guard and the audit hold the
+            # run to), then the nose DOF releases, so the fresh optimiser sees it
+            # trainable.
+            _record_warmup_fit(cfg, model, data, state)
             _release_nose_dof(model)
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
@@ -1365,8 +1812,22 @@ def train(
                 cap_supervision.SupervisionContext(model, tcfg), nose_plan
             )
             total = total + nose_total
+        mass_record: dict[str, float] = {}
+        if mass_plan is not None:
+            # A functional on a fixed quadrature, outside the causal gate, RBA and
+            # the rebalancer, like the terms above.
+            mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
+            total = total + float(tcfg.mass_balance_weight) * mass_total
         total.backward()
+        grad_norm = _clip_gradients(model, tcfg)
         opt.step()
+        if tcfg.checkpoint_every and step % tcfg.checkpoint_every == 0:
+            _checkpoint_mid_run(model, opt, state, weights, plan, cfg, paths, step)
+        if _outline_drifted(cfg, model, data, state, step, stage_b_keys):
+            # Keep the checkpoint at the step the drift was seen, then stop: a
+            # run that has lost the images is not worth the hours left in it.
+            _checkpoint_mid_run(model, opt, state, weights, plan, cfg, paths, step)
+            raise OutlineDrift(_drift_message(state))
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
@@ -1374,8 +1835,20 @@ def train(
             record.update(fv_record)
             record.update(root_record)
             record.update(nose_record)
+            record.update(mass_record)
             record["step"] = step
             record["lr"] = lr
+            record["grad_norm"] = float(grad_norm)
+            record.update(_causal_record(plan, step))
+            if tcfg.log_chunk_residuals:
+                state.setdefault("chunk_hist", []).append(
+                    {
+                        "step": step,
+                        **_chunk_diagnostics(
+                            model, x_coll, groups, coll_equations, tcfg.causal_time_chunks
+                        ),
+                    }
+                )
             state["hist"].append(record)
             if on_log is not None:
                 on_log(dict(record))
@@ -1388,12 +1861,20 @@ def train(
 
     state["done"] += steps
     state["w"] = weights
+    state["causal_index"] = plan.causal.index if plan.causal is not None else 0
     if rba:
         state["attention"] = attention  # persist per-point attention for resume
         state["rba_pool"] = x_pool  # persist the pool the attention aligns to (RAR evolves it)
         # Fingerprint of the FINAL pool (RAR mutates it in-loop), so a resume can be
         # checked to have restored the identical pool the saved attention aligns to.
         state["rba_pool_sig"] = float(x_pool.sum().item())
+    _save_checkpoint(model, opt, state, cfg, paths)
+    return model, data, state
+
+
+def _save_checkpoint(model, opt, state: dict, cfg, paths: RunPaths) -> None:
+    """Write the checkpoint atomically (a crash mid-write leaves the previous one)."""
+    tmp = paths.checkpoint.with_suffix(".pt.tmp")
     torch.save(
         {
             "model": model.state_dict(),
@@ -1402,10 +1883,23 @@ def train(
             "alpha_eps": float(model.eps),
             **_architecture_record(cfg),
         },
-        paths.checkpoint,
+        tmp,
     )
+    tmp.replace(paths.checkpoint)
     log.info("checkpoint written to %s (%d steps total)", paths.checkpoint, state["done"])
-    return model, data, state
+
+
+def _checkpoint_mid_run(model, opt, state: dict, weights, plan: _LossPlan, cfg, paths, step):
+    """The periodic save (``training.checkpoint_every``): the state as the final
+    save would record it at this step, so a resume continues from here. The RBA
+    attention is not carried mid-run; a resume re-initialises it."""
+    snapshot = {
+        **state,
+        "done": step,
+        "w": weights,
+        "causal_index": plan.causal.index if plan.causal is not None else 0,
+    }
+    _save_checkpoint(model, opt, snapshot, cfg, paths)
 
 
 @dataclass
@@ -1479,7 +1973,12 @@ def _load_joint_datasets(
 
 
 def _joint_losses(
-    model, contexts, equations, tcfg, rng
+    model,
+    contexts,
+    equations,
+    tcfg,
+    rng,
+    boundaries: _BoundaryPlan = _BoundaryPlan("no_slip", False),
 ) -> tuple[dict[str, torch.Tensor], list[CollocationBatch]]:
     """Each loss term averaged over the datasets, every dataset's residuals
     evaluated with its own conditioning row so one model fits them all.
@@ -1499,6 +1998,7 @@ def _joint_losses(
         x_data, target = cx.data.sample_supervised(tcfg.n_data, rng)
         x_coll = cx.data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         inlet, walls = cx.data.sample_boundary(tcfg.n_bc, rng)
+        outlet = cx.data.sample_outlet(tcfg.n_bc, rng) if boundaries.outlet else None
 
         ctx = registry.LossContext(
             view,
@@ -1509,6 +2009,8 @@ def _joint_losses(
             cx.groups,
             c=cx.c,
             front_times=cx.front_times,
+            outlet=outlet,
+            wall_condition=boundaries.wall_condition,
         )
         c_data = cx.c.expand(x_data.shape[0], -1)
         per_term = {"data": ((view.alpha(x_data, c_data) - target) ** 2).mean()}
@@ -1517,7 +2019,7 @@ def _joint_losses(
 
         for name, loss in per_term.items():
             aggregate[name] = loss if name not in aggregate else aggregate[name] + loss
-        coll_batches.append(CollocationBatch(view, x_coll, cx.groups, cx.c))
+        coll_batches.append(CollocationBatch(view, x_coll, cx.groups, cx.c, ctx))
 
     n = len(contexts)
     return {name: loss / n for name, loss in aggregate.items()}, coll_batches
@@ -1590,6 +2092,14 @@ def _train_joint(
     """
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if int(getattr(tcfg, "outline_guard_every", 0)) > 0:
+        # The guard measures one dataset's fit against its own warm-up record;
+        # a joint run has one record per dataset and none is threaded yet.
+        raise NotImplementedError(
+            "training.outline_guard_every is single-dataset for now: a joint run has no "
+            "per-dataset warm-up record to hold each series to. Run the guard on one "
+            "series, or turn it off for the joint run."
+        )
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
@@ -1615,8 +2125,35 @@ def _train_joint(
             "runs: its supervision channel is single-dataset. Run it on one "
             "dataset, or turn it off for the joint run."
         )
+    if bool(getattr(tcfg, "mass_balance", False)):
+        # Its quadrature is per dataset and not yet threaded through the joint
+        # contexts; raise rather than silently train without it.
+        raise NotImplementedError(
+            "training.mass_balance is not yet supported for joint (multi-dataset) "
+            "runs; run it on one dataset, or turn it off for the joint run."
+        )
+    if _two_phase(cfg):
+        # The blend reads the indicator inside the model, where a joint run's
+        # per-dataset anchors are not bound; raise rather than blend the wrong front.
+        raise NotImplementedError(
+            "model.pressure_representation=two_phase is not yet supported for joint "
+            "(multi-dataset) runs; use the single representation for the joint run."
+        )
+    if _sharp_thermal(cfg):
+        # Its gate, heater centre and initial batch are per dataset and not yet
+        # threaded through the joint contexts.
+        raise NotImplementedError(
+            "model.thermal_model=sharp is not yet supported for joint (multi-dataset) "
+            "runs; use the legacy thermal model for the joint run."
+        )
+    if bool(getattr(cfg.model, "mirror_symmetry", False)):
+        # The mirror axis is one dataset's wall span; a joint run has one per dataset.
+        raise NotImplementedError(
+            "model.mirror_symmetry is not yet supported for joint (multi-dataset) runs."
+        )
     steps = int(steps if steps is not None else tcfg.steps)
     device = torch.device(tcfg.device)
+    boundaries = _boundary_plan(cfg)
 
     # The datasets actually supervised: held-out conditions (axis B) are loaded
     # only at evaluation, never here, so they contribute nothing to the loss. This
@@ -1637,7 +2174,7 @@ def _train_joint(
     model = BubblePINN(cfg, n_cond=N_COND, geometry=contexts[0].geometry).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
 
-    equations = registry.enabled_equations(cfg.model.fields, _sharp(cfg), _film(cfg))
+    equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
     rebalanced = registry.rebalanced_terms(equations)
     stage_b_keys = registry.stage_b_terms(equations)
     coll_equations = registry.collocation_equations(equations)
@@ -1649,7 +2186,14 @@ def _train_joint(
     reset_weights = _initial_state(cfg, equations)["w"]  # config defaults, for the handoff
     first_step = state["done"] + 1
     last_step = state["done"] + steps
-    plan = _LossPlan(coll_equations, coll_keys, first_step, last_step, tcfg)
+    plan = _LossPlan(
+        coll_equations,
+        coll_keys,
+        first_step,
+        last_step,
+        tcfg,
+        _causal_schedule(tcfg, first_step, last_step, state),
+    )
     log.info(
         "joint training steps %d-%d on %s over %s%s",
         first_step,
@@ -1666,13 +2210,18 @@ def _train_joint(
             group["lr"] = lr
         opt.zero_grad()
 
-        losses, coll_batches = _joint_losses(model, contexts, equations, tcfg, rng)
+        losses, coll_batches = _joint_losses(model, contexts, equations, tcfg, rng, boundaries)
 
         # Skip rebalancing on the handoff step: its weights are about to be reset.
         if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
             step, tcfg, stage_b_keys
         ):
-            _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
+            _rebalance(
+                weights,
+                _gradient_norms(model, losses, opt),
+                rebalanced,
+                float(tcfg.rebalance_max_ratio),
+            )
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
         if _stage_b_engages_at(step, tcfg, stage_b_keys):
@@ -1693,6 +2242,7 @@ def _train_joint(
             fv_total, fv_record = _joint_front_velocity_losses(model, contexts, tcfg)
             total = total + fv_total
         total.backward()
+        _clip_gradients(model, tcfg)
         opt.step()
 
         if step % tcfg.log_every == 0 or step == first_step:
@@ -1701,6 +2251,7 @@ def _train_joint(
             record.update(fv_record)
             record["step"] = step
             record["lr"] = lr
+            record.update(_causal_record(plan, step))
             state["hist"].append(record)
             if on_log is not None:
                 on_log(dict(record))
@@ -1713,6 +2264,7 @@ def _train_joint(
 
     state["done"] += steps
     state["w"] = weights
+    state["causal_index"] = plan.causal.index if plan.causal is not None else 0
     torch.save(
         {
             "model": model.state_dict(),

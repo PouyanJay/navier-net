@@ -11,7 +11,29 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from naviernet.config.fields import Kind, Owner, Section
 from naviernet_api.services.overrides import MAX_OVERRIDES, MAX_TOKEN_LENGTH
+
+
+class FieldSpecOut(BaseModel):
+    """One user-facing input as the field table declares it
+    (`naviernet.config.fields`): the web renders its forms from this shape."""
+
+    key: str  # the Hydra path the value composes to
+    name: str  # the short name the request models and the forms use
+    label: str
+    kind: Kind
+    section: Section
+    owner: Owner
+    help: str = ""
+    unit: str = ""
+    options: list[str] = Field(default_factory=list)
+    lo: float | None = None
+    hi: float | None = None
+    optional: bool = False
+    baked: bool = False
+    advanced: bool = False
+    default: float | int | bool | str | None = None
 
 
 class Fluid(BaseModel):
@@ -56,6 +78,9 @@ class RunManifest(BaseModel):
     datasets: list[str] = Field(default_factory=list)
     heldout_datasets: list[str] = Field(default_factory=list)
     created_at: str  # ISO-8601 UTC, when the run was launched
+    # SHA-256 of the run's config snapshot (.hydra/config.yaml), so a run is
+    # matched to its exact inputs; None on manifests written before v2.
+    config_sha256: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -141,6 +166,16 @@ class OperatingConditions(BaseModel):
     n_frames_usable: int
     n_frames_event: int
     U_ref_m_s: float | None = None  # reference velocity (nondimensionalisation)
+    # Thermal conditions and the film under the bubble (the field table's
+    # conditions section; the sharp thermal model reads them). An optional one
+    # is None when not set.
+    T_inlet_C: float | None
+    T_init_C: float | None
+    side_wall_thermal: str
+    T_wall_C: float | None
+    wet_fraction_mode: str
+    wet_fraction: float
+    dT_ref_K: float | None
 
 
 class ProjectSummary(BaseModel):
@@ -205,6 +240,18 @@ class ConditionsUpdate(BaseModel):
     flow_rate_mL_hr: float | None = None
     q_wall_W_cm2: float | None = None
     U_ref: float | None = None  # reference velocity (scales.U_ref)
+    # Thermal conditions and the film under the bubble. For an OPTIONAL
+    # condition an explicit null clears the saved value back to "not set" (the
+    # derived default); a null on a required one is refused. The options mirror
+    # the field table, which the service validates against
+    # (test_defaults_parity holds the two equal).
+    T_inlet_C: float | None = None
+    T_init_C: float | None = None
+    side_wall_thermal: Literal["adiabatic", "isothermal"] | None = None
+    T_wall_C: float | None = None
+    wet_fraction_mode: Literal["fixed", "fit"] | None = None
+    wet_fraction: float | None = None
+    dT_ref_K: float | None = None
 
 
 class QcKinematics(BaseModel):
@@ -501,6 +548,52 @@ class RunLaunchRequest(BaseModel):
     # reproduced the baseline exactly).
     fv_weight: float = Field(default=10.0, ge=0.0, le=100.0)
     fv_apex_weight: float = Field(default=10.0, ge=0.0, le=100.0)
+    # --- The physics choices and training switches of the trusted-fields work
+    # (docs/plans/trustworthy-hidden-fields-plan.md). Each is one entry of the
+    # field table (naviernet.config.fields); the options and defaults mirror it
+    # (held equal by test_defaults_parity), and every default is the schema's,
+    # so an unchanged request composes byte-for-byte. ---
+    # Where the side walls are: the crop edges, or the detected wall rows (which
+    # the series' tensors must carry; the launcher checks).
+    walls_at: Literal["crop", "physical"] = "crop"
+    # No slip at the walls, or no penetration only (a first-order Darcy law
+    # admits only the latter exactly; Brinkman makes no slip admissible).
+    wall_condition: Literal["no_slip", "no_penetration"] = "no_slip"
+    momentum_closure: Literal["darcy", "brinkman"] = "darcy"
+    outlet_condition: Literal["none", "zero_gradient"] = "none"
+    # The uniform vapour pressure inside the bubble and the liquid network
+    # outside, with the Young-Laplace jump built in. Requires sharp_interface.
+    pressure_representation: Literal["single", "two_phase"] = "single"
+    # The liquid-only energy equation with the interface at saturation and the
+    # series' thermal conditions. Requires the sharp front and the T field.
+    thermal_model: Literal["legacy", "sharp"] = "legacy"
+    # The continuity source taken from the evaporation flux through the front.
+    # Requires the sharp thermal model and binned collocation times.
+    source_mode: Literal["free", "thermal"] = "free"
+    # Film evaporation under the bubble: the wall flux under the footprint
+    # evaporates the film at the series' wet fraction and creates vapour there.
+    # Requires the sharp thermal model.
+    footprint_evaporation: bool = False
+    # Every field exactly even (v odd) about the channel centreline. Requires
+    # front_geometry; for after the physics passes its tests without it.
+    mirror_symmetry: bool = False
+    # The cross-section mass balance functional and its weight.
+    mass_balance: bool = False
+    mass_balance_weight: float = Field(default=1.0, ge=0.0, le=1e4)
+    # Distinct instants per collocation batch (0 = one per point).
+    collocation_time_bins: int = Field(default=0, ge=0, le=1024)
+    # The causal schedule's convergence gate; None keeps the fixed annealing.
+    causal_gate_min_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    log_chunk_residuals: bool = False
+    # The images as the binding measurement: no rebalanced physics weight above
+    # this multiple of the data weight (0 = the fixed ceiling alone), a bound on
+    # the step's gradient norm (0 = none), and the outline guard that stops a
+    # run whose fit of the masks has fallen more than the drop below its
+    # warm-up's (0 = off; needs the Stage-B warm-up the launcher sets).
+    rebalance_max_ratio: float = Field(default=0.0, ge=0.0, le=1e4)
+    grad_clip: float = Field(default=0.0, ge=0.0, le=1e4)
+    outline_guard_every: int = Field(default=0, ge=0, le=100000)
+    outline_guard_drop: float = Field(default=0.05, ge=0.0, le=1.0)
     # Advanced overrides: the bridge to the schema's CLI-only dials (rba_gamma,
     # kin_grid, fv_smooth_px, ...). Free-form `key=value` Hydra overrides,
     # STRICTLY allowlisted in services/overrides.py: top-level training.* /
@@ -576,6 +669,74 @@ class RunLaunchRequest(BaseModel):
             raise ValueError(
                 "alpha_eps_anneal_steps needs alpha_eps_final: a target of 0 would "
                 "divide phi by zero rather than sharpen the interface"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_trusted_physics(self) -> RunLaunchRequest:
+        # The trusted-fields choices' own dependency tree, mirrored from the
+        # model's and the trainer's validators so a bad combination is a 422
+        # naming the fix, not a worker failure: what reads the sharp front...
+        if self.pressure_representation == "two_phase" and self.sharp_interface is False:
+            raise ValueError(
+                "pressure_representation=two_phase blends the vapour pressure with the "
+                "liquid network across the Young-Laplace jump, so it requires "
+                "sharp_interface -- enable it, or keep the single pressure"
+            )
+        if self.thermal_model == "sharp" and (
+            not self.front_geometry or self.sharp_interface is False
+        ):
+            raise ValueError(
+                "thermal_model=sharp reads the evaporation flux on the explicit front, "
+                "so it requires front_geometry and sharp_interface -- enable them, or "
+                "keep the legacy thermal model"
+            )
+        if self.mirror_symmetry and not self.front_geometry:
+            raise ValueError(
+                "mirror_symmetry reflects about the centreline of the run's wall span, "
+                "which the front geometry carries -- enable front_geometry, or turn "
+                "mirror_symmetry off"
+            )
+        return self._check_thermal_source()._check_single_dataset_physics()
+
+    def _check_thermal_source(self) -> RunLaunchRequest:
+        # ...and what the thermal source needs: the model that computes the flux,
+        # and a binned batch to rebuild the front per instant.
+        if self.source_mode == "thermal" and self.thermal_model != "sharp":
+            raise ValueError(
+                "source_mode=thermal takes the source from the interface flux, which "
+                "only the sharp thermal model computes -- set thermal_model=sharp, or "
+                "keep the free source"
+            )
+        if self.source_mode == "thermal" and self.collocation_time_bins <= 0:
+            raise ValueError(
+                "source_mode=thermal rebuilds the front once per distinct collocation "
+                "instant, so it needs collocation_time_bins > 0 (the trusted recipe uses 8)"
+            )
+        if self.footprint_evaporation and self.thermal_model != "sharp":
+            raise ValueError(
+                "footprint_evaporation splits the series' wall flux by phase with the sharp "
+                "thermal model's energy equation -- set thermal_model=sharp, or turn "
+                "footprint_evaporation off"
+            )
+        return self
+
+    def _check_single_dataset_physics(self) -> RunLaunchRequest:
+        if len(self.resolved_datasets()) <= 1:
+            return self
+        joint_blockers = {
+            "mass_balance": self.mass_balance,
+            "pressure_representation=two_phase": self.pressure_representation == "two_phase",
+            "thermal_model=sharp": self.thermal_model == "sharp",
+            "footprint_evaporation": self.footprint_evaporation,
+            "mirror_symmetry": self.mirror_symmetry,
+            "outline_guard_every": self.outline_guard_every > 0,
+        }
+        asked = [name for name, on in joint_blockers.items() if on]
+        if asked:
+            raise ValueError(
+                f"{', '.join(asked)}: not yet supported for joint (multi-dataset) runs "
+                "-- launch it on one series"
             )
         return self
 
@@ -727,6 +888,10 @@ class EquationState(BaseModel):
     # Which interface treatment the equation belongs to: "any", "diffuse" (bulk
     # residual over a smeared alpha) or "sharp" (imposed on the explicit front).
     mode: str
+    # The configuration choice that admits the equation, as the Hydra override
+    # that makes it (e.g. "model.momentum_closure=brinkman"); None for a term
+    # gated only by the fields the model trains.
+    enabled_by: str | None = None
 
 
 class PhysicsState(BaseModel):

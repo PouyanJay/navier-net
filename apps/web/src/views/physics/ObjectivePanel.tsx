@@ -16,10 +16,15 @@ const TERM_HUE: Record<string, FieldName> = {
   bc: "u",
   mom: "p",
   darcy: "p",
+  brinkman: "p",
+  vapour_potential: "u",
   kinematic: "p",
   laplace: "p",
   energy: "T",
   evap: "T",
+  energy_liquid: "T",
+  theta_bc: "T",
+  evap_flux: "s",
 };
 
 /** Short symbol for a term, as it is written in the loss. */
@@ -31,10 +36,15 @@ const TERM_SYMBOL: Record<string, string> = {
   bc: "L_bc",
   mom: "r_mom",
   darcy: "r_darcy",
+  brinkman: "r_brinkman",
+  vapour_potential: "r_curl",
   kinematic: "r_kin",
   laplace: "r_YL",
   energy: "r_energy",
   evap: "r_evap",
+  energy_liquid: "r_energy_l",
+  theta_bc: "L_theta",
+  evap_flux: "r_flux",
 };
 
 /**

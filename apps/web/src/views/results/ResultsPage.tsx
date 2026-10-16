@@ -14,6 +14,7 @@ import {
 } from "../../lib/api";
 import { isTrainedRun, MAX_COMPARED } from "../../lib/runs";
 import { runConditions, runDisplayName } from "./format";
+import { auditVerdicts } from "./AcceptancePanel";
 import { AgreementTab } from "./AgreementTab";
 import { CompareTab } from "./CompareTab";
 import { ExportTab } from "./ExportTab";
@@ -391,6 +392,7 @@ export function ResultsPage({ project }: ResultsPageProps) {
                   }
                   validation={validation}
                   validationLoading={validationLoading}
+                  audit={auditVerdicts(detail?.metrics)}
                 />
               ) : activeTab === "velocity" ? (
                 <FrontVelocityTab

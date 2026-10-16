@@ -176,11 +176,7 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
     from naviernet.physics import diagnostics, registry
 
     block = diagnostics.physics_report(model, data)
-    equations = registry.enabled_equations(
-        cfg.model.fields,
-        bool(getattr(cfg.model, "sharp_interface", False)),
-        bool(getattr(cfg.model, "liquid_film", False)),
-    )
+    equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
     ckpt = torch.load(paths.checkpoint, map_location="cpu", weights_only=False)
     state = ckpt.get("state", {})
     block["residual_convergence"] = diagnostics.residual_convergence(
@@ -191,6 +187,30 @@ def _physics_block(cfg, model, data, paths: RunPaths) -> dict | None:
         # reading the wrong one averages the window where the term was inert.
         int(state.get("stage_b_warmup_steps", cfg.training.stage_b_warmup_steps)),
     )
+    # The last per-time-chunk residual table the run logged (training.log_chunk_
+    # residuals), so metrics.json shows WHEN in the event each equation held.
+    chunk_hist = state.get("chunk_hist") or []
+    block["chunk_residuals"] = chunk_hist[-1] if chunk_hist else None
+    return block
+
+
+def _heating_block(cfg, model, data) -> dict | None:
+    """The sharp thermal model's heating: the energy budget of the measured
+    growth against the series' wall flux, and the wet fraction of the footprint
+    (fitted or fixed) beside the value that budget implies; ``None`` for a run
+    on the legacy thermal model."""
+    if getattr(model, "thermal_model", "legacy") != "sharp":
+        return None
+    from naviernet.physics import heating
+    from naviernet.physics.groups import compute_groups
+
+    block = heating.growth_budget(data, cfg, compute_groups(cfg))
+    block["q_wall_W_cm2"] = float(cfg.experiment.q_wall_W_cm2)
+    block["footprint_evaporation"] = bool(getattr(model, "footprint_evaporation", False))
+    if block["footprint_evaporation"]:
+        wet = model.wet_fraction
+        block["wet_fraction"] = float(wet) if isinstance(wet, float) else float(wet.detach())
+        block["wet_fraction_mode"] = model.wet_fraction_mode
     return block
 
 
@@ -224,6 +244,7 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
         "nose_speed_star": mean_speed_star,
         "nose_speed_mm_s": mean_speed_star * cfg.scales.U_ref * 1e3,
         "physics": _physics_block(cfg, model, data, paths),
+        "heating": _heating_block(cfg, model, data),
     }
 
     log.info("IoU per frame: %s", {k: round(v, 3) for k, v in ious.items()})
@@ -237,6 +258,11 @@ def evaluate(cfg, model, data, paths: RunPaths) -> dict:
 
     paths.metrics_json.write_text(json.dumps(report, indent=2))
     log.info("metrics written to %s", paths.metrics_json)
+    if bool(getattr(cfg.evaluation, "audit", False)):
+        from naviernet.audit import audit_run
+
+        report["audit"] = audit_run(cfg, model, data, paths)["verdicts"]
+        paths.metrics_json.write_text(json.dumps(report, indent=2))
     return report
 
 

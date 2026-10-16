@@ -5,11 +5,9 @@ import {
   type PhysicsValidation,
 } from "../../lib/api";
 import type { RunSummary } from "../../lib/api";
-import {
-  physicsVerdict,
-  type PhysicsCheck,
-  type UnrunCheck,
-} from "./physicsChecks";
+import { physicsVerdict } from "./physicsChecks";
+import { AcceptancePanel, type AuditVerdicts } from "./AcceptancePanel";
+import { CheckRow, UnrunRow } from "./CheckRow";
 import { StateNote } from "./StateNote";
 import { InterfacePhysicsPanel } from "./InterfacePhysicsPanel";
 import { useApiResource } from "./useApiResource";
@@ -38,44 +36,6 @@ function fmtGroup(value: number): string {
   return value.toPrecision(3);
 }
 
-/** One measured check: what it compared, the number, and the tolerance it is
- * read against — a check without a stated tolerance is an assertion. */
-function CheckRow({ check }: { check: PhysicsCheck }) {
-  return (
-    <div className="check-row" data-ok={check.ok}>
-      <span
-        className={"check-ic" + (check.ok ? " ok" : " open")}
-        aria-hidden="true"
-      >
-        {check.ok ? "✓" : "!"}
-      </span>
-      <div>
-        <b>{check.name}</b>
-        <span>{check.detail}</span>
-      </div>
-      <span className={check.ok ? "check-v" : "check-v flag"}>
-        {check.value}
-        <small>{check.against}</small>
-      </span>
-    </div>
-  );
-}
-
-/** A check that could not run. Not a failure: an input the series never
- * recorded, and what would supply it. */
-function UnrunRow({ check }: { check: UnrunCheck }) {
-  return (
-    <div className="check-row unrun">
-      <span className="check-ic none" aria-hidden="true" />
-      <div>
-        <b>{check.name}</b>
-        <span>{check.reason}</span>
-      </div>
-      <span className="check-v quiet">—</span>
-    </div>
-  );
-}
-
 interface PhysicsTabProps {
   run: RunSummary;
   runId: string;
@@ -90,6 +50,8 @@ interface PhysicsTabProps {
   /** The validation payload is still in flight. A check whose input has not
    * arrived has no verdict to give, so none is drawn. */
   validationLoading: boolean;
+  /** The acceptance verdicts the evaluate stage wrote; null when it wrote none. */
+  audit: AuditVerdicts | null;
 }
 
 /** The checks that hold independently of training, and the dimensionless
@@ -102,6 +64,7 @@ export function PhysicsTab({
   datasetName,
   validation,
   validationLoading,
+  audit,
 }: PhysicsTabProps) {
   const groupsQ = useApiResource<DimensionlessGroups>(
     dataset,
@@ -229,6 +192,7 @@ export function PhysicsTab({
           </div>
         </div>
       </Panel>
+      <AcceptancePanel audit={audit} />
       <InterfacePhysicsPanel
         physics={validation?.physics ?? null}
         frontGeometry={frontGeometry}

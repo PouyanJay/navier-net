@@ -33,15 +33,22 @@ from naviernet.physics.residuals import (
     MomentumResiduals,
     NucleationPulse,
     StageAResiduals,
+    ThermalBatches,
     boundary_losses,
+    brinkman_residuals,
     darcy_residuals,
+    energy_liquid_residual,
     energy_residuals,
+    evap_flux_closure,
     footprint_source_penalty_sq,
+    interface_mass_flux,
     kinematic_residual,
     laplace_jump_residual,
     momentum_residuals,
     source_penalty_sq,
     stage_a_residuals,
+    thermal_boundary_losses,
+    vapour_potential_residual,
 )
 
 
@@ -68,12 +75,22 @@ class LossContext:
         groups: dict[str, float] | None = None,
         c: torch.Tensor | None = None,
         front_times: torch.Tensor | None = None,
+        outlet: torch.Tensor | None = None,
+        wall_condition: str = "no_slip",
+        initial: torch.Tensor | None = None,
     ) -> None:
         self.model = model
         self.x_coll = x_coll
         self.inlet = inlet
         self.walls = walls
         self.u_inlet = u_inlet
+        # The outlet batch (None when no outlet condition is imposed) and the
+        # side-wall condition the `bc` term applies (see residuals.boundary_losses).
+        self.outlet = outlet
+        self.wall_condition = wall_condition
+        # Points at the first instant, for the sharp thermal model's initial
+        # temperature condition (None when that model is off).
+        self.initial = initial
         self.groups = groups
         # Times the interface conditions are sampled at (sharp-interface runs only);
         # the front itself is built lazily below, once per step, and shared by every
@@ -87,7 +104,11 @@ class LossContext:
         self._res_a: StageAResiduals | None = None
         self._mom: MomentumResiduals | None = None
         self._darcy: MomentumResiduals | None = None
+        self._brinkman: MomentumResiduals | None = None
+        self._vapour_potential: torch.Tensor | None = None
         self._energy: EnergyResiduals | None = None
+        self._energy_liquid: torch.Tensor | None = None
+        self._mass_flux: torch.Tensor | None = None
 
     @property
     def front(self) -> FrontSamples:
@@ -126,6 +147,38 @@ class LossContext:
         if self._darcy is None:
             self._darcy = darcy_residuals(self.model, self.x_coll, self.groups, c=self.c)
         return self._darcy
+
+    @property
+    def brinkman_res(self) -> MomentumResiduals:
+        if self._brinkman is None:
+            self._brinkman = brinkman_residuals(self.model, self.x_coll, self.groups, c=self.c)
+        return self._brinkman
+
+    @property
+    def vapour_potential_res(self) -> torch.Tensor:
+        if self._vapour_potential is None:
+            self._vapour_potential = vapour_potential_residual(
+                self.model, self.x_coll, c=self.c
+            )
+        return self._vapour_potential
+
+    @property
+    def energy_liquid_res(self) -> torch.Tensor:
+        if self._energy_liquid is None:
+            self._energy_liquid = energy_liquid_residual(
+                self.model, self.x_coll, self.groups, c=self.c
+            )
+        return self._energy_liquid
+
+    @property
+    def mass_flux(self) -> torch.Tensor | None:
+        """The liquid-side kinematic correction on this step's front under the
+        sharp thermal model; ``None`` otherwise."""
+        if getattr(self.model, "thermal_model", "legacy") != "sharp":
+            return None
+        if self._mass_flux is None:
+            self._mass_flux = interface_mass_flux(self.model, self.front, self.groups)
+        return self._mass_flux
 
     @property
     def energy_res(self) -> EnergyResiduals:
@@ -185,9 +238,12 @@ def _div_sq(ctx: LossContext) -> torch.Tensor:
 
 def _src_sq(ctx: LossContext) -> torch.Tensor:
     # Which region is forbidden to the source depends on the film: without it,
-    # mass off the interface band is unphysical; with it, the films evaporate
-    # across the whole footprint and only the outside liquid stays forbidden.
-    if getattr(ctx.model, "liquid_film", False):
+    # mass off the interface band is unphysical; with it (the 1-D film field, or
+    # the footprint's film evaporation), the films evaporate across the whole
+    # footprint and only the outside liquid stays forbidden.
+    if getattr(ctx.model, "liquid_film", False) or getattr(
+        ctx.model, "footprint_evaporation", False
+    ):
         with torch.no_grad():
             c = None if ctx.c is None else ctx.c.expand(ctx.x_coll.shape[0], -1)
             vapour = ctx.model.alpha(ctx.x_coll, c)
@@ -199,7 +255,16 @@ def _bc_term(ctx: LossContext) -> torch.Tensor:
     # The inlet temperature is anchored only when the superheat can leave it --
     # otherwise theta_in is already the field's floor and the condition is vacuous.
     theta_in = ctx.model.theta_in if getattr(ctx.model, "depletable_superheat", False) else None
-    return boundary_losses(ctx.model, ctx.inlet, ctx.walls, ctx.u_inlet, ctx.c, theta_in)
+    return boundary_losses(
+        ctx.model,
+        ctx.inlet,
+        ctx.walls,
+        ctx.u_inlet,
+        ctx.c,
+        theta_in,
+        wall_condition=ctx.wall_condition,
+        outlet_x=ctx.outlet,
+    )
 
 
 def _mom_sq(ctx: LossContext) -> torch.Tensor:
@@ -212,8 +277,32 @@ def _darcy_sq(ctx: LossContext) -> torch.Tensor:
     return res.mom_x**2 + res.mom_y**2
 
 
+def _brinkman_sq(ctx: LossContext) -> torch.Tensor:
+    res = ctx.brinkman_res
+    return res.mom_x**2 + res.mom_y**2
+
+
+def _vapour_potential_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.vapour_potential_res**2
+
+
 def _kinematic_term(ctx: LossContext) -> torch.Tensor:
-    return (kinematic_residual(ctx.model, ctx.front, ctx.c) ** 2).mean()
+    return (
+        kinematic_residual(ctx.model, ctx.front, ctx.c, mass_flux=ctx.mass_flux) ** 2
+    ).mean()
+
+
+def _energy_liquid_sq(ctx: LossContext) -> torch.Tensor:
+    return ctx.energy_liquid_res**2
+
+
+def _theta_bc_term(ctx: LossContext) -> torch.Tensor:
+    batches = ThermalBatches(ctx.inlet, ctx.initial, ctx.walls)
+    return thermal_boundary_losses(ctx.model, ctx.groups, batches, ctx.c)
+
+
+def _evap_flux_sq(ctx: LossContext) -> torch.Tensor:
+    return evap_flux_closure(ctx.model, ctx.x_coll, ctx.c) ** 2
 
 
 def _laplace_term(ctx: LossContext) -> torch.Tensor:
@@ -283,6 +372,13 @@ class Equation:
     # REPLACES the |grad alpha| one, and two closures on the same field with
     # different distributions would fight. ``None`` = never displaced.
     unless_flag: str | None = None
+    # Several displacing flags, for an equation more than one feature replaces;
+    # ``unless_flag`` is the single-flag shorthand and stays for the UI.
+    unless_flags: tuple[str, ...] = ()
+    # The momentum closure (``model.momentum_closure``) this equation belongs to:
+    # Darcy and Brinkman are two laws for the same balance, so exactly one is
+    # active. ``None`` = independent of the closure.
+    closure: str | None = None
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
     # Per-point squared residual (shape ``(n_coll, 1)``, non-negative) for the
     # collocation terms; ``term`` is its mean. ``None`` for boundary terms (bc), which
@@ -324,6 +420,9 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("s",),
         rebalanced=False,  # a deliberate soft penalty, held where it is put
         core=True,
+        # A thermal source lives on the front by construction; penalising it off
+        # the interface would score the kernel's own tails.
+        unless_flag="thermal_source",
         pointwise=_src_sq,
         term=_mean(_src_sq),
     ),
@@ -363,8 +462,38 @@ REGISTRY: tuple[Equation, ...] = (
         fields_added=("p",),
         groups=("hele_shaw", "mu_ratio"),
         mode="sharp",
+        closure="darcy",
         pointwise=_darcy_sq,
         term=_mean(_darcy_sq),
+    ),
+    Equation(
+        id="brinkman",
+        stage="B",
+        name="Brinkman (depth-averaged momentum with wall shear)",
+        tex=r"\nabla p = -C_\text{HS}\,\tilde{\mu}(\alpha)\,\mathbf{u}"
+        r" + \frac{\tilde{\mu}(\alpha)}{\mathrm{Re}}\nabla^2\mathbf{u}",
+        weight_key="brinkman",
+        fields_required=("phi", "u", "v", "p"),
+        fields_added=("p",),
+        groups=("hele_shaw", "mu_ratio", "Re"),
+        mode="sharp",
+        closure="brinkman",
+        pointwise=_brinkman_sq,
+        term=_mean(_brinkman_sq),
+    ),
+    Equation(
+        id="vapour_potential",
+        stage="B",
+        name="Curl-free vapour velocity",
+        tex=r"\alpha\left(\frac{\partial v}{\partial x} - \frac{\partial u}{\partial y}\right) = 0",
+        weight_key="vapour_potential",
+        fields_required=("phi", "u", "v"),
+        mode="sharp",
+        # Only under the two-phase pressure, where the uniform vapour pressure
+        # makes the Darcy law inside the bubble say nothing about its velocity.
+        flag="two_phase_pressure",
+        pointwise=_vapour_potential_sq,
+        term=_mean(_vapour_potential_sq),
     ),
     Equation(
         id="kinematic",
@@ -457,8 +586,62 @@ REGISTRY: tuple[Equation, ...] = (
         fields_required=("u", "v", "T"),
         fields_added=("T",),
         groups=("Pe", "Pr"),
+        # Displaced by the sharp thermal model's liquid energy equation.
+        unless_flag="sharp_thermal",
         pointwise=_energy_sq,
         term=_mean(_energy_sq),
+    ),
+    Equation(
+        id="energy_liquid",
+        stage="B",
+        name="Liquid energy, interface at saturation",
+        tex=r"(1-\alpha)\left[\frac{\partial\theta}{\partial t} + u\cdot\nabla\theta"
+        r" - \frac{1}{\mathrm{Pe}}\nabla^2\theta - q^*(x,y,t)(1-\alpha)\right] = 0",
+        weight_key="energy_liquid",
+        fields_required=("phi", "u", "v", "T"),
+        fields_added=("T",),
+        groups=("Pe", "q_wall_star"),
+        mode="sharp",
+        flag="sharp_thermal",
+        pointwise=_energy_liquid_sq,
+        term=_mean(_energy_liquid_sq),
+    ),
+    Equation(
+        id="theta_bc",
+        stage="B",
+        name="Temperature conditions",
+        tex=r"\theta = \theta_\text{in}\ \text{(inlet)};\quad \theta = \theta_0\ (t_0);"
+        r"\quad \partial_y\theta = 0\ \text{or}\ \theta = \theta_w\ \text{(walls)}",
+        weight_key="theta_bc",
+        fields_required=("phi", "T"),
+        groups=("theta_inlet",),
+        mode="sharp",
+        flag="sharp_thermal",
+        on_collocation=False,  # evaluated on the inlet, initial and wall batches
+        # NOT rebalanced. These are the series' measured temperatures (the
+        # liquid at 58 C before the first frame, the inlet), as much data as the
+        # masks are. Pinned to gradient parity, the first full-chain benchmark
+        # let the physics erase the initial superheat (the condition's loss sat
+        # at 0.76 while the temperature flattened to saturation everywhere).
+        # Their weight is the configured one, held at the data term's.
+        rebalanced=False,
+        term=_theta_bc_term,
+    ),
+    Equation(
+        id="evap_flux",
+        stage="B",
+        name="Source from the interface flux",
+        tex=r"s = C_m \oint \frac{\partial\theta}{\partial n}\, K_w(\mathbf{x}-\mathbf{X})\,d\ell",
+        weight_key="evap_flux",
+        fields_required=("phi", "s", "T"),
+        groups=("mass_flux_to_source",),
+        mode="sharp",
+        flag="sharp_thermal",
+        # With a thermal source there is no free source to pull.
+        unless_flag="thermal_source",
+        rebalanced=False,  # a soft consistency closure, like the one it replaces
+        pointwise=_evap_flux_sq,
+        term=_mean(_evap_flux_sq),
     ),
     Equation(
         id="evap",
@@ -470,8 +653,10 @@ REGISTRY: tuple[Equation, ...] = (
         groups=("Ja",),
         rebalanced=False,  # a soft consistency penalty, ramped by the curriculum
         # Displaced by the film's source closure: same field, different
-        # distribution, and the distribution is the point of the film.
+        # distribution, and the distribution is the point of the film. Also
+        # displaced by the sharp thermal model, whose flux closure replaces it.
         unless_flag="liquid_film",
+        unless_flags=("liquid_film", "sharp_thermal"),
         pointwise=_evap_sq,
         term=_mean(_evap_sq),
     ),
@@ -495,7 +680,13 @@ REGISTRY: tuple[Equation, ...] = (
 
 
 def enabled_equations(
-    fields: Sequence[str], sharp_interface: bool = False, liquid_film: bool = False
+    fields: Sequence[str],
+    sharp_interface: bool = False,
+    liquid_film: bool = False,
+    momentum_closure: str = "darcy",
+    two_phase_pressure: bool = False,
+    sharp_thermal: bool = False,
+    thermal_source: bool = False,
 ) -> list[Equation]:
     """The equations active for a model with the given fields, in registry order.
 
@@ -503,21 +694,88 @@ def enabled_equations(
     it admits the equations imposed on the explicit front and excludes the ones
     that only make sense over a smeared alpha. ``liquid_film`` opts in the film
     term (``model.liquid_film``), which exists only when the film field does.
-    Both default off, so every existing call site composes byte-for-byte.
+    ``momentum_closure`` picks the sharp-mode momentum law (``model.momentum_
+    closure``): Darcy or Brinkman, never both. ``two_phase_pressure`` opts in the
+    curl-free vapour velocity (``model.pressure_representation=two_phase``).
+    ``sharp_thermal`` swaps the legacy energy and evaporation pair for the liquid
+    energy equation, the temperature conditions and the flux closure
+    (``model.thermal_model=sharp``); ``thermal_source`` then drops the free
+    source's closure and its off-interface penalty (``model.source_mode=thermal``).
+    Every default keeps existing call sites composing byte-for-byte.
     """
     present = set(fields)
     allowed = {"any", "sharp" if sharp_interface else "diffuse"}
-    on = {None} | ({"liquid_film"} if liquid_film else set())
-    off = {"liquid_film"} if liquid_film else set()
+    active = {
+        name
+        for name, on in (
+            ("liquid_film", liquid_film),
+            ("two_phase_pressure", two_phase_pressure),
+            ("sharp_thermal", sharp_thermal),
+            ("thermal_source", thermal_source),
+        )
+        if on
+    }
     return [
         e
         for e in REGISTRY
         if e.implemented
         and e.mode in allowed
-        and e.flag in on
-        and e.unless_flag not in off
+        and e.flag in ({None} | active)
+        and e.unless_flag not in active
+        and not (set(e.unless_flags) & active)
+        and e.closure in (None, momentum_closure)
         and set(e.fields_required) <= present
     ]
+
+
+def flags_from(model_cfg) -> dict[str, object]:
+    """The :func:`enabled_equations` keyword arguments a model config implies, so
+    every caller (trainer, evaluation, API) gates the registry the same way."""
+    return {
+        "sharp_interface": bool(getattr(model_cfg, "sharp_interface", False)),
+        "liquid_film": bool(getattr(model_cfg, "liquid_film", False)),
+        "momentum_closure": str(getattr(model_cfg, "momentum_closure", "darcy")),
+        "two_phase_pressure": (
+            str(getattr(model_cfg, "pressure_representation", "single")) == "two_phase"
+        ),
+        "sharp_thermal": str(getattr(model_cfg, "thermal_model", "legacy")) == "sharp",
+        "thermal_source": str(getattr(model_cfg, "source_mode", "free")) == "thermal",
+    }
+
+
+# The configuration choice behind each registry flag, as the Hydra override that
+# switches it on, and the one that keeps it off; what the API reports as an
+# equation's ``enabled_by``.
+_FLAG_CHOICES = {
+    "liquid_film": "model.liquid_film=true",
+    "two_phase_pressure": "model.pressure_representation=two_phase",
+    "sharp_thermal": "model.thermal_model=sharp",
+    "thermal_source": "model.source_mode=thermal",
+}
+_FLAG_DEFAULTS = {
+    "liquid_film": "model.liquid_film=false",
+    "two_phase_pressure": "model.pressure_representation=single",
+    "sharp_thermal": "model.thermal_model=legacy",
+    "thermal_source": "model.source_mode=free",
+}
+
+
+def enabled_by(equation: Equation) -> str | None:
+    """The configuration choices that admit ``equation``, as comma-separated
+    Hydra overrides (composing them, with its fields present, enables it), or
+    None for a term gated only by the fields the model trains."""
+    choices: list[str] = []
+    if equation.mode == "sharp":
+        choices.append("model.sharp_interface=true")
+    elif equation.mode == "diffuse":
+        choices.append("model.sharp_interface=false")
+    if equation.closure is not None:
+        choices.append(f"model.momentum_closure={equation.closure}")
+    if equation.flag is not None:
+        choices.append(_FLAG_CHOICES[equation.flag])
+    excluded = {equation.unless_flag, *equation.unless_flags} - {None}
+    choices.extend(_FLAG_DEFAULTS[flag] for flag in sorted(excluded))
+    return ", ".join(choices) or None
 
 
 def collocation_equations(equations: Sequence[Equation]) -> list[Equation]:

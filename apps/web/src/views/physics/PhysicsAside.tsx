@@ -24,6 +24,10 @@ const DESC: Record<string, string> = {
   mom: "Depth-averaged (Hele-Shaw) momentum with wall drag and surface tension; unlocks pressure. Mixture ρ̃, μ̃ and Re, We come from the selected fluid.",
   darcy:
     "Depth-averaged momentum reduced to Darcy drag, imposed on the explicit front.",
+  brinkman:
+    "Darcy drag plus the Brinkman in-plane viscous term, which carries the wall layer that makes no-slip side walls admissible. Replaces Darcy when the series chooses it.",
+  vapour_potential:
+    "Under the two-phase pressure the vapour pressure is uniform, so the vapour velocity is made curl-free: with the kinematic condition on the front it becomes the unique potential flow.",
   kinematic:
     "The front moves with the normal component of the velocity it is immersed in.",
   laplace:
@@ -31,6 +35,12 @@ const DESC: Record<string, string> = {
   energy:
     "Wall heating with an interfacial mass–energy closure; unlocks temperature. Pe and the saturation properties come from the selected fluid.",
   evap: "One evaporation flux closes the continuity source and removes latent heat.",
+  energy_liquid:
+    "The liquid's energy equation with the interface held at saturation, so the latent heat is a boundary condition rather than a sink. Heated by the background flux and the cavity disk where there is liquid.",
+  theta_bc:
+    "The inlet temperature, the liquid's temperature before the first frame, and adiabatic or isothermal side walls, from the series' conditions.",
+  evap_flux:
+    "The free source is pulled, both ways, to the evaporation flux through the front: the liquid-side temperature gradient, spread over the interface band with the mass-conservation factor.",
 };
 
 const fieldLabel = (f: string) => FIELDS[f as FieldName]?.label ?? f;
@@ -65,6 +75,13 @@ function EquationInfo({
             + field {fieldLabel(f)}
           </span>
         ))}
+        {/* Why the term is on: the configuration choice that admits it, as
+            the registry gates it, so the switch never has to be guessed at. */}
+        {eq.enabled_by && (
+          <span className="fchip mono" title="the choice that admits this term">
+            {eq.enabled_by}
+          </span>
+        )}
       </div>
       {shown.length > 0 && (
         <div className="groupsline">

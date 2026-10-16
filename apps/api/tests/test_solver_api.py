@@ -11,8 +11,9 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
-from helpers import TINY_RUN, read_stream
+from helpers import TINY_RUN, final_status, read_stream
 
 
 def test_launch_trains_evaluates_and_streams(client: TestClient, repo_root: Path):
@@ -908,3 +909,161 @@ def test_asking_for_root_attachment_on_a_stage_a_series_is_rejected(client):
     )
     assert r.status_code == 422
     assert "root_attachment" in r.text
+
+
+# --- the trusted-fields physics choices (field table, WP7) --------------------
+
+
+def test_the_physics_choices_default_to_the_schema_and_compose_when_asked(
+    client: TestClient, repo_root: Path
+):
+    """An untouched request composes the schema's choices; a chosen closure,
+    the mass balance and the chunk record reach the run's own config."""
+    run_id = client.post(
+        "/api/runs",
+        json={
+            **TINY_RUN,
+            "momentum_closure": "brinkman",
+            "outlet_condition": "zero_gradient",
+            "mass_balance": True,
+            "mass_balance_weight": 2.0,
+            "collocation_time_bins": 2,
+            "log_chunk_residuals": True,
+            "causal_weighting": True,
+            "causal_gate_min_weight": 0.9,
+        },
+    ).json()["run_id"]
+    events = read_stream(client, run_id)
+    assert final_status(events)["state"] == "done", final_status(events)
+
+    cfg = yaml.safe_load(
+        (repo_root / "outputs" / run_id / ".hydra" / "config.yaml").read_text()
+    )
+    assert cfg["model"]["momentum_closure"] == "brinkman"
+    assert cfg["model"]["outlet_condition"] == "zero_gradient"
+    assert cfg["model"]["walls_at"] == "crop"
+    assert cfg["model"]["pressure_representation"] == "single"
+    assert cfg["model"]["thermal_model"] == "legacy"
+    assert cfg["training"]["mass_balance"] is True
+    assert cfg["training"]["mass_balance_weight"] == pytest.approx(2.0)
+    assert cfg["training"]["collocation_time_bins"] == 2
+    assert cfg["training"]["log_chunk_residuals"] is True
+    assert cfg["training"]["causal_gate_min_weight"] == pytest.approx(0.9)
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        ({"source_mode": "thermal", "thermal_model": "legacy"}, "thermal_model=sharp"),
+        ({"source_mode": "thermal", "thermal_model": "sharp"}, "collocation_time_bins"),
+        ({"mirror_symmetry": True, "front_geometry": False}, "front_geometry"),
+        ({"pressure_representation": "two_phase", "sharp_interface": False}, "sharp_interface"),
+        ({"walls_at": "lattice"}, "walls_at"),
+        ({"footprint_evaporation": True, "thermal_model": "legacy"}, "thermal_model=sharp"),
+        ({"rebalance_max_ratio": -1.0}, "rebalance_max_ratio"),
+        ({"outline_guard_drop": 1.5}, "outline_guard_drop"),
+    ],
+)
+def test_launch_rejects_an_inconsistent_physics_choice_naming_the_fix(
+    client: TestClient, payload: dict, reason: str
+):
+    r = client.post("/api/runs", json={**TINY_RUN, **payload})
+    assert r.status_code == 422, r.text
+    # The messages, not the whole body: a 422 echoes the payload, whose keys
+    # would match the reason on their own.
+    assert reason in _messages(r)
+
+
+def test_launch_rejects_the_outline_guard_on_a_series_without_a_warm_up(client):
+    """The guard holds a run to its warm-up's fit, and the launcher sets a
+    warm-up only for a Stage-B series; a Stage-A series has no floor to hold."""
+    r = client.post("/api/runs", json={**TINY_RUN, "outline_guard_every": 100})
+    assert r.status_code == 422
+    assert "warm-up" in _messages(r)
+
+
+def test_launch_composes_the_images_binding_switches(client: TestClient, repo_root: Path):
+    """The weight cap, the gradient clip and the guard's drop reach the run's
+    config as the form sent them."""
+    run_id = client.post(
+        "/api/runs",
+        json={
+            **TINY_RUN,
+            "rebalance_max_ratio": 3.0,
+            "grad_clip": 5.0,
+            "outline_guard_drop": 0.02,
+        },
+    ).json()["run_id"]
+    events = read_stream(client, run_id)
+    assert final_status(events)["state"] == "done", final_status(events)
+
+    cfg = yaml.safe_load(
+        (repo_root / "outputs" / run_id / ".hydra" / "config.yaml").read_text()
+    )
+    assert cfg["training"]["rebalance_max_ratio"] == pytest.approx(3.0)
+    assert cfg["training"]["grad_clip"] == pytest.approx(5.0)
+    assert cfg["training"]["outline_guard_every"] == 0
+    assert cfg["training"]["outline_guard_drop"] == pytest.approx(0.02)
+    assert cfg["model"]["footprint_evaporation"] is False
+
+
+def _messages(response) -> str:
+    """A 422's messages with the field each names, never the echoed payload."""
+    detail = response.json()["detail"]
+    if not isinstance(detail, list):
+        return str(detail)
+    return " ".join(f"{'.'.join(map(str, d['loc']))}: {d['msg']}" for d in detail)
+
+
+def test_launch_rejects_the_sharp_thermal_model_on_a_series_without_temperature(
+    client, repo_root
+):
+    """A series that trains the pressure but not the temperature: the sharp
+    front resolves, and what is missing is exactly the T field."""
+    import json
+
+    raw = repo_root / "data" / "raw" / TINY_RUN["dataset"]
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "model.json").write_text(json.dumps({"enabled": ["mom"]}))
+
+    r = client.post("/api/runs", json={**TINY_RUN, "thermal_model": "sharp"})
+    assert r.status_code == 422
+    assert "'T' field" in _messages(r)
+
+
+def test_launch_rejects_physical_walls_without_wall_positions_in_the_tensors(client):
+    r = client.post("/api/runs", json={**TINY_RUN, "walls_at": "physical"})
+    assert r.status_code == 422
+    assert "preprocess" in r.text
+
+
+def test_physical_walls_launch_on_tensors_that_carry_the_wall_positions(
+    client: TestClient, repo_root: Path
+):
+    """The positive path of the pre-flight: a series preprocessed with the wall
+    rows in its meta trains with the domain walled at them."""
+    from conftest import write_synthetic_tensors
+
+    processed = repo_root / "data" / "processed" / "walled"
+    processed.mkdir(parents=True)
+    write_synthetic_tensors(processed / "tensors.npz", wall_positions=True)
+
+    run_id = client.post(
+        "/api/runs", json={**TINY_RUN, "dataset": "walled", "walls_at": "physical"}
+    ).json()["run_id"]
+    events = read_stream(client, run_id)
+
+    assert final_status(events)["state"] == "done", final_status(events)
+    cfg = yaml.safe_load(
+        (repo_root / "outputs" / run_id / ".hydra" / "config.yaml").read_text()
+    )
+    assert cfg["model"]["walls_at"] == "physical"
+
+
+def test_a_joint_run_refuses_the_single_series_physics(client):
+    r = client.post(
+        "/api/runs",
+        json={**TINY_RUN, "datasets": ["highest_t", "second"], "mass_balance": True},
+    )
+    assert r.status_code == 422
+    assert "joint" in r.text

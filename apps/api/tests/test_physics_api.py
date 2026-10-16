@@ -24,6 +24,11 @@ def test_physics_lists_the_registry_equations_with_state(client):
         "energy",
         "evap",
         "darcy",
+        "brinkman",
+        "vapour_potential",
+        "energy_liquid",
+        "theta_bc",
+        "evap_flux",
         "kinematic",
         "laplace",
         "film",
@@ -193,3 +198,18 @@ def test_validation_drops_a_nan_nested_inside_residual_convergence(client):
     assert physics.residual_convergence["laplace"].ratio is None
     # And the whole payload really is serialisable as strict JSON.
     json.dumps(physics.model_dump(), allow_nan=False)
+
+
+def test_every_equation_carries_the_choices_that_admit_it(client):
+    """The registry's gate behind each equation, as the overrides that make it,
+    so the UI can say why a term is on rather than only that it is. The route
+    carries the registry's answer verbatim (its semantics are tested with the
+    registry: composing the choices enables the equation)."""
+    from naviernet.physics.registry import REGISTRY, enabled_by
+
+    eqs = _by_id(client.get("/api/physics/sample").json())
+
+    for equation in REGISTRY:
+        assert eqs[equation.id]["enabled_by"] == enabled_by(equation), equation.id
+    assert "model.momentum_closure=brinkman" in eqs["brinkman"]["enabled_by"]
+    assert eqs["vof"]["enabled_by"] is None

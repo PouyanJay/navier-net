@@ -1,0 +1,90 @@
+# Trusted-fields optimisation (docs/plans/trustworthy-hidden-fields-plan.md, WP1):
+# the Stage-B objective with the training defects of the 2026-10 audit removed.
+#
+# - The causal eps schedule is GATED: eps only tightens once every time chunk's
+#   weight clears 0.99, so late times are never silently dropped from the PDE
+#   residuals (the representative run trained them on the first ~0.5 ms only).
+# - A longer physics stage with a slower learning-rate decay, rebalanced every
+#   500 steps, so the hidden fields get a fair chance to converge after the
+#   Stage-B restart.
+# - Per-time-chunk residuals are logged, so the run's own record shows when in
+#   the event each equation held.
+
+defaults:
+  - base_training
+
+steps: 12000
+lr: 2.0e-3
+lr_halflife: 2500
+
+n_data: 3072
+n_coll: 3072
+n_bc: 512
+collocation_time_bins: 8
+
+holdout_frame: -1
+val_fraction: 0.1
+val_strategy: tail
+
+weights:
+  data: 10.0
+  vof: 1.0
+  div: 1.0
+  src: 0.1
+  bc: 5.0
+  mom: 1.0
+  energy: 1.0
+  evap: 1.0
+  brinkman: 1.0
+  vapour_potential: 1.0
+  energy_liquid: 1.0
+  # The series' measured temperatures (the liquid at 58 C before the first
+  # frame, the inlet) at the data term's weight, and never rebalanced: the
+  # first full-chain benchmark let the physics erase the initial superheat.
+  theta_bc: 10.0
+  evap_flux: 1.0
+
+rebalance_every: 500
+# No rebalanced physics weight may exceed ten times the data weight: the images
+# are the measurement. Unbounded, the first full-chain benchmark ratcheted
+# Brinkman to 1000 and energy to 253 against data at 10, and the outline
+# drifted off the masks while every residual improved.
+rebalance_max_ratio: 10.0
+# One rebalance spike must not diverge the run (seed 2 of the first benchmark
+# took every residual up four orders in the 500 steps after the energy weight
+# jumped to 80). Measured on Series-1, the step's total gradient norm runs 6 to
+# 22 after the physics engages, so the bound only ever touches a spike.
+grad_clip: 50.0
+curriculum_steps: 0
+stage_b_warmup_steps: 3000
+# The outline guard: every 500 steps after the warm-up the fit of the masks is
+# measured; a run whose mean IoU has fallen more than 0.05 below the warm-up's
+# stops there with its checkpoint, instead of finishing as a failure.
+outline_guard_every: 500
+outline_guard_drop: 0.05
+# The front times and the mass-balance instants drawn afresh each step: the
+# first 12000-step seed satisfied the jump condition and the flux balance at
+# the fixed quadrature instants only (defect 0.1 there, 1.5 to 2.5 between).
+quadrature_jitter: true
+
+causal_weighting: true
+causal_time_chunks: 16
+causal_eps_schedule: [0.01, 0.1, 1.0, 10.0]
+causal_gate_min_weight: 0.99
+log_chunk_residuals: true
+
+root_supervision: true
+
+# The growth RATE as a measurement: the front's own normal speed against the
+# velocity measured from consecutive masks, and the nose apex against its
+# measured displacement. Ties the vapour production to the observed growth and
+# removes the no-evaporation solution the first benchmark found.
+front_velocity: true
+
+# WP2: the cross-section mass balance, scored on a fixed quadrature.
+mass_balance: true
+mass_balance_weight: 1.0
+
+seed: 0
+device: cpu
+log_every: 500

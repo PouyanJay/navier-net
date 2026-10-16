@@ -106,6 +106,16 @@ const DOMAINS: Domain[] = [
     icon: ThermalIcon,
     rows: (c) => [
       { label: "Wall heat flux", value: c.q_wall_W_cm2, unit: "W·cm⁻²" },
+      { label: "Inlet temp", value: c.T_inlet_C ?? "saturation", unit: "°C" },
+      { label: "Initial liquid temp", value: c.T_init_C ?? "—", unit: "°C" },
+      { label: "Side walls", value: c.side_wall_thermal },
+      {
+        label: "Wet fraction",
+        value:
+          c.wet_fraction_mode === "fit"
+            ? `fitted from ${c.wet_fraction}`
+            : c.wet_fraction,
+      },
     ],
   },
   {

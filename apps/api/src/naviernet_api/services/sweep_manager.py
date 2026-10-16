@@ -102,9 +102,12 @@ def launch(settings: Settings, request: SweepLaunchRequest) -> SweepStatus:
     # rejected every UI launch with `unknown dataset ''`.
     names = request.resolved_datasets()
     dataset = run_manager.validate_trainable_dataset(settings, names[0] if names else None)
-    # Children bypass run_manager.launch(), so the advanced-overrides gate has
-    # to run here or a sweep would compose raw network tokens unchecked.
+    # Children bypass run_manager.launch(), so the advanced-overrides gate and
+    # the physics pre-flight have to run here, or a sweep would compose raw
+    # network tokens unchecked and die in its first child on a choice the
+    # series cannot honour.
     run_manager.checked_overrides(request)
+    run_manager.preflight_physics(settings, dataset, request)
     # Normalize the request the way run_manager.launch does for ordinary runs:
     # the child worker's _configure reads the singular field, and a sweep is
     # single-dataset by design (seeds vary, the series does not).

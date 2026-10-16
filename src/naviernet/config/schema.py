@@ -55,6 +55,22 @@ class ExperimentConfig:
 
     notes: str = ""
 
+    # --- Thermal conditions and heating (trustworthy-fields WP4). Every field is
+    # optional so an existing series composes unchanged; the sharp thermal model
+    # (model.thermal_model=sharp) reads them. Temperatures in degrees C. ---
+    T_inlet_C: Optional[float] = None  # noqa: UP045 -- liquid at the inlet; None = saturation
+    T_init_C: Optional[float] = None  # noqa: UP045 -- the whole liquid before frame 1
+    side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
+    T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
+    # Film evaporation under the bubble (model.footprint_evaporation): the wall
+    # flux under the footprint evaporates the liquid film the bubble leaves on
+    # the heated wall, over the share of the footprint that is still wet.
+    # "fixed" uses wet_fraction as given; "fit" starts ONE bounded scalar there
+    # (strictly inside (0, 1)) and lets the observed growth set it through the
+    # chain. Reported beside the value the energy balance of the masks implies.
+    wet_fraction_mode: str = "fixed"  # "fixed" | "fit"
+    wet_fraction: float = 1.0  # 0..1; the wet share of the footprint
+
 
 @dataclass
 class FluidConfig:
@@ -132,6 +148,10 @@ class ScalesConfig:
 
     L_ref_um: float = MISSING
     U_ref: float = MISSING  # m/s; measured nose-speed scale
+    # The superheat scale dT_ref in kelvin. None: the initial superheat
+    # T_init_C - T_sat_C when the series gives T_init_C, else the conduction scale
+    # q''_w h / (2 k_l) the legacy thermal model uses.
+    dT_ref_K: Optional[float] = None  # noqa: UP045 -- OmegaConf needs Optional
 
 
 @dataclass
@@ -350,6 +370,84 @@ class ModelConfig:
     front_cap_samples: int = 16
     # Times per step the front is sampled at, spread over the training window.
     front_times: int = 16
+    # --- Domain and boundary choices (trustworthy-fields WP2). Every default keeps
+    # existing runs byte-for-byte; configs/model/trusted.yaml switches them on. ---
+    # Where the side walls are. "crop": the imaged ROI's edges, which sit a few
+    # pixels INSIDE the channel walls (today). "physical": the walls preprocessing
+    # detected (Domain.y_wall_lo/hi), so the wall samples, the inlet span, the
+    # uniform collocation and the capsule's width bound reach the channel.
+    walls_at: str = "crop"  # "crop" | "physical"
+    # The side-wall velocity condition. A first-order Darcy law admits only
+    # no-penetration (v = 0): adding no-slip gives zero Cauchy data on the wall,
+    # which forces a harmonic pressure to be constant everywhere; the published
+    # runs lost their inlet flux within one channel width. No-slip is admissible
+    # with the Brinkman closure, whose in-plane viscous term carries the O(h)
+    # wall layer (Brinkman 1949; Zeng, Yortsos & Salin 2003).
+    wall_condition: str = "no_slip"  # "no_slip" | "no_penetration"
+    # The depth-averaged momentum law in sharp mode: Darcy, or Darcy plus the
+    # Brinkman viscous term (1/Re) mu~ lap(u).
+    momentum_closure: str = "darcy"  # "darcy" | "brinkman"
+    # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
+    # The channel continues beyond the field of view and its pressure there is
+    # unknown, so no pressure condition is imposed.
+    outlet_condition: str = "none"  # "none" | "zero_gradient"
+    # How the pressure field is represented (trustworthy-fields WP3). "single":
+    # one network for both phases (today), which has to fake the Young-Laplace
+    # discontinuity with steep gradients the momentum residual then punishes.
+    # "two_phase": the uniform vapour pressure p_v(t) inside the bubble and the
+    # liquid network outside, blended by the (detached) indicator, so the jump
+    # is built in: the Laplace condition reads the liquid branch on the front,
+    # the momentum law is scored in the liquid, and the vapour velocity is made
+    # curl-free (the Darcy law with a uniform vapour pressure). Requires
+    # `sharp_interface` (p_v exists only there).
+    pressure_representation: str = "single"  # "single" | "two_phase"
+    # --- The thermal model (trustworthy-fields WP4). ---
+    # "legacy": the diffuse energy equation with the |grad alpha| latent sink, the
+    # kinetic (Schrage-type) closure through a learned resistance, and the inlet
+    # floor on theta (today). "sharp": the liquid-only energy equation with the
+    # interface AT saturation, inlet, initial and side-wall conditions from the
+    # experiment, and the evaporation flux taken from the liquid-side temperature
+    # gradient on the explicit front, so one mass flux drives both the latent
+    # heat and the vapour volume. Requires the front geometry, the sharp
+    # interface and the T field.
+    thermal_model: str = "legacy"  # "legacy" | "sharp"
+    # The interface temperature under the sharp model: saturation (conduction-
+    # limited evaporation, no fitted resistance). The kinetic route lives in the
+    # legacy model for now.
+    interface_temperature: str = "saturation"  # "saturation" | "kinetic"
+    # How theta is built under the sharp model: "gated" multiplies the T network
+    # by the (smoothed) distance into the liquid, so theta is exactly zero in
+    # the vapour and on the front and may go below saturation in the liquid.
+    theta_parameterization: str = "gated"  # "gated" | "free"
+    # Smoothing width of that distance gate, in L_ref units: a numerical choice,
+    # kept well below the thermal layer it must not blur (~0.02-0.04 here).
+    theta_gate_width: float = 0.005
+    # Where the continuity source comes from. "free": the s network, pulled toward
+    # the thermal flux two-way by the evap_flux closure. "thermal": s IS the
+    # interface flux spread over the band, no s network in the loop.
+    source_mode: str = "free"  # "free" | "thermal"
+    # Width of the Gaussian that spreads the front flux into the source band, in
+    # L_ref units. None = alpha_eps, the interface half-thickness.
+    source_kernel_width: Optional[float] = None  # noqa: UP045
+    # Film evaporation under the bubble, the growth mechanism of confined flow
+    # boiling: the series' wall flux under the footprint evaporates the liquid
+    # film at the wet fraction and creates vapour there, a volumetric source
+    # footprint_source_star * f_wet * alpha added to the thermal source. The same
+    # flux heats the liquid where there is liquid (the energy equation's
+    # (1 - alpha) gate), so one wall flux is split by phase. Measured on
+    # Series-1, the wall flux under the footprint alone pays for the growth from
+    # about 1.5 ms on; the first full-chain benchmark, which let only the
+    # outline's conduction flux create vapour, found the no-evaporation solution.
+    # Requires the sharp thermal model. Off by default.
+    footprint_evaporation: bool = False
+    # Mirror symmetry about the channel centreline (trustworthy-fields WP5):
+    # every field network is averaged with its own reflection (u, p, T, s and
+    # the interface even, v odd) and the capsule's centreline is pinned to the
+    # axis, so the symmetry a symmetric channel implies holds exactly. A safety
+    # net for AFTER the physics passes its tests: switched on earlier it would
+    # hide the non-identifiability the audit exists to expose. Requires the
+    # front geometry (the axis is the run's wall span, which it carries).
+    mirror_symmetry: bool = False
 
 
 @dataclass
@@ -367,6 +465,11 @@ class LossWeights:
     energy: float = 1.0  # Stage B: energy
     evap: float = 1.0  # Stage B: evaporation mass-closure penalty
     darcy: float = 1.0  # R4: depth-averaged momentum (replaces `mom` in sharp mode)
+    brinkman: float = 1.0  # WP2: Darcy + Brinkman momentum (replaces `darcy` when chosen)
+    vapour_potential: float = 1.0  # WP3: curl-free vapour velocity under the two-phase pressure
+    energy_liquid: float = 1.0  # WP4: liquid energy equation of the sharp thermal model
+    theta_bc: float = 1.0  # WP4: inlet, initial and side-wall temperature conditions
+    evap_flux: float = 1.0  # WP4: free source pulled to the interface flux, two-way
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
     film: float = 1.0  # liquid film: deposition where the meniscus advances
@@ -443,6 +546,40 @@ class TrainingConfig:
     # random field (which collapses it). 0 disables the gate (Stage-B on from
     # step 1); a resumed run whose step count is past the gate is unaffected.
     stage_b_warmup_steps: int = 0
+    # Write the checkpoint every this many steps as well as at the end (0 = at
+    # the end only), so a run cut short on a rented machine resumes from its
+    # last save instead of from nothing. A resume reads the saved step count.
+    checkpoint_every: int = 0
+    # Clip the total gradient's norm to this before each optimiser step (0 = no
+    # clipping). The objective is untouched; only a spike's step is bounded. The
+    # full-chain benchmark lost one seed in three to one such spike: the
+    # rebalancer had raised the energy term's weight to 80 (3.5 on the seeds that
+    # held), and the next 500 steps took every residual up four orders.
+    grad_clip: float = 0.0
+    # Cap on every rebalanced weight as a multiple of the data weight (0 = the
+    # fixed 1e3 ceiling alone). The gradient-norm rebalancer ratchets a term
+    # whose gradient is small up to the ceiling; the first full-chain benchmark
+    # ended with Brinkman at 1000 and energy at 253 against data at 10, and the
+    # images lost the vote: the outline drifted off the masks while every
+    # residual improved. The images are the measurement, so no physics term may
+    # outweigh them by more than this.
+    rebalance_max_ratio: float = 0.0
+    # The outline guard: every this many steps after the warm-up the per-frame
+    # IoU against the masks is measured (0 = off), and a run whose mean IoU has
+    # fallen more than outline_guard_drop below the warm-up's own fit is stopped
+    # there, checkpoint written, instead of finishing hours later as a failure.
+    # The warm-up's fit is recorded at the step the physics engages.
+    outline_guard_every: int = 0
+    outline_guard_drop: float = 0.05
+    # Draw the front times and the mass-balance instants afresh every step
+    # (stratified: one instant per equal stratum of the window) instead of
+    # holding them on fixed grids. Measured on the first 12000-step seed of the
+    # trusted recipe: the flux defect was 0.1 at the eight fixed mass-balance
+    # instants and 1.5 to 2.5 everywhere between them, and the Young-Laplace
+    # residual 0.1 to 0.3 at the sixteen fixed front times and 0.5 to 1.0
+    # between them. The fields had learned the quadrature, not the physics.
+    # Off keeps the fixed grids (existing runs byte-for-byte).
+    quadrature_jitter: bool = False
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See
@@ -466,6 +603,19 @@ class TrainingConfig:
     # domain; it stays at the full domain afterwards (so late frames get real
     # full-weight training). Only used when causal_mode="march".
     causal_march_full_frac: float = 0.5
+    # Convergence gate on the eps schedule (the rule in arXiv:2203.07404 that the
+    # fixed per-step annealing above lacks): eps advances to the next schedule value
+    # only once EVERY time chunk's causal weight exceeds this threshold at the
+    # current eps. None keeps the fixed annealing. Measured without the gate on the
+    # representative run: Stage-B chunk losses of O(1-30) drove every weight but
+    # the first chunk's to exactly zero, so the PDE residuals received no gradient
+    # after ~0.5 ms of the event for the whole physics stage.
+    causal_gate_min_weight: Optional[float] = None  # noqa: UP045 -- OmegaConf needs Optional
+    # Per-time-chunk residual diagnostics: at every logged step, each collocation
+    # term's plain mean over each time chunk is appended to the run's record, so a
+    # residual left unenforced at late times is visible in the run's own history
+    # (and in metrics.json). Off keeps the history byte-for-byte as it was.
+    log_chunk_residuals: bool = False
     # Problem 2 -- loss-weighting scheme. "gradnorm" is the gradient-norm rebalancer
     # (unbounded; ratchets to the 1e3 cap on long runs); "rba" is bounded residual-
     # based attention (arXiv:2307.00379). Default keeps existing behaviour until
@@ -567,9 +717,44 @@ class TrainingConfig:
     # The nose sampling budget, mirroring root_cap_samples.
     nose_cap_samples: int = 48
 
+    # Cross-section mass balance (trustworthy-fields WP2): on a fixed quadrature,
+    # Q(x,t) - Q_in - int_0^x int s dy dx' = 0 at every station and time, so the
+    # axial volume flux is the inlet flux plus the vapour created upstream. The
+    # local residual div u = s says this only where it is sampled; the published
+    # runs lost the whole inlet flux within one channel width while their local
+    # residual looked moderate. Normalised by Q_in; outside causal weighting, RBA
+    # and the rebalancer like the other functionals. Off by default.
+    mass_balance: bool = False
+    mass_balance_weight: float = 1.0
+    mass_balance_stations: int = 32  # x-stations of the cumulative source integral
+    mass_balance_times: int = 8  # fixed time slices across the window
+    mass_balance_grid: int = 64  # transverse quadrature points, wall to wall
+
     seed: int = 0
     device: str = "cpu"
     log_every: int = 200
+
+
+@dataclass
+class AcceptanceConfig:
+    """Thresholds a hidden field must meet before it is trusted (WP6): seed
+    agreement, mirror symmetry, residuals on the audit grid, the cross-section
+    flux balance, the heat budget, and the outline against the masks. Each is a
+    fraction, a correlation, or a length on L_ref."""
+
+    seed_corr_min: float = 0.95  # min cross-seed correlation of each field
+    mirror_max: float = 0.05  # max symmetry-breaking fraction of a hidden field
+    residual_rms_max: float = 0.05  # max RMS of any collocation residual
+    flux_tol: float = 0.05  # max |Q - Q_in - created upstream| / Q_in at any station
+    heat_budget_tol: float = 0.30  # max spread between the latent-power estimates
+    # The outline: the per-frame IoU against the masks may fall neither below
+    # this floor nor more than iou_drop_max below the warm-up's own fit of that
+    # frame, and the nose may sit no farther than nose_tol (L_ref units) from
+    # the measured nose at any frame. A run that fails here is rejected whatever
+    # its residuals say: the images are the measurement.
+    iou_min: float = 0.85
+    iou_drop_max: float = 0.05
+    nose_tol: float = 0.1
 
 
 @dataclass
@@ -577,6 +762,12 @@ class EvaluationConfig:
     stride: int = 4  # pixel stride for gridded prediction
     n_traj_points: int = 61  # timesteps on the continuous nose trajectory
     threshold: float = 0.5  # alpha level defining the interface
+    # The acceptance audit written beside metrics.json by `evaluate` (WP6): every
+    # event frame on an audit_nx x audit_ny grid centred on the channel.
+    audit: bool = True
+    audit_nx: int = 129
+    audit_ny: int = 49
+    acceptance: AcceptanceConfig = field(default_factory=AcceptanceConfig)
 
 
 @dataclass
