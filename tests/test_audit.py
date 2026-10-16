@@ -40,6 +40,10 @@ SHARP_THERMAL = [
 VERDICTS = {"mirror", "residuals", "flux", "heat", "outline", "outline_drop", "nose"}
 
 
+def _no_constants(token: str):
+    raise AssertionError(f"audit.json carries {token}, which a browser cannot parse")
+
+
 def _grid_fields():
     ys = np.linspace(-1.0, 1.0, 21)[:, None]
     xs = np.linspace(0.0, 2.0, 31)[None, :]
@@ -94,6 +98,7 @@ def test_audit_of_a_trained_run_reports_every_test_with_verdicts(tmp_path):
     report = audit_run(cfg, model, data, paths)
 
     assert paths.audit_json.exists() and paths.audit_fields_npz.exists()
+    json.loads(paths.audit_json.read_text(), parse_constant=_no_constants)
     assert set(report["verdicts"]) == VERDICTS
     assert all(isinstance(v["pass"], bool) for v in report["verdicts"].values())
     assert set(report["warmup_iou"]) == {str(f) for f in data.frame_numbers[: data.n_event]}
@@ -142,6 +147,23 @@ def test_evaluate_writes_the_audit_verdicts_into_metrics(tmp_path):
     assert metrics["heating"]["wet_fraction_mode"] == "fit"
     assert 0.0 < metrics["heating"]["wet_fraction"] < 1.0
     assert json.loads(paths.metrics_json.read_text())["audit"] == metrics["audit"]
+
+
+def test_a_missing_nose_counts_as_the_whole_channel_off():
+    from naviernet.audit import _outline_verdicts
+
+    class Acceptance:
+        iou_min, iou_drop_max, nose_tol = 0.85, 0.05, 0.1
+
+    frames = [
+        {"frame": 1, "outline": {"iou": 0.9, "nose_error": 0.02}},
+        {"frame": 2, "outline": {"iou": 0.9, "nose_error": None}},
+    ]
+
+    verdicts = _outline_verdicts(frames, Acceptance(), None, nose_missing=5.75)
+
+    assert verdicts["nose"] == {"worst": 5.75, "max": 0.1, "pass": False}
+    assert "outline_drop" not in verdicts, "no warm-up record, no drop verdict"
 
 
 def test_seed_ensemble_comparison_scores_agreement_and_disagreement():

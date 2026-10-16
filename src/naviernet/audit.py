@@ -245,11 +245,13 @@ def outline_agreement(cfg, model, data, row: int) -> dict:
     nose_model = front_position(predicted, xs, x_anchor)
     nose_measured = front_position(measured, xs, x_anchor)
     error = abs(nose_model - nose_measured)
+    # None, never inf: JSON has no infinity, and the report must stay readable.
+    # The verdict counts a missing nose as the whole channel length off.
     return {
         "iou": frame_iou(cfg, model, data, row),
         "nose_model": None if np.isnan(nose_model) else float(nose_model),
         "nose_measured": None if np.isnan(nose_measured) else float(nose_measured),
-        "nose_error": float("inf") if np.isnan(error) else float(error),
+        "nose_error": None if np.isnan(error) else float(error),
     }
 
 
@@ -307,10 +309,17 @@ def audit_frame(
     return record, fields
 
 
-def _verdicts(frames: list[dict], acceptance, warmup_iou: dict[str, float] | None) -> dict:
+def _verdicts(
+    frames: list[dict],
+    acceptance,
+    warmup_iou: dict[str, float] | None,
+    nose_missing: float,
+) -> dict:
     """Pass/fail against the configured thresholds, with the worst value behind
     each verdict so a failure says by how much. A verdict carries ``max`` when
-    the worst value must stay below it and ``min`` when it must stay above."""
+    the worst value must stay below it and ``min`` when it must stay above.
+    ``nose_missing`` is the error booked for a frame whose predicted outline
+    has no nose (the domain's length: as far off as a nose can be)."""
     hidden = [name for name in FIELDS if name != "alpha"]
     mirror_worst = max(
         f["mirror"][name] for f in frames for name in hidden if name in f["mirror"]
@@ -318,7 +327,7 @@ def _verdicts(frames: list[dict], acceptance, warmup_iou: dict[str, float] | Non
     residual_worst = max((v for f in frames for v in f["residual_rms"].values()), default=0.0)
     flux_worst = max(f["flux"]["max_abs"] for f in frames)
     heat_worst = max(f["heat"]["spread"] for f in frames)
-    verdicts = _outline_verdicts(frames, acceptance, warmup_iou)
+    verdicts = _outline_verdicts(frames, acceptance, warmup_iou, nose_missing)
     verdicts.update(
         _verdicts_of_fields(mirror_worst, residual_worst, flux_worst, heat_worst, acceptance)
     )
@@ -326,13 +335,14 @@ def _verdicts(frames: list[dict], acceptance, warmup_iou: dict[str, float] | Non
 
 
 def _outline_verdicts(
-    frames: list[dict], acceptance, warmup_iou: dict[str, float] | None
+    frames: list[dict], acceptance, warmup_iou: dict[str, float] | None, nose_missing: float
 ) -> dict:
     """The outline against the masks: the lowest per-frame IoU above the floor,
     the largest drop below the warm-up's fit of the same frame (when the run
     recorded one), and the largest nose error."""
     iou_worst = min(f["outline"]["iou"] for f in frames)
-    nose_worst = max(f["outline"]["nose_error"] for f in frames)
+    errors = [f["outline"]["nose_error"] for f in frames]
+    nose_worst = max(nose_missing if e is None else e for e in errors)
     verdicts = {
         "outline": {
             "worst": iou_worst,
@@ -416,6 +426,7 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
         frames.append(record)
         for name, values in fields.items():
             snapshots[f"{record['frame']}/{name}"] = values
+    warmup = warmup_fit(paths)
     report = {
         "run_name": cfg.run_name,
         "dataset": cfg.dataset,
@@ -430,11 +441,17 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
             "iou_drop_max": float(evaluation.acceptance.iou_drop_max),
             "nose_tol": float(evaluation.acceptance.nose_tol),
         },
-        "warmup_iou": warmup_fit(paths),
-        "verdicts": _verdicts(frames, evaluation.acceptance, warmup_fit(paths)),
+        "warmup_iou": warmup,
+        "verdicts": _verdicts(
+            frames,
+            evaluation.acceptance,
+            warmup,
+            float(data.domain.x_max - data.domain.x_min),
+        ),
         "frames": frames,
     }
-    paths.audit_json.write_text(json.dumps(report, indent=2))
+    # allow_nan=False: a report a browser cannot parse is no report.
+    paths.audit_json.write_text(json.dumps(report, indent=2, allow_nan=False))
     np.savez_compressed(paths.audit_fields_npz, **snapshots)
     log.info(
         "audit: %s",

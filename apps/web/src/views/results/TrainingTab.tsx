@@ -23,17 +23,29 @@ const TERM_LABELS: Record<string, { family: Family; label: string }> = {
   src: { family: "core", label: "src · off-interface" },
   bc: { family: "core", label: "bc · inlet/walls" },
   darcy: { family: "interface", label: "darcy · depth-averaged momentum" },
-  brinkman: { family: "interface", label: "brinkman · momentum with wall shear" },
-  vapour_potential: { family: "interface", label: "vapour_potential · curl-free vapour" },
+  brinkman: {
+    family: "interface",
+    label: "brinkman · momentum with wall shear",
+  },
+  vapour_potential: {
+    family: "interface",
+    label: "vapour_potential · curl-free vapour",
+  },
   mass_bal: { family: "extra", label: "mass_bal · cross-section flux balance" },
   laplace: { family: "interface", label: "laplace · Young–Laplace jump" },
   kinematic: { family: "interface", label: "kinematic · front condition" },
   mom: { family: "interface", label: "mom · 2-D momentum" },
   energy: { family: "extra", label: "energy · wall heating" },
   evap: { family: "extra", label: "evap · phase-change closure" },
-  energy_liquid: { family: "extra", label: "energy_liquid · liquid energy, saturated interface" },
+  energy_liquid: {
+    family: "extra",
+    label: "energy_liquid · liquid energy, saturated interface",
+  },
   theta_bc: { family: "extra", label: "theta_bc · temperature conditions" },
-  evap_flux: { family: "extra", label: "evap_flux · source from the front flux" },
+  evap_flux: {
+    family: "extra",
+    label: "evap_flux · source from the front flux",
+  },
   fv_normal: { family: "extra", label: "fv_normal · measured front speed" },
   fv_apex: { family: "extra", label: "fv_apex · nose displacement" },
 };
@@ -45,7 +57,9 @@ type Family = "core" | "interface" | "extra";
 const PREVIOUSLY_CHARTED = new Set(["data", "vof", "div", "src", "bc"]);
 
 /** Keys that are not loss terms. */
-const NOT_A_TERM = new Set(["step", "lr"]);
+// The record's bookkeeping beside the loss terms: the step, the learning
+// rate, and the step's total gradient norm (recorded since the second pass).
+const NOT_A_TERM = new Set(["step", "lr", "grad_norm"]);
 
 interface TermSeries {
   key: string;

@@ -93,6 +93,22 @@ def test_the_outline_guard_needs_a_warm_up_to_set_its_floor(tmp_path):
         training.train(cfg, paths)
 
 
+def test_the_outline_guard_needs_stage_b_physics_to_engage(tmp_path):
+    """A Stage-A model with a warm-up never engages anything, so the guard's
+    floor would never be recorded and the guard could never fire."""
+    cfg, paths = staged_capsule_run(
+        tmp_path,
+        [
+            "training.steps=2",
+            "training.stage_b_warmup_steps=1",
+            "training.outline_guard_every=1",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="no Stage-B physics"):
+        training.train(cfg, paths)
+
+
 def test_the_guard_waits_for_the_physics_to_engage(tmp_path, monkeypatch):
     """Through the warm-up there is no floor to hold the run to, so the guard
     measures nothing there."""
@@ -103,6 +119,7 @@ def test_the_guard_waits_for_the_physics_to_engage(tmp_path, monkeypatch):
             "training.stage_b_warmup_steps=3",
             "training.steps=4",
             "training.outline_guard_every=1",
+            "training.outline_guard_drop=1.0",  # measure, never stop: the fits are real
         ],
     )
     calls: list[int] = []
@@ -155,13 +172,15 @@ def test_the_cap_reaches_the_training_loop(tmp_path):
     cap times its data weight."""
     cfg, paths = staged_capsule_run(
         tmp_path,
-        ["training.steps=3", "training.rebalance_every=1", "training.rebalance_max_ratio=2.0"],
+        ["training.steps=3", "training.rebalance_every=1", "training.rebalance_max_ratio=0.1"],
     )
 
     _, _, state = training.train(cfg, paths)
 
     weights = state["w"]
-    assert all(weights[k] <= 2.0 * weights["data"] + 1e-9 for k in ("vof", "div", "bc"))
+    # The cap is a tenth of the data weight (1.0): bc starts at 5, so an
+    # unwired cap would leave it above the bound.
+    assert all(weights[k] <= 0.1 * weights["data"] + 1e-9 for k in ("vof", "div", "bc"))
 
 
 def test_the_temperature_conditions_are_never_rebalanced():

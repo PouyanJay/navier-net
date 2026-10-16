@@ -1384,12 +1384,14 @@ def _release_nose_dof(model) -> None:
     log.info("nose DOF released: w_nose(t) may move")
 
 
-def _clip_gradients(model, tcfg) -> float:
+def _clip_gradients(model, tcfg) -> torch.Tensor:
     """Bound the step a gradient spike can take (``training.grad_clip`` > 0) and
-    return the total gradient norm before any clipping, for the run's record."""
+    return the total gradient norm before any clipping, for the run's record.
+    A tensor, not a float: reading it every step would sync a GPU run every
+    step, so the log branch converts it on its own cadence."""
     limit = float(getattr(tcfg, "grad_clip", 0.0))
     bound = limit if limit > 0.0 else float("inf")
-    return float(torch.nn.utils.clip_grad_norm_(model.parameters(), bound))
+    return torch.nn.utils.clip_grad_norm_(model.parameters(), bound)
 
 
 class OutlineDrift(RuntimeError):
@@ -1415,6 +1417,26 @@ def _record_warmup_fit(cfg, model, data, state: dict) -> None:
         float(np.mean(list(state["warmup_iou"].values()))),
         min(state["warmup_iou"].values()),
     )
+
+
+def _require_guard_arms(tcfg, stage_b_keys, state: dict, first_step: int) -> None:
+    """A guard that could never fire is a switch that does nothing: it needs
+    Stage-B physics to engage after the warm-up (that is the step the floor is
+    recorded at), and a run resumed past that step needs the record."""
+    if int(getattr(tcfg, "outline_guard_every", 0)) <= 0:
+        return
+    if not stage_b_keys:
+        raise ValueError(
+            "training.outline_guard_every holds the run to the fit its warm-up reached "
+            "before the Stage-B physics engaged, and this model has no Stage-B physics to "
+            "engage. Turn the guard off, or train the physics."
+        )
+    if first_step > int(tcfg.stage_b_warmup_steps) and not state.get("warmup_iou"):
+        log.warning(
+            "outline guard: this run was resumed past its warm-up without a record of the "
+            "warm-up's fit, so the guard cannot fire; the audit's outline_drop verdict is "
+            "absent for the same reason."
+        )
 
 
 def _outline_drifted(cfg, model, data, state: dict, step: int, stage_b_keys) -> bool:
@@ -1489,6 +1511,12 @@ def _restart_for_stage_b(
     return torch.optim.Adam(model.parameters(), lr=lr), dict(reset_weights)
 
 
+# The rebalanced weights' fixed bounds: a floor so a term never vanishes from
+# the objective, and a ceiling a runaway ratchet stops at.
+REBALANCE_FLOOR = 1e-2
+REBALANCE_CEILING = 1e3
+
+
 def _rebalance(
     weights: dict[str, float],
     norms: dict[str, float],
@@ -1503,11 +1531,15 @@ def _rebalance(
     keeps the fixed ceiling alone.
     """
     reference = norms["data"] * weights["data"]
-    ceiling = 1e3 if max_ratio <= 0.0 else min(1e3, max_ratio * weights["data"])
+    ceiling = REBALANCE_CEILING
+    if max_ratio > 0.0:
+        ceiling = min(ceiling, max_ratio * weights["data"])
     for name in terms:
         target = reference / norms[name]
         # Half-step towards the target: full steps oscillate.
-        weights[name] = float(np.clip(0.5 * weights[name] + 0.5 * target, 1e-2, ceiling))
+        weights[name] = float(
+            np.clip(0.5 * weights[name] + 0.5 * target, REBALANCE_FLOOR, ceiling)
+        )
 
 
 def train(
@@ -1628,6 +1660,7 @@ def train(
         _causal_schedule(tcfg, first_step, last_step, state),
     )
     _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step)
+    _require_guard_arms(tcfg, stage_b_keys, state, first_step)
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
@@ -1779,7 +1812,7 @@ def train(
             record.update(mass_record)
             record["step"] = step
             record["lr"] = lr
-            record["grad_norm"] = grad_norm
+            record["grad_norm"] = float(grad_norm)
             record.update(_causal_record(plan, step))
             if tcfg.log_chunk_residuals:
                 state.setdefault("chunk_hist", []).append(
@@ -2183,6 +2216,7 @@ def _train_joint(
             fv_total, fv_record = _joint_front_velocity_losses(model, contexts, tcfg)
             total = total + fv_total
         total.backward()
+        _clip_gradients(model, tcfg)
         opt.step()
 
         if step % tcfg.log_every == 0 or step == first_step:

@@ -266,7 +266,7 @@ def test_growth_budget_is_the_energy_balance_of_the_growth(tmp_path):
 def test_fitted_wet_fraction_starts_at_its_declared_value_and_stays_bounded(tmp_path):
     _, _, model = _model(tmp_path, [*SHARP_THERMAL, *FOOTPRINT])
 
-    assert float(model.wet_fraction) == pytest.approx(0.8, abs=1e-6)
+    assert float(model.wet_fraction.detach()) == pytest.approx(0.8, abs=1e-6)
     with torch.no_grad():
         model._wet_fraction_raw.fill_(100.0)
         assert float(model.wet_fraction) <= 1.0

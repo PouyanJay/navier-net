@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from naviernet.data.dataset import INTERFACE_ALPHA
+
 
 def measured_areas_m2(data, cfg) -> np.ndarray:
     """The projected vapour area of every event frame, in square metres."""
@@ -20,7 +22,7 @@ def measured_areas_m2(data, cfg) -> np.ndarray:
     pixel_area = float(data.x[1] - data.x[0]) * float(data.y[1] - data.y[0]) * length**2
     return np.array(
         [
-            float(((data.alpha[i] > 0.5) & (data.valid[i] > 0)).sum()) * pixel_area
+            float(((data.alpha[i] > INTERFACE_ALPHA) & (data.valid[i] > 0)).sum()) * pixel_area
             for i in range(data.n_event)
         ]
     )
@@ -46,7 +48,8 @@ def growth_budget(data, cfg, groups: dict[str, float]) -> dict[str, float | list
     growth = np.gradient(areas, times)
     latent_power = fluid.rho_v * growth * depth * fluid.h_lv
     footprint_power = float(exp.q_wall_W_cm2) * 1e4 * areas
-    implied = np.minimum(1.0, latent_power / np.maximum(footprint_power, 1e-12))
+    # A frame that shrinks needs no film at all: the share is clipped to [0, 1].
+    implied = np.clip(latent_power / np.maximum(footprint_power, 1e-12), 0.0, 1.0)
     return {
         "latent_power_mW": (latent_power * 1e3).tolist(),
         "footprint_power_mW": (footprint_power * 1e3).tolist(),
