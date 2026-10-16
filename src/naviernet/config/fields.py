@@ -598,6 +598,16 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "evaluation.audit_scan_times",
+        "Audit scan instants",
+        "int",
+        *_GATE,
+        help="instants across the whole event the residuals and the flux are scanned at; 0 skips",
+        lo=0,
+        hi=1001,
+        advanced=True,
+    ),
+    FieldSpec(
         "evaluation.acceptance.seed_corr_min",
         "Seed agreement",
         "float",
@@ -669,6 +679,19 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         unit="L_ref",
         lo=_TOLERANCE[0],
         hi=_TOLERANCE[1],
+    ),
+    FieldSpec(
+        "evaluation.acceptance.jump_px_max",
+        "Shape change the jump asks for",
+        "float",
+        *_GATE,
+        help=(
+            "the Young-Laplace mismatch on the front as the shape change that would remove "
+            "it; its 90th percentile may not exceed this many pixels"
+        ),
+        unit="px",
+        lo=0.0,
+        hi=1e3,
     ),
 )
 

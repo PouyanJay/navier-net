@@ -770,6 +770,12 @@ class AcceptanceConfig:
     iou_min: float = 0.85
     iou_drop_max: float = 0.05
     nose_tol: float = 0.1
+    # Where the frozen (or fitted) shape blocks the physics: the Young-Laplace
+    # mismatch on the front, expressed as the shape change it would take to
+    # remove it, in camera pixels. The 90th percentile over the front and the
+    # event may not exceed this: within it the measured outline and the
+    # physics agree to the measurement's own resolution.
+    jump_px_max: float = 2.0
 
 
 @dataclass
@@ -782,6 +788,12 @@ class EvaluationConfig:
     audit: bool = True
     audit_nx: int = 129
     audit_ny: int = 49
+    # Instants scanned across the whole event window (not only the camera
+    # frames) for the residuals, the flux balance and the jump condition, on a
+    # grid half the audit's in each direction. A field can satisfy the physics
+    # at the instants it was trained on and violate it between them; this is
+    # what sees it. 0 skips the scan.
+    audit_scan_times: int = 61
     acceptance: AcceptanceConfig = field(default_factory=AcceptanceConfig)
 
 

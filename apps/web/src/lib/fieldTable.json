@@ -764,6 +764,23 @@
     "default": 49
   },
   {
+    "key": "evaluation.audit_scan_times",
+    "label": "Audit scan instants",
+    "kind": "int",
+    "section": "acceptance",
+    "owner": "override",
+    "help": "instants across the whole event the residuals and the flux are scanned at; 0 skips",
+    "unit": "",
+    "options": [],
+    "lo": 0,
+    "hi": 1001,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "audit_scan_times",
+    "default": 61
+  },
+  {
     "key": "evaluation.acceptance.seed_corr_min",
     "label": "Seed agreement",
     "kind": "float",
@@ -898,5 +915,22 @@
     "advanced": false,
     "name": "nose_tol",
     "default": 0.1
+  },
+  {
+    "key": "evaluation.acceptance.jump_px_max",
+    "label": "Shape change the jump asks for",
+    "kind": "float",
+    "section": "acceptance",
+    "owner": "override",
+    "help": "the Young-Laplace mismatch on the front as the shape change that would remove it; its 90th percentile may not exceed this many pixels",
+    "unit": "px",
+    "options": [],
+    "lo": 0.0,
+    "hi": 1000.0,
+    "optional": false,
+    "baked": false,
+    "advanced": false,
+    "name": "jump_px_max",
+    "default": 2.0
   }
 ]
