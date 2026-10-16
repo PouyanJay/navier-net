@@ -15,10 +15,16 @@ evaluated checkpoint at every event frame:
    a uniform grid, with the per-time-chunk table training logged alongside.
 3. **Flux balance.** The axial volume flux against the inlet flux plus the
    vapour created upstream, at every station.
-4. **Heat budget.** The latent power the source implies, the latent power the
-   interface flux implies, the latent power the measured growth needs, and the
-   heaters' input, all in milliwatts.
+4. **Heat budget.** The latent power the source implies (the footprint film
+   source and the outline flux, and their sum), the latent power the measured
+   growth needs, and the wall flux's input under the liquid and under the
+   footprint, all in milliwatts.
 5. **Interface conditions** per side of the front.
+6. **Outline.** The IoU against the mask at every frame, held above a floor
+   and within a tolerance of the warm-up's own fit (recorded in the checkpoint
+   at the step the physics engaged), and the nose position against the
+   measured nose. The images are the measurement: a run that fails here is
+   rejected whatever its residuals say.
 
 The seed-ensemble test needs several runs and lives in
 ``scripts/audit_ensemble.py``, which reads the field snapshots this module
@@ -33,7 +39,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from naviernet.physics import heating, mass_balance, registry
+from naviernet.physics import mass_balance, registry
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.residuals import (
     interface_mass_flux,
@@ -179,9 +185,12 @@ def _measured_growth_rate(data, row: int) -> float:
 
 
 def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGrid) -> dict:
-    """Latent power implied by the source, by the interface flux (sharp thermal
-    model), and needed by the measured growth; the heaters' input into the
-    liquid; and the spread between the latent estimates. All in milliwatts."""
+    """The latent power the source implies, its two parts under the sharp
+    thermal model (the footprint film source and the outline flux), the latent
+    power the measured growth needs, the wall flux's input under the liquid and
+    under the footprint, and the spread between the estimates of the latent
+    power: the source's integral, the growth's need and the parts' sum. All in
+    milliwatts."""
     fluid, exp = cfg.fluid, cfg.experiment
     length = cfg.scales.L_ref_um * 1e-6
     depth = exp.channel_height_um * 1e-6
@@ -190,31 +199,58 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
     liquid = 1.0 - fields["alpha"]
 
     specific_volume = 1.0 / fluid.rho_v - 1.0 / fluid.rho_l
-    mass_from_source = _integral(fields["s"], grid) * length * depth * speed / specific_volume
+    # A dimensionless source integral to the latent power its vapour volume cost.
+    to_latent_mW = length * depth * speed / specific_volume * fluid.h_lv * 1e3
     growth = _measured_growth_rate(data, row) * length**2 / t_ref
-    scale = model.q_wall_scale
-    scale = float(scale) if isinstance(scale, float) else float(scale.detach())
-    background = float(exp.q_wall_W_cm2) * 1e4 * scale * _integral(liquid, grid) * length**2
+    wall = float(exp.q_wall_W_cm2) * 1e4
     budget = {
-        "latent_from_source_mW": mass_from_source * fluid.h_lv * 1e3,
+        "latent_from_source_mW": _integral(fields["s"], grid) * to_latent_mW,
         "latent_for_growth_mW": fluid.rho_v * growth * depth * fluid.h_lv * 1e3,
-        "background_heater_mW": background * 1e3,
+        "wall_into_liquid_mW": wall * _integral(liquid, grid) * length**2 * 1e3,
+        "wall_under_footprint_mW": wall * _integral(fields["alpha"], grid) * length**2 * 1e3,
     }
-    if "q_cavity_star" in groups and model.heater_centre is not None:
-        points = torch.tensor(_points(grid, float(data.t[row])), device=_device(model))
-        disk = heating.heater_footprint(points, groups, model.heater_centre).cpu().numpy()
-        disk = disk.reshape(len(grid.ys), len(grid.xs))
-        cavity = float(exp.q_cavity_W_cm2) * 1e4 * _integral(disk * liquid, grid) * length**2
-        budget["cavity_heater_mW"] = cavity * 1e3
+    estimates = [budget["latent_from_source_mW"], budget["latent_for_growth_mW"]]
     if getattr(model, "thermal_model", "legacy") == "sharp":
         t_row = torch.tensor(float(data.t[row]), device=_device(model))
         flux, weights, _ = model._front_flux(t_row, None)
         along_front = float((flux * weights).sum().detach())
         budget["latent_from_flux_mW"] = fluid.k_l * groups["dT_ref"] * depth * along_front * 1e3
-    latent = [budget[k] for k in budget if k.startswith("latent")]
+        budget["latent_from_footprint_mW"] = 0.0
+        if getattr(model, "footprint_evaporation", False):
+            points = torch.tensor(_points(grid, float(data.t[row])), device=_device(model))
+            footprint = model.footprint_source(points).detach().cpu().numpy()
+            footprint = footprint.reshape(len(grid.ys), len(grid.xs))
+            budget["latent_from_footprint_mW"] = _integral(footprint, grid) * to_latent_mW
+            wet = model.wet_fraction
+            budget["wet_fraction"] = (
+                float(wet) if isinstance(wet, float) else float(wet.detach())
+            )
+        estimates.append(budget["latent_from_flux_mW"] + budget["latent_from_footprint_mW"])
     reference = max(abs(budget["latent_for_growth_mW"]), 1e-9)
-    budget["spread"] = float((max(latent) - min(latent)) / reference)
+    budget["spread"] = float((max(estimates) - min(estimates)) / reference)
     return budget
+
+
+def outline_agreement(cfg, model, data, row: int) -> dict:
+    """The frame's IoU against its mask, and the nose position of the predicted
+    and the measured outline with their distance, in L_ref units. A predicted
+    outline with no vapour has no nose; its error is reported infinite."""
+    from naviernet.evaluation import frame_iou, front_position, predict_alpha
+
+    stride, threshold = int(cfg.evaluation.stride), float(cfg.evaluation.threshold)
+    xs = data.x[::stride]
+    x_anchor = float(data.pin_anchor[0])
+    predicted = predict_alpha(model, data, float(data.t[row]), stride) > threshold
+    measured = data.alpha[row, ::stride, ::stride] > threshold
+    nose_model = front_position(predicted, xs, x_anchor)
+    nose_measured = front_position(measured, xs, x_anchor)
+    error = abs(nose_model - nose_measured)
+    return {
+        "iou": frame_iou(cfg, model, data, row),
+        "nose_model": None if np.isnan(nose_model) else float(nose_model),
+        "nose_measured": None if np.isnan(nose_measured) else float(nose_measured),
+        "nose_error": float("inf") if np.isnan(error) else float(error),
+    }
 
 
 def front_conditions(model, groups, t: float) -> dict | None:
@@ -266,13 +302,15 @@ def audit_frame(
         "flux": flux_balance(cfg, model, data, groups, t),
         "heat": heat_budget(cfg, model, data, groups, row, fields, grid),
         "front": front_conditions(model, groups, t),
+        "outline": outline_agreement(cfg, model, data, row),
     }
     return record, fields
 
 
-def _verdicts(frames: list[dict], acceptance) -> dict:
+def _verdicts(frames: list[dict], acceptance, warmup_iou: dict[str, float] | None) -> dict:
     """Pass/fail against the configured thresholds, with the worst value behind
-    each verdict so a failure says by how much."""
+    each verdict so a failure says by how much. A verdict carries ``max`` when
+    the worst value must stay below it and ``min`` when it must stay above."""
     hidden = [name for name in FIELDS if name != "alpha"]
     mirror_worst = max(
         f["mirror"][name] for f in frames for name in hidden if name in f["mirror"]
@@ -280,6 +318,52 @@ def _verdicts(frames: list[dict], acceptance) -> dict:
     residual_worst = max((v for f in frames for v in f["residual_rms"].values()), default=0.0)
     flux_worst = max(f["flux"]["max_abs"] for f in frames)
     heat_worst = max(f["heat"]["spread"] for f in frames)
+    verdicts = _outline_verdicts(frames, acceptance, warmup_iou)
+    verdicts.update(
+        _verdicts_of_fields(mirror_worst, residual_worst, flux_worst, heat_worst, acceptance)
+    )
+    return verdicts
+
+
+def _outline_verdicts(
+    frames: list[dict], acceptance, warmup_iou: dict[str, float] | None
+) -> dict:
+    """The outline against the masks: the lowest per-frame IoU above the floor,
+    the largest drop below the warm-up's fit of the same frame (when the run
+    recorded one), and the largest nose error."""
+    iou_worst = min(f["outline"]["iou"] for f in frames)
+    nose_worst = max(f["outline"]["nose_error"] for f in frames)
+    verdicts = {
+        "outline": {
+            "worst": iou_worst,
+            "min": float(acceptance.iou_min),
+            "pass": iou_worst >= float(acceptance.iou_min),
+        },
+        "nose": {
+            "worst": nose_worst,
+            "max": float(acceptance.nose_tol),
+            "pass": nose_worst <= float(acceptance.nose_tol),
+        },
+    }
+    if warmup_iou:
+        drops = [
+            float(warmup_iou[str(f["frame"])]) - f["outline"]["iou"]
+            for f in frames
+            if str(f["frame"]) in warmup_iou
+        ]
+        if drops:
+            drop_worst = max(drops)
+            verdicts["outline_drop"] = {
+                "worst": drop_worst,
+                "max": float(acceptance.iou_drop_max),
+                "pass": drop_worst <= float(acceptance.iou_drop_max),
+            }
+    return verdicts
+
+
+def _verdicts_of_fields(
+    mirror_worst, residual_worst, flux_worst, heat_worst, acceptance
+) -> dict:
     return {
         "mirror": {
             "worst": mirror_worst,
@@ -302,6 +386,19 @@ def _verdicts(frames: list[dict], acceptance) -> dict:
             "pass": heat_worst <= acceptance.heat_budget_tol,
         },
     }
+
+
+def warmup_fit(paths: RunPaths) -> dict[str, float] | None:
+    """The per-frame IoU the run reached at the end of its warm-up, as the
+    trainer recorded it in the checkpoint at the step the physics engaged;
+    ``None`` for a run without that record (no warm-up, or an older run)."""
+    if not paths.checkpoint.exists():
+        return None
+    state = torch.load(paths.checkpoint, map_location="cpu", weights_only=False).get(
+        "state", {}
+    )
+    recorded = state.get("warmup_iou")
+    return {str(k): float(v) for k, v in recorded.items()} if recorded else None
 
 
 def audit_run(cfg, model, data, paths: RunPaths) -> dict:
@@ -329,8 +426,12 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
             "residual_rms_max": float(evaluation.acceptance.residual_rms_max),
             "flux_tol": float(evaluation.acceptance.flux_tol),
             "heat_budget_tol": float(evaluation.acceptance.heat_budget_tol),
+            "iou_min": float(evaluation.acceptance.iou_min),
+            "iou_drop_max": float(evaluation.acceptance.iou_drop_max),
+            "nose_tol": float(evaluation.acceptance.nose_tol),
         },
-        "verdicts": _verdicts(frames, evaluation.acceptance),
+        "warmup_iou": warmup_fit(paths),
+        "verdicts": _verdicts(frames, evaluation.acceptance, warmup_fit(paths)),
         "frames": frames,
     }
     paths.audit_json.write_text(json.dumps(report, indent=2))

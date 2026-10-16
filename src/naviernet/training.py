@@ -401,6 +401,35 @@ def _validate_training_config(cfg) -> None:
     _validate_sharpening(tcfg, cfg.model.alpha_eps)
     _validate_boundaries(cfg.model)
     _validate_thermal_training(tcfg, cfg.model)
+    _validate_rebalance_cap(tcfg)
+    _validate_outline_guard(tcfg)
+
+
+def _validate_rebalance_cap(tcfg) -> None:
+    """A negative cap is a typo, not a choice."""
+    if float(getattr(tcfg, "rebalance_max_ratio", 0.0)) < 0.0:
+        raise ValueError(
+            f"training.rebalance_max_ratio={tcfg.rebalance_max_ratio} must be >= 0 "
+            "(0 keeps the fixed ceiling alone)."
+        )
+
+
+def _validate_outline_guard(tcfg) -> None:
+    """The guard's floor is the warm-up's fit, so it needs a warm-up to record one;
+    a drop must be a non-negative tolerance."""
+    every = int(getattr(tcfg, "outline_guard_every", 0))
+    if every < 0:
+        raise ValueError(f"training.outline_guard_every={every} must be >= 0 (0 = off)")
+    if float(getattr(tcfg, "outline_guard_drop", 0.0)) < 0.0:
+        raise ValueError(
+            f"training.outline_guard_drop={tcfg.outline_guard_drop} must be >= 0 (an IoU tolerance)"
+        )
+    if every > 0 and int(tcfg.stage_b_warmup_steps) <= 0:
+        raise ValueError(
+            "training.outline_guard_every holds the run to the IoU its warm-up reached, so it "
+            "needs training.stage_b_warmup_steps > 0 to record that fit; set a warm-up, or "
+            "turn the guard off."
+        )
 
 
 def _validate_thermal_training(tcfg, model_cfg) -> None:
@@ -1355,10 +1384,67 @@ def _release_nose_dof(model) -> None:
     log.info("nose DOF released: w_nose(t) may move")
 
 
-def _clip_gradients(model, tcfg) -> None:
-    """Bound the step a gradient spike can take (``training.grad_clip`` > 0)."""
-    if float(getattr(tcfg, "grad_clip", 0.0)) > 0.0:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), float(tcfg.grad_clip))
+def _clip_gradients(model, tcfg) -> float:
+    """Bound the step a gradient spike can take (``training.grad_clip`` > 0) and
+    return the total gradient norm before any clipping, for the run's record."""
+    limit = float(getattr(tcfg, "grad_clip", 0.0))
+    bound = limit if limit > 0.0 else float("inf")
+    return float(torch.nn.utils.clip_grad_norm_(model.parameters(), bound))
+
+
+class OutlineDrift(RuntimeError):
+    """The outline guard stopped the run: its fit of the masks fell further below
+    the warm-up's than ``training.outline_guard_drop`` allows."""
+
+
+def _outline_fit(cfg, model, data) -> dict[str, float]:
+    """The per-frame IoU against the masks, keyed by camera frame (as strings, so
+    the record survives a round trip through JSON)."""
+    from naviernet.evaluation import iou_report
+
+    report = iou_report(cfg, model, data)
+    return {str(frame): float(iou) for frame, iou in report["iou_per_frame"].items()}
+
+
+def _record_warmup_fit(cfg, model, data, state: dict) -> None:
+    """At the step the physics engages: the warm-up's fit of every frame, the
+    floor the outline guard and the audit's outline verdict hold the run to."""
+    state["warmup_iou"] = _outline_fit(cfg, model, data)
+    log.info(
+        "warm-up fit recorded: IoU mean %.3f, min %.3f",
+        float(np.mean(list(state["warmup_iou"].values()))),
+        min(state["warmup_iou"].values()),
+    )
+
+
+def _outline_drifted(cfg, model, data, state: dict, step: int, stage_b_keys) -> bool:
+    """The outline guard (``training.outline_guard_every``): every so many steps
+    after the warm-up, measure the fit and append it to the run's record; True
+    when its mean has fallen more than ``outline_guard_drop`` below the warm-up's."""
+    tcfg = cfg.training
+    every = int(getattr(tcfg, "outline_guard_every", 0))
+    if every <= 0 or step % every or not stage_b_keys or step <= tcfg.stage_b_warmup_steps:
+        return False
+    reference = state.get("warmup_iou")
+    if not reference:
+        return False
+    fit = _outline_fit(cfg, model, data)
+    mean = float(np.mean(list(fit.values())))
+    floor = float(np.mean(list(reference.values()))) - float(tcfg.outline_guard_drop)
+    record = {"step": step, "iou_mean": mean, "iou_min": min(fit.values()), "floor": floor}
+    state.setdefault("outline_hist", []).append(record)
+    log.info("step %5d | outline guard: IoU mean %.3f (floor %.3f)", step, mean, floor)
+    return mean < floor
+
+
+def _drift_message(state: dict) -> str:
+    last = state["outline_hist"][-1]
+    return (
+        f"outline guard stopped the run at step {last['step']}: IoU mean {last['iou_mean']:.3f} "
+        f"fell below the floor {last['floor']:.3f} set by the warm-up's fit minus "
+        "training.outline_guard_drop; the checkpoint at this step is kept. The physics "
+        "overrode the images: look at the rebalanced weights and the residuals in the log."
+    )
 
 
 def _engage_thermal_source(model, step: int, tcfg, stage_b_keys: tuple[str, ...]) -> None:
@@ -1407,13 +1493,21 @@ def _rebalance(
     weights: dict[str, float],
     norms: dict[str, float],
     terms: tuple[str, ...] = REBALANCED_TERMS,
+    max_ratio: float = 0.0,
 ) -> None:
-    """Nudge weights so each term's gradient matches the data term's. In place."""
+    """Nudge weights so each term's gradient matches the data term's. In place.
+
+    ``max_ratio`` (``training.rebalance_max_ratio``) caps every rebalanced weight
+    at that multiple of the data weight, under the fixed ceiling: the images are
+    the measurement, and no physics term may outweigh them by more than it. Zero
+    keeps the fixed ceiling alone.
+    """
     reference = norms["data"] * weights["data"]
+    ceiling = 1e3 if max_ratio <= 0.0 else min(1e3, max_ratio * weights["data"])
     for name in terms:
         target = reference / norms[name]
         # Half-step towards the target: full steps oscillate.
-        weights[name] = float(np.clip(0.5 * weights[name] + 0.5 * target, 1e-2, 1e3))
+        weights[name] = float(np.clip(0.5 * weights[name] + 0.5 * target, 1e-2, ceiling))
 
 
 def train(
@@ -1462,8 +1556,8 @@ def train(
     thermal = _sharp_thermal(cfg)
     if thermal:
         log.info(
-            "background flux by energy balance: %s",
-            _fmt(heating.estimate_background_flux(data, cfg, groups)),
+            "energy budget of the measured growth: %s",
+            _fmt(heating.budget_summary(heating.growth_budget(data, cfg, groups))),
         )
 
     equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
@@ -1602,13 +1696,21 @@ def train(
             and step % tcfg.rebalance_every == 0
             and not _stage_b_engages_at(step, tcfg, stage_b_keys)
         ):
-            _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
+            _rebalance(
+                weights,
+                _gradient_norms(model, losses, opt),
+                rebalanced,
+                float(tcfg.rebalance_max_ratio),
+            )
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
         if _stage_b_engages_at(step, tcfg, stage_b_keys):
             # Engage Stage-B physics on the interface the warm-up converged, from a
-            # clean optimiser (see _restart_for_stage_b). The nose DOF releases
-            # first, so the fresh optimiser sees it trainable.
+            # clean optimiser (see _restart_for_stage_b). The warm-up's fit is
+            # recorded first (the floor the outline guard and the audit hold the
+            # run to), then the nose DOF releases, so the fresh optimiser sees it
+            # trainable.
+            _record_warmup_fit(cfg, model, data, state)
             _release_nose_dof(model)
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
@@ -1658,10 +1760,15 @@ def train(
             mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
             total = total + float(tcfg.mass_balance_weight) * mass_total
         total.backward()
-        _clip_gradients(model, tcfg)
+        grad_norm = _clip_gradients(model, tcfg)
         opt.step()
         if tcfg.checkpoint_every and step % tcfg.checkpoint_every == 0:
             _checkpoint_mid_run(model, opt, state, weights, plan, cfg, paths, step)
+        if _outline_drifted(cfg, model, data, state, step, stage_b_keys):
+            # Keep the checkpoint at the step the drift was seen, then stop: a
+            # run that has lost the images is not worth the hours left in it.
+            _checkpoint_mid_run(model, opt, state, weights, plan, cfg, paths, step)
+            raise OutlineDrift(_drift_message(state))
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
@@ -1672,6 +1779,7 @@ def train(
             record.update(mass_record)
             record["step"] = step
             record["lr"] = lr
+            record["grad_norm"] = grad_norm
             record.update(_causal_record(plan, step))
             if tcfg.log_chunk_residuals:
                 state.setdefault("chunk_hist", []).append(
@@ -1925,6 +2033,14 @@ def _train_joint(
     """
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if int(getattr(tcfg, "outline_guard_every", 0)) > 0:
+        # The guard measures one dataset's fit against its own warm-up record;
+        # a joint run has one record per dataset and none is threaded yet.
+        raise NotImplementedError(
+            "training.outline_guard_every is single-dataset for now: a joint run has no "
+            "per-dataset warm-up record to hold each series to. Run the guard on one "
+            "series, or turn it off for the joint run."
+        )
     if tcfg.weighting == "rba":
         # RBA needs a per-dataset fixed pool + attention; wired for single-dataset runs
         # first (T2.3), joint runs in T2.5. Raise rather than silently use gradnorm.
@@ -2041,7 +2157,12 @@ def _train_joint(
         if step % tcfg.rebalance_every == 0 and not _stage_b_engages_at(
             step, tcfg, stage_b_keys
         ):
-            _rebalance(weights, _gradient_norms(model, losses, opt), rebalanced)
+            _rebalance(
+                weights,
+                _gradient_norms(model, losses, opt),
+                rebalanced,
+                float(tcfg.rebalance_max_ratio),
+            )
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
         if _stage_b_engages_at(step, tcfg, stage_b_keys):

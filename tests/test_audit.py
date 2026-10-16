@@ -27,14 +27,17 @@ SHARP_THERMAL = [
     "model.sharp_interface=true",
     "model.thermal_model=sharp",
     "model.source_mode=thermal",
+    "model.footprint_evaporation=true",
     "experiment.T_inlet_C=56.6",
     "experiment.T_init_C=58.0",
-    "experiment.q_cavity_W_cm2=2.0",
-    "experiment.heater_radius_um=100",
+    "experiment.wet_fraction_mode=fit",
+    "experiment.wet_fraction=0.8",
     "training.collocation_time_bins=2",
+    "training.stage_b_warmup_steps=1",
     "evaluation.audit_nx=33",
     "evaluation.audit_ny=17",
 ]
+VERDICTS = {"mirror", "residuals", "flux", "heat", "outline", "outline_drop", "nose"}
 
 
 def _grid_fields():
@@ -91,8 +94,12 @@ def test_audit_of_a_trained_run_reports_every_test_with_verdicts(tmp_path):
     report = audit_run(cfg, model, data, paths)
 
     assert paths.audit_json.exists() and paths.audit_fields_npz.exists()
-    assert set(report["verdicts"]) == {"mirror", "residuals", "flux", "heat"}
+    assert set(report["verdicts"]) == VERDICTS
     assert all(isinstance(v["pass"], bool) for v in report["verdicts"].values())
+    assert set(report["warmup_iou"]) == {str(f) for f in data.frame_numbers[: data.n_event]}
+    outline = report["verdicts"]["outline"]
+    assert outline["pass"] == (outline["worst"] >= outline["min"])
+    assert report["verdicts"]["nose"]["max"] == cfg.evaluation.acceptance.nose_tol
     frame = report["frames"][1]
     assert set(frame["mirror"]) == {"alpha", "u", "v", "p", "T", "s"}
     assert {"brinkman", "energy_liquid"} & set(frame["residual_rms"]) or "darcy" in frame[
@@ -105,9 +112,18 @@ def test_audit_of_a_trained_run_reports_every_test_with_verdicts(tmp_path):
         "latent_from_source_mW",
         "latent_for_growth_mW",
         "latent_from_flux_mW",
+        "latent_from_footprint_mW",
+        "wall_into_liquid_mW",
+        "wall_under_footprint_mW",
+        "wet_fraction",
         "spread",
     } <= set(frame["heat"])
+    assert frame["heat"]["latent_from_footprint_mW"] > 0, (
+        "the film under the capsule evaporates"
+    )
     assert frame["front"] is not None and frame["front"]["kinematic_rms_upper"] >= 0
+    assert 0.0 <= frame["outline"]["iou"] <= 1.0
+    assert frame["outline"]["nose_error"] >= 0.0
     assert all(np.isfinite(v) for v in frame["mirror"].values())
     snapshots = np.load(paths.audit_fields_npz)
     assert f"{frame['frame']}/u" in snapshots.files
@@ -122,7 +138,9 @@ def test_evaluate_writes_the_audit_verdicts_into_metrics(tmp_path):
 
     metrics = evaluate(cfg, model, data, paths)
 
-    assert set(metrics["audit"]) == {"mirror", "residuals", "flux", "heat"}
+    assert set(metrics["audit"]) == VERDICTS
+    assert metrics["heating"]["wet_fraction_mode"] == "fit"
+    assert 0.0 < metrics["heating"]["wet_fraction"] < 1.0
     assert json.loads(paths.metrics_json.read_text())["audit"] == metrics["audit"]
 
 

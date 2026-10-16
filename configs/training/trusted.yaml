@@ -38,12 +38,30 @@ weights:
   brinkman: 1.0
   vapour_potential: 1.0
   energy_liquid: 1.0
-  theta_bc: 1.0
+  # The series' measured temperatures (the liquid at 58 C before the first
+  # frame, the inlet) at the data term's weight, and never rebalanced: the
+  # first full-chain benchmark let the physics erase the initial superheat.
+  theta_bc: 10.0
   evap_flux: 1.0
 
 rebalance_every: 500
+# No rebalanced physics weight may exceed ten times the data weight: the images
+# are the measurement. Unbounded, the first full-chain benchmark ratcheted
+# Brinkman to 1000 and energy to 253 against data at 10, and the outline
+# drifted off the masks while every residual improved.
+rebalance_max_ratio: 10.0
+# One rebalance spike must not diverge the run (seed 2 of the first benchmark
+# took every residual up four orders in the 500 steps after the energy weight
+# jumped to 80). Measured on Series-1, the step's total gradient norm runs 6 to
+# 22 after the physics engages, so the bound only ever touches a spike.
+grad_clip: 50.0
 curriculum_steps: 0
 stage_b_warmup_steps: 3000
+# The outline guard: every 500 steps after the warm-up the fit of the masks is
+# measured; a run whose mean IoU has fallen more than 0.05 below the warm-up's
+# stops there with its checkpoint, instead of finishing as a failure.
+outline_guard_every: 500
+outline_guard_drop: 0.05
 
 causal_weighting: true
 causal_time_chunks: 16
@@ -52,6 +70,12 @@ causal_gate_min_weight: 0.99
 log_chunk_residuals: true
 
 root_supervision: true
+
+# The growth RATE as a measurement: the front's own normal speed against the
+# velocity measured from consecutive masks, and the nose apex against its
+# measured displacement. Ties the vapour production to the observed growth and
+# removes the no-evaporation solution the first benchmark found.
+front_velocity: true
 
 # WP2: the cross-section mass balance, scored on a fixed quadrature.
 mass_balance: true
