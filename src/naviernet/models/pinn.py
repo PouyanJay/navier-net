@@ -280,6 +280,9 @@ class BubblePINN(nn.Module):
         self.theta_parameterization = str(getattr(model_cfg, "theta_parameterization", "gated"))
         self.theta_gate_width = float(getattr(model_cfg, "theta_gate_width", 0.005))
         self.source_mode = str(getattr(model_cfg, "source_mode", "free"))
+        # Evaluation and every run without a warm-up read the thermal source from
+        # the first step; the trainer clears this through a warm-up (see source).
+        self.thermal_source_engaged = True
         kernel = getattr(model_cfg, "source_kernel_width", None)
         self.source_kernel_width = float(kernel if kernel is not None else model_cfg.alpha_eps)
         for name, value, allowed in (
@@ -846,8 +849,17 @@ class BubblePINN(nn.Module):
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The volumetric dilatation from phase change: the free ``s`` network, or
         under ``model.source_mode=thermal`` the interface flux spread over the
-        band (:meth:`thermal_source`)."""
-        if self.source_mode == "thermal":
+        band (:meth:`thermal_source`).
+
+        The thermal source is held back while :attr:`thermal_source_engaged` is
+        False: the trainer clears it through the Stage-A warm-up, when the
+        energy equation and the temperature conditions are gated off, so the
+        continuity residual cannot shape the temperature on its own through the
+        flux (the first full-chain benchmark drove it to the thousands that way
+        before the thermal physics ever engaged). The free ``s`` carries the
+        warm-up instead, exactly as the legacy Stage A does.
+        """
+        if self.source_mode == "thermal" and self.thermal_source_engaged:
             return self.thermal_source(x, c)
         return self._even(self.nets["s"], x, c)
 

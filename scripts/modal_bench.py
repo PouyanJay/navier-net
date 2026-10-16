@@ -89,6 +89,11 @@ def _pack(run_name: str) -> bytes:
     return buffer.getvalue()
 
 
+# A save every this many steps, so a container lost mid-run resumes from its
+# last checkpoint on the volume instead of from nothing.
+CHECKPOINT_EVERY = 1000
+
+
 def _common(run_name: str, seed: int, gpu_steps: list[str]) -> list[str]:
     return [
         f"dataset={DATASET}",
@@ -96,6 +101,7 @@ def _common(run_name: str, seed: int, gpu_steps: list[str]) -> list[str]:
         f"run_name={run_name}",
         f"training.seed={seed}",
         "training.device=cuda",
+        f"training.checkpoint_every={CHECKPOINT_EVERY}",
         *gpu_steps,
     ]
 
@@ -130,13 +136,21 @@ def time_steps(seed: int = 0) -> float:
 @app.function(
     image=image, gpu=GPU, cpu=CPUS, memory=8192, timeout=TIMEOUT_S, volumes={OUTPUTS: volume}
 )
-def bench(seed: int) -> tuple[str, bytes]:
-    """Train and evaluate (with the audit) one seed; returns its run directory."""
-    run_name = f"{RUN_PREFIX}-s{seed}"
+def bench(seed: int, prefix: str = RUN_PREFIX) -> tuple[str, bytes, str | None]:
+    """Train and evaluate (with the audit) one seed; returns its run directory
+    and, when the evaluate stage failed, the failure, so a trained checkpoint
+    is never lost to an evaluation bug (it can be audited locally). A run name
+    already on the volume resumes from its last checkpoint."""
+    run_name = f"{prefix}-s{seed}"
     _cli(_common(run_name, seed, ["stage=train"]))
-    _cli(_common(run_name, seed, ["stage=evaluate"]))
     volume.commit()
-    return run_name, _pack(run_name)
+    failure = None
+    try:
+        _cli(_common(run_name, seed, ["stage=evaluate"]))
+    except subprocess.CalledProcessError as exc:
+        failure = f"evaluate stage failed: {exc}"
+    volume.commit()
+    return run_name, _pack(run_name), failure
 
 
 def _unpack(run_name: str, payload: bytes) -> Path:
@@ -150,8 +164,11 @@ def _unpack(run_name: str, payload: bytes) -> Path:
 
 
 @app.local_entrypoint()
-def main(mode: str = "time", seeds: str = "0,1,2", gpu: str = GPU) -> None:
-    """``time`` measures the per-step cost; ``bench`` runs the seeds in parallel."""
+def main(
+    mode: str = "time", seeds: str = "0,1,2", gpu: str = GPU, prefix: str = RUN_PREFIX
+) -> None:
+    """``time`` measures the per-step cost; ``bench`` runs the seeds in parallel
+    under ``prefix`` (a new prefix for a new configuration; the same one resumes)."""
     # The functions as declared, unless another card is asked for: a function
     # re-optioned at run time is a separate object, and only the declared one
     # has been seen to dispatch a `.map` promptly.
@@ -166,9 +183,18 @@ def main(mode: str = "time", seeds: str = "0,1,2", gpu: str = GPU) -> None:
     if mode != "bench":
         raise SystemExit("mode must be 'time' or 'bench'")
     wanted = [int(s) for s in seeds.split(",") if s.strip()]
-    print(f"dispatching seeds {wanted} on {gpu}", flush=True)
-    for run_name, payload in runner.map(wanted, order_outputs=False):
+    print(f"dispatching seeds {wanted} on {gpu} as {prefix}-s*", flush=True)
+    # One seed's failure must not end the app and cancel the others mid-run.
+    for result in runner.map(
+        wanted, kwargs={"prefix": prefix}, order_outputs=False, return_exceptions=True
+    ):
+        if isinstance(result, Exception):
+            print(f"a seed failed: {result}", flush=True)
+            continue
+        run_name, payload, failure = result
         print(f"downloaded {_unpack(run_name, payload)}", flush=True)
+        if failure:
+            print(f"{run_name}: {failure}; audit it locally", flush=True)
 
 
 if __name__ == "__main__":

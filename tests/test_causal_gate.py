@@ -158,3 +158,29 @@ def test_one_pass_chunk_losses_equal_the_per_chunk_evaluation():
     assert one_pass.shape == (4,)
     assert torch.allclose(one_pass, per_chunk, rtol=1e-5, atol=1e-7)
     assert one_pass.requires_grad
+
+
+def test_periodic_checkpoints_record_the_step_they_were_written_at(tmp_path, monkeypatch):
+    """With ``checkpoint_every`` the run saves on the way, each save carrying its
+    step count, so a run cut short resumes from its last save."""
+    from naviernet import training
+
+    cfg, paths = staged_run(
+        tmp_path, ["training.steps=3", "training.checkpoint_every=1", "training.log_every=1"]
+    )
+    written: list[int] = []
+    original = training._save_checkpoint
+
+    def record(model, opt, state, cfg, paths):
+        written.append(int(state["done"]))
+        original(model, opt, state, cfg, paths)
+
+    monkeypatch.setattr(training, "_save_checkpoint", record)
+
+    training.train(cfg, paths)
+
+    assert written == [1, 2, 3, 3], "every step on the way, then the final save"
+    assert (
+        torch.load(paths.checkpoint, map_location="cpu", weights_only=False)["state"]["done"]
+        == 3
+    )

@@ -301,3 +301,39 @@ def test_thermal_source_requires_binned_collocation_times(tmp_path):
 
     with pytest.raises(ValueError, match="collocation_time_bins"):
         train(cfg, paths)
+
+
+def test_the_thermal_source_waits_for_the_physics_to_engage(tmp_path):
+    """Through the warm-up the free source carries continuity; the thermal
+    source takes over at the step the Stage-B physics engages, and evaluation
+    (no trainer) reads the thermal source from the start."""
+    from naviernet.training import _engage_thermal_source
+
+    cfg, paths = staged_capsule_run(
+        tmp_path,
+        [
+            *SHARP_THERMAL,
+            *THERMAL_SERIES,
+            "model.source_mode=thermal",
+            "training.stage_b_warmup_steps=3",
+        ],
+    )
+    data = BubbleDataset(cfg, paths)
+    torch.manual_seed(0)
+    model = BubblePINN(cfg, geometry=_geometry_priors(cfg, data))
+    x = torch.rand(16, 3, requires_grad=True)
+    assert model.thermal_source_engaged, "evaluation reads the thermal source"
+    with torch.enable_grad():
+        thermal = model.thermal_source(x).detach()
+
+    _engage_thermal_source(model, 3, cfg.training, ("energy_liquid",))
+    held_back = model.source(x).detach()
+    _engage_thermal_source(model, 4, cfg.training, ("energy_liquid",))
+    with torch.enable_grad():
+        engaged = model.source(x).detach()
+
+    assert not torch.allclose(held_back, thermal), "the warm-up source is the free net"
+    assert torch.allclose(held_back, model._even(model.nets["s"], x, None).detach())
+    assert torch.allclose(engaged, thermal)
+    _engage_thermal_source(model, 1, cfg.training, ())  # no Stage-B terms: no warm-up
+    assert model.thermal_source_engaged

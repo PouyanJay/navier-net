@@ -1355,6 +1355,25 @@ def _release_nose_dof(model) -> None:
     log.info("nose DOF released: w_nose(t) may move")
 
 
+def _engage_thermal_source(model, step: int, tcfg, stage_b_keys: tuple[str, ...]) -> None:
+    """Hold the thermal source back through the Stage-A warm-up.
+
+    While the Stage-B terms are gated to zero the energy equation and the
+    temperature conditions are not in the loss, so a source read from the
+    temperature's gradient would let continuity alone shape the temperature:
+    the first full-chain benchmark's temperature reached the thousands during
+    its warm-up and the physics never recovered. The free ``s`` carries the
+    warm-up, as in the legacy Stage A, and the thermal source takes over at the
+    step the physics engages. A model without the attribute (a joint view) is
+    left alone; the joint trainer refuses the thermal model anyway.
+    """
+    if not hasattr(model, "thermal_source_engaged"):
+        return
+    model.thermal_source_engaged = not (
+        bool(stage_b_keys) and step <= tcfg.stage_b_warmup_steps
+    )
+
+
 def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     """True only at the one step the warm-up hands off to Stage-B physics -- where
     the optimiser is restarted. Never true when the warm-up is disabled
@@ -1552,6 +1571,7 @@ def train(
                 cfg,
             )
 
+        _engage_thermal_source(model, step, tcfg, stage_b_keys)
         ctx = registry.LossContext(
             model,
             x_coll,
@@ -1633,6 +1653,8 @@ def train(
             total = total + float(tcfg.mass_balance_weight) * mass_total
         total.backward()
         opt.step()
+        if tcfg.checkpoint_every and step % tcfg.checkpoint_every == 0:
+            _checkpoint_mid_run(model, opt, state, weights, plan, cfg, paths, step)
 
         if step % tcfg.log_every == 0 or step == first_step:
             record = {name: float(loss.detach()) for name, loss in losses.items()}
@@ -1672,6 +1694,13 @@ def train(
         # Fingerprint of the FINAL pool (RAR mutates it in-loop), so a resume can be
         # checked to have restored the identical pool the saved attention aligns to.
         state["rba_pool_sig"] = float(x_pool.sum().item())
+    _save_checkpoint(model, opt, state, cfg, paths)
+    return model, data, state
+
+
+def _save_checkpoint(model, opt, state: dict, cfg, paths: RunPaths) -> None:
+    """Write the checkpoint atomically (a crash mid-write leaves the previous one)."""
+    tmp = paths.checkpoint.with_suffix(".pt.tmp")
     torch.save(
         {
             "model": model.state_dict(),
@@ -1680,10 +1709,23 @@ def train(
             "alpha_eps": float(model.eps),
             **_architecture_record(cfg),
         },
-        paths.checkpoint,
+        tmp,
     )
+    tmp.replace(paths.checkpoint)
     log.info("checkpoint written to %s (%d steps total)", paths.checkpoint, state["done"])
-    return model, data, state
+
+
+def _checkpoint_mid_run(model, opt, state: dict, weights, plan: _LossPlan, cfg, paths, step):
+    """The periodic save (``training.checkpoint_every``): the state as the final
+    save would record it at this step, so a resume continues from here. The RBA
+    attention is not carried mid-run; a resume re-initialises it."""
+    snapshot = {
+        **state,
+        "done": step,
+        "w": weights,
+        "causal_index": plan.causal.index if plan.causal is not None else 0,
+    }
+    _save_checkpoint(model, opt, snapshot, cfg, paths)
 
 
 @dataclass

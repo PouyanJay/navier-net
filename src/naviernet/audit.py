@@ -89,6 +89,12 @@ def audit_grid(data, nx: int, ny: int) -> AuditGrid:
     )
 
 
+def _device(model) -> torch.device:
+    """Where the model's parameters live: the audit's tensors go there too, so
+    a checkpoint trained on a GPU is audited on it."""
+    return next(model.parameters()).device
+
+
 def _points(grid: AuditGrid, t: float) -> np.ndarray:
     grid_x, grid_y = np.meshgrid(grid.xs, grid.ys)
     return np.column_stack([grid_x.ravel(), grid_y.ravel(), np.full(grid_x.size, t)]).astype(
@@ -102,7 +108,7 @@ def fields_on_grid(model, grid: AuditGrid, t: float) -> dict[str, np.ndarray]:
     Evaluated with autograd on: a thermal source differentiates the temperature
     at the front to get its flux, so it cannot be read under ``no_grad``.
     """
-    points = torch.tensor(_points(grid, t))
+    points = torch.tensor(_points(grid, t), device=_device(model))
     shape = (len(grid.ys), len(grid.xs))
     with torch.enable_grad():
         u, v = model.velocity(points)
@@ -122,7 +128,9 @@ def residual_rms_on_grid(
     sums = dict.fromkeys((eq.id for eq in equations), 0.0)
     with torch.enable_grad():
         for start in range(0, len(points), CHUNK):
-            chunk = torch.tensor(points[start : start + CHUNK], requires_grad=True)
+            chunk = torch.tensor(
+                points[start : start + CHUNK], device=_device(model), requires_grad=True
+            )
             ctx = registry.LossContext(model, chunk, groups=groups)
             for eq in equations:
                 sums[eq.id] += float(eq.pointwise(ctx).detach().sum())
@@ -132,13 +140,14 @@ def residual_rms_on_grid(
 def flux_balance(cfg, model, data, groups, t: float) -> dict:
     """The normalised axial-flux defect at every station at ``t``, and its worst
     value upstream of the root, where the flux must simply equal the inlet's."""
+    device = _device(model)
     plan = mass_balance.build_plan(
         data.domain,
         (data.y_lo, data.y_hi),
         groups,
         cfg.training,
-        "cpu",
-        at_times=torch.tensor([t], dtype=torch.float32),
+        device,
+        at_times=torch.tensor([t], dtype=torch.float32, device=device),
     )
     with torch.enable_grad():  # the thermal source needs autograd for its flux
         defect = mass_balance.axial_flux_defect(model, plan).detach().cpu().numpy()[0]
@@ -192,13 +201,14 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
         "background_heater_mW": background * 1e3,
     }
     if "q_cavity_star" in groups and model.heater_centre is not None:
-        points = torch.tensor(_points(grid, float(data.t[row])))
-        disk = heating.heater_footprint(points, groups, model.heater_centre).numpy()
+        points = torch.tensor(_points(grid, float(data.t[row])), device=_device(model))
+        disk = heating.heater_footprint(points, groups, model.heater_centre).cpu().numpy()
         disk = disk.reshape(len(grid.ys), len(grid.xs))
         cavity = float(exp.q_cavity_W_cm2) * 1e4 * _integral(disk * liquid, grid) * length**2
         budget["cavity_heater_mW"] = cavity * 1e3
     if getattr(model, "thermal_model", "legacy") == "sharp":
-        flux, weights, _ = model._front_flux(torch.tensor(float(data.t[row])), None)
+        t_row = torch.tensor(float(data.t[row]), device=_device(model))
+        flux, weights, _ = model._front_flux(t_row, None)
         along_front = float((flux * weights).sum().detach())
         budget["latent_from_flux_mW"] = fluid.k_l * groups["dT_ref"] * depth * along_front * 1e3
     latent = [budget[k] for k in budget if k.startswith("latent")]
@@ -217,7 +227,7 @@ def front_conditions(model, groups, t: float) -> dict | None:
     model_cfg = model.cfg.model
     with torch.enable_grad():
         front = model.front(
-            torch.tensor([[t]], dtype=torch.float32),
+            torch.tensor([[t]], dtype=torch.float32, device=_device(model)),
             int(model_cfg.front_body_samples),
             int(model_cfg.front_cap_samples),
         )
@@ -227,10 +237,10 @@ def front_conditions(model, groups, t: float) -> dict | None:
             else None
         )
         kinematic = (
-            kinematic_residual(model, front, mass_flux=mass_flux).detach().numpy().ravel()
+            kinematic_residual(model, front, mass_flux=mass_flux).detach().cpu().numpy().ravel()
         )
-        laplace = laplace_jump_residual(model, front, groups).detach().numpy().ravel()
-    upper = front.side.detach().numpy().ravel() > 0
+        laplace = laplace_jump_residual(model, front, groups).detach().cpu().numpy().ravel()
+    upper = front.side.detach().cpu().numpy().ravel() > 0
     return {
         "kinematic_rms_upper": _rms(kinematic[upper]),
         "kinematic_rms_lower": _rms(kinematic[~upper]),

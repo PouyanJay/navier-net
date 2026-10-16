@@ -393,6 +393,22 @@ debugging with their closed pull requests.
   (001f0d5): 1.1 -> 0.45 s per step of the trusted recipe on the Mac, same numbers.
   A rented A10 through Modal (`scripts/modal_bench.py`) costs about 1.2 s per step,
   limited by Python-side small-op overhead on its vCPU, not by the card.
+- 2026-10-15, first full-chain run (`trust-wpf-s1`, Modal A10, 12000 steps,
+  checkpoint kept under `outputs/trust-wpf-s1`): diverged. Its record shows the
+  temperature reaching the thousands DURING the Stage-A warm-up (energy_liquid
+  8e6 and theta_bc 1e6 at step 2500, with both terms gated off): under
+  `source_mode=thermal` the continuity residual read the source from the
+  temperature's gradient while nothing else constrained the temperature, so the
+  warm-up shaped it through that side door. At engagement the physics terms
+  could not recover (energy 1e9, Brinkman 1e4, flux defect 16x the inlet, mirror
+  0.96, IoU 0.936); the rebalancer then clamped every weight to its floor and
+  the causal weights went to zero. Fix: the trainer holds the thermal source
+  back through the warm-up (the free `s` carries it, as in the legacy Stage A)
+  and engages it with the Stage-B physics. Also: periodic checkpoints
+  (`training.checkpoint_every`), the audit on the model's device, and a
+  launcher that survives one seed's failure (the first launch's failure in one
+  seed's evaluate stage tore the app down and cancelled the other two seeds at
+  steps 11500 and 9500).
 - 2026-10-15, WP2 (#4): physical walls, Brinkman no-slip, outlet, mass balance.
   Joint runs refuse the mass balance for now.
 - 2026-10-15, WP3 (#5): two-phase pressure, curl-free vapour. Joint runs refuse it.

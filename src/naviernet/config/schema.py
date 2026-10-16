@@ -541,6 +541,10 @@ class TrainingConfig:
     # random field (which collapses it). 0 disables the gate (Stage-B on from
     # step 1); a resumed run whose step count is past the gate is unaffected.
     stage_b_warmup_steps: int = 0
+    # Write the checkpoint every this many steps as well as at the end (0 = at
+    # the end only), so a run cut short on a rented machine resumes from its
+    # last save instead of from nothing. A resume reads the saved step count.
+    checkpoint_every: int = 0
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See
