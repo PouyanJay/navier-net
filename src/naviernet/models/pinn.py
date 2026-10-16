@@ -279,6 +279,12 @@ class BubblePINN(nn.Module):
         )
         self.theta_parameterization = str(getattr(model_cfg, "theta_parameterization", "gated"))
         self.theta_gate_width = float(getattr(model_cfg, "theta_gate_width", 0.005))
+        self.theta_gate = str(getattr(model_cfg, "theta_gate", "linear"))
+        self.theta_gate_length = float(getattr(model_cfg, "theta_gate_length", 0.04))
+        if self.theta_gate_length <= 0.0:
+            raise ValueError(
+                f"model.theta_gate_length={self.theta_gate_length} must be > 0 (a length in L_ref)"
+            )
         self.source_mode = str(getattr(model_cfg, "source_mode", "free"))
         # Evaluation and every run without a warm-up read the thermal source from
         # the first step; the trainer clears this through a warm-up (see source).
@@ -289,6 +295,7 @@ class BubblePINN(nn.Module):
             ("thermal_model", self.thermal_model, ("legacy", "sharp")),
             ("interface_temperature", self.interface_temperature, ("saturation", "kinetic")),
             ("theta_parameterization", self.theta_parameterization, ("gated", "free")),
+            ("theta_gate", self.theta_gate, ("linear", "saturating")),
             ("source_mode", self.source_mode, ("free", "thermal")),
         ):
             if value not in allowed:
@@ -911,13 +918,34 @@ class BubblePINN(nn.Module):
         return source + self.footprint_source(x, c)
 
     def interface_flux_at(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
-        """``g = d theta/dn`` on the liquid side at the front samples, ``(N, 1)``,
-        by autograd of the temperature at the (detached) sample positions along
-        the outward normal; the gradient flows to the temperature net only."""
+        """``g = d theta/dn`` on the liquid side at the front samples, ``(N, 1)``;
+        the gradient flows to the temperature net only.
+
+        Under the gated parameterisation ``theta = G(d) N`` with ``d`` the
+        smoothed distance into the liquid, the flux is read analytically as
+        ``G'(0) N (-d phi/dn)``: the slope the gate has just inside the liquid.
+        Differentiating ``theta`` at the front itself would read the middle of
+        the smoothing, where ``d`` has only half its liquid-side slope, and
+        measured on the trusted recipe it returned 0.54 to 0.59 of the gradient
+        a few smoothing widths into the liquid. Any other parameterisation is
+        differentiated directly.
+        """
         leaf = front.points.detach().clone().requires_grad_(True)
+        normal = front.normal.detach()
+        if self.thermal_model == "sharp" and self.theta_parameterization == "gated":
+            phi = self._phi_with_frozen_geometry(leaf, c)
+            grad_phi = torch.autograd.grad(phi.sum(), leaf, create_graph=True)[0][:, :2]
+            into_liquid = -(grad_phi * normal).sum(dim=1, keepdim=True)
+            net = self._even(self._require("T"), leaf, c)
+            return self._gate_slope() * net * into_liquid.detach()
         theta = self.temperature(leaf, c)
         gradient = torch.autograd.grad(theta.sum(), leaf, create_graph=True)[0][:, :2]
-        return (gradient * front.normal.detach()).sum(dim=1, keepdim=True)
+        return (gradient * normal).sum(dim=1, keepdim=True)
+
+    def _gate_slope(self) -> float:
+        """The temperature gate's slope just inside the liquid, per unit distance:
+        1 for the linear gate, ``1 / theta_gate_length`` for the saturating one."""
+        return 1.0 / self.theta_gate_length if self.theta_gate == "saturating" else 1.0
 
     def _front_flux(
         self, instant: torch.Tensor, c: torch.Tensor | None
@@ -982,11 +1010,22 @@ class BubblePINN(nn.Module):
         than flooring the whole field.
         """
         if self.thermal_model == "sharp":
-            return self._liquid_distance(x, c) * self._even(self._require("T"), x, c)
+            return self._temperature_gate(x, c) * self._even(self._require("T"), x, c)
         raw = torch.sigmoid(self._even(self._require("T"), x, c))
         if self.depletable_superheat:
             return raw
         return self.theta_in + (1.0 - self.theta_in) * raw
+
+    def _temperature_gate(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
+        """The factor the T network is multiplied by under the sharp model: zero
+        in the vapour and on the front; the distance into the liquid itself
+        (``model.theta_gate=linear``), or that distance saturating at one beyond
+        a few ``theta_gate_length`` (``saturating``), so the far field reads the
+        network directly and does not move with the bubble."""
+        distance = self._liquid_distance(x, c)
+        if self.theta_gate == "saturating":
+            return torch.tanh(distance / self.theta_gate_length)
+        return distance
 
     def _liquid_distance(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
         """The (smoothed) distance into the liquid, ``0.5 (sqrt(phi^2 + d^2) - phi)``:

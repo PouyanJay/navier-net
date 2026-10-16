@@ -422,6 +422,19 @@ class ModelConfig:
     # Smoothing width of that distance gate, in L_ref units: a numerical choice,
     # kept well below the thermal layer it must not blur (~0.02-0.04 here).
     theta_gate_width: float = 0.005
+    # The shape of that gate. "linear": theta = d N, the distance itself, so far
+    # from the bubble theta is the network times a distance that SHRINKS as the
+    # front approaches; unless the network compensates exactly, the liquid
+    # ahead of an advancing nose cools for no physical reason (measured on the
+    # trusted recipe: 21 to 69 percent of the downstream temperature's fall was
+    # this geometric decay, and the liquid that should stay at 58 C drifted to
+    # saturation). "saturating": theta = tanh(d / theta_gate_length) N, still
+    # zero on the front, but equal to the network beyond a few gate lengths, so
+    # the far field no longer depends on where the bubble is.
+    theta_gate: str = "linear"  # "linear" | "saturating"
+    # The saturating gate's length in L_ref units: the thermal layer's scale
+    # sqrt(t*/Pe), about 0.02 to 0.04 here; the network still shapes the layer.
+    theta_gate_length: float = 0.04
     # Where the continuity source comes from. "free": the s network, pulled toward
     # the thermal flux two-way by the evap_flux closure. "thermal": s IS the
     # interface flux spread over the band, no s network in the loop.
@@ -602,6 +615,10 @@ class TrainingConfig:
     # momentum weight down to 0.26 (its gradient is the largest), and its
     # Brinkman residual doubled against the coupled run's.
     frozen_weighting: str = "fixed"  # "fixed" | "equalised"
+    # The temperature equation trains the temperature only: the velocity in its
+    # advection term is detached, so the equation's error cannot bend the flow
+    # (see residuals.energy_liquid_residual). Off keeps the two-way gradient.
+    one_way_advection: bool = False
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See

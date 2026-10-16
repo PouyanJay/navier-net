@@ -427,7 +427,11 @@ def energy_residuals(
 
 
 def energy_liquid_residual(
-    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None = None,
+    one_way: bool = False,
 ) -> torch.Tensor:
     """``(1 - alpha) [theta_t + u.grad theta - lap(theta)/Pe - q* (1 - alpha)]``.
 
@@ -435,11 +439,23 @@ def energy_liquid_residual(
     the bubble the same flux evaporates the film instead (the footprint source
     on the model), so one wall flux is split by phase. The latent sink is absent
     because the interface temperature is the boundary condition that carries it.
+
+    ``one_way`` detaches the velocity in the advection term, so this equation
+    trains the temperature and never the flow. Physically the coupling is one
+    way here: the liquid carries the heat, and nothing in the model lets the
+    temperature move the liquid (constant properties, no buoyancy); its only
+    route back is the evaporation source, which continuity reads. Without the
+    detach the equation's error reaches the velocity network through
+    ``u.grad(theta)``, and measured on the trusted recipe it pulled the flow
+    ahead of the bubble 2 to 30 times harder than the momentum equation did,
+    bending it into the lopsided swirl the mirror test failed on.
     """
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
     theta = model.temperature(x, cx)
     u, v = model.velocity(x, cx)
+    if one_way:
+        u, v = u.detach(), v.detach()
     t_x, t_y, t_t = gradients(theta, x)
     heat = groups["q_wall_star"]
     residual = (

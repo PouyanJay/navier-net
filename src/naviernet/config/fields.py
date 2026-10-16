@@ -391,6 +391,29 @@ PHYSICS_DIALS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.theta_gate",
+        "Temperature gate shape",
+        "enum",
+        *_DIAL,
+        help=(
+            "linear multiplies the network by the distance into the liquid; saturating levels "
+            "off beyond the thermal layer, so the far field does not move with the bubble"
+        ),
+        options=("linear", "saturating"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.theta_gate_length",
+        "Temperature gate length",
+        "float",
+        *_DIAL,
+        help="where the saturating gate levels off: about the thermal layer's thickness",
+        unit="L_ref",
+        lo=1e-4,
+        hi=10.0,
+        advanced=True,
+    ),
+    FieldSpec(
         "model.source_kernel_width",
         "Source kernel width",
         "float",
@@ -533,6 +556,18 @@ TRAINING: tuple[FieldSpec, ...] = (
             "rebalanced to equal gradient contributions"
         ),
         options=("fixed", "equalised"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.one_way_advection",
+        "One-way heat advection",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "the temperature equation trains the temperature only, so its error cannot bend "
+            "the flow; the liquid carries the heat, the heat does not move the liquid"
+        ),
         advanced=True,
     ),
     FieldSpec(

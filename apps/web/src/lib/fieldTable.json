@@ -458,6 +458,43 @@
     "default": 0.005
   },
   {
+    "key": "model.theta_gate",
+    "label": "Temperature gate shape",
+    "kind": "enum",
+    "section": "physics",
+    "owner": "override",
+    "help": "linear multiplies the network by the distance into the liquid; saturating levels off beyond the thermal layer, so the far field does not move with the bubble",
+    "unit": "",
+    "options": [
+      "linear",
+      "saturating"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "theta_gate",
+    "default": "linear"
+  },
+  {
+    "key": "model.theta_gate_length",
+    "label": "Temperature gate length",
+    "kind": "float",
+    "section": "physics",
+    "owner": "override",
+    "help": "where the saturating gate levels off: about the thermal layer's thickness",
+    "unit": "L_ref",
+    "options": [],
+    "lo": 0.0001,
+    "hi": 10.0,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "theta_gate_length",
+    "default": 0.04
+  },
+  {
     "key": "model.source_kernel_width",
     "label": "Source kernel width",
     "kind": "float",
@@ -663,6 +700,23 @@
     "advanced": true,
     "name": "frozen_weighting",
     "default": "fixed"
+  },
+  {
+    "key": "training.one_way_advection",
+    "label": "One-way heat advection",
+    "kind": "bool",
+    "section": "training",
+    "owner": "override",
+    "help": "the temperature equation trains the temperature only, so its error cannot bend the flow; the liquid carries the heat, the heat does not move the liquid",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "one_way_advection",
+    "default": false
   },
   {
     "key": "training.quadrature_jitter",

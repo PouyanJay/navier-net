@@ -133,17 +133,49 @@ def time_steps(seed: int = 0) -> float:
     return per_step
 
 
+def _target_steps() -> int:
+    """The recipe's own step count, read from the composed config, so the
+    target is never typed twice."""
+    from hydra import compose, initialize_config_dir
+
+    from naviernet.config import register_configs
+
+    register_configs()
+    with initialize_config_dir(config_dir=f"{REMOTE_ROOT}/configs", version_base="1.3"):
+        cfg = compose(config_name="config", overrides=[f"dataset={DATASET}", *RECIPE])
+    return int(cfg.training.steps)
+
+
+def _completed_steps(run_name: str) -> int:
+    """Steps the run's checkpoint on the volume has already done (0 when none)."""
+    import torch
+
+    checkpoint = Path(OUTPUTS) / run_name / "checkpoints" / "ckpt.pt"
+    if not checkpoint.exists():
+        return 0
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)["state"]
+    return int(state["done"])
+
+
 @app.function(
     image=image, gpu=GPU, cpu=CPUS, memory=8192, timeout=TIMEOUT_S, volumes={OUTPUTS: volume}
 )
 def bench(seed: int, prefix: str = RUN_PREFIX) -> tuple[str, bytes, str | None]:
     """Train and evaluate (with the audit) one seed; returns its run directory
     and, when the evaluate stage failed, the failure, so a trained checkpoint
-    is never lost to an evaluation bug (it can be audited locally). A run name
-    already on the volume resumes from its last checkpoint."""
+    is never lost to an evaluation bug (it can be audited locally).
+
+    A run name already on the volume resumes from its last checkpoint and
+    trains only the steps left to the recipe's total. That matters because
+    Modal restarts a preempted container with the same input: training.steps
+    is additive per call, so a restart that passed it unchanged trained the
+    whole count again (trust-wpf6-s0, preempted at 7500, ended at 19000)."""
     run_name = f"{prefix}-s{seed}"
-    _cli(_common(run_name, seed, ["stage=train"]))
-    volume.commit()
+    remaining = _target_steps() - _completed_steps(run_name)
+    if remaining > 0:
+        print(f"{run_name}: {remaining} steps to train", flush=True)
+        _cli(_common(run_name, seed, [f"training.steps={remaining}", "stage=train"]))
+        volume.commit()
     failure = None
     try:
         _cli(_common(run_name, seed, ["stage=evaluate"]))
