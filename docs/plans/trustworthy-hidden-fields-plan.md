@@ -23,9 +23,12 @@ The audit of `root-bench-full-s0` (October 2026) found that the hidden fields
    one continuous pressure network across a pressure discontinuity, walls placed at
    the crop edges instead of the channel walls, no outlet condition.
 
-The goal is a reconstruction whose hidden fields pass five acceptance tests at
-every frame: seed agreement, mirror symmetry, small residuals in every time
-slice, flux balance at every cross-section, and a closed heat budget.
+The goal is a reconstruction whose hidden fields pass six acceptance tests at
+every frame: the outline against the masks (shape, nose position and growth
+rate, held to the warm-up's own fit), seed agreement, mirror symmetry, small
+residuals in every time slice, flux balance at every cross-section, and a
+closed heat budget. The outline comes first: the images are the measurement,
+and a run that fails them is rejected whatever its residuals say.
 
 ## Ground rules
 
@@ -55,11 +58,11 @@ slice, flux balance at every cross-section, and a closed heat budget.
 | Channel width | 300 um | `experiment.channel_width_um` | Was 291 in the stored archive. Changing it rescales x*, y* and the nose speed by 3.1%; needs a re-preprocess under a new dataset name. |
 | Channel height | 150 um | `experiment.channel_height_um` | unchanged |
 | Cavity position | centreline | `experiment.cavity_y_fraction = 0.5` | fraction of the wall-to-wall width; the streamwise position stays the measured root |
-| Inlet temperature | saturation | `experiment.T_inlet_C` (None = T_sat) | table says 56 C; the fluid's T_sat is 56.6 C; default is the fluid value |
+| Inlet temperature | 58 C (revised 2026-10-15, second pass) | `experiment.T_inlet_C` (None = T_sat) | first set to saturation; the inlet is not measured separately, and a 1.4 K step at the inlet cannot reach the bubble within the 4.5 ms event, so the recipe uses the initial liquid temperature |
 | Initial liquid temperature | 58 C | `experiment.T_init_C` | 1.4 K above the fluid's T_sat; set 58.6 if exactly 2 K is intended |
 | Side walls, thermal | adiabatic, at the real wall rows | `experiment.side_wall_thermal = "adiabatic"`, `model.walls_at = "physical"` | wall rows come from preprocessing meta |
-| Cavity heater | disk of radius 100 um at the cavity, q'' per series (2, 3, 4 W/cm2) | `experiment.q_cavity_W_cm2`, `experiment.heater_radius_um`, `experiment.heater_on_ms` (None = on throughout) | assumption: on for the whole event; the 0.3 V pulse is only the trigger |
-| Background wall flux | uniform along the channel, sized so the overall latent heat supplied meets the growth need (page 2 of the authors' table) | `experiment.q_wall_mode = "fit"`, `experiment.q_wall_W_cm2` (fixed value, or the initial guess; None = energy-balance estimate from the masks), `experiment.q_wall_max_W_cm2` | implemented as ONE learned scalar bounded in [0, max], constrained by the observed growth through the thermal chain, initialised from a global energy balance of the measured growth; reported in W/cm2 next to that estimate |
+| Wall flux | ONE uniform flux, the series' nominal (2, 3, 4 W/cm2), split by phase | `experiment.q_wall_W_cm2` | under liquid it heats the liquid; under the bubble it evaporates the film. The first rebuild's two heaters (a fitted uniform background flux plus a 100 um cavity disk) are removed, 2026-10-15 second pass: they let the fit switch the growth off |
+| Film under the bubble | the wet share of the footprint, ONE fitted scalar in (0, 1) | `model.footprint_evaporation = true`, `experiment.wet_fraction_mode = "fit"`, `experiment.wet_fraction` (the start; the energy balance of the masks implies 0.88 for Series 1) | reported beside the energy-balance estimate; a later refinement is a wet fraction varying along the footprint (film dryout), to be added only once the growth matches |
 | Side walls, momentum | no-slip with a Brinkman term, impermeable | `model.momentum_closure = "brinkman"`, `model.wall_condition = "no_slip"` | no-penetration-only remains available |
 | Vapour pressure | uniform p_v(t) | existing | unchanged |
 | Interface pressure | Young-Laplace | existing, plus `model.jump_model = "park_homsy" | "plain"` | default keeps the validated Park-Homsy weights |
@@ -88,16 +91,30 @@ the detached indicator; the jump condition reads the liquid branch on the front.
 
 Liquid energy, no sink term (the latent heat is the boundary condition):
 
-    d theta/dt + u . grad theta = (1/Pe) lap theta + q*(x, y, t) (1 - alpha)
-    q* = q_bg_star * m  +  q_cav_star * H(r_h - |x - x_cavity|)
-    (uniform background flux with the learned multiplier m >= 0 in fit mode, plus a
-     smooth disk of radius heater_radius_um at the cavity; both gated by liquid contact)
+    d theta/dt + u . grad theta = (1/Pe) lap theta + q_wall_star (1 - alpha)
+    (the series' wall flux, gated by liquid contact; under the bubble the same
+     flux evaporates the film instead, below)
     theta = 0 on the interface and inside the vapour
     theta = theta_in at the inlet, d theta/dn = 0 on the side walls, theta = theta_0 at t = t_min
 
-Evaporation flux from the liquid-side normal gradient at the front, g = d theta/dn:
+Two evaporation paths create the vapour volume. The film under the bubble
+(`model.footprint_evaporation`): the wall flux under the footprint evaporates the
+liquid film the bubble leaves on the heated wall, over the wet share f_wet of the
+footprint, a volumetric source wherever there is vapour:
 
-    volume source     s = C_m * sum_i g_i dl_i K_w(x - X_i),   C_m = (Ja/Pe) (rho_l/rho_v - 1)
+    s_film = footprint_source_star * f_wet * alpha,
+    footprint_source_star = q'' (1/rho_v - 1/rho_l) L / (h_lv H U)   (0.175 for Series 1 at 2 W/cm2)
+
+This is the growth mechanism of confined flow boiling. On Series 1 the wall power
+under the footprint (2.1 to 3.8 mW) pays for the measured growth (3.2 to 2.4 mW
+of latent heat) from about 1.5 ms on; before that the outline's own conduction
+flux from the superheated liquid supplies the rest. Without this path the first
+full-chain run found the no-evaporation solution (flat temperature, zero source,
+a nose at a third of the measured speed).
+
+The outline flux from the liquid-side normal gradient at the front, g = d theta/dn:
+
+    volume source     s = s_film + C_m * sum_i g_i dl_i K_w(x - X_i),   C_m = (Ja/Pe) (rho_l/rho_v - 1)
     kinematic         V_n = u . n + (Ja/Pe) g                  (liquid side; the correction is ~1e-3)
 
 K_w is a normalised Gaussian of width `model.source_kernel_width` (default alpha_eps)
@@ -123,14 +140,23 @@ C_HS = 0.223, Brinkman wall layer ~ sqrt(1/(Re C_HS)) = 0.14 L = 43 um, thermal
 layer ~ sqrt(t*/Pe) = 0.02 to 0.04 L = 6 to 12 um (the T net needs a larger
 Fourier scale than the others: `model.per_field.T.fourier_scale`).
 
-Magnitudes to expect: the cavity disk supplies 0.6 to 1.3 mW; the observed growth
-needs ~3 mW of latent heat early and ~1.5 mW late; conduction from the initially
-superheated liquid through a ~10 um layer over the interface can supply ~4 mW. The
-global balance over the imaged footprint (5.0e-7 m2) puts the background flux near
-0.5 W/cm2 for the latent need alone, before sensible heating of the through-flow
-(every 1.5 K of outlet warming at 5 mL/h costs ~3.7 mW), so the fitted value may land
-anywhere between 0.5 and 2 W/cm2. Whatever it is, the latent heat still has to pass
-through the interface by conduction, so the thermal layer must be resolved.
+Magnitudes measured on Series 1 (`heating.growth_budget`): the growth needs 3.2 mW
+of latent heat at the start and 2.4 mW at the end; the wall flux under the
+footprint supplies 2.1 to 3.8 mW; the energy balance implies a wet fraction of
+0.88 averaged over the event (capped at 1 early, 0.63 at the end). Conduction from
+the initially superheated liquid through the ~10 um outline layer can supply about
+1.6 mW throughout, which is what pays for the early excess; the T net keeps a
+Fourier scale of 10 to resolve that layer to within a factor of two.
+
+The images are the measurement. The audit holds the outline (per-frame IoU above
+`evaluation.acceptance.iou_min` and within `iou_drop_max` of the warm-up's own fit
+of that frame, the nose within `nose_tol` of the measured nose); the trainer holds
+it during the run (`training.outline_guard_every`, `outline_guard_drop`: the run
+stops with its checkpoint when the mean IoU drifts below the warm-up's fit); the
+measured front velocity is supervised (`training.front_velocity`, the growth RATE as
+data); no rebalanced physics weight may exceed `training.rebalance_max_ratio` times
+the data weight; the temperature conditions are never rebalanced and sit at the data
+weight; `training.grad_clip` bounds one spike's step.
 
 ## Work packages, in order
 
@@ -187,14 +213,16 @@ through the interface by conduction, so the thermal layer must be resolved.
 
 ### WP4  Thermal rebuild
 - Config: `experiment.T_inlet_C`, `T_init_C`, `side_wall_thermal`, `T_wall_C`,
-  `q_cavity_W_cm2`, `heater_radius_um`, `heater_on_ms`, `cavity_y_fraction`,
-  `q_wall_mode`, `q_wall_max_W_cm2`; `scales.dT_ref_K`;
-- Background flux in fit mode: one learned scalar on the model (`_log_q_wall_scale`,
-  softplus, the `q_pulse_star` pattern), bounded by `q_wall_max_W_cm2`, initialised
-  from `estimate_background_flux(data, fluid, geometry)`: latent power of the measured
-  projected growth (rho_v h dA/dt h_lv) minus the cavity disk's input, divided by the
-  imaged heated footprint. Reported in `metrics.json` as `q_wall_fit_W_cm2` beside
-  `q_wall_estimate_W_cm2`.
+  `wet_fraction_mode`, `wet_fraction`; `scales.dT_ref_K`; `model.footprint_evaporation`.
+  (The first pass carried two heaters, `q_cavity_W_cm2`, `heater_radius_um`,
+  `heater_on_ms`, `cavity_y_fraction`, `q_wall_mode`, `q_wall_max_W_cm2`; removed in
+  the second pass, see the log.)
+- The wet fraction in fit mode: one learned scalar on the model (`_wet_fraction_raw`,
+  sigmoid-bounded in (0, 1), shifted so the zero init lands on the declared start).
+  `heating.growth_budget(data, cfg, groups)` reports, per frame, the latent power of
+  the measured projected growth (rho_v h dA/dt h_lv), the wall power under the
+  footprint, and the wet fraction the balance implies; `metrics.json` carries the
+  fitted value beside that estimate under `heating`.
   `model.thermal_model = "legacy" | "sharp"`, `interface_temperature = "saturation" |
   "kinetic"`, `theta_parameterization = "gated" | "free"`, `source_mode = "free" |
   "thermal"`, `source_kernel_width`.
@@ -306,13 +334,9 @@ renders from it.
 | `T_init_C` | experiment | C, optional | None (no initial term) | yes | theta_initial, dT_ref |
 | `side_wall_thermal` | experiment | adiabatic / isothermal | adiabatic | yes | theta_wall |
 | `T_wall_C` | experiment | C, optional | None | yes (isothermal only) | theta_wall |
-| `q_cavity_W_cm2` | experiment | W/cm2, optional | None = no cavity heater | yes | cavity disk source |
-| `heater_radius_um` | experiment | um, optional | None = no cavity heater | yes | cavity disk source |
-| `heater_on_ms` | experiment | ms, optional | None = always on | yes | cavity disk source |
-| `q_wall_mode` | experiment | fixed / fit | fixed | yes | background flux |
-| `q_wall_W_cm2` | experiment | W/cm2, optional in fit mode | existing | yes | background flux value or initial guess |
-| `q_wall_max_W_cm2` | experiment | W/cm2 | 10 | advanced | bound on the fitted flux |
-| `cavity_y_fraction` | experiment | 0..1 | 0.5 | yes | heater centre, mirror axis |
+| `q_wall_W_cm2` | experiment | W/cm2 | existing | yes | the one wall flux: liquid heating and film evaporation |
+| `wet_fraction_mode` | experiment | fixed / fit | fixed | yes | the film under the bubble |
+| `wet_fraction` | experiment | 0..1 | 1.0 | yes | the fixed wet share, or the fit's start |
 | `channel_width_um` | experiment | um | existing | yes, marks re-preprocess | calibration, walls |
 | `dT_ref_K` | scales | K, optional | None = T_init - T_sat, else conduction scale | yes | theta scaling |
 | `walls_at` | model | crop / physical | crop | yes | samplers, geometry bound |
@@ -326,8 +350,14 @@ renders from it.
 | `theta_parameterization` | model | gated / free | gated | yes | temperature accessor |
 | `source_mode` | model | free / thermal | free | yes | source accessor |
 | `source_kernel_width` | model | L_ref units | alpha_eps | advanced | source distribution |
+| `footprint_evaporation` | model | bool | false | yes | the film source under the bubble |
 | `mirror_symmetry` | model | bool | false | yes | accessors, geometry |
 | `causal_gate_min_weight` | training | optional float | None | yes | causal eps schedule |
+| `front_velocity` | training | bool | false (trusted recipe: true) | yes | the growth rate as data |
+| `rebalance_max_ratio` | training | float | 0 (trusted: 10) | yes | cap on the rebalanced weights |
+| `grad_clip` | training | float | 0 (trusted: 10) | yes | bound on a step's gradient norm |
+| `outline_guard_every`, `outline_guard_drop` | training | int, float | 0, 0.05 (trusted: 500, 0.05) | yes | the outline guard |
+| `acceptance.iou_min`, `iou_drop_max`, `nose_tol` | evaluation | 0.85, 0.05, 0.1 L_ref | | yes, results page | the outline verdicts |
 | `lbfgs_steps` | training | int | 0 | yes | final polish |
 | `weights.mass_balance`, `mass_balance_stations`, `mass_balance_times` | training | float, int, int | 1.0, 8, 8 | advanced | mass_balance term |
 | `weights.brinkman`, `weights.vapour_potential`, `weights.theta_*`, `weights.evap_flux` | training | float | 1.0 | advanced | new terms |
@@ -339,11 +369,13 @@ renders from it.
    it (the 56 C in the table was a reporting slip).
 2. Initial superheat: 58 C gives 1.4 K over 56.6 C. Set `T_init_C = 58.6` for 2.0 K.
    Default 58.0 C as given.
-3. DECIDED 2026-10-15: the cavity heater is on for the whole event, and the uniform
-   background heater comes IN ADDITION to the cavity disk, constant in time and uniform
-   in space, with its magnitude set so the overall heat supplied maintains the ~3 mW
-   latent need. Implemented as one fitted constant (recommended) initialised from the
-   energy-balance estimate; `q_wall_mode = "fixed"` remains available.
+3. DECIDED 2026-10-15, then REVISED the same day after the first full-chain run:
+   the two heaters (a 100 um cavity disk plus a fitted uniform background flux) are
+   gone. One wall flux, the series' nominal, uniform over the heated wall, split by
+   phase: it heats the liquid where there is liquid and evaporates the film under
+   the bubble. Still open: whether the 2 W/cm2 is the whole heated floor (assumed)
+   or only a 100 um disk at the cavity; in the latter case the wall is better
+   described by its temperature and the superheated liquid becomes the energy source.
 4. The 300 um calibration changes every x*, y* and the nose speed by 3.1%. The paper's
    current numbers remain tied to the 291 um archive until WP8.
 5. Three heat-flux values: treated as three series, each with its own `q_wall_W_cm2`.
@@ -364,6 +396,30 @@ request (`feat/trusted-fields`, #11); the per-package branches are kept for
 debugging with their closed pull requests.
 
 ## Implementation log
+
+- 2026-10-15, second pass after the first full-chain seed (`wpf2-s0`, Modal A10,
+  stopped at step 10000; checkpoint under `outputs/wpf2-s0-preview`): the chain
+  converged to the solution with NO evaporation. Mean IoU 0.74 (0.89 at frame 2,
+  0.63 at the end), the nose at 67 mm/s against the measured 180, the interface
+  flux and the source at zero in every frame, the fitted background heater at
+  0.03 W/cm2, the temperature flat at saturation (the 58 C initial liquid erased:
+  theta_bc 0.76), while the pressure was symmetric and p_v uniform. The
+  rebalancer had Brinkman at 1000, energy at 253 and the kinematic condition at
+  119 against data at 10. Diagnosis: the only vapour path was conduction from the
+  superheated liquid through the outline, the images were outvoted, and nothing
+  judged the outline. Changes, all on `feat/trusted-fields`:
+  physics: film evaporation under the footprint from the series' wall flux
+  (`model.footprint_evaporation`, the wet fraction fitted in (0, 1)); the
+  invented heaters removed; the outline flux kept as the secondary path.
+  Boundary and initial conditions: one wall flux at the nominal 2 W/cm2, inlet
+  and initial liquid at 58 C, adiabatic walls, saturation at the interface.
+  The images as the binding measurement: outline verdicts in the audit (IoU
+  floor, drop from the warm-up's recorded fit, nose position), the outline guard
+  in the trainer, the measured front velocity supervised, the rebalanced weights
+  capped at ten times the data weight, the temperature conditions never rebalanced
+  and at the data weight, gradient clipping on. Numerics: the T net's Fourier
+  scale lowered from 20 to 10 (3 would read the outline flux an order of
+  magnitude low). The heat budget now reports the film and the outline parts.
 
 - 2026-10-15, WP0 (#2): baseline tag `baseline-2026-10-15`; wall positions in the
   tensor meta and on `Domain`; `Series-1-w300` preprocessed at 300 um (1.685 um/px,
