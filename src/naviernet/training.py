@@ -170,29 +170,52 @@ def _boundary_plan(cfg) -> _BoundaryPlan:
     )
 
 
-def _mass_balance_plan(cfg, data: BubbleDataset, groups: dict, device):
-    """The cross-section mass-balance quadrature when the term is on, else None."""
+def _mass_balance_plan(cfg, data: BubbleDataset, groups: dict, device, rng=None):
+    """The cross-section mass-balance quadrature when the term is on, else None.
+    With ``rng`` (``training.quadrature_jitter``) its instants are a fresh
+    stratified draw, so the balance is scored across the window rather than at
+    the same eight instants every step."""
     if not bool(getattr(cfg.training, "mass_balance", False)):
         return None
+    at_times = None
+    if rng is not None:
+        at_times = torch.tensor(
+            _stratified_times(data.domain, int(cfg.training.mass_balance_times), rng)
+        )
     return mass_balance.build_plan(
-        data.domain, (data.y_lo, data.y_hi), groups, cfg.training, device
+        data.domain, (data.y_lo, data.y_hi), groups, cfg.training, device, at_times=at_times
     )
 
 
-def _front_times(cfg, data: BubbleDataset, device) -> torch.Tensor | None:
+def _stratified_times(domain, n: int, rng) -> np.ndarray:
+    """One instant drawn inside each of ``n`` equal strata of the window, in
+    order: the window stays covered and no instant is ever the same twice."""
+    edges = np.linspace(domain.t_min, domain.t_max, n + 1)
+    return rng.uniform(edges[:-1], edges[1:]).astype(np.float32)
+
+
+def _front_times(cfg, data: BubbleDataset, device, rng=None) -> torch.Tensor | None:
     """The times the interface conditions are sampled at, or ``None`` when the run
     is not sharp-interface.
 
-    A fixed, uniform sweep of the training window rather than a random draw: the
-    front is one smooth curve per time, so what matters is covering the window,
-    and a deterministic grid makes the term reproducible across resume.
+    Without ``rng``, a fixed uniform sweep of the window. With it
+    (``training.quadrature_jitter``), a fresh stratified draw each step: the
+    first full-chain seed satisfied the Young-Laplace condition at the sixteen
+    fixed instants and violated it between them three to one.
     """
     if not _sharp(cfg):
         return None
     d = data.domain
-    return torch.linspace(d.t_min, d.t_max, int(cfg.model.front_times), device=device).reshape(
-        -1, 1
-    )
+    n = int(cfg.model.front_times)
+    if rng is not None:
+        return torch.tensor(_stratified_times(d, n, rng), device=device).reshape(-1, 1)
+    return torch.linspace(d.t_min, d.t_max, n, device=device).reshape(-1, 1)
+
+
+def _jitter_rng(tcfg, rng):
+    """The rng the quadrature draws from under ``training.quadrature_jitter``,
+    else None (fixed grids). The step rng, so a resumed run continues the draw."""
+    return rng if bool(getattr(tcfg, "quadrature_jitter", False)) else None
 
 
 def _architecture_record(cfg) -> dict:
@@ -1705,6 +1728,9 @@ def train(
             )
 
         _engage_thermal_source(model, step, tcfg, stage_b_keys)
+        if _jitter_rng(tcfg, rng) is not None:
+            front_times = _front_times(cfg, data, device, rng)
+            mass_plan = _mass_balance_plan(cfg, data, groups, device, rng)
         ctx = registry.LossContext(
             model,
             x_coll,

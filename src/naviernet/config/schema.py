@@ -571,6 +571,15 @@ class TrainingConfig:
     # The warm-up's fit is recorded at the step the physics engages.
     outline_guard_every: int = 0
     outline_guard_drop: float = 0.05
+    # Draw the front times and the mass-balance instants afresh every step
+    # (stratified: one instant per equal stratum of the window) instead of
+    # holding them on fixed grids. Measured on the first 12000-step seed of the
+    # trusted recipe: the flux defect was 0.1 at the eight fixed mass-balance
+    # instants and 1.5 to 2.5 everywhere between them, and the Young-Laplace
+    # residual 0.1 to 0.3 at the sixteen fixed front times and 0.5 to 1.0
+    # between them. The fields had learned the quadrature, not the physics.
+    # Off keeps the fixed grids (existing runs byte-for-byte).
+    quadrature_jitter: bool = False
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See

@@ -62,6 +62,10 @@ stage_b_warmup_steps: 3000
 # stops there with its checkpoint, instead of finishing as a failure.
 outline_guard_every: 500
 outline_guard_drop: 0.05
+# The front times and the mass-balance instants drawn afresh each step: the
+# first 12000-step seed satisfied the jump condition and the flux balance at
+# the fixed quadrature instants only (defect 0.1 there, 1.5 to 2.5 between).
+quadrature_jitter: true
 
 causal_weighting: true
 causal_time_chunks: 16

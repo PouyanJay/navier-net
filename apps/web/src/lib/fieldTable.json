@@ -628,6 +628,23 @@
     "default": 0.05
   },
   {
+    "key": "training.quadrature_jitter",
+    "label": "Jitter the quadrature times",
+    "kind": "bool",
+    "section": "training",
+    "owner": "override",
+    "help": "draw the front times and the mass-balance instants afresh each step instead of fixed grids, so the physics is scored across the window",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "quadrature_jitter",
+    "default": false
+  },
+  {
     "key": "training.mass_balance_stations",
     "label": "Mass balance stations",
     "kind": "int",

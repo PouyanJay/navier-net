@@ -512,6 +512,18 @@ TRAINING: tuple[FieldSpec, ...] = (
         hi=_FRACTION[1],
     ),
     FieldSpec(
+        "training.quadrature_jitter",
+        "Jitter the quadrature times",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "draw the front times and the mass-balance instants afresh each step "
+            "instead of fixed grids, so the physics is scored across the window"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "training.mass_balance_stations",
         "Mass balance stations",
         "int",
