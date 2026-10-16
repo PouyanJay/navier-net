@@ -1355,6 +1355,12 @@ def _release_nose_dof(model) -> None:
     log.info("nose DOF released: w_nose(t) may move")
 
 
+def _clip_gradients(model, tcfg) -> None:
+    """Bound the step a gradient spike can take (``training.grad_clip`` > 0)."""
+    if float(getattr(tcfg, "grad_clip", 0.0)) > 0.0:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), float(tcfg.grad_clip))
+
+
 def _engage_thermal_source(model, step: int, tcfg, stage_b_keys: tuple[str, ...]) -> None:
     """Hold the thermal source back through the Stage-A warm-up.
 
@@ -1652,6 +1658,7 @@ def train(
             mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
             total = total + float(tcfg.mass_balance_weight) * mass_total
         total.backward()
+        _clip_gradients(model, tcfg)
         opt.step()
         if tcfg.checkpoint_every and step % tcfg.checkpoint_every == 0:
             _checkpoint_mid_run(model, opt, state, weights, plan, cfg, paths, step)

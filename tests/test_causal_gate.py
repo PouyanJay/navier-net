@@ -184,3 +184,26 @@ def test_periodic_checkpoints_record_the_step_they_were_written_at(tmp_path, mon
         torch.load(paths.checkpoint, map_location="cpu", weights_only=False)["state"]["done"]
         == 3
     )
+
+
+def test_gradient_clipping_bounds_the_total_gradient_norm(tmp_path, monkeypatch):
+    """With ``grad_clip`` the parameters' gradient norm never exceeds the bound
+    at the optimiser step; without it the same step sees the raw norm."""
+    from naviernet import training
+
+    norms: list[float] = []
+    original_step = torch.optim.Adam.step
+
+    def measuring_step(self, *args, **kwargs):
+        grads = [
+            p.grad for group in self.param_groups for p in group["params"] if p.grad is not None
+        ]
+        norms.append(float(torch.norm(torch.stack([g.norm() for g in grads]))))
+        return original_step(self, *args, **kwargs)
+
+    monkeypatch.setattr(torch.optim.Adam, "step", measuring_step)
+    cfg, paths = staged_run(tmp_path, ["training.steps=3", "training.grad_clip=0.01"])
+
+    training.train(cfg, paths)
+
+    assert norms and max(norms) <= 0.01 * (1 + 1e-4)

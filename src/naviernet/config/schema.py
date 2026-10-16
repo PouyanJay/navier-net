@@ -545,6 +545,12 @@ class TrainingConfig:
     # the end only), so a run cut short on a rented machine resumes from its
     # last save instead of from nothing. A resume reads the saved step count.
     checkpoint_every: int = 0
+    # Clip the total gradient's norm to this before each optimiser step (0 = no
+    # clipping). The objective is untouched; only a spike's step is bounded. The
+    # full-chain benchmark lost one seed in three to one such spike: the
+    # rebalancer had raised the energy term's weight to 80 (3.5 on the seeds that
+    # held), and the next 500 steps took every residual up four orders.
+    grad_clip: float = 0.0
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See
