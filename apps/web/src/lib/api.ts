@@ -603,6 +603,9 @@ export interface RunLaunchRequest {
   grad_clip: number;
   outline_guard_every: number;
   outline_guard_drop: number;
+  /** Two-stage training: the outline frozen at the warm-up's fit when the
+   * physics engages; needs the front geometry and a Stage-B series. */
+  freeze_geometry: boolean;
   /** Advanced overrides: `key=value` Hydra tokens for the schema's CLI-only
    * dials. Strictly allowlisted server-side (top-level training.* / model.*
    * scalar fields the form and the series config do not own); an invalid token

@@ -66,6 +66,13 @@ outline_guard_drop: 0.05
 # first 12000-step seed satisfied the jump condition and the flux balance at
 # the fixed quadrature instants only (defect 0.1 there, 1.5 to 2.5 between).
 quadrature_jitter: true
+# Two-stage training: the bubble is frozen at the warm-up's fit of the images
+# when the physics engages, and the physics stage trains only the hidden
+# fields, with the physics terms equalised among themselves. The jittered
+# 12000-step seed kept the momentum weight below 1 against the data's 10 and
+# its velocity and temperature stayed lopsided; with the outline an input the
+# physics no longer has to be held back to protect it.
+freeze_geometry: true
 
 causal_weighting: true
 causal_time_chunks: 16

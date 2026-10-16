@@ -95,6 +95,8 @@ export function treatmentPatch(name: Treatment): Partial<SolverFormState> {
       source_mode: "free",
       footprint_evaporation: false,
       mirror_symmetry: false,
+      // Freezing needs the explicit geometry this rung does not have.
+      freeze_geometry: false,
     };
   }
   if (name === "front") {

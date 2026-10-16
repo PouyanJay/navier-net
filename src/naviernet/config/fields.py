@@ -512,6 +512,17 @@ TRAINING: tuple[FieldSpec, ...] = (
         hi=_FRACTION[1],
     ),
     FieldSpec(
+        "training.freeze_geometry",
+        "Freeze the outline after the warm-up",
+        "bool",
+        "training",
+        "form",
+        help=(
+            "two-stage training: the bubble is fixed at the warm-up's fit of the images and "
+            "the physics stage trains only the velocity, pressure and temperature"
+        ),
+    ),
+    FieldSpec(
         "training.quadrature_jitter",
         "Jitter the quadrature times",
         "bool",

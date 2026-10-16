@@ -31,6 +31,7 @@
   "causal_weighting": true,
   "collocation_time_bins": 8,
   "evap_closure_two_way": false,
+  "freeze_geometry": true,
   "front_velocity": true,
   "fv_apex_weight": 10.0,
   "fv_weight": 10.0,

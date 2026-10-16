@@ -426,6 +426,7 @@ def _validate_training_config(cfg) -> None:
     _validate_thermal_training(tcfg, cfg.model)
     _validate_rebalance_cap(tcfg)
     _validate_outline_guard(tcfg)
+    _validate_freeze_geometry(tcfg, cfg.model)
 
 
 def _validate_rebalance_cap(tcfg) -> None:
@@ -434,6 +435,24 @@ def _validate_rebalance_cap(tcfg) -> None:
         raise ValueError(
             f"training.rebalance_max_ratio={tcfg.rebalance_max_ratio} must be >= 0 "
             "(0 keeps the fixed ceiling alone)."
+        )
+
+
+def _validate_freeze_geometry(tcfg, model_cfg) -> None:
+    """The geometry is frozen at the warm-up's fit, so there must be a warm-up
+    to fit it, and an explicit geometry to freeze."""
+    if not bool(getattr(tcfg, "freeze_geometry", False)):
+        return
+    if int(tcfg.stage_b_warmup_steps) <= 0:
+        raise ValueError(
+            "training.freeze_geometry freezes the bubble at the fit its warm-up reached, so it "
+            "needs training.stage_b_warmup_steps > 0; set a warm-up, or turn it off."
+        )
+    if not bool(getattr(model_cfg, "front_geometry", False)):
+        raise ValueError(
+            "training.freeze_geometry freezes the explicit front, so it requires "
+            "model.front_geometry=true; a free level set has no geometry to freeze apart "
+            "from the fields."
         )
 
 
@@ -1522,6 +1541,37 @@ def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     )
 
 
+def _geometry_frozen(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
+    """Whether ``step`` falls in the physics stage of a two-stage run
+    (``training.freeze_geometry``): after a warm-up, with Stage-B physics to
+    engage. State-based, so a resumed run lands on the same side."""
+    return (
+        bool(getattr(tcfg, "freeze_geometry", False))
+        and bool(stage_b_keys)
+        and int(tcfg.stage_b_warmup_steps) > 0
+        and step > int(tcfg.stage_b_warmup_steps)
+    )
+
+
+def _freeze_geometry(model, frozen: bool) -> None:
+    """Hold every parameter of the explicit geometry (the capsule, its nose,
+    root and width nets) where it is, or release it. The fields' own nets and
+    the scalar unknowns stay trainable."""
+    for p in model.nets["phi"].parameters():
+        p.requires_grad_(not frozen)
+    if frozen:
+        log.info("geometry frozen at the warm-up's fit: the physics stage trains the fields")
+
+
+def _physics_reference(
+    weights: dict[str, float], norms: dict[str, float], terms: tuple[str, ...]
+) -> float:
+    """The rebalancer's reference once the geometry is frozen: the median of
+    the rebalanced terms' weighted gradient norms, so the physics terms are
+    equalised among themselves (the data term no longer has a gradient)."""
+    return float(np.median([norms[name] * weights[name] for name in terms]))
+
+
 def _restart_for_stage_b(
     model, lr: float, reset_weights: dict[str, float]
 ) -> tuple[torch.optim.Optimizer, dict[str, float]]:
@@ -1545,15 +1595,19 @@ def _rebalance(
     norms: dict[str, float],
     terms: tuple[str, ...] = REBALANCED_TERMS,
     max_ratio: float = 0.0,
+    reference: float | None = None,
 ) -> None:
     """Nudge weights so each term's gradient matches the data term's. In place.
 
     ``max_ratio`` (``training.rebalance_max_ratio``) caps every rebalanced weight
     at that multiple of the data weight, under the fixed ceiling: the images are
     the measurement, and no physics term may outweigh them by more than it. Zero
-    keeps the fixed ceiling alone.
+    keeps the fixed ceiling alone. ``reference`` replaces the data term's
+    weighted norm as the target (the frozen-geometry stage, where the data term
+    has no gradient; see :func:`_physics_reference`).
     """
-    reference = norms["data"] * weights["data"]
+    if reference is None:
+        reference = norms["data"] * weights["data"]
     ceiling = REBALANCE_CEILING
     if max_ratio > 0.0:
         ceiling = min(ceiling, max_ratio * weights["data"])
@@ -1684,6 +1738,8 @@ def train(
     )
     _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step)
     _require_guard_arms(tcfg, stage_b_keys, state, first_step)
+    if _geometry_frozen(first_step, tcfg, stage_b_keys):
+        _freeze_geometry(model, True)  # a run resumed inside the physics stage
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
@@ -1750,16 +1806,22 @@ def train(
 
         # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
         # bounded per-point attention below. Skip the handoff step: weights reset there.
+        frozen = _geometry_frozen(step, tcfg, stage_b_keys)
         if (
             not rba
             and step % tcfg.rebalance_every == 0
             and not _stage_b_engages_at(step, tcfg, stage_b_keys)
         ):
+            # Once the geometry is frozen the data term has no gradient: the
+            # physics terms are measured and equalised among themselves.
+            measured = {k: v for k, v in losses.items() if k != "data"} if frozen else losses
+            norms = _gradient_norms(model, measured, opt)
             _rebalance(
                 weights,
-                _gradient_norms(model, losses, opt),
+                norms,
                 rebalanced,
                 float(tcfg.rebalance_max_ratio),
+                _physics_reference(weights, norms, rebalanced) if frozen else None,
             )
             log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
@@ -1771,6 +1833,8 @@ def train(
             # trainable.
             _record_warmup_fit(cfg, model, data, state)
             _release_nose_dof(model)
+            if frozen:
+                _freeze_geometry(model, True)
             opt, weights = _restart_for_stage_b(model, lr, reset_weights)
             log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
         schedule = _loss_schedule(step, tcfg, stage_b_keys)
@@ -1791,22 +1855,23 @@ def train(
             )
             total = total + kin_total
         fv_record: dict[str, float] = {}
-        if fv_plan is not None:
+        if fv_plan is not None and not frozen:
             # Outside the causal gate, RBA and the rebalancer, like the kinematic
             # terms: supervised functionals on the front, not pointwise residuals.
+            # Not evaluated once the geometry is frozen: they act on it alone.
             fv_total, fv_record = front_velocity.front_velocity_losses(
                 front_velocity.FrontVelocityContext(model, tcfg), fv_plan
             )
             total = total + fv_total
         root_record: dict[str, float] = {}
-        if root_plan is not None:
+        if root_plan is not None and not frozen:
             # Outside the causal gate, RBA and the rebalancer, same reason.
             root_total, root_record = root_supervision.root_losses(
                 cap_supervision.SupervisionContext(model, tcfg), root_plan
             )
             total = total + root_total
         nose_record: dict[str, float] = {}
-        if nose_plan is not None:
+        if nose_plan is not None and not frozen:
             # Outside the causal gate, RBA and the rebalancer, same reason.
             nose_total, nose_record = nose_supervision.nose_losses(
                 cap_supervision.SupervisionContext(model, tcfg), nose_plan
@@ -2092,6 +2157,11 @@ def _train_joint(
     """
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if bool(getattr(tcfg, "freeze_geometry", False)):
+        raise NotImplementedError(
+            "training.freeze_geometry is single-dataset for now: the two-stage schedule is "
+            "not threaded through the joint trainer. Run it on one series, or turn it off."
+        )
     if int(getattr(tcfg, "outline_guard_every", 0)) > 0:
         # The guard measures one dataset's fit against its own warm-up record;
         # a joint run has one record per dataset and none is threaded yet.

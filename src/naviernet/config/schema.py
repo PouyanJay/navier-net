@@ -580,6 +580,21 @@ class TrainingConfig:
     # between them. The fields had learned the quadrature, not the physics.
     # Off keeps the fixed grids (existing runs byte-for-byte).
     quadrature_jitter: bool = False
+    # Two-stage training: at the end of the warm-up, the step the physics
+    # engages, the bubble's geometry is frozen at the warm-up's fit of the
+    # images, and the physics stage trains only the hidden fields (u, v, p, T,
+    # the vapour pressure, the wet fraction) against the equations. The
+    # measured outline becomes an input to the flow problem, not an objective
+    # the flow competes with: the kinematic and Young-Laplace conditions read
+    # the frozen front as a moving boundary. With nothing left for the physics
+    # to pull off the masks, the rebalancer equalises the physics terms among
+    # themselves (the median of their weighted gradient norms is the
+    # reference) instead of holding them to the data term, which the measured
+    # 12000-step seeds showed keeping the momentum weight below 1 against the
+    # data's 10. The terms that act on the geometry alone (the measured front
+    # velocity, the root and nose supervision) are not evaluated once it is
+    # frozen. Needs a warm-up (stage_b_warmup_steps > 0) and the front geometry.
+    freeze_geometry: bool = False
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See

@@ -628,6 +628,23 @@
     "default": 0.05
   },
   {
+    "key": "training.freeze_geometry",
+    "label": "Freeze the outline after the warm-up",
+    "kind": "bool",
+    "section": "training",
+    "owner": "form",
+    "help": "two-stage training: the bubble is fixed at the warm-up's fit of the images and the physics stage trains only the velocity, pressure and temperature",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": false,
+    "name": "freeze_geometry",
+    "default": false
+  },
+  {
     "key": "training.quadrature_jitter",
     "label": "Jitter the quadrature times",
     "kind": "bool",
