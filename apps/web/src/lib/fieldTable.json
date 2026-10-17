@@ -136,6 +136,23 @@
     "default": null
   },
   {
+    "key": "experiment.T_init_layer_um",
+    "label": "Initial thermal layer",
+    "kind": "float",
+    "section": "conditions",
+    "owner": "series",
+    "help": "the initial temperature holds only farther than this from the first frame's outline; inside it the heat equation forms the layer the bubble already has",
+    "unit": "µm",
+    "options": [],
+    "lo": 0.0,
+    "hi": 10000.0,
+    "optional": false,
+    "baked": false,
+    "advanced": false,
+    "name": "T_init_layer_um",
+    "default": 0.0
+  },
+  {
     "key": "experiment.side_wall_thermal",
     "label": "Side walls",
     "kind": "enum",

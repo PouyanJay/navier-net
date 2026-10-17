@@ -478,8 +478,9 @@ def thermal_boundary_losses(
     model, groups: dict[str, float], batches: ThermalBatches, c: torch.Tensor | None = None
 ) -> torch.Tensor:
     """The inlet temperature, the initial liquid temperature (where there is
-    liquid), and the side-wall condition: adiabatic (``theta_y = 0``) unless the
-    series gives a wall temperature."""
+    liquid, and farther from the frame-1 outline than the layer the bubble
+    already has, ``init_layer_star``), and the side-wall condition: adiabatic
+    (``theta_y = 0``) unless the series gives a wall temperature."""
     inlet = (
         (model.temperature(batches.inlet, _ctx(c, batches.inlet)) - groups["theta_inlet"]) ** 2
     ).mean()
@@ -487,6 +488,12 @@ def thermal_boundary_losses(
     if "theta_init" in groups:
         cx = _ctx(c, batches.initial)
         liquid = 1.0 - model.alpha(batches.initial, cx).detach()
+        layer = groups.get("init_layer_star", 0.0)
+        if layer > 0.0:
+            # Inside the layer the heat equation decides; the distance reads the
+            # (frozen) geometry and carries no gradient.
+            distance = model._liquid_distance(batches.initial, cx).detach()
+            liquid = liquid * (distance >= layer).to(liquid.dtype)
         total = (
             total
             + (

@@ -285,6 +285,10 @@ def _thermal_conditions(cfg, dt_ref: float) -> dict[str, float]:
     t_init = getattr(exp, "T_init_C", None)
     if t_init is not None:
         conditions["theta_init"] = (float(t_init) - t_sat) / dt_ref
+        layer = float(getattr(exp, "T_init_layer_um", 0.0))
+        if layer < 0:
+            raise ValueError(f"experiment.T_init_layer_um={layer} must be >= 0 (a thickness)")
+        conditions["init_layer_star"] = layer / float(cfg.scales.L_ref_um)
     t_wall = getattr(exp, "T_wall_C", None)
     if str(getattr(exp, "side_wall_thermal", "adiabatic")) == "isothermal":
         if t_wall is None:

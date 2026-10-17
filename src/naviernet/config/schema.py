@@ -60,6 +60,14 @@ class ExperimentConfig:
     # (model.thermal_model=sharp) reads them. Temperatures in degrees C. ---
     T_inlet_C: Optional[float] = None  # noqa: UP045 -- liquid at the inlet; None = saturation
     T_init_C: Optional[float] = None  # noqa: UP045 -- the whole liquid before frame 1
+    # The thermal layer the bubble already has at the first frame: the initial
+    # temperature is imposed only on liquid farther than this from the frame-1
+    # outline, and the heat equation forms the layer inside it. The bubble is
+    # already 0.57 mm long at frame 1, so the liquid touching it has been
+    # cooling for milliseconds; imposing T_init right up to the interface
+    # forced a jump to saturation across zero distance at the first instant.
+    # 0 imposes it everywhere in the liquid (existing runs).
+    T_init_layer_um: float = 0.0
     side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
     T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
     # Film evaporation under the bubble (model.footprint_evaporation): the wall

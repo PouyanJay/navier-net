@@ -225,6 +225,7 @@ export interface OperatingConditions {
    * is null when unset. */
   T_inlet_C: number | null;
   T_init_C: number | null;
+  T_init_layer_um: number;
   side_wall_thermal: "adiabatic" | "isothermal";
   T_wall_C: number | null;
   wet_fraction_mode: "fixed" | "fit";
@@ -284,6 +285,7 @@ export interface ConditionsUpdate {
    * a null elsewhere. */
   T_inlet_C?: number | null;
   T_init_C?: number | null;
+  T_init_layer_um?: number;
   side_wall_thermal?: "adiabatic" | "isothermal";
   T_wall_C?: number | null;
   wet_fraction_mode?: "fixed" | "fit";

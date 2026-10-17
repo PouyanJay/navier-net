@@ -171,6 +171,7 @@ class OperatingConditions(BaseModel):
     # is None when not set.
     T_inlet_C: float | None
     T_init_C: float | None
+    T_init_layer_um: float
     side_wall_thermal: str
     T_wall_C: float | None
     wet_fraction_mode: str
@@ -247,6 +248,7 @@ class ConditionsUpdate(BaseModel):
     # (test_defaults_parity holds the two equal).
     T_inlet_C: float | None = None
     T_init_C: float | None = None
+    T_init_layer_um: float | None = None
     side_wall_thermal: Literal["adiabatic", "isothermal"] | None = None
     T_wall_C: float | None = None
     wet_fraction_mode: Literal["fixed", "fit"] | None = None

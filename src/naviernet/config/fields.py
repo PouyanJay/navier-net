@@ -187,6 +187,19 @@ THERMAL: tuple[FieldSpec, ...] = (
         optional=True,
     ),
     FieldSpec(
+        "experiment.T_init_layer_um",
+        "Initial thermal layer",
+        "float",
+        *_SERIES,
+        help=(
+            "the initial temperature holds only farther than this from the first frame's "
+            "outline; inside it the heat equation forms the layer the bubble already has"
+        ),
+        unit="µm",
+        lo=0.0,
+        hi=1e4,
+    ),
+    FieldSpec(
         "experiment.side_wall_thermal",
         "Side walls",
         "enum",

@@ -36,6 +36,11 @@ wet_fraction: 0.88
 # inlet cannot reach the bubble within the 4.5 ms event), adiabatic side walls.
 T_inlet_C: 58.0
 T_init_C: 58.0
+# The bubble is already 0.57 mm long at frame 1, so the liquid touching it has
+# been cooling for about 3 ms: heat spreads about 10 um in that time and the
+# cooling reaches 2 to 3 times that. The 58 C start is imposed only beyond 20 um
+# of the frame-1 outline; the heat equation forms the layer inside it.
+T_init_layer_um: 20.0
 side_wall_thermal: adiabatic
 
 flow_rate_mL_hr: 5.0

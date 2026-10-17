@@ -487,3 +487,33 @@ def test_the_interface_flux_is_the_liquid_side_gradient(tmp_path, gate):
 
     ratio = float((inside / flux).median())
     assert ratio == pytest.approx(1.0, abs=0.1), "the flux is the liquid-side gradient"
+
+
+def test_the_initial_temperature_spares_the_layer_the_bubble_already_has(tmp_path):
+    """With T_init_layer_um set, starting points within that distance of the
+    first-frame outline carry no initial condition; farther ones still do."""
+    cfg, data, model = _model(tmp_path, [*SHARP_THERMAL, "experiment.T_init_layer_um=20"])
+    groups = compute_groups(cfg)
+    assert groups["init_layer_star"] == pytest.approx(20.0 / 300.0)
+    t0 = float(data.t[0])
+    front = model.front(torch.tensor([[t0]]), 32, 8)
+    near = front.points.detach().clone()
+    near[:, :2] = near[:, :2] + 0.5 * groups["init_layer_star"] * front.normal.detach()
+    far = torch.tensor([[1.9, 0.05, t0], [1.9, 0.95, t0]])
+    walls = torch.tensor([[0.5, 0.0, t0]])
+
+    def initial_part(points):
+        batches = ThermalBatches(torch.tensor([[0.0, 0.5, t0]]), points, walls)
+        with_init = thermal_boundary_losses(model, groups, batches)
+        without = thermal_boundary_losses(
+            model, {k: v for k, v in groups.items() if k != "theta_init"}, batches
+        )
+        return float(with_init - without)
+
+    assert initial_part(near) == pytest.approx(0.0, abs=1e-9), "inside the layer: no condition"
+    assert initial_part(far) > 0.0, "beyond it: the 58 C start still holds"
+
+
+def test_a_negative_initial_layer_is_refused():
+    with pytest.raises(ValueError, match="T_init_layer_um"):
+        compute_groups(make_config([*THERMAL_SERIES, "experiment.T_init_layer_um=-1"]))
