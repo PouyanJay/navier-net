@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 import numpy as np
@@ -427,6 +427,7 @@ def _validate_training_config(cfg) -> None:
     _validate_rebalance_cap(tcfg)
     _validate_outline_guard(tcfg)
     _validate_freeze_geometry(tcfg, cfg.model)
+    _validate_temperature_stage(tcfg, cfg.model)
 
 
 def _validate_rebalance_cap(tcfg) -> None:
@@ -458,6 +459,38 @@ def _validate_freeze_geometry(tcfg, model_cfg) -> None:
             "training.freeze_geometry freezes the explicit front, so it requires "
             "model.front_geometry=true; a free level set has no geometry to freeze apart "
             "from the fields."
+        )
+
+
+def _validate_temperature_stage(tcfg, model_cfg) -> None:
+    """The temperature-only stage trains the temperature on a locked outline and
+    flow, so the outline must already be frozen, the flow must have had its own
+    stage after the warm-up, and there must be a temperature to train."""
+    start = int(getattr(tcfg, "temperature_stage_from", 0))
+    if start == 0:
+        return
+    if start < 0:
+        raise ValueError(f"training.temperature_stage_from must be >= 0, got {start}")
+    if not bool(getattr(tcfg, "freeze_geometry", False)):
+        raise ValueError(
+            "training.temperature_stage_from locks the flow on a frozen outline, so it "
+            "requires training.freeze_geometry=true"
+        )
+    if start <= int(tcfg.stage_b_warmup_steps):
+        raise ValueError(
+            f"training.temperature_stage_from ({start}) must come after the warm-up "
+            f"(training.stage_b_warmup_steps={tcfg.stage_b_warmup_steps}): the flow is "
+            "solved between the two"
+        )
+    if "T" not in list(model_cfg.fields):
+        raise ValueError(
+            "training.temperature_stage_from trains the temperature, so it requires the "
+            f"'T' field in model.fields; this model has {list(model_cfg.fields)}"
+        )
+    if tcfg.weighting == "rba":
+        raise ValueError(
+            "training.temperature_stage_from runs on the gradient-norm weighting; the RBA "
+            "attention pool is not rebuilt for the temperature terms"
         )
 
 
@@ -1568,6 +1601,54 @@ def _freeze_geometry(model, frozen: bool) -> None:
         log.info("geometry frozen at the warm-up's fit: the physics stage trains the fields")
 
 
+# The terms the temperature-only stage trains on: the liquid energy equation and
+# the measured start and inlet temperatures (the interface is at saturation by
+# construction of the gated temperature).
+TEMPERATURE_TERMS = frozenset({"energy_liquid", "theta_bc"})
+
+
+def _temperature_stage(step: int, tcfg) -> bool:
+    """Whether ``step`` falls in the temperature-only stage
+    (``training.temperature_stage_from``). State-based, so a resumed run lands on
+    the same side."""
+    start = int(getattr(tcfg, "temperature_stage_from", 0))
+    return start > 0 and step > start
+
+
+def _temperature_stage_engages_at(step: int, tcfg) -> bool:
+    """Whether ``step`` is the first of the temperature-only stage, where the
+    flow is locked and the optimiser restarts."""
+    start = int(getattr(tcfg, "temperature_stage_from", 0))
+    return start > 0 and step == start + 1
+
+
+def _lr_origin(step: int, tcfg) -> int:
+    """The step the learning-rate halving counts from: the temperature-only
+    stage restarts the clock, so the temperature trains from the full rate."""
+    return int(tcfg.temperature_stage_from) if _temperature_stage(step, tcfg) else 0
+
+
+def _lock_flow(model) -> None:
+    """Hold every parameter but the temperature net's where it is: the outline,
+    the velocity, the pressure, the vapour scalars and the wet share."""
+    for p in model.parameters():
+        p.requires_grad_(False)
+    for p in model.nets["T"].parameters():
+        p.requires_grad_(True)
+    log.info("flow locked: the temperature-only stage trains the temperature net alone")
+
+
+def _temperature_equations(equations) -> list:
+    """The enabled equations the temperature-only stage evaluates."""
+    return [eq for eq in equations if eq.weight_key in TEMPERATURE_TERMS]
+
+
+def _temperature_plan(plan: "_LossPlan") -> "_LossPlan":
+    """``plan`` narrowed to the temperature terms, keeping its causal state."""
+    coll = _temperature_equations(plan.coll_equations)
+    return replace(plan, coll_equations=coll, coll_keys=frozenset(e.weight_key for e in coll))
+
+
 def _physics_reference(
     weights: dict[str, float], norms: dict[str, float], terms: tuple[str, ...]
 ) -> float:
@@ -1745,11 +1826,22 @@ def train(
     _require_guard_arms(tcfg, stage_b_keys, state, first_step)
     if _geometry_frozen(first_step, tcfg, stage_b_keys):
         _freeze_geometry(model, True)  # a run resumed inside the physics stage
+    if _temperature_stage(first_step, tcfg):
+        _lock_flow(model)  # a run resumed inside the temperature-only stage
+        equations = _temperature_equations(equations)
+        plan = _temperature_plan(plan)
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
         model.eps = annealed_alpha_eps(step, cfg)
-        lr = tcfg.lr * (0.5 ** (step // tcfg.lr_halflife))
+        if _temperature_stage_engages_at(step, tcfg):
+            _lock_flow(model)
+            equations = _temperature_equations(equations)
+            plan = _temperature_plan(plan)
+            opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
+            log.info("step %5d | temperature-only stage engaged", step)
+        temperature_only = _temperature_stage(step, tcfg)
+        lr = tcfg.lr * (0.5 ** ((step - _lr_origin(step, tcfg)) // tcfg.lr_halflife))
         for group in opt.param_groups:
             group["lr"] = lr
         opt.zero_grad()
@@ -1804,7 +1896,13 @@ def train(
             wall_condition=boundaries.wall_condition,
             initial=initial,
         )
-        losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
+        # The temperature-only stage has no use for the outline's data term: the
+        # outline is locked, and the term would only cost a forward pass.
+        losses = (
+            {}
+            if temperature_only
+            else {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
+        )
         for eq in equations:
             losses[eq.weight_key] = eq.term(ctx)
         coll_batches = [CollocationBatch(model, x_coll, groups, None, ctx)]  # single dataset
@@ -1818,6 +1916,7 @@ def train(
         if (
             not rba
             and not held
+            and not temperature_only
             and step % tcfg.rebalance_every == 0
             and not _stage_b_engages_at(step, tcfg, stage_b_keys)
         ):
@@ -1854,7 +1953,7 @@ def train(
         else:
             total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
         kin_record: dict[str, float] = {}
-        if kin_plan is not None:
+        if kin_plan is not None and not temperature_only:
             # Outside the causal gate, RBA, and the rebalancer by construction:
             # added directly to the total with fixed config weights.
             kin_total, kin_record = kinematics.kinematic_losses(
@@ -1887,9 +1986,10 @@ def train(
             )
             total = total + nose_total
         mass_record: dict[str, float] = {}
-        if mass_plan is not None:
+        if mass_plan is not None and not temperature_only:
             # A functional on a fixed quadrature, outside the causal gate, RBA and
-            # the rebalancer, like the terms above.
+            # the rebalancer, like the terms above. A balance of the flow, so not
+            # evaluated once the flow is locked.
             mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
             total = total + float(tcfg.mass_balance_weight) * mass_total
         total.backward()

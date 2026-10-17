@@ -609,6 +609,20 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.temperature_stage_from",
+        "Temperature-only stage from step",
+        "int",
+        "training",
+        "override",
+        help=(
+            "sequential solve: after this step the outline and flow are locked and only the "
+            "temperature trains, on its own equation and conditions; 0 keeps the coupled stage"
+        ),
+        lo=0,
+        hi=1_000_000,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.quadrature_jitter",
         "Jitter the quadrature times",
         "bool",

@@ -632,6 +632,13 @@ class TrainingConfig:
     # advection term is detached, so the equation's error cannot bend the flow
     # (see residuals.energy_liquid_residual). Off keeps the two-way gradient.
     one_way_advection: bool = False
+    # Sequential temperature solve: after this step the outline and the flow are
+    # held where they are and only the temperature net trains, on the energy
+    # equation and the thermal start and inlet conditions alone, from a fresh
+    # optimiser whose learning-rate clock restarts at this step. Zero (default)
+    # keeps the coupled field stage to the end. Needs freeze_geometry and a step
+    # past the warm-up.
+    temperature_stage_from: int = 0
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See

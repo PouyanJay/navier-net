@@ -770,6 +770,23 @@
     "default": false
   },
   {
+    "key": "training.temperature_stage_from",
+    "label": "Temperature-only stage from step",
+    "kind": "int",
+    "section": "training",
+    "owner": "override",
+    "help": "sequential solve: after this step the outline and flow are locked and only the temperature trains, on its own equation and conditions; 0 keeps the coupled stage",
+    "unit": "",
+    "options": [],
+    "lo": 0,
+    "hi": 1000000,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "temperature_stage_from",
+    "default": 0
+  },
+  {
     "key": "training.quadrature_jitter",
     "label": "Jitter the quadrature times",
     "kind": "bool",
