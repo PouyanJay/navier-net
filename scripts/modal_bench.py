@@ -38,6 +38,13 @@ GPU = "A10G"
 CPUS = 4
 TIMEOUT_S = 6 * 3600
 
+# The processed archive the container trains on: the series' current one, or
+# another (NAVIERNET_TENSORS, a path) so a run resumed after a re-preprocess
+# keeps the outlines it started on.
+TENSORS = Path(
+    os.environ.get("NAVIERNET_TENSORS", REPO / "data" / "processed" / DATASET / "tensors.npz")
+)
+
 app = modal.App("navier-net-bench")
 
 # The container: Debian, Python 3.12, the project's dependencies (the Linux
@@ -65,7 +72,7 @@ image = (
     .add_local_dir(REPO / "src", f"{REMOTE_ROOT}/src")
     .add_local_dir(REPO / "configs", f"{REMOTE_ROOT}/configs")
     .add_local_file(
-        REPO / "data" / "processed" / DATASET / "tensors.npz",
+        TENSORS,
         f"{REMOTE_ROOT}/data/processed/{DATASET}/tensors.npz",
     )
 )
