@@ -1792,6 +1792,9 @@ def train(
             state["w"].update(ckpt["state"]["w"])
             state["done"] = ckpt["state"]["done"]
             state["hist"] = ckpt["state"]["hist"]
+            if "warmup_iou" in ckpt["state"]:
+                # The outline guard and the audit hold the run to this record.
+                state["warmup_iou"] = ckpt["state"]["warmup_iou"]
         else:
             opt.load_state_dict(ckpt["opt"])
             state = ckpt["state"]
