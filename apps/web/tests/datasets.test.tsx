@@ -69,6 +69,8 @@ const DETAIL = {
     T_inlet_C: null,
     T_init_C: 58,
     T_init_layer_um: 0,
+    q_upstream_W_cm2: null,
+    heater_edge_um: null,
     side_wall_thermal: "adiabatic",
     T_wall_C: null,
     wet_fraction_mode: "fixed",

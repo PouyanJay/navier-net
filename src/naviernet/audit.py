@@ -41,6 +41,7 @@ import torch
 
 from naviernet.physics import mass_balance, registry
 from naviernet.physics.groups import compute_groups
+from naviernet.physics.heating import wall_flux_ratio_np
 from naviernet.physics.residuals import (
     IN_PLANE_WEIGHT,
     interface_mass_flux,
@@ -203,12 +204,13 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
     # A dimensionless source integral to the latent power its vapour volume cost.
     to_latent_mW = length * depth * speed / specific_volume * fluid.h_lv * 1e3
     growth = _measured_growth_rate(data, row) * length**2 / t_ref
-    wall = float(exp.q_wall_W_cm2) * 1e4
+    # The floor's local flux over each grid column (both heater zones counted).
+    wall = float(exp.q_wall_W_cm2) * 1e4 * wall_flux_ratio_np(grid.xs, groups)[None, :]
     budget = {
         "latent_from_source_mW": _integral(fields["s"], grid) * to_latent_mW,
         "latent_for_growth_mW": fluid.rho_v * growth * depth * fluid.h_lv * 1e3,
-        "wall_into_liquid_mW": wall * _integral(liquid, grid) * length**2 * 1e3,
-        "wall_under_footprint_mW": wall * _integral(fields["alpha"], grid) * length**2 * 1e3,
+        "wall_into_liquid_mW": _integral(wall * liquid, grid) * length**2 * 1e3,
+        "wall_under_footprint_mW": _integral(wall * fields["alpha"], grid) * length**2 * 1e3,
     }
     estimates = [budget["latent_from_source_mW"], budget["latent_for_growth_mW"]]
     if getattr(model, "thermal_model", "legacy") == "sharp":

@@ -41,6 +41,7 @@ from typing import NamedTuple
 import torch
 
 from naviernet.physics.film import film_surface_pressure
+from naviernet.physics.heating import wall_flux_ratio
 
 
 class StageAResiduals(NamedTuple):
@@ -457,7 +458,7 @@ def energy_liquid_residual(
     if one_way:
         u, v = u.detach(), v.detach()
     t_x, t_y, t_t = gradients(theta, x)
-    heat = groups["q_wall_star"]
+    heat = groups["q_wall_star"] * wall_flux_ratio(x, groups)
     residual = (
         t_t + u * t_x + v * t_y - _laplacian(theta, x) / groups["Pe"] - heat * (1.0 - alpha)
     )

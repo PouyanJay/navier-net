@@ -35,6 +35,7 @@ from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softp
 # Neither module imports back into naviernet.models, so no cycle is possible.
 from naviernet.physics.film import deposited_thickness
 from naviernet.physics.groups import compute_groups
+from naviernet.physics.heating import wall_flux_ratio
 
 # Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
 # one smooth scalar curve in time, and capacity beyond this buys nothing but the
@@ -372,6 +373,11 @@ class BubblePINN(nn.Module):
             )
         groups = compute_groups(cfg)
         self._footprint_source_star = float(groups["footprint_source_star"])
+        self._heater_zones = {
+            key: float(groups[key])
+            for key in ("q_upstream_ratio", "heater_edge_star")
+            if key in groups
+        }
         self._wet_fraction_init = float(groups["wet_fraction_init"])
         self.wet_fraction_mode = str(getattr(cfg.experiment, "wet_fraction_mode", "fixed"))
         if self.wet_fraction_mode == "fit":
@@ -403,7 +409,10 @@ class BubblePINN(nn.Module):
         """
         if not self.footprint_evaporation:
             return torch.zeros_like(x[:, :1])
-        return self._footprint_source_star * self.wet_fraction * self.alpha(x, c).detach()
+        local = wall_flux_ratio(x, self._heater_zones)
+        return (
+            self._footprint_source_star * local * self.wet_fraction * self.alpha(x, c).detach()
+        )
 
     def _init_vapor_pressure(self) -> None:
         """``p_v(t)``: the vapour interior's pressure, one scalar per time.

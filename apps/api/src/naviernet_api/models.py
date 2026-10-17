@@ -172,6 +172,8 @@ class OperatingConditions(BaseModel):
     T_inlet_C: float | None
     T_init_C: float | None
     T_init_layer_um: float
+    q_upstream_W_cm2: float | None
+    heater_edge_um: float | None
     side_wall_thermal: str
     T_wall_C: float | None
     wet_fraction_mode: str
@@ -249,6 +251,8 @@ class ConditionsUpdate(BaseModel):
     T_inlet_C: float | None = None
     T_init_C: float | None = None
     T_init_layer_um: float | None = None
+    q_upstream_W_cm2: float | None = None
+    heater_edge_um: float | None = None
     side_wall_thermal: Literal["adiabatic", "isothermal"] | None = None
     T_wall_C: float | None = None
     wet_fraction_mode: Literal["fixed", "fit"] | None = None

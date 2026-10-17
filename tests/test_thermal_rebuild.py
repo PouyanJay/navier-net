@@ -517,3 +517,62 @@ def test_the_initial_temperature_spares_the_layer_the_bubble_already_has(tmp_pat
 def test_a_negative_initial_layer_is_refused():
     with pytest.raises(ValueError, match="T_init_layer_um"):
         compute_groups(make_config([*THERMAL_SERIES, "experiment.T_init_layer_um=-1"]))
+
+
+def test_the_floor_flux_follows_the_two_heater_zones():
+    """Upstream of the edge the floor carries the upstream flux, beyond it
+    q_wall; the step is smooth but narrow."""
+    from naviernet.physics.heating import EDGE_SMOOTHING, wall_flux_ratio, wall_flux_ratio_np
+
+    groups = compute_groups(
+        make_config(["experiment.q_upstream_W_cm2=0.45", "experiment.heater_edge_um=250"])
+    )
+    edge = groups["heater_edge_star"]
+    x = torch.tensor(
+        [[edge - 10 * EDGE_SMOOTHING, 0.5, 0.0], [edge + 10 * EDGE_SMOOTHING, 0.5, 0.0]]
+    )
+
+    ratio = wall_flux_ratio(x, groups).ravel()
+
+    assert groups["q_upstream_ratio"] == pytest.approx(
+        0.45 / float(make_config().experiment.q_wall_W_cm2)
+    )
+    assert float(ratio[0]) == pytest.approx(groups["q_upstream_ratio"], rel=1e-3)
+    assert float(ratio[1]) == pytest.approx(1.0, rel=1e-3)
+    assert wall_flux_ratio_np([edge], groups)[0] == pytest.approx(
+        0.5 * (1 + groups["q_upstream_ratio"])
+    )
+    assert torch.all(wall_flux_ratio(x, compute_groups(make_config())) == 1.0), (
+        "one flux by default"
+    )
+
+
+def test_the_two_heater_inputs_go_together():
+    with pytest.raises(ValueError, match="heater_edge_um"):
+        compute_groups(make_config(["experiment.q_upstream_W_cm2=0.45"]))
+
+
+def test_the_film_under_the_weak_zone_evaporates_at_its_own_flux(tmp_path):
+    """The footprint source reads the local floor flux: over the upstream zone
+    it is the zone's ratio times the downstream value."""
+    zones = ["experiment.q_upstream_W_cm2=0.45", "experiment.heater_edge_um=120"]
+    cfg, data, model = _model(
+        tmp_path,
+        [
+            *SHARP_THERMAL,
+            *zones,
+            "model.footprint_evaporation=true",
+            "experiment.wet_fraction=0.5",
+        ],
+    )
+    groups = compute_groups(cfg)
+    t = float(data.t[1])
+    upstream = torch.tensor([[0.33, 0.5, t]])  # inside the capsule, before the 0.4 L edge
+    downstream = torch.tensor([[0.55, 0.5, t]])  # inside the capsule, beyond it
+    ratio = groups["q_upstream_ratio"]
+
+    up = float(model.footprint_source(upstream) / model.alpha(upstream))
+    down = float(model.footprint_source(downstream) / model.alpha(downstream))
+
+    assert down == pytest.approx(groups["footprint_source_star"] * 0.5, rel=1e-3)
+    assert up == pytest.approx(down * ratio, rel=1e-2)

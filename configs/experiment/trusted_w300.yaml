@@ -22,6 +22,10 @@ T_sat_C: ${fluid.T_sat_C}
 # invented heaters of the first rebuild (a fitted uniform background flux plus
 # a 100 um cavity disk) are gone: they let the fit switch the growth off.
 q_wall_W_cm2: 2.0
+# Two heater zones along the floor: 0.45 W/cm2 from the inlet edge of the view
+# to 250 um (it contains the cavity, at 233 um), q_wall_W_cm2 beyond.
+q_upstream_W_cm2: 0.45
+heater_edge_um: 250.0
 
 # The wet share of the footprint: ONE fitted scalar bounded in (0, 1), started
 # at what the energy balance of the measured growth implies for this series

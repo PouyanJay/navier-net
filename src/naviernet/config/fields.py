@@ -200,6 +200,31 @@ THERMAL: tuple[FieldSpec, ...] = (
         hi=1e4,
     ),
     FieldSpec(
+        "experiment.q_upstream_W_cm2",
+        "Upstream heater flux",
+        "float",
+        *_SERIES,
+        help=(
+            "the floor's flux from the inlet edge of the view to the heater edge; not set "
+            "means one flux over the whole floor"
+        ),
+        unit="W/cm²",
+        lo=0.0,
+        hi=_FLUX_W_CM2[1],
+        optional=True,
+    ),
+    FieldSpec(
+        "experiment.heater_edge_um",
+        "Heater edge",
+        "float",
+        *_SERIES,
+        help="where the upstream heater zone ends, from the inlet edge of the view",
+        unit="µm",
+        lo=0.0,
+        hi=_LENGTH_UM[1],
+        optional=True,
+    ),
+    FieldSpec(
         "experiment.side_wall_thermal",
         "Side walls",
         "enum",

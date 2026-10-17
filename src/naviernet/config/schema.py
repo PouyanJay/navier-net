@@ -68,6 +68,11 @@ class ExperimentConfig:
     # forced a jump to saturation across zero distance at the first instant.
     # 0 imposes it everywhere in the liquid (existing runs).
     T_init_layer_um: float = 0.0
+    # The floor heated in two zones along the channel: q_upstream_W_cm2 from the
+    # field of view's inlet edge to heater_edge_um, q_wall_W_cm2 beyond. Both
+    # None: one flux, q_wall_W_cm2, over the whole floor (existing series).
+    q_upstream_W_cm2: Optional[float] = None  # noqa: UP045
+    heater_edge_um: Optional[float] = None  # noqa: UP045
     side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
     T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
     # Film evaporation under the bubble (model.footprint_evaporation): the wall
