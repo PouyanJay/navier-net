@@ -397,6 +397,22 @@ debugging with their closed pull requests.
 
 ## Implementation log
 
+- 2026-10-16, two-stage training (`training.freeze_geometry`, branch
+  `feat/two-stage-fields`): the jittered 12000-step seed (`trust-wpf5-s0`) removed
+  the time aliasing (flux defect 0.21 at every instant, worst 0.35, against 2.55)
+  but left the velocity and temperature lopsided (mirror u 0.44 to 0.50 and v about
+  0.8 early, T 0.3 to 0.5) and the momentum and jump residuals flat at about 0.3.
+  The rebalancer had held the Brinkman weight below 1 against the data term's 10
+  for the whole physics stage. Change: at the step the physics engages the
+  geometry is frozen at the warm-up's fit and the physics stage trains only the
+  fields (u, v, p, T, p_v, the wet fraction); the kinematic and Young-Laplace
+  conditions read the frozen front as a moving boundary; the rebalancer equalises
+  the physics terms on the median of their weighted gradient norms; the terms
+  that act on the geometry alone (front velocity, root and nose supervision) are
+  not evaluated. On in the trusted recipe. An 80-step smoke on `Series-1-w300`:
+  the IoU held at the warm-up's value at every guard check, and the Brinkman
+  weight rose to 4.4.
+
 - 2026-10-15, second pass after the first full-chain seed (`wpf2-s0`, Modal A10,
   stopped at step 10000; checkpoint under `outputs/wpf2-s0-preview`): the chain
   converged to the solution with NO evaporation. Mean IoU 0.74 (0.89 at frame 2,

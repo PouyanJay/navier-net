@@ -41,6 +41,7 @@ from typing import NamedTuple
 import torch
 
 from naviernet.physics.film import film_surface_pressure
+from naviernet.physics.heating import wall_flux_ratio
 
 
 class StageAResiduals(NamedTuple):
@@ -427,7 +428,11 @@ def energy_residuals(
 
 
 def energy_liquid_residual(
-    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None = None,
+    one_way: bool = False,
 ) -> torch.Tensor:
     """``(1 - alpha) [theta_t + u.grad theta - lap(theta)/Pe - q* (1 - alpha)]``.
 
@@ -435,13 +440,25 @@ def energy_liquid_residual(
     the bubble the same flux evaporates the film instead (the footprint source
     on the model), so one wall flux is split by phase. The latent sink is absent
     because the interface temperature is the boundary condition that carries it.
+
+    ``one_way`` detaches the velocity in the advection term, so this equation
+    trains the temperature and never the flow. Physically the coupling is one
+    way here: the liquid carries the heat, and nothing in the model lets the
+    temperature move the liquid (constant properties, no buoyancy); its only
+    route back is the evaporation source, which continuity reads. Without the
+    detach the equation's error reaches the velocity network through
+    ``u.grad(theta)``, and measured on the trusted recipe it pulled the flow
+    ahead of the bubble 2 to 30 times harder than the momentum equation did,
+    bending it into the lopsided swirl the mirror test failed on.
     """
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
     theta = model.temperature(x, cx)
     u, v = model.velocity(x, cx)
+    if one_way:
+        u, v = u.detach(), v.detach()
     t_x, t_y, t_t = gradients(theta, x)
-    heat = groups["q_wall_star"]
+    heat = groups["q_wall_star"] * wall_flux_ratio(x, groups)
     residual = (
         t_t + u * t_x + v * t_y - _laplacian(theta, x) / groups["Pe"] - heat * (1.0 - alpha)
     )
@@ -462,8 +479,9 @@ def thermal_boundary_losses(
     model, groups: dict[str, float], batches: ThermalBatches, c: torch.Tensor | None = None
 ) -> torch.Tensor:
     """The inlet temperature, the initial liquid temperature (where there is
-    liquid), and the side-wall condition: adiabatic (``theta_y = 0``) unless the
-    series gives a wall temperature."""
+    liquid, and farther from the frame-1 outline than the layer the bubble
+    already has, ``init_layer_star``), and the side-wall condition: adiabatic
+    (``theta_y = 0``) unless the series gives a wall temperature."""
     inlet = (
         (model.temperature(batches.inlet, _ctx(c, batches.inlet)) - groups["theta_inlet"]) ** 2
     ).mean()
@@ -471,6 +489,12 @@ def thermal_boundary_losses(
     if "theta_init" in groups:
         cx = _ctx(c, batches.initial)
         liquid = 1.0 - model.alpha(batches.initial, cx).detach()
+        layer = groups.get("init_layer_star", 0.0)
+        if layer > 0.0:
+            # Inside the layer the heat equation decides; the distance reads the
+            # (frozen) geometry and carries no gradient.
+            distance = model._liquid_distance(batches.initial, cx).detach()
+            liquid = liquid * (distance >= layer).to(liquid.dtype)
         total = (
             total
             + (

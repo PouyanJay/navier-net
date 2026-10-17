@@ -351,6 +351,19 @@ function BalancesGroup({ form, onForm, locked }: GroupProps) {
           disabled={locked}
         />
       </SwitchRow>
+      <SwitchRow
+        label={labelOf("freeze_geometry")}
+        hint="two stages: fit the outline, then solve the fields with it fixed"
+        verdict={{ tone: "unbenched" }}
+        checked={form.freeze_geometry}
+        onChange={(freeze_geometry) => onForm({ freeze_geometry })}
+        disabled={locked || treatmentOf(form) === "diffuse"}
+        reason={
+          treatmentOf(form) === "diffuse"
+            ? "Freezing needs the explicit front to freeze; choose an explicit or sharp front."
+            : undefined
+        }
+      />
     </>
   );
 }

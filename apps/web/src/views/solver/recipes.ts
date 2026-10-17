@@ -135,6 +135,7 @@ export const SWITCH_LABELS: [keyof SolverFormState, string][] = [
   ["mass_balance", "mass balance"],
   ["log_chunk_residuals", "chunk residuals"],
   ["footprint_evaporation", "film evaporation"],
+  ["freeze_geometry", "outline freeze"],
 ];
 
 /** The physics choices that are a pick among options; a departure reads as

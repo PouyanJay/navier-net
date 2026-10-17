@@ -225,6 +225,9 @@ export interface OperatingConditions {
    * is null when unset. */
   T_inlet_C: number | null;
   T_init_C: number | null;
+  T_init_layer_um: number;
+  q_upstream_W_cm2: number | null;
+  heater_edge_um: number | null;
   side_wall_thermal: "adiabatic" | "isothermal";
   T_wall_C: number | null;
   wet_fraction_mode: "fixed" | "fit";
@@ -284,6 +287,9 @@ export interface ConditionsUpdate {
    * a null elsewhere. */
   T_inlet_C?: number | null;
   T_init_C?: number | null;
+  T_init_layer_um?: number;
+  q_upstream_W_cm2?: number | null;
+  heater_edge_um?: number | null;
   side_wall_thermal?: "adiabatic" | "isothermal";
   T_wall_C?: number | null;
   wet_fraction_mode?: "fixed" | "fit";
@@ -603,6 +609,9 @@ export interface RunLaunchRequest {
   grad_clip: number;
   outline_guard_every: number;
   outline_guard_drop: number;
+  /** Two-stage training: the outline frozen at the warm-up's fit when the
+   * physics engages; needs the front geometry and a Stage-B series. */
+  freeze_geometry: boolean;
   /** Advanced overrides: `key=value` Hydra tokens for the schema's CLI-only
    * dials. Strictly allowlisted server-side (top-level training.* / model.*
    * scalar fields the form and the series config do not own); an invalid token

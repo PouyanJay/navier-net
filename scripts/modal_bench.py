@@ -133,20 +133,59 @@ def time_steps(seed: int = 0) -> float:
     return per_step
 
 
+def _target_steps() -> int:
+    """The recipe's own step count, read from the composed config, so the
+    target is never typed twice."""
+    from hydra import compose, initialize_config_dir
+
+    from naviernet.config import register_configs
+
+    register_configs()
+    with initialize_config_dir(config_dir=f"{REMOTE_ROOT}/configs", version_base="1.3"):
+        cfg = compose(config_name="config", overrides=[f"dataset={DATASET}", *RECIPE])
+    return int(cfg.training.steps)
+
+
+def _completed_steps(run_name: str) -> int:
+    """Steps the run's checkpoint on the volume has already done (0 when none)."""
+    import torch
+
+    checkpoint = Path(OUTPUTS) / run_name / "checkpoints" / "ckpt.pt"
+    if not checkpoint.exists():
+        return 0
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)["state"]
+    return int(state["done"])
+
+
 @app.function(
     image=image, gpu=GPU, cpu=CPUS, memory=8192, timeout=TIMEOUT_S, volumes={OUTPUTS: volume}
 )
-def bench(seed: int, prefix: str = RUN_PREFIX) -> tuple[str, bytes, str | None]:
+def bench(
+    seed: int, prefix: str = RUN_PREFIX, overrides: str = ""
+) -> tuple[str, bytes, str | None]:
     """Train and evaluate (with the audit) one seed; returns its run directory
     and, when the evaluate stage failed, the failure, so a trained checkpoint
-    is never lost to an evaluation bug (it can be audited locally). A run name
-    already on the volume resumes from its last checkpoint."""
+    is never lost to an evaluation bug (it can be audited locally).
+
+    A run name already on the volume resumes from its last checkpoint and
+    trains only the steps left to the recipe's total. That matters because
+    Modal restarts a preempted container with the same input: training.steps
+    is additive per call, so a restart that passed it unchanged trained the
+    whole count again (trust-wpf6-s0, preempted at 7500, ended at 19000).
+
+    ``overrides`` are extra Hydra overrides, space-separated, applied after the
+    recipe to both stages, so an experiment on top of the recipe is recorded in
+    the run's own config snapshot."""
+    extra = overrides.split()
     run_name = f"{prefix}-s{seed}"
-    _cli(_common(run_name, seed, ["stage=train"]))
-    volume.commit()
+    remaining = _target_steps() - _completed_steps(run_name)
+    if remaining > 0:
+        print(f"{run_name}: {remaining} steps to train", flush=True)
+        _cli(_common(run_name, seed, [*extra, f"training.steps={remaining}", "stage=train"]))
+        volume.commit()
     failure = None
     try:
-        _cli(_common(run_name, seed, ["stage=evaluate"]))
+        _cli(_common(run_name, seed, [*extra, "stage=evaluate"]))
     except subprocess.CalledProcessError as exc:
         failure = f"evaluate stage failed: {exc}"
     volume.commit()
@@ -165,7 +204,11 @@ def _unpack(run_name: str, payload: bytes) -> Path:
 
 @app.local_entrypoint()
 def main(
-    mode: str = "time", seeds: str = "0,1,2", gpu: str = GPU, prefix: str = RUN_PREFIX
+    mode: str = "time",
+    seeds: str = "0,1,2",
+    gpu: str = GPU,
+    prefix: str = RUN_PREFIX,
+    overrides: str = "",
 ) -> None:
     """``time`` measures the per-step cost; ``bench`` runs the seeds in parallel
     under ``prefix`` (a new prefix for a new configuration; the same one resumes)."""
@@ -183,10 +226,15 @@ def main(
     if mode != "bench":
         raise SystemExit("mode must be 'time' or 'bench'")
     wanted = [int(s) for s in seeds.split(",") if s.strip()]
-    print(f"dispatching seeds {wanted} on {gpu} as {prefix}-s*", flush=True)
+    print(
+        f"dispatching seeds {wanted} on {gpu} as {prefix}-s* {overrides}".rstrip(), flush=True
+    )
     # One seed's failure must not end the app and cancel the others mid-run.
     for result in runner.map(
-        wanted, kwargs={"prefix": prefix}, order_outputs=False, return_exceptions=True
+        wanted,
+        kwargs={"prefix": prefix, "overrides": overrides},
+        order_outputs=False,
+        return_exceptions=True,
     ):
         if isinstance(result, Exception):
             print(f"a seed failed: {result}", flush=True)

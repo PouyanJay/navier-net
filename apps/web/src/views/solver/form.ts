@@ -74,6 +74,8 @@ export interface SolverFormState {
   grad_clip: number;
   outline_guard_every: number;
   outline_guard_drop: number;
+  /** Two-stage training: the outline frozen after the warm-up. */
+  freeze_geometry: boolean;
   /** Advanced overrides as raw text; parsed to `overrides` at launch. */
   overridesText: string;
 }
@@ -197,6 +199,7 @@ export const FORM_DEFAULTS: SolverFormState = {
   grad_clip: 0,
   outline_guard_every: 0,
   outline_guard_drop: 0.05,
+  freeze_geometry: false,
   overridesText: "",
 };
 

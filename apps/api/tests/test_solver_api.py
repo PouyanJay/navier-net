@@ -962,6 +962,11 @@ def test_the_physics_choices_default_to_the_schema_and_compose_when_asked(
         ({"footprint_evaporation": True, "thermal_model": "legacy"}, "thermal_model=sharp"),
         ({"rebalance_max_ratio": -1.0}, "rebalance_max_ratio"),
         ({"outline_guard_drop": 1.5}, "outline_guard_drop"),
+        ({"freeze_geometry": True, "front_geometry": False}, "front_geometry"),
+        (
+            {"freeze_geometry": True, "front_geometry": True, "datasets": ["a", "b"]},
+            "freeze_geometry",
+        ),
     ],
 )
 def test_launch_rejects_an_inconsistent_physics_choice_naming_the_fix(
@@ -980,6 +985,16 @@ def test_launch_rejects_the_outline_guard_on_a_series_without_a_warm_up(client):
     r = client.post("/api/runs", json={**TINY_RUN, "outline_guard_every": 100})
     assert r.status_code == 422
     assert "warm-up" in _messages(r)
+
+
+def test_launch_rejects_the_outline_freeze_on_a_series_without_a_warm_up(client):
+    """The freeze keeps the geometry the warm-up fitted; a Stage-A series has
+    no warm-up, so there is nothing to freeze it at."""
+    r = client.post(
+        "/api/runs", json={**TINY_RUN, "front_geometry": True, "freeze_geometry": True}
+    )
+    assert r.status_code == 422
+    assert "outline freeze" in _messages(r)
 
 
 def test_launch_composes_the_images_binding_switches(client: TestClient, repo_root: Path):

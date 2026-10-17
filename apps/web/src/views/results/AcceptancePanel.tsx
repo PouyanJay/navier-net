@@ -8,9 +8,12 @@ const VERDICT_IDS = [
   "outline",
   "outline_drop",
   "nose",
+  "jump_shape",
   "mirror",
   "residuals",
+  "residuals_in_time",
   "flux",
+  "flux_in_time",
   "heat",
 ] as const;
 type VerdictId = (typeof VERDICT_IDS)[number];
@@ -70,6 +73,12 @@ const ROWS: { id: VerdictId; name: string; detail: string }[] = [
       "largest distance between the model's nose and the measured nose, in channel widths",
   },
   {
+    id: "jump_shape",
+    name: "Shape the jump condition asks for",
+    detail:
+      "Young-Laplace mismatch on the front as the shape change that would remove it (90th percentile, pixels)",
+  },
+  {
     id: "mirror",
     name: "Mirror symmetry",
     detail:
@@ -81,10 +90,22 @@ const ROWS: { id: VerdictId; name: string; detail: string }[] = [
     detail: "RMS of the worst collocation residual, equation by equation",
   },
   {
+    id: "residuals_in_time",
+    name: "Residuals between the frames",
+    detail:
+      "the same, scanned at instants across the whole event, camera frames or not",
+  },
+  {
     id: "flux",
     name: "Cross-section flux balance",
     detail:
       "largest defect of volume flux against the inlet flux plus the vapour created upstream, at any station",
+  },
+  {
+    id: "flux_in_time",
+    name: "Flux balance between the frames",
+    detail:
+      "the largest flux defect at instants across the whole event, camera frames or not",
   },
   {
     id: "heat",

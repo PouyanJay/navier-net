@@ -166,7 +166,11 @@ class LossContext:
     def energy_liquid_res(self) -> torch.Tensor:
         if self._energy_liquid is None:
             self._energy_liquid = energy_liquid_residual(
-                self.model, self.x_coll, self.groups, c=self.c
+                self.model,
+                self.x_coll,
+                self.groups,
+                c=self.c,
+                one_way=bool(getattr(self.model.cfg.training, "one_way_advection", False)),
             )
         return self._energy_liquid
 

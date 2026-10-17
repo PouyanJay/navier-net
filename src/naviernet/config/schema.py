@@ -60,6 +60,19 @@ class ExperimentConfig:
     # (model.thermal_model=sharp) reads them. Temperatures in degrees C. ---
     T_inlet_C: Optional[float] = None  # noqa: UP045 -- liquid at the inlet; None = saturation
     T_init_C: Optional[float] = None  # noqa: UP045 -- the whole liquid before frame 1
+    # The thermal layer the bubble already has at the first frame: the initial
+    # temperature is imposed only on liquid farther than this from the frame-1
+    # outline, and the heat equation forms the layer inside it. The bubble is
+    # already 0.57 mm long at frame 1, so the liquid touching it has been
+    # cooling for milliseconds; imposing T_init right up to the interface
+    # forced a jump to saturation across zero distance at the first instant.
+    # 0 imposes it everywhere in the liquid (existing runs).
+    T_init_layer_um: float = 0.0
+    # The floor heated in two zones along the channel: q_upstream_W_cm2 from the
+    # field of view's inlet edge to heater_edge_um, q_wall_W_cm2 beyond. Both
+    # None: one flux, q_wall_W_cm2, over the whole floor (existing series).
+    q_upstream_W_cm2: Optional[float] = None  # noqa: UP045
+    heater_edge_um: Optional[float] = None  # noqa: UP045
     side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
     T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
     # Film evaporation under the bubble (model.footprint_evaporation): the wall
@@ -422,6 +435,19 @@ class ModelConfig:
     # Smoothing width of that distance gate, in L_ref units: a numerical choice,
     # kept well below the thermal layer it must not blur (~0.02-0.04 here).
     theta_gate_width: float = 0.005
+    # The shape of that gate. "linear": theta = d N, the distance itself, so far
+    # from the bubble theta is the network times a distance that SHRINKS as the
+    # front approaches; unless the network compensates exactly, the liquid
+    # ahead of an advancing nose cools for no physical reason (measured on the
+    # trusted recipe: 21 to 69 percent of the downstream temperature's fall was
+    # this geometric decay, and the liquid that should stay at 58 C drifted to
+    # saturation). "saturating": theta = tanh(d / theta_gate_length) N, still
+    # zero on the front, but equal to the network beyond a few gate lengths, so
+    # the far field no longer depends on where the bubble is.
+    theta_gate: str = "linear"  # "linear" | "saturating"
+    # The saturating gate's length in L_ref units: the thermal layer's scale
+    # sqrt(t*/Pe), about 0.02 to 0.04 here; the network still shapes the layer.
+    theta_gate_length: float = 0.04
     # Where the continuity source comes from. "free": the s network, pulled toward
     # the thermal flux two-way by the evap_flux closure. "thermal": s IS the
     # interface flux spread over the band, no s network in the loop.
@@ -580,6 +606,32 @@ class TrainingConfig:
     # between them. The fields had learned the quadrature, not the physics.
     # Off keeps the fixed grids (existing runs byte-for-byte).
     quadrature_jitter: bool = False
+    # Two-stage training: at the end of the warm-up, the step the physics
+    # engages, the bubble's geometry is frozen at the warm-up's fit of the
+    # images, and the physics stage trains only the hidden fields (u, v, p, T,
+    # the vapour pressure, the wet fraction) against the equations. The
+    # measured outline becomes an input to the flow problem, not an objective
+    # the flow competes with: the kinematic and Young-Laplace conditions read
+    # the frozen front as a moving boundary. With nothing left for the physics
+    # to pull off the masks, the rebalancer equalises the physics terms among
+    # themselves (the median of their weighted gradient norms is the
+    # reference) instead of holding them to the data term, which the measured
+    # 12000-step seeds showed keeping the momentum weight below 1 against the
+    # data's 10. The terms that act on the geometry alone (the measured front
+    # velocity, the root and nose supervision) are not evaluated once it is
+    # frozen. Needs a warm-up (stage_b_warmup_steps > 0) and the front geometry.
+    freeze_geometry: bool = False
+    # How the physics terms are weighted once the geometry is frozen. "fixed":
+    # each at its configured weight, never rebalanced. "equalised": rebalanced
+    # to equal gradient contributions (the median of the weighted norms is the
+    # reference). The first two-stage seed ran equalised and turned the
+    # momentum weight down to 0.26 (its gradient is the largest), and its
+    # Brinkman residual doubled against the coupled run's.
+    frozen_weighting: str = "fixed"  # "fixed" | "equalised"
+    # The temperature equation trains the temperature only: the velocity in its
+    # advection term is detached, so the equation's error cannot bend the flow
+    # (see residuals.energy_liquid_residual). Off keeps the two-way gradient.
+    one_way_advection: bool = False
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See
@@ -755,6 +807,12 @@ class AcceptanceConfig:
     iou_min: float = 0.85
     iou_drop_max: float = 0.05
     nose_tol: float = 0.1
+    # Where the frozen (or fitted) shape blocks the physics: the Young-Laplace
+    # mismatch on the front, expressed as the shape change it would take to
+    # remove it, in camera pixels. The 90th percentile over the front and the
+    # event may not exceed this: within it the measured outline and the
+    # physics agree to the measurement's own resolution.
+    jump_px_max: float = 2.0
 
 
 @dataclass
@@ -767,6 +825,12 @@ class EvaluationConfig:
     audit: bool = True
     audit_nx: int = 129
     audit_ny: int = 49
+    # Instants scanned across the whole event window (not only the camera
+    # frames) for the residuals, the flux balance and the jump condition, on a
+    # grid half the audit's in each direction. A field can satisfy the physics
+    # at the instants it was trained on and violate it between them; this is
+    # what sees it. 0 skips the scan.
+    audit_scan_times: int = 61
     acceptance: AcceptanceConfig = field(default_factory=AcceptanceConfig)
 
 

@@ -41,7 +41,9 @@ import torch
 
 from naviernet.physics import mass_balance, registry
 from naviernet.physics.groups import compute_groups
+from naviernet.physics.heating import wall_flux_ratio_np
 from naviernet.physics.residuals import (
+    IN_PLANE_WEIGHT,
     interface_mass_flux,
     kinematic_residual,
     laplace_jump_residual,
@@ -202,12 +204,13 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
     # A dimensionless source integral to the latent power its vapour volume cost.
     to_latent_mW = length * depth * speed / specific_volume * fluid.h_lv * 1e3
     growth = _measured_growth_rate(data, row) * length**2 / t_ref
-    wall = float(exp.q_wall_W_cm2) * 1e4
+    # The floor's local flux over each grid column (both heater zones counted).
+    wall = float(exp.q_wall_W_cm2) * 1e4 * wall_flux_ratio_np(grid.xs, groups)[None, :]
     budget = {
         "latent_from_source_mW": _integral(fields["s"], grid) * to_latent_mW,
         "latent_for_growth_mW": fluid.rho_v * growth * depth * fluid.h_lv * 1e3,
-        "wall_into_liquid_mW": wall * _integral(liquid, grid) * length**2 * 1e3,
-        "wall_under_footprint_mW": wall * _integral(fields["alpha"], grid) * length**2 * 1e3,
+        "wall_into_liquid_mW": _integral(wall * liquid, grid) * length**2 * 1e3,
+        "wall_under_footprint_mW": _integral(wall * fields["alpha"], grid) * length**2 * 1e3,
     }
     estimates = [budget["latent_from_source_mW"], budget["latent_for_growth_mW"]]
     if getattr(model, "thermal_model", "legacy") == "sharp":
@@ -255,13 +258,50 @@ def outline_agreement(cfg, model, data, row: int) -> dict:
     }
 
 
-def front_conditions(model, groups, t: float) -> dict | None:
+# The front's four segments, as the sampler orders them and the jump map names them.
+SEGMENTS = ("upper", "lower", "root", "nose")
+
+
+def _segment_codes(front) -> np.ndarray:
+    """0 upper body, 1 lower body, 2 root cap, 3 nose cap, per front sample."""
+    side = front.side.detach().cpu().numpy().ravel()
+    cap = front.on_cap.detach().cpu().numpy().ravel() > 0.5
+    spine = front.u.detach().cpu().numpy().ravel()
+    codes = np.where(side > 0, 0, 1)
+    codes[cap & (spine < 0.5)] = 2
+    codes[cap & (spine >= 0.5)] = 3
+    return codes
+
+
+def jump_shape_pixels(
+    laplace: np.ndarray, kappa_par: np.ndarray, groups, pixel: float, width: float
+) -> np.ndarray:
+    """The Young-Laplace mismatch at each front sample as the shape change that
+    would remove it, in camera pixels.
+
+    A local displacement of the outline by ``d`` across a feature of radius
+    ``R`` changes its in-plane curvature by ``d / R^2``, and so the jump by
+    ``(pi/4) d / (R^2 We)``. ``R`` is the local radius of curvature, capped at
+    half the channel width (a flat stretch of the body still bends over the
+    channel's own scale). The gap-direction curvature reads the front's speed,
+    not its shape, and is left out of the yardstick.
+    """
+    kappa = np.maximum(np.abs(kappa_par), 2.0 / width)
+    per_pixel = IN_PLANE_WEIGHT * kappa**2 * pixel / groups["We"]
+    return np.abs(laplace) / per_pixel
+
+
+def front_conditions(
+    model, groups, t: float, pixel: float = 0.0, width: float = 1.0
+) -> tuple[dict | None, dict[str, np.ndarray]]:
     """Kinematic and Young-Laplace residual RMS on the upper and lower halves of
-    the explicit front, or ``None`` for a run without one."""
+    the explicit front, and (``pixel`` > 0) the jump mismatch per segment as the
+    shape change in pixels that would remove it; with the per-sample arrays the
+    jump map is drawn from. ``(None, {})`` for a run without the sharp front."""
     if not getattr(model, "front_geometry", False) or not getattr(
         model, "sharp_interface", False
     ):
-        return None
+        return None, {}
     model_cfg = model.cfg.model
     with torch.enable_grad():
         front = model.front(
@@ -279,11 +319,30 @@ def front_conditions(model, groups, t: float) -> dict | None:
         )
         laplace = laplace_jump_residual(model, front, groups).detach().cpu().numpy().ravel()
     upper = front.side.detach().cpu().numpy().ravel() > 0
-    return {
+    record = {
         "kinematic_rms_upper": _rms(kinematic[upper]),
         "kinematic_rms_lower": _rms(kinematic[~upper]),
         "laplace_rms_upper": _rms(laplace[upper]),
         "laplace_rms_lower": _rms(laplace[~upper]),
+    }
+    if pixel <= 0.0:
+        return record, {}
+    kappa = front.kappa_par.detach().cpu().numpy().ravel()
+    pixels = jump_shape_pixels(laplace, kappa, groups, pixel, width)
+    codes = _segment_codes(front)
+    record["jump_px_median"] = float(np.median(pixels))
+    record["jump_px_p90"] = float(np.percentile(pixels, 90))
+    record["jump_px_by_segment"] = {
+        name: float(np.median(pixels[codes == k]))
+        for k, name in enumerate(SEGMENTS)
+        if (codes == k).any()
+    }
+    xy = front.points.detach().cpu().numpy()[:, :2]
+    return record, {
+        "front_x": xy[:, 0],
+        "front_y": xy[:, 1],
+        "front_jump_px": pixels,
+        "front_segment": codes,
     }
 
 
@@ -303,10 +362,13 @@ def audit_frame(
         "residual_rms": residual_rms_on_grid(model, groups, equations, grid, t),
         "flux": flux_balance(cfg, model, data, groups, t),
         "heat": heat_budget(cfg, model, data, groups, row, fields, grid),
-        "front": front_conditions(model, groups, t),
         "outline": outline_agreement(cfg, model, data, row),
     }
-    return record, fields
+    pixel = float(data.x[1] - data.x[0])
+    record["front"], front = front_conditions(
+        model, groups, t, pixel, float(data.y_hi - data.y_lo)
+    )
+    return record, {**fields, **front}
 
 
 def _verdicts(
@@ -398,6 +460,68 @@ def _verdicts_of_fields(
     }
 
 
+def time_scan(cfg, model, data, groups, equations, n_times: int) -> dict | None:
+    """The residuals, the flux balance and the jump condition at ``n_times``
+    instants spread over the whole window, camera frames or not, on a grid
+    half the audit's in each direction; ``None`` when the scan is off."""
+    if n_times <= 0:
+        return None
+    evaluation = cfg.evaluation
+    grid = audit_grid(
+        data, int(evaluation.audit_nx) // 2 + 1, int(evaluation.audit_ny) // 2 + 1
+    )
+    times = np.linspace(data.domain.t_min, data.domain.t_max, n_times)
+    scan: dict[str, list] = {"t_star": times.tolist(), "flux_max_abs": [], "laplace_rms": []}
+    residuals: dict[str, list[float]] = {eq.id: [] for eq in equations}
+    for t in times:
+        for name, value in residual_rms_on_grid(model, groups, equations, grid, t).items():
+            residuals[name].append(value)
+        scan["flux_max_abs"].append(flux_balance(cfg, model, data, groups, float(t))["max_abs"])
+        front, _ = front_conditions(model, groups, float(t))
+        scan["laplace_rms"].append(
+            None
+            if front is None
+            else float(
+                np.hypot(front["laplace_rms_upper"], front["laplace_rms_lower"]) / np.sqrt(2)
+            )
+        )
+    scan["residual_rms"] = residuals
+    return scan
+
+
+def _scan_verdicts(scan: dict | None, acceptance) -> dict:
+    """The equations and the flux balance held at every scanned instant."""
+    if scan is None:
+        return {}
+    residual_worst = max((max(v) for v in scan["residual_rms"].values() if v), default=0.0)
+    flux_worst = max(scan["flux_max_abs"])
+    return {
+        "residuals_in_time": {
+            "worst": residual_worst,
+            "max": acceptance.residual_rms_max,
+            "pass": residual_worst <= acceptance.residual_rms_max,
+        },
+        "flux_in_time": {
+            "worst": flux_worst,
+            "max": acceptance.flux_tol,
+            "pass": flux_worst <= acceptance.flux_tol,
+        },
+    }
+
+
+def _jump_verdict(frames: list[dict], acceptance) -> dict:
+    """The jump mismatch as shape change: the worst frame's 90th percentile, in
+    pixels, against ``jump_px_max``; nothing for a run without the sharp front."""
+    p90 = [
+        f["front"]["jump_px_p90"] for f in frames if f["front"] and "jump_px_p90" in f["front"]
+    ]
+    if not p90:
+        return {}
+    worst = max(p90)
+    limit = float(acceptance.jump_px_max)
+    return {"jump_shape": {"worst": worst, "max": limit, "pass": worst <= limit}}
+
+
 def warmup_fit(paths: RunPaths) -> dict[str, float] | None:
     """The per-frame IoU the run reached at the end of its warm-up, as the
     trainer recorded it in the checkpoint at the step the physics engaged;
@@ -427,6 +551,15 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
         for name, values in fields.items():
             snapshots[f"{record['frame']}/{name}"] = values
     warmup = warmup_fit(paths)
+    scan = time_scan(cfg, model, data, groups, equations, int(evaluation.audit_scan_times))
+    verdicts = _verdicts(
+        frames,
+        evaluation.acceptance,
+        warmup,
+        float(data.domain.x_max - data.domain.x_min),
+    )
+    verdicts.update(_scan_verdicts(scan, evaluation.acceptance))
+    verdicts.update(_jump_verdict(frames, evaluation.acceptance))
     report = {
         "run_name": cfg.run_name,
         "dataset": cfg.dataset,
@@ -440,15 +573,12 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
             "iou_min": float(evaluation.acceptance.iou_min),
             "iou_drop_max": float(evaluation.acceptance.iou_drop_max),
             "nose_tol": float(evaluation.acceptance.nose_tol),
+            "jump_px_max": float(evaluation.acceptance.jump_px_max),
         },
         "warmup_iou": warmup,
-        "verdicts": _verdicts(
-            frames,
-            evaluation.acceptance,
-            warmup,
-            float(data.domain.x_max - data.domain.x_min),
-        ),
+        "verdicts": verdicts,
         "frames": frames,
+        "scan": scan,
     }
     # allow_nan=False: a report a browser cannot parse is no report.
     paths.audit_json.write_text(json.dumps(report, indent=2, allow_nan=False))

@@ -171,6 +171,9 @@ class OperatingConditions(BaseModel):
     # is None when not set.
     T_inlet_C: float | None
     T_init_C: float | None
+    T_init_layer_um: float
+    q_upstream_W_cm2: float | None
+    heater_edge_um: float | None
     side_wall_thermal: str
     T_wall_C: float | None
     wet_fraction_mode: str
@@ -247,6 +250,9 @@ class ConditionsUpdate(BaseModel):
     # (test_defaults_parity holds the two equal).
     T_inlet_C: float | None = None
     T_init_C: float | None = None
+    T_init_layer_um: float | None = None
+    q_upstream_W_cm2: float | None = None
+    heater_edge_um: float | None = None
     side_wall_thermal: Literal["adiabatic", "isothermal"] | None = None
     T_wall_C: float | None = None
     wet_fraction_mode: Literal["fixed", "fit"] | None = None
@@ -594,6 +600,10 @@ class RunLaunchRequest(BaseModel):
     grad_clip: float = Field(default=0.0, ge=0.0, le=1e4)
     outline_guard_every: int = Field(default=0, ge=0, le=100000)
     outline_guard_drop: float = Field(default=0.05, ge=0.0, le=1.0)
+    # Two-stage training: the geometry frozen at the warm-up's fit once the
+    # physics engages, which then trains only the fields. Needs front_geometry
+    # and the Stage-B warm-up the launcher sets; single-dataset only.
+    freeze_geometry: bool = False
     # Advanced overrides: the bridge to the schema's CLI-only dials (rba_gamma,
     # kin_grid, fv_smooth_px, ...). Free-form `key=value` Hydra overrides,
     # STRICTLY allowlisted in services/overrides.py: top-level training.* /
@@ -691,6 +701,11 @@ class RunLaunchRequest(BaseModel):
                 "so it requires front_geometry and sharp_interface -- enable them, or "
                 "keep the legacy thermal model"
             )
+        if self.freeze_geometry and not self.front_geometry:
+            raise ValueError(
+                "freeze_geometry freezes the explicit front at the warm-up's fit, so it "
+                "requires front_geometry -- enable it, or turn freeze_geometry off"
+            )
         if self.mirror_symmetry and not self.front_geometry:
             raise ValueError(
                 "mirror_symmetry reflects about the centreline of the run's wall span, "
@@ -731,6 +746,7 @@ class RunLaunchRequest(BaseModel):
             "footprint_evaporation": self.footprint_evaporation,
             "mirror_symmetry": self.mirror_symmetry,
             "outline_guard_every": self.outline_guard_every > 0,
+            "freeze_geometry": self.freeze_geometry,
         }
         asked = [name for name, on in joint_blockers.items() if on]
         if asked:

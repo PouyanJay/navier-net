@@ -187,6 +187,44 @@ THERMAL: tuple[FieldSpec, ...] = (
         optional=True,
     ),
     FieldSpec(
+        "experiment.T_init_layer_um",
+        "Initial thermal layer",
+        "float",
+        *_SERIES,
+        help=(
+            "the initial temperature holds only farther than this from the first frame's "
+            "outline; inside it the heat equation forms the layer the bubble already has"
+        ),
+        unit="µm",
+        lo=0.0,
+        hi=1e4,
+    ),
+    FieldSpec(
+        "experiment.q_upstream_W_cm2",
+        "Upstream heater flux",
+        "float",
+        *_SERIES,
+        help=(
+            "the floor's flux from the inlet edge of the view to the heater edge; not set "
+            "means one flux over the whole floor"
+        ),
+        unit="W/cm²",
+        lo=0.0,
+        hi=_FLUX_W_CM2[1],
+        optional=True,
+    ),
+    FieldSpec(
+        "experiment.heater_edge_um",
+        "Heater edge",
+        "float",
+        *_SERIES,
+        help="where the upstream heater zone ends, from the inlet edge of the view",
+        unit="µm",
+        lo=0.0,
+        hi=_LENGTH_UM[1],
+        optional=True,
+    ),
+    FieldSpec(
         "experiment.side_wall_thermal",
         "Side walls",
         "enum",
@@ -391,6 +429,29 @@ PHYSICS_DIALS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.theta_gate",
+        "Temperature gate shape",
+        "enum",
+        *_DIAL,
+        help=(
+            "linear multiplies the network by the distance into the liquid; saturating levels "
+            "off beyond the thermal layer, so the far field does not move with the bubble"
+        ),
+        options=("linear", "saturating"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.theta_gate_length",
+        "Temperature gate length",
+        "float",
+        *_DIAL,
+        help="where the saturating gate levels off: about the thermal layer's thickness",
+        unit="L_ref",
+        lo=1e-4,
+        hi=10.0,
+        advanced=True,
+    ),
+    FieldSpec(
         "model.source_kernel_width",
         "Source kernel width",
         "float",
@@ -512,6 +573,42 @@ TRAINING: tuple[FieldSpec, ...] = (
         hi=_FRACTION[1],
     ),
     FieldSpec(
+        "training.freeze_geometry",
+        "Freeze the outline after the warm-up",
+        "bool",
+        "training",
+        "form",
+        help=(
+            "two-stage training: the bubble is fixed at the warm-up's fit of the images and "
+            "the physics stage trains only the velocity, pressure and temperature"
+        ),
+    ),
+    FieldSpec(
+        "training.frozen_weighting",
+        "Weights after the freeze",
+        "enum",
+        "training",
+        "override",
+        help=(
+            "once the outline is frozen: each physics term at its configured weight, or "
+            "rebalanced to equal gradient contributions"
+        ),
+        options=("fixed", "equalised"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.one_way_advection",
+        "One-way heat advection",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "the temperature equation trains the temperature only, so its error cannot bend "
+            "the flow; the liquid carries the heat, the heat does not move the liquid"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "training.quadrature_jitter",
         "Jitter the quadrature times",
         "bool",
@@ -587,6 +684,16 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "evaluation.audit_scan_times",
+        "Audit scan instants",
+        "int",
+        *_GATE,
+        help="instants across the whole event the residuals and the flux are scanned at; 0 skips",
+        lo=0,
+        hi=1001,
+        advanced=True,
+    ),
+    FieldSpec(
         "evaluation.acceptance.seed_corr_min",
         "Seed agreement",
         "float",
@@ -658,6 +765,19 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         unit="L_ref",
         lo=_TOLERANCE[0],
         hi=_TOLERANCE[1],
+    ),
+    FieldSpec(
+        "evaluation.acceptance.jump_px_max",
+        "Shape change the jump asks for",
+        "float",
+        *_GATE,
+        help=(
+            "the Young-Laplace mismatch on the front as the shape change that would remove "
+            "it; its 90th percentile may not exceed this many pixels"
+        ),
+        unit="px",
+        lo=0.0,
+        hi=1e3,
     ),
 )
 

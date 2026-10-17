@@ -668,20 +668,22 @@ def _require_physics_support(
     if request.walls_at == "physical":
         _require_wall_positions(settings, request.resolved_datasets())
     if request.outline_guard_every > 0:
-        _require_warmup(settings, request.resolved_datasets()[0])
+        _require_warmup(settings, request.resolved_datasets()[0], "outline guard")
+    if request.freeze_geometry:
+        _require_warmup(settings, request.resolved_datasets()[0], "outline freeze")
 
 
-def _require_warmup(settings: Settings, dataset: str) -> None:
-    """The outline guard holds a run to the fit its warm-up reached, and the
-    launcher sets a warm-up only for a Stage-B series."""
+def _require_warmup(settings: Settings, dataset: str, choice: str) -> None:
+    """The outline guard and the outline freeze both start from the fit the
+    warm-up reached, and the launcher sets a warm-up only for a Stage-B series."""
     from naviernet_api.services.datasets import series_is_stage_b
 
     if not series_is_stage_b(settings, dataset):
         raise LaunchRejected(
             422,
-            "The outline guard holds the run to the IoU its warm-up reached, and only a "
+            f"The {choice} starts from the fit the run's warm-up reached, and only a "
             "Stage-B series trains with a warm-up. Enable Momentum or Energy on Physics & "
-            "model, or turn the outline guard off.",
+            f"model, or turn the {choice} off.",
         )
 
 

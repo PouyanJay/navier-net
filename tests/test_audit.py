@@ -36,8 +36,20 @@ SHARP_THERMAL = [
     "training.stage_b_warmup_steps=1",
     "evaluation.audit_nx=33",
     "evaluation.audit_ny=17",
+    "evaluation.audit_scan_times=5",
 ]
-VERDICTS = {"mirror", "residuals", "flux", "heat", "outline", "outline_drop", "nose"}
+VERDICTS = {
+    "mirror",
+    "residuals",
+    "flux",
+    "heat",
+    "outline",
+    "outline_drop",
+    "nose",
+    "residuals_in_time",
+    "flux_in_time",
+    "jump_shape",
+}
 
 
 def _no_constants(token: str):
@@ -146,6 +158,11 @@ def test_audit_of_a_trained_run_reports_every_test_with_verdicts(tmp_path):
         "the film under the capsule evaporates"
     )
     assert frame["front"] is not None and frame["front"]["kinematic_rms_upper"] >= 0
+    assert set(frame["front"]["jump_px_by_segment"]) <= {"upper", "lower", "root", "nose"}
+    assert frame["front"]["jump_px_p90"] >= frame["front"]["jump_px_median"] >= 0
+    scan = report["scan"]
+    assert len(scan["t_star"]) == 5 == len(scan["flux_max_abs"]) == len(scan["laplace_rms"])
+    assert all(len(v) == 5 for v in scan["residual_rms"].values())
     assert 0.0 <= frame["outline"]["iou"] <= 1.0
     assert frame["outline"]["nose_error"] >= 0.0
     assert all(np.isfinite(v) for v in frame["mirror"].values())
@@ -183,6 +200,22 @@ def test_a_missing_nose_counts_as_the_whole_channel_off():
 
     assert verdicts["nose"] == {"worst": 5.75, "max": 0.1, "pass": False}
     assert "outline_drop" not in verdicts, "no warm-up record, no drop verdict"
+
+
+def test_the_jump_mismatch_reads_as_the_shape_change_that_removes_it():
+    """A mismatch equal to what a one-pixel displacement of a feature of radius R
+    changes in the jump reads as one pixel; a flat stretch is held to the
+    channel's half-width as its radius."""
+    from naviernet.audit import jump_shape_pixels
+    from naviernet.physics.residuals import IN_PLANE_WEIGHT
+
+    groups, pixel, width = {"We": 2.0}, 0.01, 1.0
+    kappa = np.array([5.0, 0.0])
+    one_pixel = IN_PLANE_WEIGHT * np.array([5.0, 2.0]) ** 2 * pixel / groups["We"]
+
+    pixels = jump_shape_pixels(one_pixel * np.array([1.0, 3.0]), kappa, groups, pixel, width)
+
+    assert pixels == pytest.approx([1.0, 3.0])
 
 
 def test_seed_ensemble_comparison_scores_agreement_and_disagreement():

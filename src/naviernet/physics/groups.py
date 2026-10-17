@@ -285,6 +285,10 @@ def _thermal_conditions(cfg, dt_ref: float) -> dict[str, float]:
     t_init = getattr(exp, "T_init_C", None)
     if t_init is not None:
         conditions["theta_init"] = (float(t_init) - t_sat) / dt_ref
+        layer = float(getattr(exp, "T_init_layer_um", 0.0))
+        if layer < 0:
+            raise ValueError(f"experiment.T_init_layer_um={layer} must be >= 0 (a thickness)")
+        conditions["init_layer_star"] = layer / float(cfg.scales.L_ref_um)
     t_wall = getattr(exp, "T_wall_C", None)
     if str(getattr(exp, "side_wall_thermal", "adiabatic")) == "isothermal":
         if t_wall is None:
@@ -322,9 +326,33 @@ def _film_evaporation(cfg, fluid, u: float, length: float, h: float) -> dict[str
             "fitted scalar is sigmoid-bounded and starts exactly there, so an end of the "
             "interval has no gradient to move off."
         )
+    zones = _heater_zones(exp, length)
     return {
         "footprint_source_star": q_wall * specific_volume * length / (fluid.h_lv * h * u),
         "wet_fraction_init": wet,
+        **zones,
+    }
+
+
+def _heater_zones(exp, length: float) -> dict[str, float]:
+    """The upstream heater zone as the ratio of its flux to q_wall_W_cm2 and its
+    downstream edge on L_ref; empty when the floor carries one flux."""
+    upstream = getattr(exp, "q_upstream_W_cm2", None)
+    edge = getattr(exp, "heater_edge_um", None)
+    if (upstream is None) != (edge is None):
+        raise ValueError(
+            "experiment.q_upstream_W_cm2 and experiment.heater_edge_um go together: the "
+            "upstream heater zone needs both its flux and where it ends."
+        )
+    if upstream is None:
+        return {}
+    if float(upstream) < 0 or float(edge) < 0:
+        raise ValueError(
+            f"experiment.q_upstream_W_cm2={upstream} and heater_edge_um={edge} must be >= 0"
+        )
+    return {
+        "q_upstream_ratio": float(upstream) / float(exp.q_wall_W_cm2),
+        "heater_edge_star": float(edge) * 1e-6 / length,
     }
 
 
