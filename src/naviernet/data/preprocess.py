@@ -40,7 +40,7 @@ from PIL import Image
 from scipy.ndimage import gaussian_filter, map_coordinates
 
 from naviernet.config.fields import specs as field_specs
-from naviernet.data.contour import DEFAULT_WAVELENGTH_PX, fair_closed_contour
+from naviernet.data.contour import fair_closed_contour
 from naviernet.physics.groups import compute_groups
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
@@ -243,7 +243,7 @@ def _seal_fov_cut(band: np.ndarray) -> np.ndarray:
 
 
 def _meniscus_interface(
-    band: np.ndarray, min_hole_fraction: float, seed_blur_px: float
+    band: np.ndarray, min_hole_fraction: float, seed_blur_px: float, wavelength_px: float
 ) -> np.ndarray:
     """The interface: a fair closed curve on the meniscus rim's centreline.
 
@@ -266,9 +266,7 @@ def _meniscus_interface(
     filled = _fill_holes(band)
     hole = (filled & (1 - band)).astype(np.uint8)
     if int(hole.sum()) < min_hole_fraction * int(filled.sum()):
-        return fair_closed_contour(
-            _outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS
-        )
+        return fair_closed_contour(_outer_contour(filled), wavelength_px, _INTERFACE_POINTS)
 
     # 0 at the outer edge. The crop's top and bottom rows count as outer edge:
     # where the rim runs into a wall line it is cut there, and without that edge
@@ -282,12 +280,10 @@ def _meniscus_interface(
     seed_field = cv2.GaussianBlur(signed, (0, 0), seed_blur_px) if seed_blur_px > 0 else signed
     seed = _largest_component((seed_field >= 0).astype(np.uint8))
     if seed is None:  # no interior half survived the blur; take the outer edge
-        return fair_closed_contour(
-            _outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS
-        )
+        return fair_closed_contour(_outer_contour(filled), wavelength_px, _INTERFACE_POINTS)
     init = _resample_closed(_outer_contour(_fill_holes(seed)), _SNAKE_POINTS)
     return fair_closed_contour(
-        _snake_centreline(signed, init), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS
+        _snake_centreline(signed, init), wavelength_px, _INTERFACE_POINTS
     )
 
 
@@ -318,7 +314,34 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
             f"(currently {imaging.dark_thresh})"
         )
 
-    return _meniscus_interface(band, imaging.min_rim_hole_fraction, imaging.contour_smooth_px)
+    return _meniscus_interface(
+        band,
+        imaging.min_rim_hole_fraction,
+        imaging.contour_smooth_px,
+        float(imaging.fair_wavelength_px),
+    )
+
+
+def _signed_distance(mask: np.ndarray) -> np.ndarray:
+    """Pixels to the mask's edge, negative inside."""
+    outside = cv2.distanceTransform(1 - mask, cv2.DIST_L2, 5)
+    return outside - cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+
+
+def mirror_symmetric(
+    interface: np.ndarray, shape: tuple[int, int], centre_row: float, wavelength_px: float
+) -> np.ndarray:
+    """The interface averaged with its reflection about ``centre_row``, faired:
+    the zero level of the mean of the bubble's signed distance and its mirror
+    image's, so the result is exactly symmetric and sits midway between the two
+    wherever the trace was lopsided."""
+    distance = _signed_distance(_fill_interface(interface, shape))
+    rows, cols = np.mgrid[0 : shape[0], 0 : shape[1]].astype(np.float64)
+    mirrored = map_coordinates(
+        distance, [2.0 * centre_row - rows, cols], order=1, mode="nearest"
+    )
+    averaged = (0.5 * (distance + mirrored) < 0).astype(np.uint8)
+    return fair_closed_contour(_outer_contour(averaged), wavelength_px, _INTERFACE_POINTS)
 
 
 def _fill_interface(interface: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -371,6 +394,14 @@ def preprocess(cfg, paths: RunPaths) -> dict:
     interfaces = [segment_frame(cfg, paths, n, calibration.roi) for n in frame_numbers]
     width_px = np.asarray(Image.open(paths.raw_frame(frame_numbers[0])).convert("L")).shape[1]
     roi_shape = (calibration.roi[1] - calibration.roi[0], width_px)
+    if bool(cfg.imaging.mirror_symmetric):
+        centre_row = 0.5 * (calibration.wall_top + calibration.wall_bottom) - calibration.roi[0]
+        interfaces = [
+            mirror_symmetric(
+                curve, roi_shape, centre_row, float(cfg.imaging.fair_wavelength_px)
+            )
+            for curve in interfaces
+        ]
     masks = np.stack([_fill_interface(curve, roi_shape) for curve in interfaces])
     # Flip x so downstream is +x; the raw camera sees flow right to left.
     alpha = masks.astype(np.float32)[:, :, ::-1].copy()

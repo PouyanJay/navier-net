@@ -161,6 +161,13 @@ class ImagingConfig:
     # starts from) and smooths the solid-nucleus fallback. The interface's own
     # smoothness comes from the contour's rigidity, not this. 0 disables the blur.
     contour_smooth_px: float = 5.0
+    # Arc length below which the traced interface's detail is faired away
+    # (contour.fair_closed_contour), in pixels.
+    fair_wavelength_px: float = 100.0
+    # Average the traced bubble with its reflection about the channel centreline
+    # (midway between the detected walls) before fairing, so the outline the
+    # model fits is exactly mirror-symmetric, as the channel and its flow are.
+    mirror_symmetric: bool = False
     # Columns masked out on the last usable frame, where the bubble leaves the
     # field of view (expressed in flipped, downstream-positive coordinates).
     truncated_cols: int = 0
