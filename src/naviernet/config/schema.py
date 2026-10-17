@@ -798,6 +798,14 @@ class TrainingConfig:
     mass_balance_weight: float = 1.0
     mass_balance_stations: int = 32  # x-stations of the cumulative source integral
     mass_balance_times: int = 8  # fixed time slices across the window
+    # Growth closure: at every event frame the vapour the source makes,
+    # int s dA, equals the measured growth of the bubble's area. The outline
+    # flux's part is detached, so the term trains the footprint's wetting and
+    # never the temperature. Needs the thermal source with footprint
+    # evaporation. Zero weight (default) leaves it off; outside causal
+    # weighting, RBA and the rebalancer like the mass balance.
+    growth_closure_weight: float = 0.0
+    growth_closure_stride: int = 4  # every n-th pixel of the covered floor
     mass_balance_grid: int = 64  # transverse quadrature points, wall to wall
 
     seed: int = 0

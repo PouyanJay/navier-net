@@ -35,6 +35,7 @@ from naviernet.models.pinn import BoundPINN, BubblePINN
 from naviernet.physics import (
     cap_supervision,
     front_velocity,
+    growth_closure,
     heating,
     kinematics,
     mass_balance,
@@ -137,6 +138,39 @@ def bind_cover_times(cfg, model, data: BubbleDataset) -> None:
         return
     age = compute_groups(cfg)["footprint_age_star"]
     model.bind_cover_times(data.x, data.y, heating.cover_times(data, age))
+
+
+def _growth_closure_plan(cfg, data: BubbleDataset, device):
+    """The growth closure's quadrature when its weight is on, else None."""
+    if float(getattr(cfg.training, "growth_closure_weight", 0.0)) <= 0.0:
+        return None
+    return growth_closure.build_plan(data, int(cfg.training.growth_closure_stride), device)
+
+
+def _validate_growth_closure(tcfg, model_cfg) -> None:
+    """The closure trains the footprint's wetting against the measured growth,
+    so there must be a thermal source with a footprint to train."""
+    weight = float(getattr(tcfg, "growth_closure_weight", 0.0))
+    if weight < 0.0:
+        raise ValueError(f"training.growth_closure_weight must be >= 0, got {weight}")
+    if weight == 0.0:
+        return
+    if str(getattr(model_cfg, "source_mode", "free")) != "thermal" or not bool(
+        getattr(model_cfg, "footprint_evaporation", False)
+    ):
+        raise ValueError(
+            "training.growth_closure_weight scores the vapour the heat makes, so it requires "
+            "model.source_mode=thermal and model.footprint_evaporation=true"
+        )
+
+
+def _wetting_record(model) -> dict[str, float]:
+    """The fitted wetting of the footprint, for the log."""
+    if getattr(model, "footprint_wetting", "uniform") == "microlayer":
+        return {"film_um": float(torch.as_tensor(model.microlayer_um).detach())}
+    if getattr(model, "wet_fraction_mode", "fixed") == "fit":
+        return {"wet_fraction": float(model.wet_fraction.detach())}
+    return {}
 
 
 def _sharp(cfg) -> bool:
@@ -437,6 +471,7 @@ def _validate_training_config(cfg) -> None:
     _validate_outline_guard(tcfg)
     _validate_freeze_geometry(tcfg, cfg.model)
     _validate_temperature_stage(tcfg, cfg.model)
+    _validate_growth_closure(tcfg, cfg.model)
 
 
 def _validate_rebalance_cap(tcfg) -> None:
@@ -1758,6 +1793,7 @@ def train(
     front_times = _front_times(cfg, data, device)
     boundaries = _boundary_plan(cfg)
     mass_plan = _mass_balance_plan(cfg, data, groups, device)
+    closure_plan = _growth_closure_plan(cfg, data, device)
     thermal = _sharp_thermal(cfg)
     if thermal:
         log.info(
@@ -2005,6 +2041,18 @@ def train(
             # evaluated once the flow is locked.
             mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
             total = total + float(tcfg.mass_balance_weight) * mass_total
+        closure_record: dict[str, float] = {}
+        if (
+            closure_plan is not None
+            and not temperature_only
+            and getattr(model, "thermal_source_engaged", False)
+        ):
+            # The integral of continuity over the bubble, like the mass balance a
+            # functional outside the gate, RBA and the rebalancer.
+            closure_total, closure_record = growth_closure.growth_closure_loss(
+                model, closure_plan
+            )
+            total = total + float(tcfg.growth_closure_weight) * closure_total
         total.backward()
         grad_norm = _clip_gradients(model, tcfg)
         opt.step()
@@ -2023,6 +2071,8 @@ def train(
             record.update(root_record)
             record.update(nose_record)
             record.update(mass_record)
+            record.update(closure_record)
+            record.update(_wetting_record(model))
             record["step"] = step
             record["lr"] = lr
             record["grad_norm"] = float(grad_norm)
@@ -2279,6 +2329,11 @@ def _train_joint(
     """
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if float(getattr(tcfg, "growth_closure_weight", 0.0)) > 0.0:
+        raise ValueError(
+            "training.growth_closure_weight is single-dataset for now: the measured growth "
+            "is read from one series' images"
+        )
     if str(getattr(cfg.experiment, "footprint_wetting", "uniform")) == "microlayer":
         raise ValueError(
             "experiment.footprint_wetting=microlayer is single-dataset for now: the cover "

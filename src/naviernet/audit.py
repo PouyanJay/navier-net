@@ -41,6 +41,7 @@ import torch
 
 from naviernet.physics import mass_balance, registry
 from naviernet.physics.groups import compute_groups
+from naviernet.physics.growth_closure import measured_growth_rate
 from naviernet.physics.heating import wall_flux_ratio_np
 from naviernet.physics.residuals import (
     IN_PLANE_WEIGHT,
@@ -173,19 +174,6 @@ def _integral(values: np.ndarray, grid: AuditGrid) -> float:
     return float(np.trapezoid(np.trapezoid(values, grid.xs, axis=1), grid.ys))
 
 
-def _measured_growth_rate(data, row: int) -> float:
-    """``dA/dt`` of the measured vapour area at ``row``, in ``L_ref^2 / t_ref``."""
-    pixel = float(data.x[1] - data.x[0]) * float(data.y[1] - data.y[0])
-    areas = {
-        r: float(((data.alpha[r] > 0.5) & (data.valid[r] > 0)).sum()) * pixel
-        for r in (row - 1, row, row + 1)
-        if 0 <= r < data.n_event
-    }
-    rows = sorted(areas)
-    first, last = rows[0], rows[-1]
-    return (areas[last] - areas[first]) / (float(data.t[last]) - float(data.t[first]))
-
-
 def _scalar(value) -> float:
     return float(value) if isinstance(value, float) else float(value.detach())
 
@@ -223,7 +211,7 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
     specific_volume = 1.0 / fluid.rho_v - 1.0 / fluid.rho_l
     # A dimensionless source integral to the latent power its vapour volume cost.
     to_latent_mW = length * depth * speed / specific_volume * fluid.h_lv * 1e3
-    growth = _measured_growth_rate(data, row) * length**2 / t_ref
+    growth = measured_growth_rate(data, row) * length**2 / t_ref
     # The floor's local flux over each grid column (both heater zones counted).
     wall = float(exp.q_wall_W_cm2) * 1e4 * wall_flux_ratio_np(grid.xs, groups)[None, :]
     budget = {

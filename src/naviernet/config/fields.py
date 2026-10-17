@@ -531,6 +531,31 @@ TRAINING: tuple[FieldSpec, ...] = (
         hi=_WEIGHT[1],
     ),
     FieldSpec(
+        "training.growth_closure_weight",
+        "Growth closure weight",
+        "float",
+        "training",
+        "override",
+        help=(
+            "the vapour the heat makes equals the bubble's measured growth at every frame; "
+            "trains the footprint's wetting, never the temperature; 0 is off"
+        ),
+        lo=_WEIGHT[0],
+        hi=_WEIGHT[1],
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.growth_closure_stride",
+        "Growth closure stride",
+        "int",
+        "training",
+        "override",
+        help="every n-th pixel of the covered floor the vapour total is summed over",
+        lo=1,
+        hi=64,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.collocation_time_bins",
         "Collocation time bins",
         "int",
