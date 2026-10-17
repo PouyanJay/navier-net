@@ -73,6 +73,10 @@ quadrature_jitter: true
 # its velocity and temperature stayed lopsided; with the outline an input the
 # physics no longer has to be held back to protect it.
 freeze_geometry: true
+# The temperature equation trains the temperature only: its advection term
+# reads the velocity detached, so its error cannot bend the flow (it pulled
+# the liquid ahead of the bubble 2 to 30 times harder than momentum did).
+one_way_advection: true
 
 causal_weighting: true
 causal_time_chunks: 16

@@ -64,3 +64,12 @@ source_mode: thermal
 # all: a flat temperature, a zero source and a nose at a third of the measured
 # speed.
 footprint_evaporation: true
+
+# The temperature gate levels off beyond the thermal layer, so the liquid ahead
+# of an advancing nose keeps its own temperature instead of cooling as the
+# distance to the bubble shrinks (the linear gate drifted that liquid from 58 C
+# towards saturation). The smoothing width is kept small against the gate
+# length, so the gate reads 1.25 % of the far field on the front.
+theta_gate: saturating
+theta_gate_length: 0.04
+theta_gate_width: 0.001
