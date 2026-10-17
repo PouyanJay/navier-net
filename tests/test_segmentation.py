@@ -67,6 +67,23 @@ def test_interface_settles_on_the_rim_centreline():
     assert radius.std() < 2.0
 
 
+def test_a_rim_cut_by_the_crop_is_centred_between_the_cut_and_its_inner_edge():
+    # A rim running into the walls: the crop keeps rows 10 to 189 of a ring
+    # whose outer edge reaches rows 0 and 199, so the rim is cut top and bottom.
+    # Its centre there lies midway between the cut and the inner edge (row 60 on
+    # top), not out toward the wall the cut hides.
+    shape = (200, 200)
+    outer = _ellipse(shape, 100, 100, 100, 90)
+    inner = _ellipse(shape, 100, 100, 40, 30)
+    band = (outer & (1 - inner)).astype(np.uint8)[10:190]
+
+    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    top, bottom = curve[:, 1].min(), curve[:, 1].max()
+    assert 20 <= top <= 30, "midway between the cut (row 0) and the inner edge (row 50)"
+    assert 150 <= bottom <= 160
+    assert abs(top - (band.shape[0] - 1 - bottom)) < 3, "the same gap top and bottom"
+
+
 def test_interface_stays_smooth_on_a_jagged_band():
     # A rim whose outer edge wobbles fast with angle: a discrete centreline
     # would kink, but the active contour's rigidity smooths it out.

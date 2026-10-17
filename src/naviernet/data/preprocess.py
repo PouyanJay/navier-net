@@ -270,7 +270,12 @@ def _meniscus_interface(
             _outer_contour(filled), DEFAULT_WAVELENGTH_PX, _INTERFACE_POINTS
         )
 
-    to_outer = cv2.distanceTransform(filled, cv2.DIST_L2, 5)  # 0 at the outer edge
+    # 0 at the outer edge. The crop's top and bottom rows count as outer edge:
+    # where the rim runs into a wall line it is cut there, and without that edge
+    # the distance runs on past the crop and the centreline slides toward the
+    # wall (Series-1-w300's head traced 8 to 20 um off the walls instead of the
+    # rim centre's 32 to 35 um, and lopsided top to bottom).
+    to_outer = cv2.distanceTransform(np.pad(filled, ((1, 1), (0, 0))), cv2.DIST_L2, 5)[1:-1]
     to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
     signed = (to_outer - to_inner).astype(np.float32)
 
