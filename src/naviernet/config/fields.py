@@ -267,6 +267,45 @@ THERMAL: tuple[FieldSpec, ...] = (
         hi=_FRACTION[1],
     ),
     FieldSpec(
+        "experiment.footprint_wetting",
+        "Footprint wetting",
+        "enum",
+        *_SERIES,
+        help=(
+            "uniform: the wet share above for the whole event; microlayer: each spot the "
+            "bubble covers stays wet until the floor's flux has evaporated its film"
+        ),
+        options=("uniform", "microlayer"),
+    ),
+    FieldSpec(
+        "experiment.microlayer_mode",
+        "Microlayer thickness",
+        "enum",
+        *_SERIES,
+        help="the film thickness: fixed at the value below, or fitted from it",
+        options=("fixed", "fit"),
+    ),
+    FieldSpec(
+        "experiment.microlayer_um",
+        "Microlayer thickness value",
+        "float",
+        *_SERIES,
+        help="the film the bubble leaves on the floor it covers; the fixed value or the fit's start",
+        unit="µm",
+        lo=0.01,
+        hi=50.0,
+    ),
+    FieldSpec(
+        "experiment.footprint_age_ms",
+        "First footprint age",
+        "float",
+        *_SERIES,
+        help="how long before the first frame its footprint was covered; 0 is freshly covered",
+        unit="ms",
+        lo=0.0,
+        hi=100.0,
+    ),
+    FieldSpec(
         "scales.dT_ref_K",
         "Superheat scale",
         "float",

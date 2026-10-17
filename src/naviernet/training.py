@@ -130,6 +130,15 @@ def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
     )
 
 
+def bind_cover_times(cfg, model, data: BubbleDataset) -> None:
+    """Give a microlayer-wetted model the instant the images first cover each
+    spot of the floor; a no-op under the uniform wetting."""
+    if getattr(model, "footprint_wetting", "uniform") != "microlayer":
+        return
+    age = compute_groups(cfg)["footprint_age_star"]
+    model.bind_cover_times(data.x, data.y, heating.cover_times(data, age))
+
+
 def _sharp(cfg) -> bool:
     """Whether this run imposes the interface conditions on the explicit front."""
     return bool(getattr(cfg.model, "sharp_interface", False))
@@ -1643,7 +1652,7 @@ def _temperature_equations(equations) -> list:
     return [eq for eq in equations if eq.weight_key in TEMPERATURE_TERMS]
 
 
-def _temperature_plan(plan: "_LossPlan") -> "_LossPlan":
+def _temperature_plan(plan: _LossPlan) -> _LossPlan:
     """``plan`` narrowed to the temperature terms, keeping its causal state."""
     coll = _temperature_equations(plan.coll_equations)
     return replace(plan, coll_equations=coll, coll_keys=frozenset(e.weight_key for e in coll))
@@ -1740,6 +1749,7 @@ def train(
     model = BubblePINN(
         cfg, pin=_pin_anchor(cfg, data), geometry=_geometry_priors(cfg, data)
     ).to(device)
+    bind_cover_times(cfg, model, data)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
     fv_plan = _front_velocity_plan(cfg, data, device)
@@ -2266,6 +2276,11 @@ def _train_joint(
     """
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if str(getattr(cfg.experiment, "footprint_wetting", "uniform")) == "microlayer":
+        raise ValueError(
+            "experiment.footprint_wetting=microlayer is single-dataset for now: the cover "
+            "times are read from one series' images"
+        )
     if bool(getattr(tcfg, "freeze_geometry", False)):
         raise NotImplementedError(
             "training.freeze_geometry is single-dataset for now: the two-stage schedule is "
@@ -2487,6 +2502,7 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
         geometry=_geometry_priors(cfg, data),
     ).to(device)
     model.load_state_dict(ckpt["model"])
+    bind_cover_times(cfg, model, data)
     # The interface thickness the run ENDED at, not the one it started from:
     # scoring a sharpened model through its initial blur would measure a
     # different solution than the one that was trained.

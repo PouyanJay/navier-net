@@ -35,7 +35,7 @@ from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softp
 # Neither module imports back into naviernet.models, so no cycle is possible.
 from naviernet.physics.film import deposited_thickness
 from naviernet.physics.groups import compute_groups
-from naviernet.physics.heating import wall_flux_ratio
+from naviernet.physics.heating import DEPLETION_SMOOTHING, wall_flux_ratio
 
 # Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
 # one smooth scalar curve in time, and capacity beyond this buys nothing but the
@@ -382,6 +382,50 @@ class BubblePINN(nn.Module):
         self.wet_fraction_mode = str(getattr(cfg.experiment, "wet_fraction_mode", "fixed"))
         if self.wet_fraction_mode == "fit":
             self._wet_fraction_raw = nn.Parameter(torch.zeros(1))
+        self.footprint_wetting = str(getattr(cfg.experiment, "footprint_wetting", "uniform"))
+        if self.footprint_wetting == "microlayer":
+            self._tau_per_um = float(groups["microlayer_tau_star_per_um"])
+            self._microlayer_init = float(groups["microlayer_um_init"])
+            self.microlayer_mode = str(cfg.experiment.microlayer_mode)
+            if self.microlayer_mode == "fit":
+                self._log_microlayer_raw = nn.Parameter(torch.zeros(1))
+            self._cover: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None
+
+    def bind_cover_times(self, xs, ys, times) -> None:
+        """The instant the images first show each pixel of the floor covered
+        (``heating.cover_times``, on the dataset's uniform pixel grid ``xs`` by
+        ``ys``), which the microlayer wetting reads."""
+        device = next(self.parameters()).device
+        self._cover = tuple(
+            torch.as_tensor(a, dtype=torch.float32, device=device) for a in (xs, ys, times)
+        )
+
+    @property
+    def microlayer_um(self):
+        """The film the bubble leaves on the floor, microns: the declared value
+        when fixed; when fitted, a trained positive scalar starting there."""
+        if self.microlayer_mode == "fixed":
+            return self._microlayer_init
+        return self._microlayer_init * torch.exp(self._log_microlayer_raw)
+
+    def _wetness(self, x: torch.Tensor, local: torch.Tensor) -> torch.Tensor:
+        """The share of the floor still wet at ``x``: the uniform wet share, or
+        under the microlayer wetting one while the film the bubble left when it
+        covered the spot lasts (its life is the film over the local flux) and
+        zero after, ``(N, 1)``."""
+        if self.footprint_wetting == "uniform":
+            return self.wet_fraction
+        if self._cover is None:
+            raise RuntimeError(
+                "the microlayer wetting reads when the images first cover each spot of the "
+                "floor: bind them with bind_cover_times before evaluating the source"
+            )
+        xs, ys, times = self._cover
+        col = ((x[:, 0] - xs[0]) / (xs[1] - xs[0])).round().long().clamp(0, len(xs) - 1)
+        row = ((x[:, 1] - ys[0]) / (ys[1] - ys[0])).round().long().clamp(0, len(ys) - 1)
+        covered_at = times[row, col].unsqueeze(1)
+        life = self._tau_per_um * self.microlayer_um / local.clamp_min(1e-6)
+        return torch.sigmoid((covered_at + life - x[:, 2:3]) / (DEPLETION_SMOOTHING * life))
 
     @property
     def wet_fraction(self):
@@ -411,7 +455,10 @@ class BubblePINN(nn.Module):
             return torch.zeros_like(x[:, :1])
         local = wall_flux_ratio(x, self._heater_zones)
         return (
-            self._footprint_source_star * local * self.wet_fraction * self.alpha(x, c).detach()
+            self._footprint_source_star
+            * local
+            * self._wetness(x, local)
+            * self.alpha(x, c).detach()
         )
 
     def _init_vapor_pressure(self) -> None:

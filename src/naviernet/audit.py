@@ -186,6 +186,26 @@ def _measured_growth_rate(data, row: int) -> float:
     return (areas[last] - areas[first]) / (float(data.t[last]) - float(data.t[first]))
 
 
+def _scalar(value) -> float:
+    return float(value) if isinstance(value, float) else float(value.detach())
+
+
+def wetting_record(model) -> dict:
+    """How the footprint is wetted and its fitted or declared value: the
+    uniform wet share, or the microlayer's film thickness."""
+    if getattr(model, "footprint_wetting", "uniform") == "microlayer":
+        return {
+            "footprint_wetting": "microlayer",
+            "microlayer_um": _scalar(model.microlayer_um),
+            "microlayer_mode": model.microlayer_mode,
+        }
+    return {
+        "footprint_wetting": "uniform",
+        "wet_fraction": _scalar(model.wet_fraction),
+        "wet_fraction_mode": model.wet_fraction_mode,
+    }
+
+
 def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGrid) -> dict:
     """The latent power the source implies, its two parts under the sharp
     thermal model (the footprint film source and the outline flux), the latent
@@ -224,10 +244,7 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
             footprint = model.footprint_source(points).detach().cpu().numpy()
             footprint = footprint.reshape(len(grid.ys), len(grid.xs))
             budget["latent_from_footprint_mW"] = _integral(footprint, grid) * to_latent_mW
-            wet = model.wet_fraction
-            budget["wet_fraction"] = (
-                float(wet) if isinstance(wet, float) else float(wet.detach())
-            )
+            budget.update(wetting_record(model))
         estimates.append(budget["latent_from_flux_mW"] + budget["latent_from_footprint_mW"])
     reference = max(abs(budget["latent_for_growth_mW"]), 1e-9)
     budget["spread"] = float((max(estimates) - min(estimates)) / reference)

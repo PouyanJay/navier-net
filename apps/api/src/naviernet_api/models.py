@@ -178,6 +178,10 @@ class OperatingConditions(BaseModel):
     T_wall_C: float | None
     wet_fraction_mode: str
     wet_fraction: float
+    footprint_wetting: str
+    microlayer_mode: str
+    microlayer_um: float
+    footprint_age_ms: float
     dT_ref_K: float | None
 
 
@@ -257,6 +261,10 @@ class ConditionsUpdate(BaseModel):
     T_wall_C: float | None = None
     wet_fraction_mode: Literal["fixed", "fit"] | None = None
     wet_fraction: float | None = None
+    footprint_wetting: Literal["uniform", "microlayer"] | None = None
+    microlayer_mode: Literal["fixed", "fit"] | None = None
+    microlayer_um: float | None = None
+    footprint_age_ms: float | None = None
     dT_ref_K: float | None = None
 
 

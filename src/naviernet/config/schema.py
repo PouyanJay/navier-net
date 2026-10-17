@@ -83,6 +83,17 @@ class ExperimentConfig:
     # chain. Reported beside the value the energy balance of the masks implies.
     wet_fraction_mode: str = "fixed"  # "fixed" | "fit"
     wet_fraction: float = 1.0  # 0..1; the wet share of the footprint
+    # How the footprint stays wet. "uniform": the wet share above, constant over
+    # the event. "microlayer": the bubble leaves a film of microlayer_um on the
+    # floor it covers, and the floor's local flux evaporates it, so a spot is wet
+    # only for microlayer_um * rho_l * h_lv / q after the images first show it
+    # covered; vapour then comes from newly covered floor. The uniform share is
+    # not read under the microlayer. footprint_age_ms is how long before the
+    # first frame the first frame's footprint was covered (0: freshly covered).
+    footprint_wetting: str = "uniform"  # "uniform" | "microlayer"
+    microlayer_mode: str = "fixed"  # "fixed" | "fit"
+    microlayer_um: float = 0.5
+    footprint_age_ms: float = 0.0
 
 
 @dataclass

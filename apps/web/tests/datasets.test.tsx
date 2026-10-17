@@ -75,6 +75,10 @@ const DETAIL = {
     T_wall_C: null,
     wet_fraction_mode: "fixed",
     wet_fraction: 1,
+    footprint_wetting: "uniform",
+    microlayer_mode: "fixed",
+    microlayer_um: 0.5,
+    footprint_age_ms: 0,
     dT_ref_K: null,
   },
 };
@@ -1616,6 +1620,10 @@ describe("new series conditions", () => {
         side_wall_thermal: "adiabatic",
         wet_fraction_mode: "fixed",
         wet_fraction: 1,
+        footprint_wetting: "uniform",
+        microlayer_mode: "fixed",
+        microlayer_um: 0.5,
+        footprint_age_ms: 0,
       },
     ]);
   });
