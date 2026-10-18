@@ -708,6 +708,18 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.warmup_cache",
+        "Reuse the warm-up",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "start from the outline fit an earlier run with the same images, settings and "
+            "code already trained; it is retrained only when one of those changes"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "training.temperature_stage_from",
         "Temperature-only stage from step",
         "int",

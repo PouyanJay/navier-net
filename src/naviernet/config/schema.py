@@ -676,6 +676,12 @@ class TrainingConfig:
     # keeps the coupled field stage to the end. Needs freeze_geometry and a step
     # past the warm-up.
     temperature_stage_from: int = 0
+    # Reuse the warm-up: a fresh run starts from the checkpoint at the end of
+    # stage_b_warmup_steps that an earlier run with the same warm-up inputs
+    # cached, or trains and caches it (naviernet.warmup_cache). The key is the
+    # processed archive's content, the config minus what acts only after the
+    # warm-up, and the code the warm-up runs.
+    warmup_cache: bool = False
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See

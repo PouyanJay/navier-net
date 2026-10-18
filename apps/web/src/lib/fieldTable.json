@@ -929,6 +929,23 @@
     "default": false
   },
   {
+    "key": "training.warmup_cache",
+    "label": "Reuse the warm-up",
+    "kind": "bool",
+    "section": "training",
+    "owner": "override",
+    "help": "start from the outline fit an earlier run with the same images, settings and code already trained; it is retrained only when one of those changes",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "warmup_cache",
+    "default": false
+  },
+  {
     "key": "training.temperature_stage_from",
     "label": "Temperature-only stage from step",
     "kind": "int",

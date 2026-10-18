@@ -73,6 +73,9 @@ quadrature_jitter: true
 # its velocity and temperature stayed lopsided; with the outline an input the
 # physics no longer has to be held back to protect it.
 freeze_geometry: true
+# The warm-up is trained once per outline, settings and code, and reused by
+# every physics variant after it (naviernet.warmup_cache).
+warmup_cache: true
 # The temperature equation trains the temperature only: its advection term
 # reads the velocity detached, so its error cannot bend the flow (it pulled
 # the liquid ahead of the bubble 2 to 30 times harder than momentum did).

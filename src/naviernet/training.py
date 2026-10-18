@@ -27,6 +27,7 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
+from naviernet import warmup_cache
 from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
@@ -171,6 +172,12 @@ def _wetting_record(model) -> dict[str, float]:
     if getattr(model, "wet_fraction_mode", "fixed") == "fit":
         return {"wet_fraction": float(model.wet_fraction.detach())}
     return {}
+
+
+def _stage_b_keys(cfg) -> tuple[str, ...]:
+    """The weight keys of the terms held at zero through the warm-up."""
+    equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
+    return tuple(registry.stage_b_terms(equations))
 
 
 def _sharp(cfg) -> bool:
@@ -1762,11 +1769,16 @@ def train(
     paths: RunPaths,
     steps: int | None = None,
     on_log: Callable[[dict], None] | None = None,
+    use_warmup_cache: bool = True,
 ) -> tuple[BubblePINN, BubbleDataset, dict]:
     """Train (or continue training) and write the checkpoint. Returns the model.
 
     ``on_log``, when given, receives a copy of each history record as it is
     logged, so a caller can observe progress while the run is still going.
+    Under ``training.warmup_cache`` a fresh run starts from the shared
+    warm-up's checkpoint, training and caching it first when it is missing
+    (see :mod:`naviernet.warmup_cache`); ``use_warmup_cache=False`` is the call
+    that trains it.
     """
     # Validate the held-out split up front, so a misconfigured `heldout_datasets`
     # fails loudly on every path -- including a single-dataset CLI run, which never
@@ -1777,6 +1789,14 @@ def train(
 
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if use_warmup_cache and warmup_cache.enabled(cfg):
+        steps = warmup_cache.reuse_or_train(
+            cfg,
+            paths,
+            int(steps if steps is not None else tcfg.steps),
+            _stage_b_keys(cfg),
+            lambda n: train(cfg, paths, steps=n, on_log=on_log, use_warmup_cache=False),
+        )
     rba = tcfg.weighting == "rba"
     pressure_shape = bool(getattr(cfg.model, "pressure_shape", False))
     steps = int(steps if steps is not None else tcfg.steps)
@@ -2337,6 +2357,11 @@ def _train_joint(
     """
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if warmup_cache.enabled(cfg):
+        raise ValueError(
+            "training.warmup_cache is single-dataset for now: the key reads one series' "
+            "processed archive"
+        )
     if float(getattr(tcfg, "growth_closure_weight", 0.0)) > 0.0:
         raise ValueError(
             "training.growth_closure_weight is single-dataset for now: the measured growth "
