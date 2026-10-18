@@ -358,6 +358,29 @@ PHYSICS: tuple[FieldSpec, ...] = (
         options=("darcy", "brinkman"),
     ),
     FieldSpec(
+        "model.hard_kinematics",
+        "Exact kinematic condition",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the liquid moves across the bubble edge exactly at the edge's own speed, on the "
+            "whole edge, by construction instead of as a penalty; sliding along it stays free"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.kinematic_blend_length",
+        "Kinematic blend length",
+        "float",
+        "physics",
+        "override",
+        help="how far from the edge the exact kinematic correction fades out, in L_ref units",
+        lo=1e-4,
+        hi=1.0,
+        advanced=True,
+    ),
+    FieldSpec(
         "model.momentum_inertia",
         "Inertia in the momentum law",
         "bool",

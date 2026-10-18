@@ -134,6 +134,7 @@ class BubblePINN(nn.Module):
         self._validate_pressure_representation(cfg, names)
         self._validate_thermal(cfg, names)
         self._validate_mirror_symmetry(cfg, geometry)
+        self._init_hard_kinematics(cfg)
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -339,6 +340,23 @@ class BubblePINN(nn.Module):
                 "model.front_geometry=true."
             )
         self.mirror_axis = 0.5 * (float(geometry.y_min) + float(geometry.y_max))
+
+    def _init_hard_kinematics(self, cfg) -> None:
+        """The exact kinematic condition (``model.hard_kinematics``): it reads the
+        interface's normal and speed off the explicit geometry, so it needs one."""
+        self.hard_kinematics = bool(getattr(cfg.model, "hard_kinematics", False))
+        self.kinematic_blend_length = float(getattr(cfg.model, "kinematic_blend_length", 0.04))
+        if not self.hard_kinematics:
+            return
+        if not self.front_geometry:
+            raise ValueError(
+                "model.hard_kinematics reads the interface's normal and speed off the explicit "
+                "geometry, so it requires model.front_geometry=true"
+            )
+        if self.kinematic_blend_length <= 0.0:
+            raise ValueError(
+                f"model.kinematic_blend_length={self.kinematic_blend_length} must be > 0"
+            )
 
     def _reflect(self, x: torch.Tensor) -> torch.Tensor:
         """``(x, y, t) -> (x, 2 y_c - y, t)``: the point's mirror image across the axis."""
@@ -921,7 +939,47 @@ class BubblePINN(nn.Module):
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
+        u, v = self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
+        if not self.hard_kinematics:
+            return u, v
+        return self._kinematic_correction(x, c, u, v)
+
+    # Below this |grad phi| the normal is undefined (the medial axis deep inside
+    # the vapour, where the blend has long faded); the floor only keeps the
+    # division finite there.
+    _GRAD_FLOOR = 1e-6
+
+    def _kinematic_correction(
+        self, x: torch.Tensor, c: torch.Tensor | None, u: torch.Tensor, v: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """``u + (V_n - u.n) n psi``: the network's velocity with its normal part
+        replaced by the interface's speed ``V_n`` where ``psi = sech^2(phi / l)``
+        is one (the interface), blending back to the network over the length
+        ``l``. The tangential part is untouched.
+
+        ``n = -grad phi / |grad phi|`` (out of the vapour) and ``V_n = phi_t /
+        |grad phi|`` are the level set's own normal and normal speed, exact on the
+        interface and its natural extension off it; ``phi`` is read with the
+        geometry's parameters detached, so no flow term can move the outline
+        through this. Both are even about a mirror axis, so the correction keeps
+        ``u`` even and ``v`` odd.
+        """
+        grad_on = torch.is_grad_enabled()
+        with torch.enable_grad():
+            leaf = x if x.requires_grad else x.detach().requires_grad_(True)
+            phi = self._phi_with_frozen_geometry(leaf, c)
+            phi_x, phi_y, phi_t = torch.autograd.grad(
+                phi, leaf, torch.ones_like(phi), create_graph=True
+            )[0].split(1, dim=1)
+            norm = torch.sqrt(phi_x**2 + phi_y**2).clamp_min(self._GRAD_FLOOR)
+            n_x, n_y = -phi_x / norm, -phi_y / norm
+            speed = phi_t / norm
+            blend = 1.0 - torch.tanh(phi / self.kinematic_blend_length) ** 2
+            shortfall = blend * (speed - (u * n_x + v * n_y))
+            u, v = u + shortfall * n_x, v + shortfall * n_y
+        if not grad_on:
+            return u.detach(), v.detach()
+        return u, v
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The volumetric dilatation from phase change: the free ``s`` network, or

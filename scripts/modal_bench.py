@@ -36,7 +36,9 @@ RECIPE = ["experiment=trusted_w300", "model=trusted", "training=trusted"]
 RUN_PREFIX = "trust-wpf"
 GPU = "A10G"
 CPUS = 4
-TIMEOUT_S = 6 * 3600
+# The exact kinematic condition costs about 70% more per step (about 7 h for
+# 12000 steps on the A10); a timeout is not retried, so leave room.
+TIMEOUT_S = 12 * 3600
 
 # The processed archive the container trains on: the series' current one, or
 # another (NAVIERNET_TENSORS, a path) so a run resumed after a re-preprocess

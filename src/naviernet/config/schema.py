@@ -425,6 +425,18 @@ class ModelConfig:
     # and measured at the advancing head the omitted inertia matched the drag
     # and reached the in-plane viscous term in the side gaps. Brinkman only.
     momentum_inertia: bool = False
+    # The kinematic condition imposed exactly instead of as a penalty: the
+    # liquid's velocity across the interface equals the interface's own normal
+    # speed on the whole of it, at every instant, by construction. The velocity
+    # network is corrected along the interface normal by a factor that is one on
+    # the interface and fades over kinematic_blend_length (L_ref units) on both
+    # sides; the tangential velocity is left free (a gas interface is
+    # shear-free). Normal and speed come from the geometry with its parameters
+    # detached, so the correction never moves the outline. Needs the front
+    # geometry. The evaporation term m/rho_l (about 0.1 mm/s on Series-1-w300,
+    # under 0.1% of the head's speed) is not included.
+    hard_kinematics: bool = False
+    kinematic_blend_length: float = 0.04
     # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.
