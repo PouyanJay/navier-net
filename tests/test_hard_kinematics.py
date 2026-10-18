@@ -94,6 +94,7 @@ def test_a_run_with_the_exact_condition_trains_and_scores_no_kinematic_error(tmp
 
     _, _, state = training.train(cfg, paths)
 
-    last = state["hist"][-1]
-    assert last["kinematic"] < 1e-6
+    first, last = state["hist"][0], state["hist"][-1]
+    assert first["kinematic"] > 1e-6, "held off through the warm-up"
+    assert last["kinematic"] < 1e-6, "exact once the physics engages"
     assert torch.isfinite(torch.tensor(last["brinkman"]))

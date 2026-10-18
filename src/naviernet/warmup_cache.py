@@ -77,6 +77,8 @@ AFTER_WARMUP = (
     "training.frozen_weighting",
     "training.one_way_advection",
     "model.momentum_inertia",
+    "model.hard_kinematics",
+    "model.kinematic_blend_length",
     "experiment.footprint_wetting",
     "experiment.microlayer_mode",
     "experiment.microlayer_um",

@@ -345,6 +345,10 @@ class BubblePINN(nn.Module):
         """The exact kinematic condition (``model.hard_kinematics``): it reads the
         interface's normal and speed off the explicit geometry, so it needs one."""
         self.hard_kinematics = bool(getattr(cfg.model, "hard_kinematics", False))
+        # Evaluation and every run without a warm-up apply it from the start;
+        # the trainer holds it off through the warm-up, as it does the thermal
+        # source, so the warm-up stays the outline fit alone.
+        self.kinematics_engaged = True
         self.kinematic_blend_length = float(getattr(cfg.model, "kinematic_blend_length", 0.04))
         if not self.hard_kinematics:
             return
@@ -940,7 +944,7 @@ class BubblePINN(nn.Module):
         self, x: torch.Tensor, c: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         u, v = self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
-        if not self.hard_kinematics:
+        if not (self.hard_kinematics and self.kinematics_engaged):
             return u, v
         return self._kinematic_correction(x, c, u, v)
 

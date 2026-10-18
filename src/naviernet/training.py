@@ -1627,6 +1627,16 @@ def _engage_thermal_source(model, step: int, tcfg, stage_b_keys: tuple[str, ...]
     )
 
 
+def _engage_hard_kinematics(model, step: int, tcfg, stage_b_keys: tuple[str, ...]) -> None:
+    """Hold the exact kinematic condition off through the warm-up, like the
+    thermal source: the warm-up fits the outline, whose speed is not final until
+    the physics engages and (under ``training.freeze_geometry``) freezes it, and
+    a warm-up without it is the one every physics variant shares."""
+    if not hasattr(model, "kinematics_engaged"):
+        return
+    model.kinematics_engaged = not (bool(stage_b_keys) and step <= tcfg.stage_b_warmup_steps)
+
+
 def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     """True only at the one step the warm-up hands off to Stage-B physics -- where
     the optimiser is restarted. Never true when the warm-up is disabled
@@ -1958,6 +1968,7 @@ def train(
             )
 
         _engage_thermal_source(model, step, tcfg, stage_b_keys)
+        _engage_hard_kinematics(model, step, tcfg, stage_b_keys)
         if _jitter_rng(tcfg, rng) is not None:
             front_times = _front_times(cfg, data, device, rng)
             mass_plan = _mass_balance_plan(cfg, data, groups, device, rng)

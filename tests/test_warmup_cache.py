@@ -48,7 +48,15 @@ def test_a_run_that_reuses_the_warm_up_ends_where_one_that_trained_it_does(tmp_p
 
 def test_a_physics_only_change_shares_the_warm_up(tmp_path):
     cfg, paths, *_ = _run(tmp_path, "base")
-    _run(tmp_path, "variant", ["training.weights.brinkman=7.0", "model.momentum_inertia=true"])
+    _run(
+        tmp_path,
+        "variant",
+        [
+            "training.weights.brinkman=7.0",
+            "model.momentum_inertia=true",
+            "model.hard_kinematics=true",
+        ],
+    )
 
     assert len(_entries(cfg, paths)) == 1
 
