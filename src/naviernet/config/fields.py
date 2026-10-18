@@ -580,6 +580,18 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.growth_closure_outline_gradient",
+        "Growth closure trains the temperature",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "let the vapour the bubble edge makes carry the closure's gradient, so the "
+            "measured growth also adjusts the temperature; off, it adjusts the film only"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "training.growth_closure_stride",
         "Growth closure stride",
         "int",

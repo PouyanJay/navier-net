@@ -2100,7 +2100,9 @@ def train(
                 # The integral of continuity over the bubble, like the mass balance a
                 # functional outside the gate, RBA and the rebalancer.
                 closure_total, closure_record = growth_closure.growth_closure_loss(
-                    model, closure_plan
+                    model,
+                    closure_plan,
+                    bool(getattr(tcfg, "growth_closure_outline_gradient", False)),
                 )
                 total = total + float(tcfg.growth_closure_weight) * closure_total
             total.backward()

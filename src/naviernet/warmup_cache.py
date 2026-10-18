@@ -74,6 +74,7 @@ AFTER_WARMUP = (
     "training.temperature_stage_from",
     "training.growth_closure_weight",
     "training.growth_closure_stride",
+    "training.growth_closure_outline_gradient",
     "training.frozen_weighting",
     "training.one_way_advection",
     "model.momentum_inertia",

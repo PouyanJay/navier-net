@@ -739,6 +739,23 @@
     "default": 0.0
   },
   {
+    "key": "training.growth_closure_outline_gradient",
+    "label": "Growth closure trains the temperature",
+    "kind": "bool",
+    "section": "training",
+    "owner": "override",
+    "help": "let the vapour the bubble edge makes carry the closure's gradient, so the measured growth also adjusts the temperature; off, it adjusts the film only",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "growth_closure_outline_gradient",
+    "default": false
+  },
+  {
     "key": "training.growth_closure_stride",
     "label": "Growth closure stride",
     "kind": "int",

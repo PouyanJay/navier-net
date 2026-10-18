@@ -840,6 +840,10 @@ class TrainingConfig:
     # weighting, RBA and the rebalancer like the mass balance.
     growth_closure_weight: float = 0.0
     growth_closure_stride: int = 4  # every n-th pixel of the covered floor
+    # Let the closure's outline part (the flux the temperature carries) keep its
+    # gradient, so the measured growth also trains the temperature. Off: it is
+    # read detached, and the closure trains the footprint's wetting alone.
+    growth_closure_outline_gradient: bool = False
     mass_balance_grid: int = 64  # transverse quadrature points, wall to wall
 
     seed: int = 0

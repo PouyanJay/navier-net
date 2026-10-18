@@ -111,3 +111,25 @@ def test_a_closure_run_logs_the_gap_and_the_film(tmp_path):
     last = state["hist"][-1]
     assert "growth_closure" in last and last["growth_closure"] >= 0.0
     assert last["film_um"] > 0.0
+
+
+def test_the_outline_part_is_the_same_value_with_or_without_its_gradient(tmp_path):
+    data, model = _model(tmp_path)
+    plan = growth_closure.build_plan(data, stride=2, device="cpu")
+
+    _, detached = growth_closure.source_totals(model, plan)
+    _, carried = growth_closure.source_totals(model, plan, outline_gradient=True)
+
+    assert torch.equal(detached, carried.detach())
+    assert not detached.requires_grad
+    assert all(p.requires_grad for p in model.nets["T"].parameters()), "flags restored"
+
+
+def test_the_switch_lets_the_closure_train_the_temperature(tmp_path):
+    data, model = _model(tmp_path)
+    plan = growth_closure.build_plan(data, stride=2, device="cpu")
+
+    loss, _ = growth_closure.growth_closure_loss(model, plan, outline_gradient=True)
+    loss.backward()
+
+    assert any(p.grad is not None for p in model.nets["T"].parameters())

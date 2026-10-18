@@ -15,12 +15,15 @@ the measured growth, normalised by the mean measured rate so it is O(1).
 The source has two parts: the outline flux, which the temperature carries, and
 the film under the footprint. The outline part enters detached, so this total
 trains the footprint's wetting (its wet share or film thickness) and never
-bends the temperature to fix an integral. A functional on a fixed quadrature,
+bends the temperature to fix an integral; it is read without a parameter graph,
+since no backward pass reaches it. ``training.growth_closure_outline_gradient``
+keeps its gradient instead, so the closure also trains the temperature. A functional on a fixed quadrature,
 outside causal weighting, RBA and the rebalancer, like the mass balance.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import numpy as np
@@ -100,23 +103,46 @@ def outline_vapour(model, instant: torch.Tensor) -> torch.Tensor:
     return model._source_coefficient * (flux * weights).sum()
 
 
-def source_totals(model, plan: GrowthClosurePlan) -> tuple[torch.Tensor, torch.Tensor]:
+@contextmanager
+def _without_parameter_graph(model):
+    """Within the block no parameter records a graph: a value read here and
+    then detached costs no bookkeeping for a backward pass that never comes.
+    Every value is the same as outside it."""
+    flags = [(p, p.requires_grad) for p in model.parameters()]
+    for p, _ in flags:
+        p.requires_grad_(False)
+    try:
+        yield
+    finally:
+        for p, flag in flags:
+            p.requires_grad_(flag)
+
+
+def source_totals(
+    model, plan: GrowthClosurePlan, outline_gradient: bool = False
+) -> tuple[torch.Tensor, torch.Tensor]:
     """``int s dA`` at every event frame, ``(n,)``, split into the footprint's
-    part (with its gradient) and the outline's (detached)."""
+    part (with its gradient) and the outline's: detached and read without a
+    parameter graph, or with its gradient to the temperature under
+    ``outline_gradient`` (``training.growth_closure_outline_gradient``)."""
     footprint, outline = [], []
     for instant in plan.times:
         x = torch.cat([plan.points, instant.expand(len(plan.points), 1)], dim=1)
         footprint.append(model.footprint_source(x).sum() * plan.cell)
-        outline.append(outline_vapour(model, instant).detach())
+        if outline_gradient:
+            outline.append(outline_vapour(model, instant))
+        else:
+            with _without_parameter_graph(model):
+                outline.append(outline_vapour(model, instant).detach())
     return torch.stack(footprint), torch.stack(outline)
 
 
 def growth_closure_loss(
-    model, plan: GrowthClosurePlan
+    model, plan: GrowthClosurePlan, outline_gradient: bool = False
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Mean squared gap between the vapour made and the measured growth over
     the event frames, on the mean measured rate; plus its log record."""
-    footprint, outline = source_totals(model, plan)
+    footprint, outline = source_totals(model, plan, outline_gradient)
     gap = (footprint + outline - plan.growth) / plan.scale
     loss = (gap**2).mean()
     return loss, {
