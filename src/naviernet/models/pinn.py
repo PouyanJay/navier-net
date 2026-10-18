@@ -15,6 +15,7 @@ parameter rather than an emergent property of the fit.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import contextmanager
 
 import torch
 import torch.nn as nn
@@ -135,6 +136,9 @@ class BubblePINN(nn.Module):
         self._validate_thermal(cfg, names)
         self._validate_mirror_symmetry(cfg, geometry)
         self._init_hard_kinematics(cfg)
+        self._field_cache: dict | None = None
+        # Read on every thermal-source call; the groups are fixed for the model.
+        self._source_coefficient = float(compute_groups(cfg)["mass_flux_to_source"])
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -340,6 +344,34 @@ class BubblePINN(nn.Module):
                 "model.front_geometry=true."
             )
         self.mirror_axis = 0.5 * (float(geometry.y_min) + float(geometry.y_max))
+
+    @contextmanager
+    def caching_fields(self):
+        """Within the block, each field is computed once per point batch and
+        shared: the equations of a training step read the velocity, the volume
+        fraction, the temperature and the pressure at the same collocation
+        points, and recomputing them per equation doubled the step's graph (and
+        its backward pass) for no change in any value. Entries are keyed on the
+        batch tensor itself, so a different batch is never served another's."""
+        self._field_cache = {}
+        try:
+            yield
+        finally:
+            self._field_cache = None
+
+    def _shared(self, name: str, x: torch.Tensor, c, compute):
+        """``compute()``, or its value from this block's cache for the same
+        batch ``x`` and context ``c``."""
+        cache = self._field_cache
+        if cache is None:
+            return compute()
+        key = (name, id(x), id(c))
+        hit = cache.get(key)
+        if hit is not None and hit[0] is x and hit[1] is c:
+            return hit[2]
+        value = compute()
+        cache[key] = (x, c, value)  # holding x and c keeps their ids unique
+        return value
 
     def _init_hard_kinematics(self, cfg) -> None:
         """The exact kinematic condition (``model.hard_kinematics``): it reads the
@@ -893,7 +925,9 @@ class BubblePINN(nn.Module):
         geometry: GeometryPriors | None = None,
     ) -> torch.Tensor:
         """Volume fraction, bounded in (0, 1) by construction."""
-        return torch.sigmoid(self.phi(x, c, pin=pin, geometry=geometry) / self.eps)
+        if pin is not None or geometry is not None:
+            return torch.sigmoid(self.phi(x, c, pin=pin, geometry=geometry) / self.eps)
+        return self._shared("alpha", x, c, lambda: torch.sigmoid(self.phi(x, c) / self.eps))
 
     def front(
         self,
@@ -942,6 +976,11 @@ class BubblePINN(nn.Module):
 
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self._shared("velocity", x, c, lambda: self._velocity(x, c))
+
+    def _velocity(
+        self, x: torch.Tensor, c: torch.Tensor | None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         u, v = self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
         if not (self.hard_kinematics and self.kinematics_engaged):
@@ -1019,8 +1058,7 @@ class BubblePINN(nn.Module):
         (:meth:`footprint_source`) is added: the wall flux under the bubble
         creates vapour across the footprint, the outline flux along the front.
         """
-        groups = compute_groups(self.cfg)
-        coefficient = groups["mass_flux_to_source"]
+        coefficient = self._source_coefficient
         sigma = self.source_kernel_width
         source = torch.zeros_like(x[:, :1])
         instants, inverse = torch.unique(x[:, 2].detach(), return_inverse=True)
@@ -1094,6 +1132,9 @@ class BubblePINN(nn.Module):
         return vapour_fraction * self.p_vapor(x[:, 2:3]) + (1.0 - vapour_fraction) * liquid
 
     def liquid_pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._shared("liquid_pressure", x, c, lambda: self._liquid_pressure(x, c))
+
+    def _liquid_pressure(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
         """The liquid-side pressure: the ``p`` network itself. Identical to
         :meth:`pressure` under the single representation."""
         return self._even(self._require("p"), x, c)
@@ -1115,6 +1156,9 @@ class BubblePINN(nn.Module):
         return nn.functional.softplus(self._log_q_pulse)
 
     def temperature(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._shared("temperature", x, c, lambda: self._temperature(x, c))
+
+    def _temperature(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
         """Non-dimensional superheat. Stage B; raises if T was not configured.
 
         Bounded to ``(theta_in, 1)`` -- inlet to wall -- by default. Under
@@ -1157,6 +1201,9 @@ class BubblePINN(nn.Module):
     def _phi_with_frozen_geometry(
         self, x: torch.Tensor, c: torch.Tensor | None
     ) -> torch.Tensor:
+        return self._shared("phi_frozen", x, c, lambda: self._phi_frozen(x, c))
+
+    def _phi_frozen(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
         """``phi(x)`` with the geometry's parameters detached but its dependence on
         ``x`` kept: the temperature's spatial derivatives see the interface, while
         no thermal term can move it through the gate."""

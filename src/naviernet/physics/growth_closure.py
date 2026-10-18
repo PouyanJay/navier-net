@@ -96,10 +96,8 @@ def build_plan(data, stride: int, device) -> GrowthClosurePlan:
 def outline_vapour(model, instant: torch.Tensor) -> torch.Tensor:
     """The outline flux's part of ``int s dA`` at one instant: the coefficient
     times the flux integrated along the front (the kernel is normalised)."""
-    from naviernet.physics.groups import compute_groups
-
     flux, weights, _ = model._front_flux(instant, None)
-    return compute_groups(model.cfg)["mass_flux_to_source"] * (flux * weights).sum()
+    return model._source_coefficient * (flux * weights).sum()
 
 
 def source_totals(model, plan: GrowthClosurePlan) -> tuple[torch.Tensor, torch.Tensor]:

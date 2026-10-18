@@ -36,6 +36,7 @@ replacing the free source ``s``. The property fields ``rho*(alpha)`` and
 from __future__ import annotations
 
 import math
+from contextlib import contextmanager
 from typing import NamedTuple
 
 import torch
@@ -53,13 +54,41 @@ class StageAResiduals(NamedTuple):
     interface_weight: torch.Tensor  # 1 on the interface, 0 in the bulk (detached)
 
 
+# While set (sharing_gradients), each (field, points) derivative is taken once
+# and shared: a training step's equations differentiate the same velocity,
+# temperature and pressure at the same points, each on its own before.
+_GRADIENT_CACHE: dict | None = None
+
+
+@contextmanager
+def sharing_gradients():
+    """Within the block, :func:`gradients` returns the derivative it already
+    took of the same field at the same points instead of taking it again. The
+    value is the same either way; the step's graph, and its backward pass, is
+    not built twice. Keyed on the tensors themselves, held for the block."""
+    global _GRADIENT_CACHE
+    _GRADIENT_CACHE = {}
+    try:
+        yield
+    finally:
+        _GRADIENT_CACHE = None
+
+
 def gradients(f: torch.Tensor, x: torch.Tensor):
     """Return ``(f_x, f_y, f_t)`` for a scalar field ``f`` evaluated at ``x``.
 
     ``x`` must have ``requires_grad=True`` and columns ordered ``(x, y, t)``.
     """
+    cache = _GRADIENT_CACHE
+    if cache is not None:
+        hit = cache.get((id(f), id(x)))
+        if hit is not None and hit[0] is f and hit[1] is x:
+            return hit[2]
     grad = torch.autograd.grad(f, x, torch.ones_like(f), create_graph=True)[0]
-    return grad[:, 0:1], grad[:, 1:2], grad[:, 2:3]
+    parts = grad[:, 0:1], grad[:, 1:2], grad[:, 2:3]
+    if cache is not None:
+        cache[(id(f), id(x))] = (f, x, parts)
+    return parts
 
 
 def _ctx(c: torch.Tensor | None, x: torch.Tensor) -> torch.Tensor | None:

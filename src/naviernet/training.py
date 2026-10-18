@@ -42,6 +42,7 @@ from naviernet.physics import (
     mass_balance,
     nose_supervision,
     registry,
+    residuals,
     root_supervision,
     weighting,
 )
@@ -1972,127 +1973,137 @@ def train(
         if _jitter_rng(tcfg, rng) is not None:
             front_times = _front_times(cfg, data, device, rng)
             mass_plan = _mass_balance_plan(cfg, data, groups, device, rng)
-        ctx = registry.LossContext(
-            model,
-            x_coll,
-            inlet,
-            walls,
-            u_inlet,
-            groups,
-            front_times=front_times,
-            outlet=outlet,
-            wall_condition=boundaries.wall_condition,
-            initial=initial,
-        )
-        # The temperature-only stage has no use for the outline's data term: the
-        # outline is locked, and the term would only cost a forward pass.
-        losses = (
-            {}
-            if temperature_only
-            else {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
-        )
-        for eq in equations:
-            losses[eq.weight_key] = eq.term(ctx)
-        coll_batches = [CollocationBatch(model, x_coll, groups, None, ctx)]  # single dataset
+        # Every equation of the step reads the fields at the same batches:
+        # computed once and shared (BubblePINN.caching_fields), with their
+        # derivatives (residuals.sharing_gradients), not per equation.
+        with model.caching_fields(), residuals.sharing_gradients():
+            ctx = registry.LossContext(
+                model,
+                x_coll,
+                inlet,
+                walls,
+                u_inlet,
+                groups,
+                front_times=front_times,
+                outlet=outlet,
+                wall_condition=boundaries.wall_condition,
+                initial=initial,
+            )
+            # The temperature-only stage has no use for the outline's data term: the
+            # outline is locked, and the term would only cost a forward pass.
+            losses = (
+                {}
+                if temperature_only
+                else {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
+            )
+            for eq in equations:
+                losses[eq.weight_key] = eq.term(ctx)
+            coll_batches = [
+                CollocationBatch(model, x_coll, groups, None, ctx)
+            ]  # single dataset
 
-        # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
-        # bounded per-point attention below. Skip the handoff step: weights reset there.
-        frozen = _geometry_frozen(step, tcfg, stage_b_keys)
-        # Once the geometry is frozen the physics terms keep their configured
-        # weights unless the run asks for them to be equalised.
-        held = frozen and str(getattr(tcfg, "frozen_weighting", "fixed")) == "fixed"
-        if (
-            not rba
-            and not held
-            and not temperature_only
-            and step % tcfg.rebalance_every == 0
-            and not _stage_b_engages_at(step, tcfg, stage_b_keys)
-        ):
-            # Once the geometry is frozen the data term has no gradient: the
-            # physics terms are measured and equalised among themselves.
-            measured = {k: v for k, v in losses.items() if k != "data"} if frozen else losses
-            norms = _gradient_norms(model, measured, opt)
-            _rebalance(
-                weights,
-                norms,
-                rebalanced,
-                float(tcfg.rebalance_max_ratio),
-                _physics_reference(weights, norms, rebalanced) if frozen else None,
-            )
-            log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
+            # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
+            # bounded per-point attention below. Skip the handoff step: weights reset there.
+            frozen = _geometry_frozen(step, tcfg, stage_b_keys)
+            # Once the geometry is frozen the physics terms keep their configured
+            # weights unless the run asks for them to be equalised.
+            held = frozen and str(getattr(tcfg, "frozen_weighting", "fixed")) == "fixed"
+            if (
+                not rba
+                and not held
+                and not temperature_only
+                and step % tcfg.rebalance_every == 0
+                and not _stage_b_engages_at(step, tcfg, stage_b_keys)
+            ):
+                # Once the geometry is frozen the data term has no gradient: the
+                # physics terms are measured and equalised among themselves.
+                measured = (
+                    {k: v for k, v in losses.items() if k != "data"} if frozen else losses
+                )
+                norms = _gradient_norms(model, measured, opt)
+                _rebalance(
+                    weights,
+                    norms,
+                    rebalanced,
+                    float(tcfg.rebalance_max_ratio),
+                    _physics_reference(weights, norms, rebalanced) if frozen else None,
+                )
+                log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
-        if _stage_b_engages_at(step, tcfg, stage_b_keys):
-            # Engage Stage-B physics on the interface the warm-up converged, from a
-            # clean optimiser (see _restart_for_stage_b). The warm-up's fit is
-            # recorded first (the floor the outline guard and the audit hold the
-            # run to), then the nose DOF releases, so the fresh optimiser sees it
-            # trainable.
-            _record_warmup_fit(cfg, model, data, state)
-            _release_nose_dof(model)
-            if frozen:
-                _freeze_geometry(model, True)
-            opt, weights = _restart_for_stage_b(model, lr, reset_weights)
-            log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
-        schedule = _loss_schedule(step, tcfg, stage_b_keys)
-        if rba:
-            total = _rba_collocation_loss(
-                ctx, weights, schedule, attention, plan
-            ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
-        else:
-            total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
-        kin_record: dict[str, float] = {}
-        if kin_plan is not None and not temperature_only:
-            # Outside the causal gate, RBA, and the rebalancer by construction:
-            # added directly to the total with fixed config weights.
-            kin_total, kin_record = kinematics.kinematic_losses(
-                kinematics.KinematicContext(model, tcfg, groups),
-                kin_plan,
-                _kin_schedule(step, first_step, tcfg),
-            )
-            total = total + kin_total
-        fv_record: dict[str, float] = {}
-        if fv_plan is not None and not frozen:
-            # Outside the causal gate, RBA and the rebalancer, like the kinematic
-            # terms: supervised functionals on the front, not pointwise residuals.
-            # Not evaluated once the geometry is frozen: they act on it alone.
-            fv_total, fv_record = front_velocity.front_velocity_losses(
-                front_velocity.FrontVelocityContext(model, tcfg), fv_plan
-            )
-            total = total + fv_total
-        root_record: dict[str, float] = {}
-        if root_plan is not None and not frozen:
-            # Outside the causal gate, RBA and the rebalancer, same reason.
-            root_total, root_record = root_supervision.root_losses(
-                cap_supervision.SupervisionContext(model, tcfg), root_plan
-            )
-            total = total + root_total
-        nose_record: dict[str, float] = {}
-        if nose_plan is not None and not frozen:
-            # Outside the causal gate, RBA and the rebalancer, same reason.
-            nose_total, nose_record = nose_supervision.nose_losses(
-                cap_supervision.SupervisionContext(model, tcfg), nose_plan
-            )
-            total = total + nose_total
-        mass_record: dict[str, float] = {}
-        if mass_plan is not None and not temperature_only:
-            # A functional on a fixed quadrature, outside the causal gate, RBA and
-            # the rebalancer, like the terms above. A balance of the flow, so not
-            # evaluated once the flow is locked.
-            mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
-            total = total + float(tcfg.mass_balance_weight) * mass_total
-        closure_record: dict[str, float] = {}
-        if (
-            closure_plan is not None
-            and not temperature_only
-            and getattr(model, "thermal_source_engaged", False)
-        ):
-            # The integral of continuity over the bubble, like the mass balance a
-            # functional outside the gate, RBA and the rebalancer.
-            closure_total, closure_record = growth_closure.growth_closure_loss(
-                model, closure_plan
-            )
-            total = total + float(tcfg.growth_closure_weight) * closure_total
-        total.backward()
+            if _stage_b_engages_at(step, tcfg, stage_b_keys):
+                # Engage Stage-B physics on the interface the warm-up converged, from a
+                # clean optimiser (see _restart_for_stage_b). The warm-up's fit is
+                # recorded first (the floor the outline guard and the audit hold the
+                # run to), then the nose DOF releases, so the fresh optimiser sees it
+                # trainable.
+                _record_warmup_fit(cfg, model, data, state)
+                _release_nose_dof(model)
+                if frozen:
+                    _freeze_geometry(model, True)
+                opt, weights = _restart_for_stage_b(model, lr, reset_weights)
+                log.info(
+                    "step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys)
+                )
+            schedule = _loss_schedule(step, tcfg, stage_b_keys)
+            if rba:
+                total = _rba_collocation_loss(
+                    ctx, weights, schedule, attention, plan
+                ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
+            else:
+                total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
+            kin_record: dict[str, float] = {}
+            if kin_plan is not None and not temperature_only:
+                # Outside the causal gate, RBA, and the rebalancer by construction:
+                # added directly to the total with fixed config weights.
+                kin_total, kin_record = kinematics.kinematic_losses(
+                    kinematics.KinematicContext(model, tcfg, groups),
+                    kin_plan,
+                    _kin_schedule(step, first_step, tcfg),
+                )
+                total = total + kin_total
+            fv_record: dict[str, float] = {}
+            if fv_plan is not None and not frozen:
+                # Outside the causal gate, RBA and the rebalancer, like the kinematic
+                # terms: supervised functionals on the front, not pointwise residuals.
+                # Not evaluated once the geometry is frozen: they act on it alone.
+                fv_total, fv_record = front_velocity.front_velocity_losses(
+                    front_velocity.FrontVelocityContext(model, tcfg), fv_plan
+                )
+                total = total + fv_total
+            root_record: dict[str, float] = {}
+            if root_plan is not None and not frozen:
+                # Outside the causal gate, RBA and the rebalancer, same reason.
+                root_total, root_record = root_supervision.root_losses(
+                    cap_supervision.SupervisionContext(model, tcfg), root_plan
+                )
+                total = total + root_total
+            nose_record: dict[str, float] = {}
+            if nose_plan is not None and not frozen:
+                # Outside the causal gate, RBA and the rebalancer, same reason.
+                nose_total, nose_record = nose_supervision.nose_losses(
+                    cap_supervision.SupervisionContext(model, tcfg), nose_plan
+                )
+                total = total + nose_total
+            mass_record: dict[str, float] = {}
+            if mass_plan is not None and not temperature_only:
+                # A functional on a fixed quadrature, outside the causal gate, RBA and
+                # the rebalancer, like the terms above. A balance of the flow, so not
+                # evaluated once the flow is locked.
+                mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
+                total = total + float(tcfg.mass_balance_weight) * mass_total
+            closure_record: dict[str, float] = {}
+            if (
+                closure_plan is not None
+                and not temperature_only
+                and getattr(model, "thermal_source_engaged", False)
+            ):
+                # The integral of continuity over the bubble, like the mass balance a
+                # functional outside the gate, RBA and the rebalancer.
+                closure_total, closure_record = growth_closure.growth_closure_loss(
+                    model, closure_plan
+                )
+                total = total + float(tcfg.growth_closure_weight) * closure_total
+            total.backward()
         grad_norm = _clip_gradients(model, tcfg)
         opt.step()
         if tcfg.checkpoint_every and step % tcfg.checkpoint_every == 0:
