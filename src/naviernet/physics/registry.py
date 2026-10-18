@@ -151,7 +151,13 @@ class LossContext:
     @property
     def brinkman_res(self) -> MomentumResiduals:
         if self._brinkman is None:
-            self._brinkman = brinkman_residuals(self.model, self.x_coll, self.groups, c=self.c)
+            self._brinkman = brinkman_residuals(
+                self.model,
+                self.x_coll,
+                self.groups,
+                c=self.c,
+                inertia=bool(getattr(self.model.cfg.model, "momentum_inertia", False)),
+            )
         return self._brinkman
 
     @property

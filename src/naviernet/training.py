@@ -595,6 +595,14 @@ def _validate_boundaries(model_cfg) -> None:
         and "p" in model_cfg.fields
         and bool(getattr(model_cfg, "sharp_interface", False))
     )
+    if (
+        bool(getattr(model_cfg, "momentum_inertia", False))
+        and chosen["momentum_closure"] != "brinkman"
+    ):
+        raise ValueError(
+            "model.momentum_inertia adds the depth-averaged inertia to the Brinkman law, so it "
+            f"requires model.momentum_closure=brinkman; this model uses {chosen['momentum_closure']!r}"
+        )
     if darcy_active and chosen["wall_condition"] == "no_slip":
         log.warning(
             "model.momentum_closure=darcy with model.wall_condition=no_slip is "

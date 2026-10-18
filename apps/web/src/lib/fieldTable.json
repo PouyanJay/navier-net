@@ -412,6 +412,23 @@
     "default": "darcy"
   },
   {
+    "key": "model.momentum_inertia",
+    "label": "Inertia in the momentum law",
+    "kind": "bool",
+    "section": "physics",
+    "owner": "override",
+    "help": "adds the liquid's depth-averaged inertia to the Brinkman law, making it the depth-averaged Navier-Stokes; needed when the liquid accelerates around the bubble",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "momentum_inertia",
+    "default": false
+  },
+  {
     "key": "model.outlet_condition",
     "label": "Outlet",
     "kind": "enum",

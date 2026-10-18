@@ -618,8 +618,18 @@ def darcy_residuals(
     )
 
 
+# The convective term of the depth-averaged momentum carries the mean of u^2
+# over the depth over the square of the mean: 6/5 for the parabolic profile the
+# Hele-Shaw drag already assumes (Gondret & Rabaud 1997, Phys. Fluids 9, 3267).
+DEPTH_PROFILE_CONVECTION = 6.0 / 5.0
+
+
 def brinkman_residuals(
-    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None = None,
+    inertia: bool = False,
 ) -> MomentumResiduals:
     """Depth-averaged momentum with the Brinkman in-plane viscous term::
 
@@ -631,6 +641,13 @@ def brinkman_residuals(
     Yortsos & Salin 2003 for Hele-Shaw cells), so no-slip side walls become
     admissible. Away from the walls, where ``lap(u)`` is small, it is Darcy.
     Same return shape as the other momentum families; ``kappa`` stays zero.
+
+    ``inertia`` (``model.momentum_inertia``) adds the depth-averaged inertia
+    ``rho~(alpha) (u_t + 6/5 u.grad u)`` on the left, making the law the
+    depth-averaged Navier-Stokes of a Hele-Shaw cell. Pressure is on
+    ``rho_l U^2`` and time on ``L/U``, so the coefficient is one in the liquid.
+    No surface-tension body force: under the sharp interface the Young-Laplace
+    jump on the front carries it, and the liquid pressure is smooth up to it.
     """
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
@@ -639,11 +656,16 @@ def brinkman_residuals(
     weight = liquid_weight(model, alpha)
     u, v = model.velocity(x, cx)
     p_x, p_y, _ = gradients(liquid_pressure(model, x, cx), x)
-    return MomentumResiduals(
-        weight * (p_x + drag * u - viscosity * _laplacian(u, x)),
-        weight * (p_y + drag * v - viscosity * _laplacian(v, x)),
-        torch.zeros_like(u),
-    )
+    mom_x = p_x + drag * u - viscosity * _laplacian(u, x)
+    mom_y = p_y + drag * v - viscosity * _laplacian(v, x)
+    if inertia:
+        u_x, u_y, u_t = gradients(u, x)
+        v_x, v_y, v_t = gradients(v, x)
+        density = mixture(alpha, groups["rho_ratio"])
+        convect = DEPTH_PROFILE_CONVECTION
+        mom_x = mom_x + density * (u_t + convect * (u * u_x + v * u_y))
+        mom_y = mom_y + density * (v_t + convect * (u * v_x + v * v_y))
+    return MomentumResiduals(weight * mom_x, weight * mom_y, torch.zeros_like(u))
 
 
 # Dynamic correction to the gap-direction capillary pressure across an advancing

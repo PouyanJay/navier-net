@@ -418,6 +418,13 @@ class ModelConfig:
     # The depth-averaged momentum law in sharp mode: Darcy, or Darcy plus the
     # Brinkman viscous term (1/Re) mu~ lap(u).
     momentum_closure: str = "darcy"  # "darcy" | "brinkman"
+    # Depth-averaged inertia in the Brinkman law, rho~ (u_t + 6/5 u.grad u),
+    # making it the depth-averaged Navier-Stokes of a Hele-Shaw cell (Gondret &
+    # Rabaud 1997). Without it the law balances pressure against friction alone,
+    # valid only when Re (h/L)^2 / 12 << 1; on Series-1-w300 that is about 4.5,
+    # and measured at the advancing head the omitted inertia matched the drag
+    # and reached the in-plane viscous term in the side gaps. Brinkman only.
+    momentum_inertia: bool = False
     # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.

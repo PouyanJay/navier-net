@@ -358,6 +358,18 @@ PHYSICS: tuple[FieldSpec, ...] = (
         options=("darcy", "brinkman"),
     ),
     FieldSpec(
+        "model.momentum_inertia",
+        "Inertia in the momentum law",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "adds the liquid's depth-averaged inertia to the Brinkman law, making it the "
+            "depth-averaged Navier-Stokes; needed when the liquid accelerates around the bubble"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.outlet_condition",
         "Outlet",
         "enum",
