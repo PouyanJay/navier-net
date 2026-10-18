@@ -684,6 +684,11 @@ class TrainingConfig:
     # processed archive's content, the config minus what acts only after the
     # warm-up, and the code the warm-up runs.
     warmup_cache: bool = False
+    # The learning rate's halving period in the physics stage, in steps: the
+    # schedule's clock runs lr_halflife / physics_lr_halflife times faster after
+    # the warm-up, so a physics stage of fewer, larger steps (more points per
+    # step) sweeps the same rates as the full-length one. Zero keeps one clock.
+    physics_lr_halflife: int = 0
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See

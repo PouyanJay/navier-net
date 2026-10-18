@@ -963,6 +963,23 @@
     "default": false
   },
   {
+    "key": "training.physics_lr_halflife",
+    "label": "Physics-stage learning-rate halving",
+    "kind": "int",
+    "section": "training",
+    "owner": "override",
+    "help": "steps per halving of the learning rate after the warm-up; for a physics stage of fewer, larger steps. 0 keeps the warm-up's halving period",
+    "unit": "",
+    "options": [],
+    "lo": 0,
+    "hi": 1000000,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "physics_lr_halflife",
+    "default": 0
+  },
+  {
     "key": "training.temperature_stage_from",
     "label": "Temperature-only stage from step",
     "kind": "int",

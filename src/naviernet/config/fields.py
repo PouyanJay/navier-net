@@ -732,6 +732,20 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.physics_lr_halflife",
+        "Physics-stage learning-rate halving",
+        "int",
+        "training",
+        "override",
+        help=(
+            "steps per halving of the learning rate after the warm-up; for a physics stage "
+            "of fewer, larger steps. 0 keeps the warm-up's halving period"
+        ),
+        lo=0,
+        hi=1_000_000,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.temperature_stage_from",
         "Temperature-only stage from step",
         "int",

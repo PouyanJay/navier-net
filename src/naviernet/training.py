@@ -20,6 +20,7 @@ the optimising backward pass, and its gradients are discarded.
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import NamedTuple
@@ -480,6 +481,10 @@ def _validate_training_config(cfg) -> None:
     _validate_freeze_geometry(tcfg, cfg.model)
     _validate_temperature_stage(tcfg, cfg.model)
     _validate_growth_closure(tcfg, cfg.model)
+    if int(getattr(tcfg, "physics_lr_halflife", 0)) < 0:
+        raise ValueError(
+            f"training.physics_lr_halflife must be >= 0, got {tcfg.physics_lr_halflife}"
+        )
 
 
 def _validate_rebalance_cap(tcfg) -> None:
@@ -1692,10 +1697,26 @@ def _temperature_stage_engages_at(step: int, tcfg) -> bool:
     return start > 0 and step == start + 1
 
 
-def _lr_origin(step: int, tcfg) -> int:
-    """The step the learning-rate halving counts from: the temperature-only
-    stage restarts the clock, so the temperature trains from the full rate."""
-    return int(tcfg.temperature_stage_from) if _temperature_stage(step, tcfg) else 0
+def learning_rate(step: int, tcfg) -> float:
+    """The learning rate at ``step``: halved every ``lr_halflife`` steps of the
+    schedule's clock. The temperature-only stage restarts the clock, so the
+    temperature trains from the full rate."""
+    if _temperature_stage(step, tcfg):
+        return tcfg.lr * 0.5 ** ((step - int(tcfg.temperature_stage_from)) // tcfg.lr_halflife)
+    return tcfg.lr * 0.5 ** (math.floor(_lr_clock(step, tcfg)) // tcfg.lr_halflife)
+
+
+def _lr_clock(step: int, tcfg) -> float:
+    """Where ``step`` sits on the learning-rate schedule. Step for step through
+    the warm-up; after it, ``lr_halflife / physics_lr_halflife`` schedule steps
+    per step (``training.physics_lr_halflife``), so a physics stage run in
+    fewer, larger steps sweeps the same rates the full-length one does. Zero
+    keeps one clock for the whole run."""
+    warmup = int(tcfg.stage_b_warmup_steps)
+    physics = int(getattr(tcfg, "physics_lr_halflife", 0))
+    if physics <= 0 or step <= warmup:
+        return float(step)
+    return warmup + (step - warmup) * tcfg.lr_halflife / physics
 
 
 def _lock_flow(model) -> None:
@@ -1929,7 +1950,7 @@ def train(
             opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
             log.info("step %5d | temperature-only stage engaged", step)
         temperature_only = _temperature_stage(step, tcfg)
-        lr = tcfg.lr * (0.5 ** ((step - _lr_origin(step, tcfg)) // tcfg.lr_halflife))
+        lr = learning_rate(step, tcfg)
         for group in opt.param_groups:
             group["lr"] = lr
         opt.zero_grad()

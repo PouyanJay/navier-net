@@ -72,6 +72,7 @@ AFTER_WARMUP = (
     "training.device",
     "training.warmup_cache",
     "training.temperature_stage_from",
+    "training.physics_lr_halflife",
     "training.growth_closure_weight",
     "training.growth_closure_stride",
     "training.growth_closure_outline_gradient",
