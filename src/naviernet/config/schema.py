@@ -449,6 +449,17 @@ class ModelConfig:
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.
     outlet_condition: str = "none"  # "none" | "zero_gradient"
+    # The outlet's pressure, Pa above atmospheric (gauge), imposed on the liquid
+    # pressure across the outlet. With the zero-gradient velocity it makes the
+    # outflow stress-free at a known pressure, and fixes the pressure's level,
+    # which the vapour pressure otherwise carries alone. None imposes nothing.
+    outlet_pressure_Pa: Optional[float] = None  # noqa: UP045
+    # The inlet velocity across the channel's width. "plug": the mean everywhere,
+    # which disagrees with no-slip side walls at the inlet corners. "developed":
+    # the fully developed profile of the depth-averaged Brinkman law, flat in the
+    # middle and falling to zero at the walls over h / sqrt(12), with the same
+    # mean (the flow rate).
+    inlet_profile: str = "plug"  # "plug" | "developed"
     # How the pressure field is represented (trustworthy-fields WP3). "single":
     # one network for both phases (today), which has to fake the Young-Laplace
     # discontinuity with steep gradients the momentum residual then punishes.

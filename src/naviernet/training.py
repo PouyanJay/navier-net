@@ -182,6 +182,22 @@ def _stage_b_keys(cfg) -> tuple[str, ...]:
     return tuple(registry.stage_b_terms(equations))
 
 
+def _inlet_velocity(cfg, groups: dict, data: BubbleDataset, inlet: torch.Tensor, mean: float):
+    """The inlet's streamwise velocity target: the plug's mean, or one value per
+    inlet point on the developed profile (``model.inlet_profile``)."""
+    if str(getattr(cfg.model, "inlet_profile", "plug")) == "plug":
+        return mean
+    return residuals.developed_inlet_profile(inlet[:, 1:2], data.y_lo, data.y_hi, mean, groups)
+
+
+def _outlet_pressure(cfg) -> float | None:
+    """``model.outlet_pressure_Pa`` on the pressure scale ``rho_l U_ref^2``."""
+    pressure = getattr(cfg.model, "outlet_pressure_Pa", None)
+    if pressure is None:
+        return None
+    return float(pressure) / (float(cfg.fluid.rho_l) * float(cfg.scales.U_ref) ** 2)
+
+
 def _sharp(cfg) -> bool:
     """Whether this run imposes the interface conditions on the explicit front."""
     return bool(getattr(cfg.model, "sharp_interface", False))
@@ -587,6 +603,7 @@ _BOUNDARY_CHOICES = {
     "wall_condition": ("no_slip", "no_penetration"),
     "momentum_closure": ("darcy", "brinkman"),
     "outlet_condition": ("none", "zero_gradient"),
+    "inlet_profile": ("plug", "developed"),
 }
 
 
@@ -608,6 +625,13 @@ def _validate_boundaries(model_cfg) -> None:
         and "p" in model_cfg.fields
         and bool(getattr(model_cfg, "sharp_interface", False))
     )
+    if getattr(model_cfg, "outlet_pressure_Pa", None) is not None and (
+        chosen["outlet_condition"] == "none" or "p" not in model_cfg.fields
+    ):
+        raise ValueError(
+            "model.outlet_pressure_Pa holds the pressure on the outlet's points, so it needs "
+            "model.outlet_condition=zero_gradient (which samples them) and the 'p' field"
+        )
     if (
         bool(getattr(model_cfg, "momentum_inertia", False))
         and chosen["momentum_closure"] != "brinkman"
@@ -2003,12 +2027,13 @@ def train(
                 x_coll,
                 inlet,
                 walls,
-                u_inlet,
+                _inlet_velocity(cfg, groups, data, inlet, u_inlet),
                 groups,
                 front_times=front_times,
                 outlet=outlet,
                 wall_condition=boundaries.wall_condition,
                 initial=initial,
+                outlet_pressure=_outlet_pressure(cfg),
             )
             # The temperature-only stage has no use for the outline's data term: the
             # outline is locked, and the term would only cost a forward pass.

@@ -503,6 +503,43 @@
     "default": "none"
   },
   {
+    "key": "model.outlet_pressure_Pa",
+    "label": "Outlet pressure",
+    "kind": "float",
+    "section": "physics",
+    "owner": "override",
+    "help": "the liquid pressure at the downstream edge, above atmospheric; not set leaves the pressure level free",
+    "unit": "Pa",
+    "options": [],
+    "lo": -100000.0,
+    "hi": 100000.0,
+    "optional": true,
+    "baked": false,
+    "advanced": true,
+    "name": "outlet_pressure_Pa",
+    "default": null
+  },
+  {
+    "key": "model.inlet_profile",
+    "label": "Inlet profile",
+    "kind": "enum",
+    "section": "physics",
+    "owner": "override",
+    "help": "the inlet velocity across the width: the mean everywhere, or the developed profile that falls to zero at the side walls",
+    "unit": "",
+    "options": [
+      "plug",
+      "developed"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "inlet_profile",
+    "default": "plug"
+  },
+  {
     "key": "model.pressure_representation",
     "label": "Pressure",
     "kind": "enum",

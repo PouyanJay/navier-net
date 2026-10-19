@@ -418,6 +418,35 @@ PHYSICS: tuple[FieldSpec, ...] = (
         options=("none", "zero_gradient"),
     ),
     FieldSpec(
+        "model.outlet_pressure_Pa",
+        "Outlet pressure",
+        "float",
+        "physics",
+        "override",
+        help=(
+            "the liquid pressure at the downstream edge, above atmospheric; not set leaves "
+            "the pressure level free"
+        ),
+        unit="Pa",
+        lo=-1e5,
+        hi=1e5,
+        optional=True,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.inlet_profile",
+        "Inlet profile",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "the inlet velocity across the width: the mean everywhere, or the developed "
+            "profile that falls to zero at the side walls"
+        ),
+        options=("plug", "developed"),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.pressure_representation",
         "Pressure",
         "enum",

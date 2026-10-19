@@ -155,22 +155,43 @@ def source_penalty(residuals: StageAResiduals) -> torch.Tensor:
     return source_penalty_sq(residuals).mean()
 
 
+def developed_inlet_profile(
+    y: torch.Tensor, y_lo: float, y_hi: float, mean: float, groups: dict[str, float]
+) -> torch.Tensor:
+    """The fully developed depth-averaged Brinkman profile across the width,
+    ``(N, 1)``, with mean ``mean``.
+
+    In a straight channel the law ``-dp/dx = C_HS u - (1/Re) u''`` with no slip
+    at the side walls gives ``u ~ 1 - cosh(k y) / cosh(k w/2)`` about the
+    centreline, ``k = sqrt(C_HS Re) = sqrt(12) L/h``: flat across the middle and
+    falling to zero over ``h / sqrt(12)`` (43 um at a 150 um depth). Its mean
+    over the width is ``1 - tanh(k w/2) / (k w/2)`` of the peak.
+    """
+    k = math.sqrt(groups["hele_shaw"] * groups["Re"])
+    half = 0.5 * (y_hi - y_lo)
+    shape = 1.0 - torch.cosh(k * (y - 0.5 * (y_lo + y_hi))) / math.cosh(k * half)
+    return mean * shape / (1.0 - math.tanh(k * half) / (k * half))
+
+
 def boundary_losses(
     model,
     inlet_x,
     wall_x,
-    u_inlet: float,
+    u_inlet: float | torch.Tensor,
     c: torch.Tensor | None = None,
     theta_in: torch.Tensor | None = None,
     wall_condition: str = "no_slip",
     outlet_x: torch.Tensor | None = None,
+    outlet_pressure: float | None = None,
 ) -> torch.Tensor:
     """Inlet plug velocity, the side-wall condition, and the outlet condition.
 
     ``wall_condition`` is ``"no_slip"`` (both components vanish at the wall) or
     ``"no_penetration"`` (only the wall-normal ``v``; the tangential velocity is
     free, which is all a first-order Darcy law can honour). ``outlet_x``, when
-    given, adds :func:`outlet_loss` at those points.
+    given, adds :func:`outlet_loss` at those points, with the liquid pressure
+    held at ``outlet_pressure`` there when that is given. ``u_inlet`` is the
+    plug's speed, or one target per inlet point (the developed profile).
 
     ``theta_in`` adds the inlet temperature condition. It is passed only when the
     superheat is depletable: with the default parameterization ``theta_in`` is
@@ -189,21 +210,33 @@ def boundary_losses(
         inlet = inlet + ((model.temperature(inlet_x, _ctx(c, inlet_x)) - theta_in) ** 2).mean()
     total = inlet + wall
     if outlet_x is not None:
-        total = total + outlet_loss(model, outlet_x, c)
+        total = total + outlet_loss(model, outlet_x, c, outlet_pressure)
     return total
 
 
-def outlet_loss(model, outlet_x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-    """Zero streamwise velocity gradient at the outlet, ``mean(u_x^2 + v_x^2)``.
+def outlet_loss(
+    model,
+    outlet_x: torch.Tensor,
+    c: torch.Tensor | None = None,
+    pressure: float | None = None,
+) -> torch.Tensor:
+    """Zero streamwise velocity gradient at the outlet, ``mean(u_x^2 + v_x^2)``,
+    and the liquid pressure there held at ``pressure`` when given.
 
     The channel continues beyond the field of view, so the flow leaves the imaged
-    region as it arrived there. The outlet pressure is unknown and left free.
+    region as it arrived there. With the pressure given the outflow is
+    stress-free at that pressure (the viscous normal stress is zero with
+    ``u_x``); without it the pressure's level is left to the vapour pressure.
     ``outlet_x`` must carry ``requires_grad`` (the sampler sets it).
     """
-    u, v = model.velocity(outlet_x, _ctx(c, outlet_x))
+    cx = _ctx(c, outlet_x)
+    u, v = model.velocity(outlet_x, cx)
     u_x, _, _ = gradients(u, outlet_x)
     v_x, _, _ = gradients(v, outlet_x)
-    return (u_x**2).mean() + (v_x**2).mean()
+    total = (u_x**2).mean() + (v_x**2).mean()
+    if pressure is not None:
+        total = total + ((liquid_pressure(model, outlet_x, cx) - pressure) ** 2).mean()
+    return total
 
 
 # --- Stage B: momentum + surface tension, energy + evaporation --------------
