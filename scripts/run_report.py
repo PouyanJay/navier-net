@@ -39,6 +39,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from audit_ensemble import compare_runs  # noqa: E402
 
+from naviernet.audit import audit_grid, fields_on_grid  # noqa: E402
 from naviernet.config.schema import Config  # noqa: E402
 from naviernet.evaluation import front_position, predict_alpha  # noqa: E402
 from naviernet.physics.groups import compute_groups  # noqa: E402
@@ -58,6 +59,8 @@ LOSS_GROUPS = {
 
 # The top of the temperature map's range shown as one colour, in degrees C.
 TEMPERATURE_BAND_C = 0.4
+# The grid the temperature map is evaluated on, (nx, ny): about 3 by 2 um cells.
+TEMPERATURE_GRID = (576, 161)
 
 
 # --- loading -----------------------------------------------------------------
@@ -199,6 +202,37 @@ def fig_outline(run: Run, out: Path) -> tuple[str, dict]:
     return _save(fig, out / "outline.png"), stats
 
 
+def fig_temperature(run: Run, out: Path) -> str:
+    """The temperature, evaluated from the trained model on a fine grid
+    (TEMPERATURE_GRID): the cold layer at the bubble is about 12 um thick, a
+    single cell of the audit's snapshot grid, which drew it as blocks.
+
+    Continuous, but the top TEMPERATURE_BAND_C of the range shares one colour:
+    the bulk liquid's variations of a few hundredths of a degree read as one
+    shade instead of spots, while the cold layer keeps the full scale. The
+    colour bar's arrow marks the clipped top.
+    """
+    model, data, _ = load_model(run.cfg, RunPaths.from_config(run.cfg))
+    grid = audit_grid(data, *TEMPERATURE_GRID)
+    t_star = {f["frame"]: f["t_star"] for f in run.audit["frames"]}
+    fields = {frame: fields_on_grid(model, grid, t_star[frame]) for frame in run.frames}
+    temps = {frame: run.t_sat + fields[frame]["T"] * run.dT for frame in run.frames}
+    lo = min(t.min() for t in temps.values())
+    top = max(t.max() for t in temps.values()) - TEMPERATURE_BAND_C
+    gx, gy = np.meshgrid(grid.xs * run.l_um, grid.ys * run.l_um)
+    fig, axes = _frame_axes(f"{run.name}: temperature (°C); saturation {run.t_sat} °C")
+    for ax, frame in zip(axes, run.frames, strict=True):
+        im = ax.pcolormesh(
+            gx, gy, temps[frame], cmap="inferno", vmin=lo, vmax=top, shading="gouraud"
+        )
+        ax.contour(gx, gy, fields[frame]["alpha"], levels=[0.5], colors="k", linewidths=0.9)
+        ax.set_title(f"frame {frame}  t = {run.t_ms[frame]:.2f} ms", fontsize=9)
+        ax.set_aspect("equal")
+        ax.tick_params(labelsize=7)
+    fig.colorbar(im, ax=axes.tolist(), shrink=0.6, label="T (°C)", extend="max")
+    return _save(fig, out / "temperature.png")
+
+
 def fig_fields(run: Run, out: Path) -> dict[str, str]:
     """Speed with streamlines, temperature, pressure against p_v, and the source."""
     names: dict[str, str] = {}
@@ -224,19 +258,7 @@ def fig_fields(run: Run, out: Path) -> dict[str, str]:
     fig.colorbar(im, ax=axes.tolist(), shrink=0.6, label="|u| (mm/s)")
     names["velocity"] = _save(fig, out / "velocity.png")
 
-    temps = [run.t_sat + run.snap[f"{f}/T"] * run.dT for f in run.frames]
-    lo, hi = min(t.min() for t in temps), max(t.max() for t in temps)
-    # Continuous, but the top TEMPERATURE_BAND_C of the range shares one colour:
-    # the bulk liquid's variations of a few hundredths of a degree read as one
-    # shade instead of spots, while the cold layer at the bubble keeps the
-    # full scale. The colour bar's arrow marks the clipped top.
-    top = hi - TEMPERATURE_BAND_C
-    fig, axes = _frame_axes(f"{run.name}: temperature (°C); saturation {run.t_sat} °C")
-    for ax, frame, temp in zip(axes, run.frames, temps, strict=True):
-        im = ax.pcolormesh(gx, gy, temp, cmap="inferno", vmin=lo, vmax=top, shading="auto")
-        _outline(ax, run, frame)
-    fig.colorbar(im, ax=axes.tolist(), shrink=0.6, label="T (°C)", extend="max")
-    names["temperature"] = _save(fig, out / "temperature.png")
+    names["temperature"] = fig_temperature(run, out)
 
     rel = []
     for f in run.frames:
