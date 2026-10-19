@@ -56,7 +56,7 @@ LOSS_GROUPS = {
 }
 
 
-# The temperature map's colour bands, in degrees C.
+# The top of the temperature map's range shown as one colour, in degrees C.
 TEMPERATURE_BAND_C = 0.4
 
 
@@ -226,19 +226,16 @@ def fig_fields(run: Run, out: Path) -> dict[str, str]:
 
     temps = [run.t_sat + run.snap[f"{f}/T"] * run.dT for f in run.frames]
     lo, hi = min(t.min() for t in temps), max(t.max() for t in temps)
-    # Banded at TEMPERATURE_BAND_C, so variations finer than a band (the small
-    # spots a continuous scale shows in the bulk) read as one colour.
-    edges = np.arange(
-        np.floor(lo / TEMPERATURE_BAND_C) * TEMPERATURE_BAND_C,
-        np.ceil(hi / TEMPERATURE_BAND_C) * TEMPERATURE_BAND_C + TEMPERATURE_BAND_C / 2,
-        TEMPERATURE_BAND_C,
-    )
-    bands = matplotlib.colors.BoundaryNorm(edges, plt.get_cmap("inferno").N)
+    # Continuous, but the top TEMPERATURE_BAND_C of the range shares one colour:
+    # the bulk liquid's variations of a few hundredths of a degree read as one
+    # shade instead of spots, while the cold layer at the bubble keeps the
+    # full scale. The colour bar's arrow marks the clipped top.
+    top = hi - TEMPERATURE_BAND_C
     fig, axes = _frame_axes(f"{run.name}: temperature (°C); saturation {run.t_sat} °C")
     for ax, frame, temp in zip(axes, run.frames, temps, strict=True):
-        im = ax.pcolormesh(gx, gy, temp, cmap="inferno", norm=bands, shading="auto")
+        im = ax.pcolormesh(gx, gy, temp, cmap="inferno", vmin=lo, vmax=top, shading="auto")
         _outline(ax, run, frame)
-    fig.colorbar(im, ax=axes.tolist(), shrink=0.6, label="T (°C)", ticks=edges)
+    fig.colorbar(im, ax=axes.tolist(), shrink=0.6, label="T (°C)", extend="max")
     names["temperature"] = _save(fig, out / "temperature.png")
 
     rel = []
