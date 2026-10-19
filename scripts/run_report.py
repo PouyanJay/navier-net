@@ -229,7 +229,13 @@ def fig_temperature(run: Run, out: Path) -> str:
         ax.set_title(f"frame {frame}  t = {run.t_ms[frame]:.2f} ms", fontsize=9)
         ax.set_aspect("equal")
         ax.tick_params(labelsize=7)
-    fig.colorbar(im, ax=axes.tolist(), shrink=0.6, label="T (°C)", extend="max")
+    # Ticks every 0.2 C, and the clipped top itself, so where the single top
+    # colour starts reads off the bar.
+    ticks = [*np.arange(np.ceil(lo / 0.2) * 0.2, top - 0.1, 0.2), top]
+    bar = fig.colorbar(
+        im, ax=axes.tolist(), shrink=0.6, label="T (°C)", extend="max", ticks=ticks
+    )
+    bar.ax.set_yticklabels([f"{tick:.1f}" for tick in ticks])
     return _save(fig, out / "temperature.png")
 
 
