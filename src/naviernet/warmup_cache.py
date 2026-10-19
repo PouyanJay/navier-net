@@ -81,6 +81,7 @@ AFTER_WARMUP = (
     "model.momentum_inertia",
     "model.hard_kinematics",
     "model.kinematic_blend_length",
+    "model.kinematic_side",
     "experiment.footprint_wetting",
     "experiment.microlayer_mode",
     "experiment.microlayer_um",

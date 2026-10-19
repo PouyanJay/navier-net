@@ -429,6 +429,26 @@
     "default": false
   },
   {
+    "key": "model.kinematic_side",
+    "label": "Exact kinematic side",
+    "kind": "enum",
+    "section": "physics",
+    "owner": "override",
+    "help": "where the exact kinematic correction acts: the liquid only, or both sides of the bubble edge",
+    "unit": "",
+    "options": [
+      "both",
+      "liquid"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "kinematic_side",
+    "default": "both"
+  },
+  {
     "key": "model.kinematic_blend_length",
     "label": "Kinematic blend length",
     "kind": "float",

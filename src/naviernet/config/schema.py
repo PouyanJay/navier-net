@@ -439,6 +439,12 @@ class ModelConfig:
     # of the head's speed) is not included.
     hard_kinematics: bool = False
     kinematic_blend_length: float = 0.04
+    # Which side of the interface the exact condition corrects. "liquid": the
+    # liquid only, the vapour's velocity left to its own equations (inside, the
+    # vapour leaves the interface at V_n - m/rho_v, not V_n). "both": the blend
+    # on both sides, as the first exact-condition run (trust-hk4-s0) had it,
+    # whose continuity failed most just inside the advancing head.
+    kinematic_side: str = "both"  # "both" | "liquid"
     # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.

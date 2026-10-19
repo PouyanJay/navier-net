@@ -382,6 +382,11 @@ class BubblePINN(nn.Module):
         # source, so the warm-up stays the outline fit alone.
         self.kinematics_engaged = True
         self.kinematic_blend_length = float(getattr(cfg.model, "kinematic_blend_length", 0.04))
+        self.kinematic_side = str(getattr(cfg.model, "kinematic_side", "both"))
+        if self.kinematic_side not in ("both", "liquid"):
+            raise ValueError(
+                f"model.kinematic_side must be 'both' or 'liquid', got {self.kinematic_side!r}"
+            )
         if not self.hard_kinematics:
             return
         if not self.front_geometry:
@@ -991,6 +996,9 @@ class BubblePINN(nn.Module):
     # the vapour, where the blend has long faded); the floor only keeps the
     # division finite there.
     _GRAD_FLOOR = 1e-6
+    # Points sampled on the interface sit within rounding of it (3e-8 measured),
+    # on either side; they belong to the liquid side the condition is set on.
+    _ON_INTERFACE = 1e-6
 
     def _kinematic_correction(
         self, x: torch.Tensor, c: torch.Tensor | None, u: torch.Tensor, v: torch.Tensor
@@ -1018,6 +1026,10 @@ class BubblePINN(nn.Module):
             n_x, n_y = -phi_x / norm, -phi_y / norm
             speed = phi_t / norm
             blend = 1.0 - torch.tanh(phi / self.kinematic_blend_length) ** 2
+            if self.kinematic_side == "liquid":
+                # The vapour (phi > 0) keeps the network's velocity: a step at
+                # the interface, where the real velocity jumps too.
+                blend = torch.where(phi <= self._ON_INTERFACE, blend, torch.zeros_like(blend))
             shortfall = blend * (speed - (u * n_x + v * n_y))
             u, v = u + shortfall * n_x, v + shortfall * n_y
         if not grad_on:

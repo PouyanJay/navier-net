@@ -98,3 +98,18 @@ def test_a_run_with_the_exact_condition_trains_and_scores_no_kinematic_error(tmp
     assert first["kinematic"] > 1e-6, "held off through the warm-up"
     assert last["kinematic"] < 1e-6, "exact once the physics engages"
     assert torch.isfinite(torch.tensor(last["brinkman"]))
+
+
+def test_the_liquid_side_correction_leaves_the_vapour_to_its_own_velocity(tmp_path):
+    data, soft, hard = _pair(tmp_path, ["model.kinematic_side=liquid"])
+    front = _front(hard, data)
+    inward = front.points.detach().clone()
+    inward[:, :2] -= 0.01 * front.normal.detach()  # 3 um into the vapour
+    outward = front.points.detach().clone()
+    outward[:, :2] += 0.01 * front.normal.detach()  # 3 um into the liquid
+
+    assert torch.allclose(hard.velocity(inward)[0], soft.velocity(inward)[0], atol=1e-6)
+    assert not torch.allclose(hard.velocity(outward)[0], soft.velocity(outward)[0], atol=1e-4)
+    u, v = hard.velocity(front.points)
+    gap = (u * front.normal[:, 0:1] + v * front.normal[:, 1:2] - front.normal_speed).abs()
+    assert int((gap > 1e-5).sum()) <= 4, "still exact on the interface"

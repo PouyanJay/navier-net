@@ -370,6 +370,19 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.kinematic_side",
+        "Exact kinematic side",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "where the exact kinematic correction acts: the liquid only, or both sides of "
+            "the bubble edge"
+        ),
+        options=("both", "liquid"),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.kinematic_blend_length",
         "Kinematic blend length",
         "float",
