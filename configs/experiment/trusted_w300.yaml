@@ -22,6 +22,10 @@ T_sat_C: ${fluid.T_sat_C}
 # invented heaters of the first rebuild (a fitted uniform background flux plus
 # a 100 um cavity disk) are gone: they let the fit switch the growth off.
 q_wall_W_cm2: 2.0
+# Two heater zones along the floor: 0.45 W/cm2 from the inlet edge of the view
+# to 250 um (it contains the cavity, at 233 um), q_wall_W_cm2 beyond.
+q_upstream_W_cm2: 0.45
+heater_edge_um: 250.0
 
 # The wet share of the footprint: ONE fitted scalar bounded in (0, 1), started
 # at what the energy balance of the measured growth implies for this series
@@ -30,15 +34,29 @@ q_wall_W_cm2: 2.0
 # Reported in metrics.json beside that estimate.
 wet_fraction_mode: fit
 wet_fraction: 0.88
+# The footprint as a microlayer the floor's flux evaporates (the uniform wet
+# share above is then not read), its thickness fitted from 0.5 um.
+footprint_wetting: microlayer
+microlayer_mode: fit
+microlayer_um: 0.5
 
 # Thermal conditions: the whole liquid at 58 C before the first frame, the
 # inlet at the same 58 C (not measured separately; a step to saturation at the
 # inlet cannot reach the bubble within the 4.5 ms event), adiabatic side walls.
 T_inlet_C: 58.0
 T_init_C: 58.0
+# The bubble is already 0.57 mm long at frame 1, so the liquid touching it has
+# been cooling for about 3 ms: heat spreads about 10 um in that time and the
+# cooling reaches 2 to 3 times that. The 58 C start is imposed only beyond 20 um
+# of the frame-1 outline; the heat equation forms the layer inside it.
+T_init_layer_um: 20.0
 side_wall_thermal: adiabatic
 
-flow_rate_mL_hr: 5.0
+# 10 mL/h, not the 5 recorded earlier: the pump setting is unconfirmed, and at
+# 10 the liquid ahead of the advancing nose nearly keeps pace with it (slip 6 to
+# 44 mm/s against 28 to 73 at 5; trust-bc4-s0 against trust-x4b-s0). Revert to
+# 5.0 if the experiment's record says so.
+flow_rate_mL_hr: 10.0
 
 channel_width_um: 300.0
 channel_height_um: 150.0

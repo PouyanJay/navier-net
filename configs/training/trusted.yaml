@@ -13,13 +13,22 @@
 defaults:
   - base_training
 
-steps: 12000
+# The compressed schedule (trust-bc4-s0, the best run so far): 4x the points
+# per step and a quarter of the physics steps, the physics stage sweeping the
+# full-length run's learning rates on a clock 4x as fast. On the A10 a step of
+# 4x the points costs what one of 1x does; a 3000-step warm-up and 2250
+# physics steps took 62 minutes against about 4.5 hours, with the outline,
+# slip, temperature and equation errors matching the full run (trust-x4b-s0
+# against trust-sym-s0). The warm-up keeps its full length: 750 steps fitted
+# the late frames to 0.86 only (trust-x4-s0).
+steps: 5250
 lr: 2.0e-3
 lr_halflife: 2500
+physics_lr_halflife: 625
 
-n_data: 3072
-n_coll: 3072
-n_bc: 512
+n_data: 12288
+n_coll: 12288
+n_bc: 2048
 collocation_time_bins: 8
 
 holdout_frame: -1
@@ -35,9 +44,9 @@ weights:
   mom: 1.0
   energy: 1.0
   evap: 1.0
-  brinkman: 1.0
+  brinkman: 5.0
   vapour_potential: 1.0
-  energy_liquid: 1.0
+  energy_liquid: 10.0
   # The series' measured temperatures (the liquid at 58 C before the first
   # frame, the inlet) at the data term's weight, and never rebalanced: the
   # first full-chain benchmark let the physics erase the initial superheat.
@@ -60,12 +69,32 @@ stage_b_warmup_steps: 3000
 # The outline guard: every 500 steps after the warm-up the fit of the masks is
 # measured; a run whose mean IoU has fallen more than 0.05 below the warm-up's
 # stops there with its checkpoint, instead of finishing as a failure.
-outline_guard_every: 500
+outline_guard_every: 125
 outline_guard_drop: 0.05
 # The front times and the mass-balance instants drawn afresh each step: the
 # first 12000-step seed satisfied the jump condition and the flux balance at
 # the fixed quadrature instants only (defect 0.1 there, 1.5 to 2.5 between).
 quadrature_jitter: true
+# Two-stage training: the bubble is frozen at the warm-up's fit of the images
+# when the physics engages, and the physics stage trains only the hidden
+# fields, with the physics terms equalised among themselves. The jittered
+# 12000-step seed kept the momentum weight below 1 against the data's 10 and
+# its velocity and temperature stayed lopsided; with the outline an input the
+# physics no longer has to be held back to protect it.
+freeze_geometry: true
+# The warm-up is trained once per outline, settings and code, and reused by
+# every physics variant after it (naviernet.warmup_cache).
+warmup_cache: true
+# The kinematic balance's ramp, scaled with the compressed schedule.
+kin_ramp: 75
+# The vapour the heat makes held to the bubble's measured growth at every
+# frame; it trains the footprint's film thickness (naviernet.growth_closure).
+growth_closure_weight: 1.0
+growth_closure_stride: 6
+# The temperature equation trains the temperature only: its advection term
+# reads the velocity detached, so its error cannot bend the flow (it pulled
+# the liquid ahead of the bubble 2 to 30 times harder than momentum did).
+one_way_advection: true
 
 causal_weighting: true
 causal_time_chunks: 16
@@ -87,4 +116,4 @@ mass_balance_weight: 1.0
 
 seed: 0
 device: cpu
-log_every: 500
+log_every: 125

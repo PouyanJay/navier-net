@@ -71,13 +71,14 @@ class LossContext:
         x_coll: torch.Tensor,
         inlet: torch.Tensor | None = None,
         walls: torch.Tensor | None = None,
-        u_inlet: float = 0.0,
+        u_inlet: float | torch.Tensor = 0.0,
         groups: dict[str, float] | None = None,
         c: torch.Tensor | None = None,
         front_times: torch.Tensor | None = None,
         outlet: torch.Tensor | None = None,
         wall_condition: str = "no_slip",
         initial: torch.Tensor | None = None,
+        outlet_pressure: float | None = None,
     ) -> None:
         self.model = model
         self.x_coll = x_coll
@@ -87,6 +88,7 @@ class LossContext:
         # The outlet batch (None when no outlet condition is imposed) and the
         # side-wall condition the `bc` term applies (see residuals.boundary_losses).
         self.outlet = outlet
+        self.outlet_pressure = outlet_pressure
         self.wall_condition = wall_condition
         # Points at the first instant, for the sharp thermal model's initial
         # temperature condition (None when that model is off).
@@ -151,7 +153,13 @@ class LossContext:
     @property
     def brinkman_res(self) -> MomentumResiduals:
         if self._brinkman is None:
-            self._brinkman = brinkman_residuals(self.model, self.x_coll, self.groups, c=self.c)
+            self._brinkman = brinkman_residuals(
+                self.model,
+                self.x_coll,
+                self.groups,
+                c=self.c,
+                inertia=bool(getattr(self.model.cfg.model, "momentum_inertia", False)),
+            )
         return self._brinkman
 
     @property
@@ -166,7 +174,11 @@ class LossContext:
     def energy_liquid_res(self) -> torch.Tensor:
         if self._energy_liquid is None:
             self._energy_liquid = energy_liquid_residual(
-                self.model, self.x_coll, self.groups, c=self.c
+                self.model,
+                self.x_coll,
+                self.groups,
+                c=self.c,
+                one_way=bool(getattr(self.model.cfg.training, "one_way_advection", False)),
             )
         return self._energy_liquid
 
@@ -264,6 +276,7 @@ def _bc_term(ctx: LossContext) -> torch.Tensor:
         theta_in,
         wall_condition=ctx.wall_condition,
         outlet_x=ctx.outlet,
+        outlet_pressure=ctx.outlet_pressure,
     )
 
 

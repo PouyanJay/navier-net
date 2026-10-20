@@ -1405,8 +1405,9 @@ describe("SolverView physics choices", () => {
     expect(body.log_chunk_residuals).toBe(true);
     expect(body.rebalance_max_ratio).toBe(10);
     expect(body.grad_clip).toBe(50);
-    expect(body.outline_guard_every).toBe(500);
+    expect(body.outline_guard_every).toBe(125);
     expect(body.outline_guard_drop).toBe(0.05);
+    expect(body.freeze_geometry).toBe(true);
   });
 
   it("drops the sharp thermal model and the two-phase pressure with the sharp rung", async () => {
@@ -1425,6 +1426,7 @@ describe("SolverView physics choices", () => {
     expect(body.thermal_model).toBe("legacy");
     expect(body.source_mode).toBe("free");
     expect(body.footprint_evaporation).toBe(false);
+    expect(body.freeze_geometry).toBe(true);
     // Choices that do not read the front survive the step down.
     expect(body.walls_at).toBe("physical");
     expect(body.mass_balance).toBe(true);
@@ -1673,8 +1675,8 @@ describe("SolverView verdict chips", () => {
     await screen.findByLabelText("highest_t");
 
     // Attachment pressure, receding cap, evolving width, pinch-off, mirror
-    // symmetry, the cross-section mass balance.
-    expect(screen.getAllByText("unbenched")).toHaveLength(6);
+    // symmetry, the cross-section mass balance, the outline freeze.
+    expect(screen.getAllByText("unbenched")).toHaveLength(7);
   });
 });
 

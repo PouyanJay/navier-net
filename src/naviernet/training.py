@@ -20,13 +20,15 @@ the optimising backward pass, and its gradients are discarded.
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 import numpy as np
 import torch
 
+from naviernet import warmup_cache
 from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
@@ -35,11 +37,13 @@ from naviernet.models.pinn import BoundPINN, BubblePINN
 from naviernet.physics import (
     cap_supervision,
     front_velocity,
+    growth_closure,
     heating,
     kinematics,
     mass_balance,
     nose_supervision,
     registry,
+    residuals,
     root_supervision,
     weighting,
 )
@@ -128,6 +132,70 @@ def _geometry_priors(cfg, data: BubbleDataset) -> GeometryPriors | None:
         t_min=d.t_min,
         t_max=d.t_max,
     )
+
+
+def bind_cover_times(cfg, model, data: BubbleDataset) -> None:
+    """Give a microlayer-wetted model the instant the images first cover each
+    spot of the floor; a no-op under the uniform wetting."""
+    if getattr(model, "footprint_wetting", "uniform") != "microlayer":
+        return
+    age = compute_groups(cfg)["footprint_age_star"]
+    model.bind_cover_times(data.x, data.y, heating.cover_times(data, age))
+
+
+def _growth_closure_plan(cfg, data: BubbleDataset, device):
+    """The growth closure's quadrature when its weight is on, else None."""
+    if float(getattr(cfg.training, "growth_closure_weight", 0.0)) <= 0.0:
+        return None
+    return growth_closure.build_plan(data, int(cfg.training.growth_closure_stride), device)
+
+
+def _validate_growth_closure(tcfg, model_cfg) -> None:
+    """The closure trains the footprint's wetting against the measured growth,
+    so there must be a thermal source with a footprint to train."""
+    weight = float(getattr(tcfg, "growth_closure_weight", 0.0))
+    if weight < 0.0:
+        raise ValueError(f"training.growth_closure_weight must be >= 0, got {weight}")
+    if weight == 0.0:
+        return
+    if str(getattr(model_cfg, "source_mode", "free")) != "thermal" or not bool(
+        getattr(model_cfg, "footprint_evaporation", False)
+    ):
+        raise ValueError(
+            "training.growth_closure_weight scores the vapour the heat makes, so it requires "
+            "model.source_mode=thermal and model.footprint_evaporation=true"
+        )
+
+
+def _wetting_record(model) -> dict[str, float]:
+    """The fitted wetting of the footprint, for the log."""
+    if getattr(model, "footprint_wetting", "uniform") == "microlayer":
+        return {"film_um": float(torch.as_tensor(model.microlayer_um).detach())}
+    if getattr(model, "wet_fraction_mode", "fixed") == "fit":
+        return {"wet_fraction": float(model.wet_fraction.detach())}
+    return {}
+
+
+def _stage_b_keys(cfg) -> tuple[str, ...]:
+    """The weight keys of the terms held at zero through the warm-up."""
+    equations = registry.enabled_equations(cfg.model.fields, **registry.flags_from(cfg.model))
+    return tuple(registry.stage_b_terms(equations))
+
+
+def _inlet_velocity(cfg, groups: dict, data: BubbleDataset, inlet: torch.Tensor, mean: float):
+    """The inlet's streamwise velocity target: the plug's mean, or one value per
+    inlet point on the developed profile (``model.inlet_profile``)."""
+    if str(getattr(cfg.model, "inlet_profile", "plug")) == "plug":
+        return mean
+    return residuals.developed_inlet_profile(inlet[:, 1:2], data.y_lo, data.y_hi, mean, groups)
+
+
+def _outlet_pressure(cfg) -> float | None:
+    """``model.outlet_pressure_Pa`` on the pressure scale ``rho_l U_ref^2``."""
+    pressure = getattr(cfg.model, "outlet_pressure_Pa", None)
+    if pressure is None:
+        return None
+    return float(pressure) / (float(cfg.fluid.rho_l) * float(cfg.scales.U_ref) ** 2)
 
 
 def _sharp(cfg) -> bool:
@@ -426,6 +494,13 @@ def _validate_training_config(cfg) -> None:
     _validate_thermal_training(tcfg, cfg.model)
     _validate_rebalance_cap(tcfg)
     _validate_outline_guard(tcfg)
+    _validate_freeze_geometry(tcfg, cfg.model)
+    _validate_temperature_stage(tcfg, cfg.model)
+    _validate_growth_closure(tcfg, cfg.model)
+    if int(getattr(tcfg, "physics_lr_halflife", 0)) < 0:
+        raise ValueError(
+            f"training.physics_lr_halflife must be >= 0, got {tcfg.physics_lr_halflife}"
+        )
 
 
 def _validate_rebalance_cap(tcfg) -> None:
@@ -434,6 +509,61 @@ def _validate_rebalance_cap(tcfg) -> None:
         raise ValueError(
             f"training.rebalance_max_ratio={tcfg.rebalance_max_ratio} must be >= 0 "
             "(0 keeps the fixed ceiling alone)."
+        )
+
+
+def _validate_freeze_geometry(tcfg, model_cfg) -> None:
+    """The geometry is frozen at the warm-up's fit, so there must be a warm-up
+    to fit it, and an explicit geometry to freeze."""
+    weighting = str(getattr(tcfg, "frozen_weighting", "fixed"))
+    if weighting not in ("fixed", "equalised"):
+        raise ValueError(
+            f"training.frozen_weighting must be 'fixed' or 'equalised', got {weighting!r}"
+        )
+    if not bool(getattr(tcfg, "freeze_geometry", False)):
+        return
+    if int(tcfg.stage_b_warmup_steps) <= 0:
+        raise ValueError(
+            "training.freeze_geometry freezes the bubble at the fit its warm-up reached, so it "
+            "needs training.stage_b_warmup_steps > 0; set a warm-up, or turn it off."
+        )
+    if not bool(getattr(model_cfg, "front_geometry", False)):
+        raise ValueError(
+            "training.freeze_geometry freezes the explicit front, so it requires "
+            "model.front_geometry=true; a free level set has no geometry to freeze apart "
+            "from the fields."
+        )
+
+
+def _validate_temperature_stage(tcfg, model_cfg) -> None:
+    """The temperature-only stage trains the temperature on a locked outline and
+    flow, so the outline must already be frozen, the flow must have had its own
+    stage after the warm-up, and there must be a temperature to train."""
+    start = int(getattr(tcfg, "temperature_stage_from", 0))
+    if start == 0:
+        return
+    if start < 0:
+        raise ValueError(f"training.temperature_stage_from must be >= 0, got {start}")
+    if not bool(getattr(tcfg, "freeze_geometry", False)):
+        raise ValueError(
+            "training.temperature_stage_from locks the flow on a frozen outline, so it "
+            "requires training.freeze_geometry=true"
+        )
+    if start <= int(tcfg.stage_b_warmup_steps):
+        raise ValueError(
+            f"training.temperature_stage_from ({start}) must come after the warm-up "
+            f"(training.stage_b_warmup_steps={tcfg.stage_b_warmup_steps}): the flow is "
+            "solved between the two"
+        )
+    if "T" not in list(model_cfg.fields):
+        raise ValueError(
+            "training.temperature_stage_from trains the temperature, so it requires the "
+            f"'T' field in model.fields; this model has {list(model_cfg.fields)}"
+        )
+    if tcfg.weighting == "rba":
+        raise ValueError(
+            "training.temperature_stage_from runs on the gradient-norm weighting; the RBA "
+            "attention pool is not rebuilt for the temperature terms"
         )
 
 
@@ -473,6 +603,7 @@ _BOUNDARY_CHOICES = {
     "wall_condition": ("no_slip", "no_penetration"),
     "momentum_closure": ("darcy", "brinkman"),
     "outlet_condition": ("none", "zero_gradient"),
+    "inlet_profile": ("plug", "developed"),
 }
 
 
@@ -494,6 +625,21 @@ def _validate_boundaries(model_cfg) -> None:
         and "p" in model_cfg.fields
         and bool(getattr(model_cfg, "sharp_interface", False))
     )
+    if getattr(model_cfg, "outlet_pressure_Pa", None) is not None and (
+        chosen["outlet_condition"] == "none" or "p" not in model_cfg.fields
+    ):
+        raise ValueError(
+            "model.outlet_pressure_Pa holds the pressure on the outlet's points, so it needs "
+            "model.outlet_condition=zero_gradient (which samples them) and the 'p' field"
+        )
+    if (
+        bool(getattr(model_cfg, "momentum_inertia", False))
+        and chosen["momentum_closure"] != "brinkman"
+    ):
+        raise ValueError(
+            "model.momentum_inertia adds the depth-averaged inertia to the Brinkman law, so it "
+            f"requires model.momentum_closure=brinkman; this model uses {chosen['momentum_closure']!r}"
+        )
     if darcy_active and chosen["wall_condition"] == "no_slip":
         log.warning(
             "model.momentum_closure=darcy with model.wall_condition=no_slip is "
@@ -1511,6 +1657,16 @@ def _engage_thermal_source(model, step: int, tcfg, stage_b_keys: tuple[str, ...]
     )
 
 
+def _engage_hard_kinematics(model, step: int, tcfg, stage_b_keys: tuple[str, ...]) -> None:
+    """Hold the exact kinematic condition off through the warm-up, like the
+    thermal source: the warm-up fits the outline, whose speed is not final until
+    the physics engages and (under ``training.freeze_geometry``) freezes it, and
+    a warm-up without it is the one every physics variant shares."""
+    if not hasattr(model, "kinematics_engaged"):
+        return
+    model.kinematics_engaged = not (bool(stage_b_keys) and step <= tcfg.stage_b_warmup_steps)
+
+
 def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     """True only at the one step the warm-up hands off to Stage-B physics -- where
     the optimiser is restarted. Never true when the warm-up is disabled
@@ -1520,6 +1676,101 @@ def _stage_b_engages_at(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
         and tcfg.stage_b_warmup_steps > 0
         and step == tcfg.stage_b_warmup_steps + 1
     )
+
+
+def _geometry_frozen(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
+    """Whether ``step`` falls in the physics stage of a two-stage run
+    (``training.freeze_geometry``): after a warm-up, with Stage-B physics to
+    engage. State-based, so a resumed run lands on the same side."""
+    return (
+        bool(getattr(tcfg, "freeze_geometry", False))
+        and bool(stage_b_keys)
+        and int(tcfg.stage_b_warmup_steps) > 0
+        and step > int(tcfg.stage_b_warmup_steps)
+    )
+
+
+def _freeze_geometry(model, frozen: bool) -> None:
+    """Hold every parameter of the explicit geometry (the capsule, its nose,
+    root and width nets) where it is, or release it. The fields' own nets and
+    the scalar unknowns stay trainable."""
+    for p in model.nets["phi"].parameters():
+        p.requires_grad_(not frozen)
+    if frozen:
+        log.info("geometry frozen at the warm-up's fit: the physics stage trains the fields")
+
+
+# The terms the temperature-only stage trains on: the liquid energy equation and
+# the measured start and inlet temperatures (the interface is at saturation by
+# construction of the gated temperature).
+TEMPERATURE_TERMS = frozenset({"energy_liquid", "theta_bc"})
+
+
+def _temperature_stage(step: int, tcfg) -> bool:
+    """Whether ``step`` falls in the temperature-only stage
+    (``training.temperature_stage_from``). State-based, so a resumed run lands on
+    the same side."""
+    start = int(getattr(tcfg, "temperature_stage_from", 0))
+    return start > 0 and step > start
+
+
+def _temperature_stage_engages_at(step: int, tcfg) -> bool:
+    """Whether ``step`` is the first of the temperature-only stage, where the
+    flow is locked and the optimiser restarts."""
+    start = int(getattr(tcfg, "temperature_stage_from", 0))
+    return start > 0 and step == start + 1
+
+
+def learning_rate(step: int, tcfg) -> float:
+    """The learning rate at ``step``: halved every ``lr_halflife`` steps of the
+    schedule's clock. The temperature-only stage restarts the clock, so the
+    temperature trains from the full rate."""
+    if _temperature_stage(step, tcfg):
+        return tcfg.lr * 0.5 ** ((step - int(tcfg.temperature_stage_from)) // tcfg.lr_halflife)
+    return tcfg.lr * 0.5 ** (math.floor(_lr_clock(step, tcfg)) // tcfg.lr_halflife)
+
+
+def _lr_clock(step: int, tcfg) -> float:
+    """Where ``step`` sits on the learning-rate schedule. Step for step through
+    the warm-up; after it, ``lr_halflife / physics_lr_halflife`` schedule steps
+    per step (``training.physics_lr_halflife``), so a physics stage run in
+    fewer, larger steps sweeps the same rates the full-length one does. Zero
+    keeps one clock for the whole run."""
+    warmup = int(tcfg.stage_b_warmup_steps)
+    physics = int(getattr(tcfg, "physics_lr_halflife", 0))
+    if physics <= 0 or step <= warmup:
+        return float(step)
+    return warmup + (step - warmup) * tcfg.lr_halflife / physics
+
+
+def _lock_flow(model) -> None:
+    """Hold every parameter but the temperature net's where it is: the outline,
+    the velocity, the pressure, the vapour scalars and the wet share."""
+    for p in model.parameters():
+        p.requires_grad_(False)
+    for p in model.nets["T"].parameters():
+        p.requires_grad_(True)
+    log.info("flow locked: the temperature-only stage trains the temperature net alone")
+
+
+def _temperature_equations(equations) -> list:
+    """The enabled equations the temperature-only stage evaluates."""
+    return [eq for eq in equations if eq.weight_key in TEMPERATURE_TERMS]
+
+
+def _temperature_plan(plan: _LossPlan) -> _LossPlan:
+    """``plan`` narrowed to the temperature terms, keeping its causal state."""
+    coll = _temperature_equations(plan.coll_equations)
+    return replace(plan, coll_equations=coll, coll_keys=frozenset(e.weight_key for e in coll))
+
+
+def _physics_reference(
+    weights: dict[str, float], norms: dict[str, float], terms: tuple[str, ...]
+) -> float:
+    """The rebalancer's reference once the geometry is frozen: the median of
+    the rebalanced terms' weighted gradient norms, so the physics terms are
+    equalised among themselves (the data term no longer has a gradient)."""
+    return float(np.median([norms[name] * weights[name] for name in terms]))
 
 
 def _restart_for_stage_b(
@@ -1545,15 +1796,19 @@ def _rebalance(
     norms: dict[str, float],
     terms: tuple[str, ...] = REBALANCED_TERMS,
     max_ratio: float = 0.0,
+    reference: float | None = None,
 ) -> None:
     """Nudge weights so each term's gradient matches the data term's. In place.
 
     ``max_ratio`` (``training.rebalance_max_ratio``) caps every rebalanced weight
     at that multiple of the data weight, under the fixed ceiling: the images are
     the measurement, and no physics term may outweigh them by more than it. Zero
-    keeps the fixed ceiling alone.
+    keeps the fixed ceiling alone. ``reference`` replaces the data term's
+    weighted norm as the target (the frozen-geometry stage, where the data term
+    has no gradient; see :func:`_physics_reference`).
     """
-    reference = norms["data"] * weights["data"]
+    if reference is None:
+        reference = norms["data"] * weights["data"]
     ceiling = REBALANCE_CEILING
     if max_ratio > 0.0:
         ceiling = min(ceiling, max_ratio * weights["data"])
@@ -1570,11 +1825,16 @@ def train(
     paths: RunPaths,
     steps: int | None = None,
     on_log: Callable[[dict], None] | None = None,
+    use_warmup_cache: bool = True,
 ) -> tuple[BubblePINN, BubbleDataset, dict]:
     """Train (or continue training) and write the checkpoint. Returns the model.
 
     ``on_log``, when given, receives a copy of each history record as it is
     logged, so a caller can observe progress while the run is still going.
+    Under ``training.warmup_cache`` a fresh run starts from the shared
+    warm-up's checkpoint, training and caching it first when it is missing
+    (see :mod:`naviernet.warmup_cache`); ``use_warmup_cache=False`` is the call
+    that trains it.
     """
     # Validate the held-out split up front, so a misconfigured `heldout_datasets`
     # fails loudly on every path -- including a single-dataset CLI run, which never
@@ -1585,6 +1845,14 @@ def train(
 
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if use_warmup_cache and warmup_cache.enabled(cfg):
+        steps = warmup_cache.reuse_or_train(
+            cfg,
+            paths,
+            int(steps if steps is not None else tcfg.steps),
+            _stage_b_keys(cfg),
+            lambda n: train(cfg, paths, steps=n, on_log=on_log, use_warmup_cache=False),
+        )
     rba = tcfg.weighting == "rba"
     pressure_shape = bool(getattr(cfg.model, "pressure_shape", False))
     steps = int(steps if steps is not None else tcfg.steps)
@@ -1600,6 +1868,7 @@ def train(
     model = BubblePINN(
         cfg, pin=_pin_anchor(cfg, data), geometry=_geometry_priors(cfg, data)
     ).to(device)
+    bind_cover_times(cfg, model, data)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
     fv_plan = _front_velocity_plan(cfg, data, device)
@@ -1608,6 +1877,7 @@ def train(
     front_times = _front_times(cfg, data, device)
     boundaries = _boundary_plan(cfg)
     mass_plan = _mass_balance_plan(cfg, data, groups, device)
+    closure_plan = _growth_closure_plan(cfg, data, device)
     thermal = _sharp_thermal(cfg)
     if thermal:
         log.info(
@@ -1642,6 +1912,9 @@ def train(
             state["w"].update(ckpt["state"]["w"])
             state["done"] = ckpt["state"]["done"]
             state["hist"] = ckpt["state"]["hist"]
+            if "warmup_iou" in ckpt["state"]:
+                # The outline guard and the audit hold the run to this record.
+                state["warmup_iou"] = ckpt["state"]["warmup_iou"]
         else:
             opt.load_state_dict(ckpt["opt"])
             state = ckpt["state"]
@@ -1684,11 +1957,24 @@ def train(
     )
     _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step)
     _require_guard_arms(tcfg, stage_b_keys, state, first_step)
+    if _geometry_frozen(first_step, tcfg, stage_b_keys):
+        _freeze_geometry(model, True)  # a run resumed inside the physics stage
+    if _temperature_stage(first_step, tcfg):
+        _lock_flow(model)  # a run resumed inside the temperature-only stage
+        equations = _temperature_equations(equations)
+        plan = _temperature_plan(plan)
     log.info("training steps %d-%d on %s", first_step, last_step, device)
 
     for step in range(first_step, last_step + 1):
         model.eps = annealed_alpha_eps(step, cfg)
-        lr = tcfg.lr * (0.5 ** (step // tcfg.lr_halflife))
+        if _temperature_stage_engages_at(step, tcfg):
+            _lock_flow(model)
+            equations = _temperature_equations(equations)
+            plan = _temperature_plan(plan)
+            opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
+            log.info("step %5d | temperature-only stage engaged", step)
+        temperature_only = _temperature_stage(step, tcfg)
+        lr = learning_rate(step, tcfg)
         for group in opt.param_groups:
             group["lr"] = lr
         opt.zero_grad()
@@ -1728,97 +2014,144 @@ def train(
             )
 
         _engage_thermal_source(model, step, tcfg, stage_b_keys)
+        _engage_hard_kinematics(model, step, tcfg, stage_b_keys)
         if _jitter_rng(tcfg, rng) is not None:
             front_times = _front_times(cfg, data, device, rng)
             mass_plan = _mass_balance_plan(cfg, data, groups, device, rng)
-        ctx = registry.LossContext(
-            model,
-            x_coll,
-            inlet,
-            walls,
-            u_inlet,
-            groups,
-            front_times=front_times,
-            outlet=outlet,
-            wall_condition=boundaries.wall_condition,
-            initial=initial,
-        )
-        losses = {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
-        for eq in equations:
-            losses[eq.weight_key] = eq.term(ctx)
-        coll_batches = [CollocationBatch(model, x_coll, groups, None, ctx)]  # single dataset
+        # Every equation of the step reads the fields at the same batches:
+        # computed once and shared (BubblePINN.caching_fields), with their
+        # derivatives (residuals.sharing_gradients), not per equation.
+        with model.caching_fields(), residuals.sharing_gradients():
+            ctx = registry.LossContext(
+                model,
+                x_coll,
+                inlet,
+                walls,
+                _inlet_velocity(cfg, groups, data, inlet, u_inlet),
+                groups,
+                front_times=front_times,
+                outlet=outlet,
+                wall_condition=boundaries.wall_condition,
+                initial=initial,
+                outlet_pressure=_outlet_pressure(cfg),
+            )
+            # The temperature-only stage has no use for the outline's data term: the
+            # outline is locked, and the term would only cost a forward pass.
+            losses = (
+                {}
+                if temperature_only
+                else {"data": ((model.alpha(x_data) - alpha_target) ** 2).mean()}
+            )
+            for eq in equations:
+                losses[eq.weight_key] = eq.term(ctx)
+            coll_batches = [
+                CollocationBatch(model, x_coll, groups, None, ctx)
+            ]  # single dataset
 
-        # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
-        # bounded per-point attention below. Skip the handoff step: weights reset there.
-        if (
-            not rba
-            and step % tcfg.rebalance_every == 0
-            and not _stage_b_engages_at(step, tcfg, stage_b_keys)
-        ):
-            _rebalance(
-                weights,
-                _gradient_norms(model, losses, opt),
-                rebalanced,
-                float(tcfg.rebalance_max_ratio),
-            )
-            log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
+            # Gradient-norm rebalancing is the legacy scheme only; RBA replaces it with the
+            # bounded per-point attention below. Skip the handoff step: weights reset there.
+            frozen = _geometry_frozen(step, tcfg, stage_b_keys)
+            # Once the geometry is frozen the physics terms keep their configured
+            # weights unless the run asks for them to be equalised.
+            held = frozen and str(getattr(tcfg, "frozen_weighting", "fixed")) == "fixed"
+            if (
+                not rba
+                and not held
+                and not temperature_only
+                and step % tcfg.rebalance_every == 0
+                and not _stage_b_engages_at(step, tcfg, stage_b_keys)
+            ):
+                # Once the geometry is frozen the data term has no gradient: the
+                # physics terms are measured and equalised among themselves.
+                measured = (
+                    {k: v for k, v in losses.items() if k != "data"} if frozen else losses
+                )
+                norms = _gradient_norms(model, measured, opt)
+                _rebalance(
+                    weights,
+                    norms,
+                    rebalanced,
+                    float(tcfg.rebalance_max_ratio),
+                    _physics_reference(weights, norms, rebalanced) if frozen else None,
+                )
+                log.info("step %5d | rebalanced weights: %s", step, _fmt(weights))
 
-        if _stage_b_engages_at(step, tcfg, stage_b_keys):
-            # Engage Stage-B physics on the interface the warm-up converged, from a
-            # clean optimiser (see _restart_for_stage_b). The warm-up's fit is
-            # recorded first (the floor the outline guard and the audit hold the
-            # run to), then the nose DOF releases, so the fresh optimiser sees it
-            # trainable.
-            _record_warmup_fit(cfg, model, data, state)
-            _release_nose_dof(model)
-            opt, weights = _restart_for_stage_b(model, lr, reset_weights)
-            log.info("step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys))
-        schedule = _loss_schedule(step, tcfg, stage_b_keys)
-        if rba:
-            total = _rba_collocation_loss(
-                ctx, weights, schedule, attention, plan
-            ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
-        else:
-            total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
-        kin_record: dict[str, float] = {}
-        if kin_plan is not None:
-            # Outside the causal gate, RBA, and the rebalancer by construction:
-            # added directly to the total with fixed config weights.
-            kin_total, kin_record = kinematics.kinematic_losses(
-                kinematics.KinematicContext(model, tcfg, groups),
-                kin_plan,
-                _kin_schedule(step, first_step, tcfg),
-            )
-            total = total + kin_total
-        fv_record: dict[str, float] = {}
-        if fv_plan is not None:
-            # Outside the causal gate, RBA and the rebalancer, like the kinematic
-            # terms: supervised functionals on the front, not pointwise residuals.
-            fv_total, fv_record = front_velocity.front_velocity_losses(
-                front_velocity.FrontVelocityContext(model, tcfg), fv_plan
-            )
-            total = total + fv_total
-        root_record: dict[str, float] = {}
-        if root_plan is not None:
-            # Outside the causal gate, RBA and the rebalancer, same reason.
-            root_total, root_record = root_supervision.root_losses(
-                cap_supervision.SupervisionContext(model, tcfg), root_plan
-            )
-            total = total + root_total
-        nose_record: dict[str, float] = {}
-        if nose_plan is not None:
-            # Outside the causal gate, RBA and the rebalancer, same reason.
-            nose_total, nose_record = nose_supervision.nose_losses(
-                cap_supervision.SupervisionContext(model, tcfg), nose_plan
-            )
-            total = total + nose_total
-        mass_record: dict[str, float] = {}
-        if mass_plan is not None:
-            # A functional on a fixed quadrature, outside the causal gate, RBA and
-            # the rebalancer, like the terms above.
-            mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
-            total = total + float(tcfg.mass_balance_weight) * mass_total
-        total.backward()
+            if _stage_b_engages_at(step, tcfg, stage_b_keys):
+                # Engage Stage-B physics on the interface the warm-up converged, from a
+                # clean optimiser (see _restart_for_stage_b). The warm-up's fit is
+                # recorded first (the floor the outline guard and the audit hold the
+                # run to), then the nose DOF releases, so the fresh optimiser sees it
+                # trainable.
+                _record_warmup_fit(cfg, model, data, state)
+                _release_nose_dof(model)
+                if frozen:
+                    _freeze_geometry(model, True)
+                opt, weights = _restart_for_stage_b(model, lr, reset_weights)
+                log.info(
+                    "step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys)
+                )
+            schedule = _loss_schedule(step, tcfg, stage_b_keys)
+            if rba:
+                total = _rba_collocation_loss(
+                    ctx, weights, schedule, attention, plan
+                ) + _weighted_sum(losses, weights, schedule, skip=coll_keys)
+            else:
+                total = _total_loss(losses, coll_batches, weights, schedule, step, plan)
+            kin_record: dict[str, float] = {}
+            if kin_plan is not None and not temperature_only:
+                # Outside the causal gate, RBA, and the rebalancer by construction:
+                # added directly to the total with fixed config weights.
+                kin_total, kin_record = kinematics.kinematic_losses(
+                    kinematics.KinematicContext(model, tcfg, groups),
+                    kin_plan,
+                    _kin_schedule(step, first_step, tcfg),
+                )
+                total = total + kin_total
+            fv_record: dict[str, float] = {}
+            if fv_plan is not None and not frozen:
+                # Outside the causal gate, RBA and the rebalancer, like the kinematic
+                # terms: supervised functionals on the front, not pointwise residuals.
+                # Not evaluated once the geometry is frozen: they act on it alone.
+                fv_total, fv_record = front_velocity.front_velocity_losses(
+                    front_velocity.FrontVelocityContext(model, tcfg), fv_plan
+                )
+                total = total + fv_total
+            root_record: dict[str, float] = {}
+            if root_plan is not None and not frozen:
+                # Outside the causal gate, RBA and the rebalancer, same reason.
+                root_total, root_record = root_supervision.root_losses(
+                    cap_supervision.SupervisionContext(model, tcfg), root_plan
+                )
+                total = total + root_total
+            nose_record: dict[str, float] = {}
+            if nose_plan is not None and not frozen:
+                # Outside the causal gate, RBA and the rebalancer, same reason.
+                nose_total, nose_record = nose_supervision.nose_losses(
+                    cap_supervision.SupervisionContext(model, tcfg), nose_plan
+                )
+                total = total + nose_total
+            mass_record: dict[str, float] = {}
+            if mass_plan is not None and not temperature_only:
+                # A functional on a fixed quadrature, outside the causal gate, RBA and
+                # the rebalancer, like the terms above. A balance of the flow, so not
+                # evaluated once the flow is locked.
+                mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
+                total = total + float(tcfg.mass_balance_weight) * mass_total
+            closure_record: dict[str, float] = {}
+            if (
+                closure_plan is not None
+                and not temperature_only
+                and getattr(model, "thermal_source_engaged", False)
+            ):
+                # The integral of continuity over the bubble, like the mass balance a
+                # functional outside the gate, RBA and the rebalancer.
+                closure_total, closure_record = growth_closure.growth_closure_loss(
+                    model,
+                    closure_plan,
+                    bool(getattr(tcfg, "growth_closure_outline_gradient", False)),
+                )
+                total = total + float(tcfg.growth_closure_weight) * closure_total
+            total.backward()
         grad_norm = _clip_gradients(model, tcfg)
         opt.step()
         if tcfg.checkpoint_every and step % tcfg.checkpoint_every == 0:
@@ -1836,6 +2169,8 @@ def train(
             record.update(root_record)
             record.update(nose_record)
             record.update(mass_record)
+            record.update(closure_record)
+            record.update(_wetting_record(model))
             record["step"] = step
             record["lr"] = lr
             record["grad_norm"] = float(grad_norm)
@@ -2092,6 +2427,26 @@ def _train_joint(
     """
     tcfg = cfg.training
     _validate_training_config(cfg)
+    if warmup_cache.enabled(cfg):
+        raise ValueError(
+            "training.warmup_cache is single-dataset for now: the key reads one series' "
+            "processed archive"
+        )
+    if float(getattr(tcfg, "growth_closure_weight", 0.0)) > 0.0:
+        raise ValueError(
+            "training.growth_closure_weight is single-dataset for now: the measured growth "
+            "is read from one series' images"
+        )
+    if str(getattr(cfg.experiment, "footprint_wetting", "uniform")) == "microlayer":
+        raise ValueError(
+            "experiment.footprint_wetting=microlayer is single-dataset for now: the cover "
+            "times are read from one series' images"
+        )
+    if bool(getattr(tcfg, "freeze_geometry", False)):
+        raise NotImplementedError(
+            "training.freeze_geometry is single-dataset for now: the two-stage schedule is "
+            "not threaded through the joint trainer. Run it on one series, or turn it off."
+        )
     if int(getattr(tcfg, "outline_guard_every", 0)) > 0:
         # The guard measures one dataset's fit against its own warm-up record;
         # a joint run has one record per dataset and none is threaded yet.
@@ -2308,6 +2663,7 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
         geometry=_geometry_priors(cfg, data),
     ).to(device)
     model.load_state_dict(ckpt["model"])
+    bind_cover_times(cfg, model, data)
     # The interface thickness the run ENDED at, not the one it started from:
     # scoring a sharpened model through its initial blur would measure a
     # different solution than the one that was trained.

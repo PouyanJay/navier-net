@@ -15,6 +15,7 @@ from naviernet.data.contour import fair_closed_contour
 from naviernet.data.preprocess import (
     _largest_component,
     _meniscus_interface,
+    mirror_symmetric,
     segment_frame,
 )
 from naviernet.utils.paths import RunPaths
@@ -60,11 +61,32 @@ def test_interface_settles_on_the_rim_centreline():
     inner = _ellipse(shape, 100, 100, 20, 20)
     band = (outer & (1 - inner)).astype(np.uint8)
 
-    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    curve = _meniscus_interface(
+        band, min_hole_fraction=0.05, seed_blur_px=5.0, wavelength_px=100.0
+    )
     radius = _radius(curve, 100, 100)
     # The active contour lands near the band centre (~30 px), a clean ring.
     assert 27 <= radius.mean() <= 33
     assert radius.std() < 2.0
+
+
+def test_a_rim_cut_by_the_crop_is_centred_between_the_cut_and_its_inner_edge():
+    # A rim running into the walls: the crop keeps rows 10 to 189 of a ring
+    # whose outer edge reaches rows 0 and 199, so the rim is cut top and bottom.
+    # Its centre there lies midway between the cut and the inner edge (row 60 on
+    # top), not out toward the wall the cut hides.
+    shape = (200, 200)
+    outer = _ellipse(shape, 100, 100, 100, 90)
+    inner = _ellipse(shape, 100, 100, 40, 30)
+    band = (outer & (1 - inner)).astype(np.uint8)[10:190]
+
+    curve = _meniscus_interface(
+        band, min_hole_fraction=0.05, seed_blur_px=5.0, wavelength_px=100.0
+    )
+    top, bottom = curve[:, 1].min(), curve[:, 1].max()
+    assert 20 <= top <= 30, "midway between the cut (row 0) and the inner edge (row 50)"
+    assert 150 <= bottom <= 160
+    assert abs(top - (band.shape[0] - 1 - bottom)) < 3, "the same gap top and bottom"
 
 
 def test_interface_stays_smooth_on_a_jagged_band():
@@ -75,7 +97,9 @@ def test_interface_stays_smooth_on_a_jagged_band():
     r = np.hypot(yy - 100, xx - 100)
     band = ((r <= 40 + 4 * np.sin(17 * ang)) & (r >= 20)).astype(np.uint8)
 
-    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    curve = _meniscus_interface(
+        band, min_hole_fraction=0.05, seed_blur_px=5.0, wavelength_px=100.0
+    )
     assert _max_turn_deg(curve) < 25  # smooth despite the jagged rim
     assert 26 <= _radius(curve, 100, 100).mean() <= 34  # still on the centre
 
@@ -83,7 +107,9 @@ def test_interface_stays_smooth_on_a_jagged_band():
 def test_interface_falls_back_to_the_outer_edge_for_a_solid_nucleus():
     # A small dark blob with no enclosed interior: nothing to centre in.
     band = _ellipse((200, 200), 100, 100, 15, 15)
-    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    curve = _meniscus_interface(
+        band, min_hole_fraction=0.05, seed_blur_px=5.0, wavelength_px=100.0
+    )
     assert 13 <= _radius(curve, 100, 100).mean() <= 16  # the outer edge itself
 
 
@@ -98,7 +124,9 @@ def test_interface_reconstructs_across_a_frame_edge_cut():
     band[:, 0] = band[:, 0] | outer[:, 0]  # touches the left border
     assert band[:, 0].any()
 
-    curve = _meniscus_interface(band, min_hole_fraction=0.05, seed_blur_px=5.0)
+    curve = _meniscus_interface(
+        band, min_hole_fraction=0.05, seed_blur_px=5.0, wavelength_px=100.0
+    )
     # Spans from the sealed edge across to the far side, not closed off midway,
     # and sits inside the outer rim (a centreline, ~col 130, not the ~150 edge).
     assert curve[:, 0].min() < 5 and curve[:, 0].max() > 120
@@ -185,3 +213,19 @@ def test_segment_frame_traces_the_meniscus_and_ignores_traces(tmp_path):
     assert 34 <= ry <= 44 and 92 <= rx <= 108
     # It does not bleed out to the thin microchannel traces at the frame edges.
     assert interface[:, 0].min() > 2 and interface[:, 0].max() < 398
+
+
+def test_a_lopsided_bubble_is_made_mirror_symmetric_about_the_centre_row():
+    # An ellipse centred 6 rows below the centre row: after averaging with its
+    # reflection, the outline is symmetric and centred on the centre row.
+    shape = (120, 300)
+    lopsided = _ellipse(shape, 66, 150, 30, 100)
+    from naviernet.data.preprocess import _outer_contour
+
+    curve = mirror_symmetric(
+        _outer_contour(lopsided), shape, centre_row=60.0, wavelength_px=100.0
+    )
+    top, bottom = curve[:, 1].min(), curve[:, 1].max()
+
+    assert abs((60.0 - top) - (bottom - 60.0)) < 1.0, "the same reach above and below"
+    assert 55 <= bottom - top <= 65, "its own height kept, the offset split between the sides"

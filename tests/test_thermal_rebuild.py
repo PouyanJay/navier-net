@@ -410,3 +410,169 @@ def test_the_thermal_source_waits_for_the_physics_to_engage(tmp_path):
     assert torch.allclose(engaged, thermal)
     _engage_thermal_source(model, 1, cfg.training, ())  # no Stage-B terms: no warm-up
     assert model.thermal_source_engaged
+
+
+def test_one_way_advection_trains_the_temperature_and_leaves_the_flow_alone(tmp_path):
+    """With the velocity detached in the advection term, the liquid energy
+    residual sends no gradient to the velocity networks and still trains the
+    temperature; without it, it reaches both."""
+    from naviernet.physics.residuals import energy_liquid_residual
+
+    cfg, data, model = _model(tmp_path, SHARP_THERMAL)
+    groups = compute_groups(cfg)
+    torch.manual_seed(2)
+    x = (torch.rand(64, 3) * torch.tensor([2.0, 1.0, 0.5])).requires_grad_(True)
+    velocity = [*model.nets["u"].parameters(), *model.nets["v"].parameters()]
+    temperature = list(model.nets["T"].parameters())
+
+    def reach(one_way: bool) -> tuple[float, float]:
+        loss = (energy_liquid_residual(model, x, groups, one_way=one_way) ** 2).mean()
+        grads = torch.autograd.grad(loss, velocity + temperature, allow_unused=True)
+        norm = [0.0 if g is None else float(g.norm()) for g in grads]
+        return sum(norm[: len(velocity)]), sum(norm[len(velocity) :])
+
+    flow_two_way, heat_two_way = reach(False)
+    flow_one_way, heat_one_way = reach(True)
+
+    assert flow_two_way > 0, "the two-way residual reaches the flow"
+    assert flow_one_way == 0.0, "the one-way residual never does"
+    assert heat_one_way == pytest.approx(heat_two_way, rel=1e-6), (
+        "the temperature trains the same"
+    )
+
+
+def test_the_saturating_gate_reads_the_network_far_from_the_bubble(tmp_path):
+    """Zero on the front like the linear gate, but equal to the network beyond a
+    few gate lengths, so the far field does not scale with the distance."""
+    cfg, data, model = _model(
+        tmp_path,
+        [*SHARP_THERMAL, "model.theta_gate=saturating", "model.theta_gate_length=0.02"],
+    )
+    t = float(data.t[1])
+    front = model.front(torch.tensor([[t]]), 16, 4)
+    far = torch.tensor([[0.05, 0.05, t], [1.9, 0.95, t]])
+    net = model._even(model.nets["T"], far, None)
+
+    # On the front the smoothed distance is half the gate's smoothing width, so
+    # the gate reads tanh(width / 2 / length) there: small, and set by config.
+    floor = float(np.tanh(model.theta_gate_width / 2 / model.theta_gate_length))
+    on_front = model.temperature(front.points.detach()).abs()
+    assert torch.all(
+        on_front
+        <= floor * model._even(model.nets["T"], front.points.detach(), None).abs() * 1.01 + 1e-7
+    )
+    assert torch.allclose(model.temperature(far), net, rtol=1e-4, atol=1e-6)
+
+
+def test_an_unknown_temperature_gate_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="theta_gate"):
+        _model(tmp_path, [*SHARP_THERMAL, "model.theta_gate=cubic"])
+
+
+@pytest.mark.parametrize("gate", ["linear", "saturating"])
+def test_the_interface_flux_is_the_liquid_side_gradient(tmp_path, gate):
+    """The flux read on the front equals the temperature gradient just past the
+    gate's smoothing, not the half-slope in the middle of it."""
+    _, data, model = _model(
+        tmp_path, [*SHARP_THERMAL, f"model.theta_gate={gate}", "model.theta_gate_length=0.2"]
+    )
+    t = float(data.t[1])
+    front = model.front(torch.tensor([[t]]), 32, 8)
+    flux = model.interface_flux_at(front).detach().ravel()
+    leaf = front.points.detach().clone()
+    leaf[:, :2] = leaf[:, :2] + 5 * model.theta_gate_width * front.normal.detach()
+    leaf.requires_grad_(True)
+    grad = torch.autograd.grad(model.temperature(leaf).sum(), leaf)[0][:, :2]
+    inside = (grad * front.normal.detach()).sum(dim=1)
+
+    ratio = float((inside / flux).median())
+    assert ratio == pytest.approx(1.0, abs=0.1), "the flux is the liquid-side gradient"
+
+
+def test_the_initial_temperature_spares_the_layer_the_bubble_already_has(tmp_path):
+    """With T_init_layer_um set, starting points within that distance of the
+    first-frame outline carry no initial condition; farther ones still do."""
+    cfg, data, model = _model(tmp_path, [*SHARP_THERMAL, "experiment.T_init_layer_um=20"])
+    groups = compute_groups(cfg)
+    assert groups["init_layer_star"] == pytest.approx(20.0 / 300.0)
+    t0 = float(data.t[0])
+    front = model.front(torch.tensor([[t0]]), 32, 8)
+    near = front.points.detach().clone()
+    near[:, :2] = near[:, :2] + 0.5 * groups["init_layer_star"] * front.normal.detach()
+    far = torch.tensor([[1.9, 0.05, t0], [1.9, 0.95, t0]])
+    walls = torch.tensor([[0.5, 0.0, t0]])
+
+    def initial_part(points):
+        batches = ThermalBatches(torch.tensor([[0.0, 0.5, t0]]), points, walls)
+        with_init = thermal_boundary_losses(model, groups, batches)
+        without = thermal_boundary_losses(
+            model, {k: v for k, v in groups.items() if k != "theta_init"}, batches
+        )
+        return float(with_init - without)
+
+    assert initial_part(near) == pytest.approx(0.0, abs=1e-9), "inside the layer: no condition"
+    assert initial_part(far) > 0.0, "beyond it: the 58 C start still holds"
+
+
+def test_a_negative_initial_layer_is_refused():
+    with pytest.raises(ValueError, match="T_init_layer_um"):
+        compute_groups(make_config([*THERMAL_SERIES, "experiment.T_init_layer_um=-1"]))
+
+
+def test_the_floor_flux_follows_the_two_heater_zones():
+    """Upstream of the edge the floor carries the upstream flux, beyond it
+    q_wall; the step is smooth but narrow."""
+    from naviernet.physics.heating import EDGE_SMOOTHING, wall_flux_ratio, wall_flux_ratio_np
+
+    groups = compute_groups(
+        make_config(["experiment.q_upstream_W_cm2=0.45", "experiment.heater_edge_um=250"])
+    )
+    edge = groups["heater_edge_star"]
+    x = torch.tensor(
+        [[edge - 10 * EDGE_SMOOTHING, 0.5, 0.0], [edge + 10 * EDGE_SMOOTHING, 0.5, 0.0]]
+    )
+
+    ratio = wall_flux_ratio(x, groups).ravel()
+
+    assert groups["q_upstream_ratio"] == pytest.approx(
+        0.45 / float(make_config().experiment.q_wall_W_cm2)
+    )
+    assert float(ratio[0]) == pytest.approx(groups["q_upstream_ratio"], rel=1e-3)
+    assert float(ratio[1]) == pytest.approx(1.0, rel=1e-3)
+    assert wall_flux_ratio_np([edge], groups)[0] == pytest.approx(
+        0.5 * (1 + groups["q_upstream_ratio"])
+    )
+    assert torch.all(wall_flux_ratio(x, compute_groups(make_config())) == 1.0), (
+        "one flux by default"
+    )
+
+
+def test_the_two_heater_inputs_go_together():
+    with pytest.raises(ValueError, match="heater_edge_um"):
+        compute_groups(make_config(["experiment.q_upstream_W_cm2=0.45"]))
+
+
+def test_the_film_under_the_weak_zone_evaporates_at_its_own_flux(tmp_path):
+    """The footprint source reads the local floor flux: over the upstream zone
+    it is the zone's ratio times the downstream value."""
+    zones = ["experiment.q_upstream_W_cm2=0.45", "experiment.heater_edge_um=120"]
+    cfg, data, model = _model(
+        tmp_path,
+        [
+            *SHARP_THERMAL,
+            *zones,
+            "model.footprint_evaporation=true",
+            "experiment.wet_fraction=0.5",
+        ],
+    )
+    groups = compute_groups(cfg)
+    t = float(data.t[1])
+    upstream = torch.tensor([[0.33, 0.5, t]])  # inside the capsule, before the 0.4 L edge
+    downstream = torch.tensor([[0.55, 0.5, t]])  # inside the capsule, beyond it
+    ratio = groups["q_upstream_ratio"]
+
+    up = float(model.footprint_source(upstream) / model.alpha(upstream))
+    down = float(model.footprint_source(downstream) / model.alpha(downstream))
+
+    assert down == pytest.approx(groups["footprint_source_star"] * 0.5, rel=1e-3)
+    assert up == pytest.approx(down * ratio, rel=1e-2)

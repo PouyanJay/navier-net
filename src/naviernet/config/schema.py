@@ -60,6 +60,19 @@ class ExperimentConfig:
     # (model.thermal_model=sharp) reads them. Temperatures in degrees C. ---
     T_inlet_C: Optional[float] = None  # noqa: UP045 -- liquid at the inlet; None = saturation
     T_init_C: Optional[float] = None  # noqa: UP045 -- the whole liquid before frame 1
+    # The thermal layer the bubble already has at the first frame: the initial
+    # temperature is imposed only on liquid farther than this from the frame-1
+    # outline, and the heat equation forms the layer inside it. The bubble is
+    # already 0.57 mm long at frame 1, so the liquid touching it has been
+    # cooling for milliseconds; imposing T_init right up to the interface
+    # forced a jump to saturation across zero distance at the first instant.
+    # 0 imposes it everywhere in the liquid (existing runs).
+    T_init_layer_um: float = 0.0
+    # The floor heated in two zones along the channel: q_upstream_W_cm2 from the
+    # field of view's inlet edge to heater_edge_um, q_wall_W_cm2 beyond. Both
+    # None: one flux, q_wall_W_cm2, over the whole floor (existing series).
+    q_upstream_W_cm2: Optional[float] = None  # noqa: UP045
+    heater_edge_um: Optional[float] = None  # noqa: UP045
     side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
     T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
     # Film evaporation under the bubble (model.footprint_evaporation): the wall
@@ -70,6 +83,17 @@ class ExperimentConfig:
     # chain. Reported beside the value the energy balance of the masks implies.
     wet_fraction_mode: str = "fixed"  # "fixed" | "fit"
     wet_fraction: float = 1.0  # 0..1; the wet share of the footprint
+    # How the footprint stays wet. "uniform": the wet share above, constant over
+    # the event. "microlayer": the bubble leaves a film of microlayer_um on the
+    # floor it covers, and the floor's local flux evaporates it, so a spot is wet
+    # only for microlayer_um * rho_l * h_lv / q after the images first show it
+    # covered; vapour then comes from newly covered floor. The uniform share is
+    # not read under the microlayer. footprint_age_ms is how long before the
+    # first frame the first frame's footprint was covered (0: freshly covered).
+    footprint_wetting: str = "uniform"  # "uniform" | "microlayer"
+    microlayer_mode: str = "fixed"  # "fixed" | "fit"
+    microlayer_um: float = 0.5
+    footprint_age_ms: float = 0.0
 
 
 @dataclass
@@ -137,6 +161,13 @@ class ImagingConfig:
     # starts from) and smooths the solid-nucleus fallback. The interface's own
     # smoothness comes from the contour's rigidity, not this. 0 disables the blur.
     contour_smooth_px: float = 5.0
+    # Arc length below which the traced interface's detail is faired away
+    # (contour.fair_closed_contour), in pixels.
+    fair_wavelength_px: float = 100.0
+    # Average the traced bubble with its reflection about the channel centreline
+    # (midway between the detected walls) before fairing, so the outline the
+    # model fits is exactly mirror-symmetric, as the channel and its flow are.
+    mirror_symmetric: bool = False
     # Columns masked out on the last usable frame, where the bubble leaves the
     # field of view (expressed in flipped, downstream-positive coordinates).
     truncated_cols: int = 0
@@ -387,10 +418,48 @@ class ModelConfig:
     # The depth-averaged momentum law in sharp mode: Darcy, or Darcy plus the
     # Brinkman viscous term (1/Re) mu~ lap(u).
     momentum_closure: str = "darcy"  # "darcy" | "brinkman"
+    # Depth-averaged inertia in the Brinkman law, rho~ (u_t + 6/5 u.grad u),
+    # making it the depth-averaged Navier-Stokes of a Hele-Shaw cell (Gondret &
+    # Rabaud 1997). Without it the law balances pressure against friction alone,
+    # valid only when Re (h/L)^2 / 12 << 1; on Series-1-w300 that is about 4.5,
+    # and measured at the advancing head the omitted inertia matched the drag
+    # and reached the in-plane viscous term in the side gaps. Brinkman only.
+    momentum_inertia: bool = False
+    # The kinematic condition imposed exactly instead of as a penalty: the
+    # liquid's velocity across the interface equals the interface's own normal
+    # speed on the whole of it, at every instant, by construction. The velocity
+    # network is corrected along the interface normal by a factor that is one on
+    # the interface and fades over kinematic_blend_length (L_ref units) on both
+    # sides; the tangential velocity is left free (a gas interface is
+    # shear-free). Normal and speed come from the geometry with its parameters
+    # detached, so the correction never moves the outline. Held off through the
+    # warm-up (training.stage_b_warmup_steps) and on from the first physics
+    # step, so the warm-up stays the outline fit. Needs the front geometry.
+    # The evaporation term m/rho_l (about 0.1 mm/s on Series-1-w300, under 0.1%
+    # of the head's speed) is not included.
+    hard_kinematics: bool = False
+    kinematic_blend_length: float = 0.04
+    # Which side of the interface the exact condition corrects. "liquid": the
+    # liquid only, the vapour's velocity left to its own equations (inside, the
+    # vapour leaves the interface at V_n - m/rho_v, not V_n). "both": the blend
+    # on both sides, as the first exact-condition run (trust-hk4-s0) had it,
+    # whose continuity failed most just inside the advancing head.
+    kinematic_side: str = "both"  # "both" | "liquid"
     # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.
     outlet_condition: str = "none"  # "none" | "zero_gradient"
+    # The outlet's pressure, Pa above atmospheric (gauge), imposed on the liquid
+    # pressure across the outlet. With the zero-gradient velocity it makes the
+    # outflow stress-free at a known pressure, and fixes the pressure's level,
+    # which the vapour pressure otherwise carries alone. None imposes nothing.
+    outlet_pressure_Pa: Optional[float] = None  # noqa: UP045
+    # The inlet velocity across the channel's width. "plug": the mean everywhere,
+    # which disagrees with no-slip side walls at the inlet corners. "developed":
+    # the fully developed profile of the depth-averaged Brinkman law, flat in the
+    # middle and falling to zero at the walls over h / sqrt(12), with the same
+    # mean (the flow rate).
+    inlet_profile: str = "plug"  # "plug" | "developed"
     # How the pressure field is represented (trustworthy-fields WP3). "single":
     # one network for both phases (today), which has to fake the Young-Laplace
     # discontinuity with steep gradients the momentum residual then punishes.
@@ -422,6 +491,19 @@ class ModelConfig:
     # Smoothing width of that distance gate, in L_ref units: a numerical choice,
     # kept well below the thermal layer it must not blur (~0.02-0.04 here).
     theta_gate_width: float = 0.005
+    # The shape of that gate. "linear": theta = d N, the distance itself, so far
+    # from the bubble theta is the network times a distance that SHRINKS as the
+    # front approaches; unless the network compensates exactly, the liquid
+    # ahead of an advancing nose cools for no physical reason (measured on the
+    # trusted recipe: 21 to 69 percent of the downstream temperature's fall was
+    # this geometric decay, and the liquid that should stay at 58 C drifted to
+    # saturation). "saturating": theta = tanh(d / theta_gate_length) N, still
+    # zero on the front, but equal to the network beyond a few gate lengths, so
+    # the far field no longer depends on where the bubble is.
+    theta_gate: str = "linear"  # "linear" | "saturating"
+    # The saturating gate's length in L_ref units: the thermal layer's scale
+    # sqrt(t*/Pe), about 0.02 to 0.04 here; the network still shapes the layer.
+    theta_gate_length: float = 0.04
     # Where the continuity source comes from. "free": the s network, pulled toward
     # the thermal flux two-way by the evap_flux closure. "thermal": s IS the
     # interface flux spread over the band, no s network in the loop.
@@ -580,6 +662,50 @@ class TrainingConfig:
     # between them. The fields had learned the quadrature, not the physics.
     # Off keeps the fixed grids (existing runs byte-for-byte).
     quadrature_jitter: bool = False
+    # Two-stage training: at the end of the warm-up, the step the physics
+    # engages, the bubble's geometry is frozen at the warm-up's fit of the
+    # images, and the physics stage trains only the hidden fields (u, v, p, T,
+    # the vapour pressure, the wet fraction) against the equations. The
+    # measured outline becomes an input to the flow problem, not an objective
+    # the flow competes with: the kinematic and Young-Laplace conditions read
+    # the frozen front as a moving boundary. With nothing left for the physics
+    # to pull off the masks, the rebalancer equalises the physics terms among
+    # themselves (the median of their weighted gradient norms is the
+    # reference) instead of holding them to the data term, which the measured
+    # 12000-step seeds showed keeping the momentum weight below 1 against the
+    # data's 10. The terms that act on the geometry alone (the measured front
+    # velocity, the root and nose supervision) are not evaluated once it is
+    # frozen. Needs a warm-up (stage_b_warmup_steps > 0) and the front geometry.
+    freeze_geometry: bool = False
+    # How the physics terms are weighted once the geometry is frozen. "fixed":
+    # each at its configured weight, never rebalanced. "equalised": rebalanced
+    # to equal gradient contributions (the median of the weighted norms is the
+    # reference). The first two-stage seed ran equalised and turned the
+    # momentum weight down to 0.26 (its gradient is the largest), and its
+    # Brinkman residual doubled against the coupled run's.
+    frozen_weighting: str = "fixed"  # "fixed" | "equalised"
+    # The temperature equation trains the temperature only: the velocity in its
+    # advection term is detached, so the equation's error cannot bend the flow
+    # (see residuals.energy_liquid_residual). Off keeps the two-way gradient.
+    one_way_advection: bool = False
+    # Sequential temperature solve: after this step the outline and the flow are
+    # held where they are and only the temperature net trains, on the energy
+    # equation and the thermal start and inlet conditions alone, from a fresh
+    # optimiser whose learning-rate clock restarts at this step. Zero (default)
+    # keeps the coupled field stage to the end. Needs freeze_geometry and a step
+    # past the warm-up.
+    temperature_stage_from: int = 0
+    # Reuse the warm-up: a fresh run starts from the checkpoint at the end of
+    # stage_b_warmup_steps that an earlier run with the same warm-up inputs
+    # cached, or trains and caches it (naviernet.warmup_cache). The key is the
+    # processed archive's content, the config minus what acts only after the
+    # warm-up, and the code the warm-up runs.
+    warmup_cache: bool = False
+    # The learning rate's halving period in the physics stage, in steps: the
+    # schedule's clock runs lr_halflife / physics_lr_halflife times faster after
+    # the warm-up, so a physics stage of fewer, larger steps (more points per
+    # step) sweeps the same rates as the full-length one. Zero keeps one clock.
+    physics_lr_halflife: int = 0
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See
@@ -728,6 +854,18 @@ class TrainingConfig:
     mass_balance_weight: float = 1.0
     mass_balance_stations: int = 32  # x-stations of the cumulative source integral
     mass_balance_times: int = 8  # fixed time slices across the window
+    # Growth closure: at every event frame the vapour the source makes,
+    # int s dA, equals the measured growth of the bubble's area. The outline
+    # flux's part is detached, so the term trains the footprint's wetting and
+    # never the temperature. Needs the thermal source with footprint
+    # evaporation. Zero weight (default) leaves it off; outside causal
+    # weighting, RBA and the rebalancer like the mass balance.
+    growth_closure_weight: float = 0.0
+    growth_closure_stride: int = 4  # every n-th pixel of the covered floor
+    # Let the closure's outline part (the flux the temperature carries) keep its
+    # gradient, so the measured growth also trains the temperature. Off: it is
+    # read detached, and the closure trains the footprint's wetting alone.
+    growth_closure_outline_gradient: bool = False
     mass_balance_grid: int = 64  # transverse quadrature points, wall to wall
 
     seed: int = 0
@@ -755,6 +893,12 @@ class AcceptanceConfig:
     iou_min: float = 0.85
     iou_drop_max: float = 0.05
     nose_tol: float = 0.1
+    # Where the frozen (or fitted) shape blocks the physics: the Young-Laplace
+    # mismatch on the front, expressed as the shape change it would take to
+    # remove it, in camera pixels. The 90th percentile over the front and the
+    # event may not exceed this: within it the measured outline and the
+    # physics agree to the measurement's own resolution.
+    jump_px_max: float = 2.0
 
 
 @dataclass
@@ -767,6 +911,18 @@ class EvaluationConfig:
     audit: bool = True
     audit_nx: int = 129
     audit_ny: int = 49
+    # Instants scanned across the whole event window (not only the camera
+    # frames) for the residuals, the flux balance and the jump condition, on a
+    # grid half the audit's in each direction. A field can satisfy the physics
+    # at the instants it was trained on and violate it between them; this is
+    # what sees it. 0 skips the scan.
+    audit_scan_times: int = 61
+    # The grid each frame's relative equation errors are taken on
+    # (naviernet.relative_error); nx 0 skips them. The layer at the interface
+    # is about 12 um thick: on trust-bc4-s0 the values settle from 432 x 101 on
+    # (to within 0.01), while 288 x 81 read the edge band at 45% for 12%.
+    relative_error_nx: int = 576
+    relative_error_ny: int = 121
     acceptance: AcceptanceConfig = field(default_factory=AcceptanceConfig)
 
 

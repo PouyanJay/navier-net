@@ -36,11 +36,13 @@ replacing the free source ``s``. The property fields ``rho*(alpha)`` and
 from __future__ import annotations
 
 import math
+from contextlib import contextmanager
 from typing import NamedTuple
 
 import torch
 
 from naviernet.physics.film import film_surface_pressure
+from naviernet.physics.heating import wall_flux_ratio
 
 
 class StageAResiduals(NamedTuple):
@@ -52,13 +54,41 @@ class StageAResiduals(NamedTuple):
     interface_weight: torch.Tensor  # 1 on the interface, 0 in the bulk (detached)
 
 
+# While set (sharing_gradients), each (field, points) derivative is taken once
+# and shared: a training step's equations differentiate the same velocity,
+# temperature and pressure at the same points, each on its own before.
+_GRADIENT_CACHE: dict | None = None
+
+
+@contextmanager
+def sharing_gradients():
+    """Within the block, :func:`gradients` returns the derivative it already
+    took of the same field at the same points instead of taking it again. The
+    value is the same either way; the step's graph, and its backward pass, is
+    not built twice. Keyed on the tensors themselves, held for the block."""
+    global _GRADIENT_CACHE
+    _GRADIENT_CACHE = {}
+    try:
+        yield
+    finally:
+        _GRADIENT_CACHE = None
+
+
 def gradients(f: torch.Tensor, x: torch.Tensor):
     """Return ``(f_x, f_y, f_t)`` for a scalar field ``f`` evaluated at ``x``.
 
     ``x`` must have ``requires_grad=True`` and columns ordered ``(x, y, t)``.
     """
+    cache = _GRADIENT_CACHE
+    if cache is not None:
+        hit = cache.get((id(f), id(x)))
+        if hit is not None and hit[0] is f and hit[1] is x:
+            return hit[2]
     grad = torch.autograd.grad(f, x, torch.ones_like(f), create_graph=True)[0]
-    return grad[:, 0:1], grad[:, 1:2], grad[:, 2:3]
+    parts = grad[:, 0:1], grad[:, 1:2], grad[:, 2:3]
+    if cache is not None:
+        cache[(id(f), id(x))] = (f, x, parts)
+    return parts
 
 
 def _ctx(c: torch.Tensor | None, x: torch.Tensor) -> torch.Tensor | None:
@@ -125,22 +155,43 @@ def source_penalty(residuals: StageAResiduals) -> torch.Tensor:
     return source_penalty_sq(residuals).mean()
 
 
+def developed_inlet_profile(
+    y: torch.Tensor, y_lo: float, y_hi: float, mean: float, groups: dict[str, float]
+) -> torch.Tensor:
+    """The fully developed depth-averaged Brinkman profile across the width,
+    ``(N, 1)``, with mean ``mean``.
+
+    In a straight channel the law ``-dp/dx = C_HS u - (1/Re) u''`` with no slip
+    at the side walls gives ``u ~ 1 - cosh(k y) / cosh(k w/2)`` about the
+    centreline, ``k = sqrt(C_HS Re) = sqrt(12) L/h``: flat across the middle and
+    falling to zero over ``h / sqrt(12)`` (43 um at a 150 um depth). Its mean
+    over the width is ``1 - tanh(k w/2) / (k w/2)`` of the peak.
+    """
+    k = math.sqrt(groups["hele_shaw"] * groups["Re"])
+    half = 0.5 * (y_hi - y_lo)
+    shape = 1.0 - torch.cosh(k * (y - 0.5 * (y_lo + y_hi))) / math.cosh(k * half)
+    return mean * shape / (1.0 - math.tanh(k * half) / (k * half))
+
+
 def boundary_losses(
     model,
     inlet_x,
     wall_x,
-    u_inlet: float,
+    u_inlet: float | torch.Tensor,
     c: torch.Tensor | None = None,
     theta_in: torch.Tensor | None = None,
     wall_condition: str = "no_slip",
     outlet_x: torch.Tensor | None = None,
+    outlet_pressure: float | None = None,
 ) -> torch.Tensor:
     """Inlet plug velocity, the side-wall condition, and the outlet condition.
 
     ``wall_condition`` is ``"no_slip"`` (both components vanish at the wall) or
     ``"no_penetration"`` (only the wall-normal ``v``; the tangential velocity is
     free, which is all a first-order Darcy law can honour). ``outlet_x``, when
-    given, adds :func:`outlet_loss` at those points.
+    given, adds :func:`outlet_loss` at those points, with the liquid pressure
+    held at ``outlet_pressure`` there when that is given. ``u_inlet`` is the
+    plug's speed, or one target per inlet point (the developed profile).
 
     ``theta_in`` adds the inlet temperature condition. It is passed only when the
     superheat is depletable: with the default parameterization ``theta_in`` is
@@ -159,21 +210,33 @@ def boundary_losses(
         inlet = inlet + ((model.temperature(inlet_x, _ctx(c, inlet_x)) - theta_in) ** 2).mean()
     total = inlet + wall
     if outlet_x is not None:
-        total = total + outlet_loss(model, outlet_x, c)
+        total = total + outlet_loss(model, outlet_x, c, outlet_pressure)
     return total
 
 
-def outlet_loss(model, outlet_x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
-    """Zero streamwise velocity gradient at the outlet, ``mean(u_x^2 + v_x^2)``.
+def outlet_loss(
+    model,
+    outlet_x: torch.Tensor,
+    c: torch.Tensor | None = None,
+    pressure: float | None = None,
+) -> torch.Tensor:
+    """Zero streamwise velocity gradient at the outlet, ``mean(u_x^2 + v_x^2)``,
+    and the liquid pressure there held at ``pressure`` when given.
 
     The channel continues beyond the field of view, so the flow leaves the imaged
-    region as it arrived there. The outlet pressure is unknown and left free.
+    region as it arrived there. With the pressure given the outflow is
+    stress-free at that pressure (the viscous normal stress is zero with
+    ``u_x``); without it the pressure's level is left to the vapour pressure.
     ``outlet_x`` must carry ``requires_grad`` (the sampler sets it).
     """
-    u, v = model.velocity(outlet_x, _ctx(c, outlet_x))
+    cx = _ctx(c, outlet_x)
+    u, v = model.velocity(outlet_x, cx)
     u_x, _, _ = gradients(u, outlet_x)
     v_x, _, _ = gradients(v, outlet_x)
-    return (u_x**2).mean() + (v_x**2).mean()
+    total = (u_x**2).mean() + (v_x**2).mean()
+    if pressure is not None:
+        total = total + ((liquid_pressure(model, outlet_x, cx) - pressure) ** 2).mean()
+    return total
 
 
 # --- Stage B: momentum + surface tension, energy + evaporation --------------
@@ -427,7 +490,11 @@ def energy_residuals(
 
 
 def energy_liquid_residual(
-    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None = None,
+    one_way: bool = False,
 ) -> torch.Tensor:
     """``(1 - alpha) [theta_t + u.grad theta - lap(theta)/Pe - q* (1 - alpha)]``.
 
@@ -435,13 +502,25 @@ def energy_liquid_residual(
     the bubble the same flux evaporates the film instead (the footprint source
     on the model), so one wall flux is split by phase. The latent sink is absent
     because the interface temperature is the boundary condition that carries it.
+
+    ``one_way`` detaches the velocity in the advection term, so this equation
+    trains the temperature and never the flow. Physically the coupling is one
+    way here: the liquid carries the heat, and nothing in the model lets the
+    temperature move the liquid (constant properties, no buoyancy); its only
+    route back is the evaporation source, which continuity reads. Without the
+    detach the equation's error reaches the velocity network through
+    ``u.grad(theta)``, and measured on the trusted recipe it pulled the flow
+    ahead of the bubble 2 to 30 times harder than the momentum equation did,
+    bending it into the lopsided swirl the mirror test failed on.
     """
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
     theta = model.temperature(x, cx)
     u, v = model.velocity(x, cx)
+    if one_way:
+        u, v = u.detach(), v.detach()
     t_x, t_y, t_t = gradients(theta, x)
-    heat = groups["q_wall_star"]
+    heat = groups["q_wall_star"] * wall_flux_ratio(x, groups)
     residual = (
         t_t + u * t_x + v * t_y - _laplacian(theta, x) / groups["Pe"] - heat * (1.0 - alpha)
     )
@@ -462,8 +541,9 @@ def thermal_boundary_losses(
     model, groups: dict[str, float], batches: ThermalBatches, c: torch.Tensor | None = None
 ) -> torch.Tensor:
     """The inlet temperature, the initial liquid temperature (where there is
-    liquid), and the side-wall condition: adiabatic (``theta_y = 0``) unless the
-    series gives a wall temperature."""
+    liquid, and farther from the frame-1 outline than the layer the bubble
+    already has, ``init_layer_star``), and the side-wall condition: adiabatic
+    (``theta_y = 0``) unless the series gives a wall temperature."""
     inlet = (
         (model.temperature(batches.inlet, _ctx(c, batches.inlet)) - groups["theta_inlet"]) ** 2
     ).mean()
@@ -471,6 +551,12 @@ def thermal_boundary_losses(
     if "theta_init" in groups:
         cx = _ctx(c, batches.initial)
         liquid = 1.0 - model.alpha(batches.initial, cx).detach()
+        layer = groups.get("init_layer_star", 0.0)
+        if layer > 0.0:
+            # Inside the layer the heat equation decides; the distance reads the
+            # (frozen) geometry and carries no gradient.
+            distance = model._liquid_distance(batches.initial, cx).detach()
+            liquid = liquid * (distance >= layer).to(liquid.dtype)
         total = (
             total
             + (
@@ -594,8 +680,18 @@ def darcy_residuals(
     )
 
 
+# The convective term of the depth-averaged momentum carries the mean of u^2
+# over the depth over the square of the mean: 6/5 for the parabolic profile the
+# Hele-Shaw drag already assumes (Gondret & Rabaud 1997, Phys. Fluids 9, 3267).
+DEPTH_PROFILE_CONVECTION = 6.0 / 5.0
+
+
 def brinkman_residuals(
-    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None = None,
+    inertia: bool = False,
 ) -> MomentumResiduals:
     """Depth-averaged momentum with the Brinkman in-plane viscous term::
 
@@ -607,6 +703,13 @@ def brinkman_residuals(
     Yortsos & Salin 2003 for Hele-Shaw cells), so no-slip side walls become
     admissible. Away from the walls, where ``lap(u)`` is small, it is Darcy.
     Same return shape as the other momentum families; ``kappa`` stays zero.
+
+    ``inertia`` (``model.momentum_inertia``) adds the depth-averaged inertia
+    ``rho~(alpha) (u_t + 6/5 u.grad u)`` on the left, making the law the
+    depth-averaged Navier-Stokes of a Hele-Shaw cell. Pressure is on
+    ``rho_l U^2`` and time on ``L/U``, so the coefficient is one in the liquid.
+    No surface-tension body force: under the sharp interface the Young-Laplace
+    jump on the front carries it, and the liquid pressure is smooth up to it.
     """
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
@@ -615,11 +718,16 @@ def brinkman_residuals(
     weight = liquid_weight(model, alpha)
     u, v = model.velocity(x, cx)
     p_x, p_y, _ = gradients(liquid_pressure(model, x, cx), x)
-    return MomentumResiduals(
-        weight * (p_x + drag * u - viscosity * _laplacian(u, x)),
-        weight * (p_y + drag * v - viscosity * _laplacian(v, x)),
-        torch.zeros_like(u),
-    )
+    mom_x = p_x + drag * u - viscosity * _laplacian(u, x)
+    mom_y = p_y + drag * v - viscosity * _laplacian(v, x)
+    if inertia:
+        u_x, u_y, u_t = gradients(u, x)
+        v_x, v_y, v_t = gradients(v, x)
+        density = mixture(alpha, groups["rho_ratio"])
+        convect = DEPTH_PROFILE_CONVECTION
+        mom_x = mom_x + density * (u_t + convect * (u * u_x + v * u_y))
+        mom_y = mom_y + density * (v_t + convect * (u * v_x + v * v_y))
+    return MomentumResiduals(weight * mom_x, weight * mom_y, torch.zeros_like(u))
 
 
 # Dynamic correction to the gap-direction capillary pressure across an advancing
