@@ -267,6 +267,45 @@ THERMAL: tuple[FieldSpec, ...] = (
         hi=_FRACTION[1],
     ),
     FieldSpec(
+        "experiment.footprint_wetting",
+        "Footprint wetting",
+        "enum",
+        *_SERIES,
+        help=(
+            "uniform: the wet share above for the whole event; microlayer: each spot the "
+            "bubble covers stays wet until the floor's flux has evaporated its film"
+        ),
+        options=("uniform", "microlayer"),
+    ),
+    FieldSpec(
+        "experiment.microlayer_mode",
+        "Microlayer thickness",
+        "enum",
+        *_SERIES,
+        help="the film thickness: fixed at the value below, or fitted from it",
+        options=("fixed", "fit"),
+    ),
+    FieldSpec(
+        "experiment.microlayer_um",
+        "Microlayer thickness value",
+        "float",
+        *_SERIES,
+        help="the film the bubble leaves on the floor it covers; the fixed value or the fit's start",
+        unit="µm",
+        lo=0.01,
+        hi=50.0,
+    ),
+    FieldSpec(
+        "experiment.footprint_age_ms",
+        "First footprint age",
+        "float",
+        *_SERIES,
+        help="how long before the first frame its footprint was covered; 0 is freshly covered",
+        unit="ms",
+        lo=0.0,
+        hi=100.0,
+    ),
+    FieldSpec(
         "scales.dT_ref_K",
         "Superheat scale",
         "float",
@@ -319,6 +358,54 @@ PHYSICS: tuple[FieldSpec, ...] = (
         options=("darcy", "brinkman"),
     ),
     FieldSpec(
+        "model.hard_kinematics",
+        "Exact kinematic condition",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the liquid moves across the bubble edge exactly at the edge's own speed, on the "
+            "whole edge, by construction instead of as a penalty; sliding along it stays free"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.kinematic_side",
+        "Exact kinematic side",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "where the exact kinematic correction acts: the liquid only, or both sides of "
+            "the bubble edge"
+        ),
+        options=("both", "liquid"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.kinematic_blend_length",
+        "Kinematic blend length",
+        "float",
+        "physics",
+        "override",
+        help="how far from the edge the exact kinematic correction fades out, in L_ref units",
+        lo=1e-4,
+        hi=1.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.momentum_inertia",
+        "Inertia in the momentum law",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "adds the liquid's depth-averaged inertia to the Brinkman law, making it the "
+            "depth-averaged Navier-Stokes; needed when the liquid accelerates around the bubble"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.outlet_condition",
         "Outlet",
         "enum",
@@ -329,6 +416,35 @@ PHYSICS: tuple[FieldSpec, ...] = (
             "that continues past the field of view"
         ),
         options=("none", "zero_gradient"),
+    ),
+    FieldSpec(
+        "model.outlet_pressure_Pa",
+        "Outlet pressure",
+        "float",
+        "physics",
+        "override",
+        help=(
+            "the liquid pressure at the downstream edge, above atmospheric; not set leaves "
+            "the pressure level free"
+        ),
+        unit="Pa",
+        lo=-1e5,
+        hi=1e5,
+        optional=True,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.inlet_profile",
+        "Inlet profile",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "the inlet velocity across the width: the mean everywhere, or the developed "
+            "profile that falls to zero at the side walls"
+        ),
+        options=("plug", "developed"),
+        advanced=True,
     ),
     FieldSpec(
         "model.pressure_representation",
@@ -492,6 +608,43 @@ TRAINING: tuple[FieldSpec, ...] = (
         hi=_WEIGHT[1],
     ),
     FieldSpec(
+        "training.growth_closure_weight",
+        "Growth closure weight",
+        "float",
+        "training",
+        "override",
+        help=(
+            "the vapour the heat makes equals the bubble's measured growth at every frame; "
+            "trains the footprint's wetting, never the temperature; 0 is off"
+        ),
+        lo=_WEIGHT[0],
+        hi=_WEIGHT[1],
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.growth_closure_outline_gradient",
+        "Growth closure trains the temperature",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "let the vapour the bubble edge makes carry the closure's gradient, so the "
+            "measured growth also adjusts the temperature; off, it adjusts the film only"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.growth_closure_stride",
+        "Growth closure stride",
+        "int",
+        "training",
+        "override",
+        help="every n-th pixel of the covered floor the vapour total is summed over",
+        lo=1,
+        hi=64,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.collocation_time_bins",
         "Collocation time bins",
         "int",
@@ -609,6 +762,46 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.warmup_cache",
+        "Reuse the warm-up",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "start from the outline fit an earlier run with the same images, settings and "
+            "code already trained; it is retrained only when one of those changes"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.physics_lr_halflife",
+        "Physics-stage learning-rate halving",
+        "int",
+        "training",
+        "override",
+        help=(
+            "steps per halving of the learning rate after the warm-up; for a physics stage "
+            "of fewer, larger steps. 0 keeps the warm-up's halving period"
+        ),
+        lo=0,
+        hi=1_000_000,
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.temperature_stage_from",
+        "Temperature-only stage from step",
+        "int",
+        "training",
+        "override",
+        help=(
+            "sequential solve: after this step the outline and flow are locked and only the "
+            "temperature trains, on its own equation and conditions; 0 keeps the coupled stage"
+        ),
+        lo=0,
+        hi=1_000_000,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.quadrature_jitter",
         "Jitter the quadrature times",
         "bool",
@@ -681,6 +874,26 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         *_GATE,
         lo=5,
         hi=513,
+        advanced=True,
+    ),
+    FieldSpec(
+        "evaluation.relative_error_nx",
+        "Relative error grid, along",
+        "int",
+        *_GATE,
+        help="points along the channel each equation's error relative to its terms is taken on; 0 skips",
+        lo=0,
+        hi=2049,
+        advanced=True,
+    ),
+    FieldSpec(
+        "evaluation.relative_error_ny",
+        "Relative error grid, across",
+        "int",
+        *_GATE,
+        help="points across the channel the relative equation errors are taken on",
+        lo=3,
+        hi=1025,
         advanced=True,
     ),
     FieldSpec(

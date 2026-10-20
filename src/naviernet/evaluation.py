@@ -208,9 +208,9 @@ def _heating_block(cfg, model, data) -> dict | None:
     block["q_wall_W_cm2"] = float(cfg.experiment.q_wall_W_cm2)
     block["footprint_evaporation"] = bool(getattr(model, "footprint_evaporation", False))
     if block["footprint_evaporation"]:
-        wet = model.wet_fraction
-        block["wet_fraction"] = float(wet) if isinstance(wet, float) else float(wet.detach())
-        block["wet_fraction_mode"] = model.wet_fraction_mode
+        from naviernet.audit import wetting_record
+
+        block.update(wetting_record(model))
     return block
 
 

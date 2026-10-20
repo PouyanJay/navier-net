@@ -1405,7 +1405,7 @@ describe("SolverView physics choices", () => {
     expect(body.log_chunk_residuals).toBe(true);
     expect(body.rebalance_max_ratio).toBe(10);
     expect(body.grad_clip).toBe(50);
-    expect(body.outline_guard_every).toBe(500);
+    expect(body.outline_guard_every).toBe(125);
     expect(body.outline_guard_drop).toBe(0.05);
     expect(body.freeze_geometry).toBe(true);
   });

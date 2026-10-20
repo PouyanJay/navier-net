@@ -331,6 +331,39 @@ def _film_evaporation(cfg, fluid, u: float, length: float, h: float) -> dict[str
         "footprint_source_star": q_wall * specific_volume * length / (fluid.h_lv * h * u),
         "wet_fraction_init": wet,
         **zones,
+        **_microlayer(exp, fluid, q_wall, length / u),
+    }
+
+
+def _microlayer(exp, fluid, q_wall: float, t_ref_s: float) -> dict[str, float]:
+    """The microlayer's life per micron of film under the floor's ``q_wall``
+    (``rho_l h_lv 1e-6 / q_wall`` on ``t_ref``), its declared start, and the
+    first frame's footprint age on ``t_ref``; empty under uniform wetting."""
+    wetting = str(getattr(exp, "footprint_wetting", "uniform"))
+    if wetting not in ("uniform", "microlayer"):
+        raise ValueError(
+            f"experiment.footprint_wetting must be 'uniform' or 'microlayer', got {wetting!r}"
+        )
+    if wetting == "uniform":
+        return {}
+    mode = str(getattr(exp, "microlayer_mode", "fixed"))
+    if mode not in ("fixed", "fit"):
+        raise ValueError(f"experiment.microlayer_mode must be 'fixed' or 'fit', got {mode!r}")
+    film = float(exp.microlayer_um)
+    age = float(exp.footprint_age_ms)
+    if film <= 0.0:
+        raise ValueError(f"experiment.microlayer_um={film} must be > 0 (a film thickness)")
+    if age < 0.0:
+        raise ValueError(f"experiment.footprint_age_ms={age} must be >= 0")
+    if q_wall <= 0.0:
+        raise ValueError(
+            "experiment.footprint_wetting=microlayer evaporates the film at the floor's flux, "
+            "so it needs experiment.q_wall_W_cm2 > 0"
+        )
+    return {
+        "microlayer_tau_star_per_um": fluid.rho_l * fluid.h_lv * 1e-6 / q_wall / t_ref_s,
+        "microlayer_um_init": film,
+        "footprint_age_star": age * 1e-3 / t_ref_s,
     }
 
 

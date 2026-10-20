@@ -36,7 +36,16 @@ RECIPE = ["experiment=trusted_w300", "model=trusted", "training=trusted"]
 RUN_PREFIX = "trust-wpf"
 GPU = "A10G"
 CPUS = 4
-TIMEOUT_S = 6 * 3600
+# The exact kinematic condition costs about 70% more per step (about 7 h for
+# 12000 steps on the A10); a timeout is not retried, so leave room.
+TIMEOUT_S = 12 * 3600
+
+# The processed archive the container trains on: the series' current one, or
+# another (NAVIERNET_TENSORS, a path) so a run resumed after a re-preprocess
+# keeps the outlines it started on.
+TENSORS = Path(
+    os.environ.get("NAVIERNET_TENSORS", REPO / "data" / "processed" / DATASET / "tensors.npz")
+)
 
 app = modal.App("navier-net-bench")
 
@@ -65,7 +74,7 @@ image = (
     .add_local_dir(REPO / "src", f"{REMOTE_ROOT}/src")
     .add_local_dir(REPO / "configs", f"{REMOTE_ROOT}/configs")
     .add_local_file(
-        REPO / "data" / "processed" / DATASET / "tensors.npz",
+        TENSORS,
         f"{REMOTE_ROOT}/data/processed/{DATASET}/tensors.npz",
     )
 )
@@ -133,16 +142,17 @@ def time_steps(seed: int = 0) -> float:
     return per_step
 
 
-def _target_steps() -> int:
-    """The recipe's own step count, read from the composed config, so the
-    target is never typed twice."""
+def _target_steps(extra: list[str]) -> int:
+    """The run's step count, read from the recipe composed with the run's own
+    overrides, so the target is never typed twice and an override of
+    training.steps is honoured."""
     from hydra import compose, initialize_config_dir
 
     from naviernet.config import register_configs
 
     register_configs()
     with initialize_config_dir(config_dir=f"{REMOTE_ROOT}/configs", version_base="1.3"):
-        cfg = compose(config_name="config", overrides=[f"dataset={DATASET}", *RECIPE])
+        cfg = compose(config_name="config", overrides=[f"dataset={DATASET}", *RECIPE, *extra])
     return int(cfg.training.steps)
 
 
@@ -178,7 +188,7 @@ def bench(
     the run's own config snapshot."""
     extra = overrides.split()
     run_name = f"{prefix}-s{seed}"
-    remaining = _target_steps() - _completed_steps(run_name)
+    remaining = _target_steps(extra) - _completed_steps(run_name)
     if remaining > 0:
         print(f"{run_name}: {remaining} steps to train", flush=True)
         _cli(_common(run_name, seed, [*extra, f"training.steps={remaining}", "stage=train"]))
@@ -190,6 +200,104 @@ def bench(
         failure = f"evaluate stage failed: {exc}"
     volume.commit()
     return run_name, _pack(run_name), failure
+
+
+# --- the step-cost sweep (--mode sweep) ----------------------------------------
+# What the next runs train: the trusted recipe with the test settings on top.
+SWEEP_EXTRAS = [
+    "training.weights.energy_liquid=10.0",
+    "training.weights.brinkman=5.0",
+    "experiment.footprint_wetting=microlayer",
+    "experiment.microlayer_mode=fit",
+    "experiment.microlayer_um=0.5",
+    "training.growth_closure_weight=1.0",
+    "training.growth_closure_stride=6",
+    "model.hard_kinematics=true",
+]
+# The recipe's batch sizes, scaled together by the sweep.
+SWEEP_BATCH = {"training.n_coll": 3072, "training.n_data": 3072, "training.n_bc": 512}
+# Physics steps timed, after a short warm-up; the first logged physics step is
+# skipped so start-up and the handoff are not counted.
+SWEEP_WARMUP, SWEEP_FIRST, SWEEP_LAST = 10, 20, 50
+
+
+def _logged_at(log: str, step: int) -> float:
+    """The wall clock of the log line for ``step``, in seconds."""
+    import datetime as dt
+    import re
+
+    match = re.search(
+        rf"^\[([^\]]+)\]\[naviernet\.training\]\[INFO\] - step +{step} \| lr", log, re.M
+    )
+    if match is None:
+        raise RuntimeError(f"no log line for step {step}")
+    return dt.datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S,%f").timestamp()
+
+
+def _time_physics_steps(label: str, scale: int, device: str, threads: int) -> dict:
+    """Seconds per physics step of the sweep's recipe at ``scale`` times the
+    batch, on this container."""
+    run_name = f"sweep-{label}-x{scale}"
+    overrides = [
+        f"dataset={DATASET}",
+        *RECIPE,
+        *SWEEP_EXTRAS,
+        f"run_name={run_name}",
+        f"training.device={device}",
+        "training.warmup_cache=false",
+        "training.checkpoint_every=0",
+        f"training.steps={SWEEP_LAST}",
+        f"training.stage_b_warmup_steps={SWEEP_WARMUP}",
+        "training.rebalance_every=1000",
+        "training.log_every=10",
+        *(f"{key}={value * scale}" for key, value in SWEEP_BATCH.items()),
+        "stage=train",
+    ]
+    env = {**os.environ, "OMP_NUM_THREADS": str(threads)}
+    command = [sys.executable, "-m", "naviernet.cli", f"paths.root={REMOTE_ROOT}", *overrides]
+    done = subprocess.run(command, cwd=REMOTE_ROOT, env=env, capture_output=True, text=True)
+    log = done.stdout + done.stderr
+    if done.returncode != 0:
+        return {"label": label, "scale": scale, "error": log[-1500:]}
+    per_step = (_logged_at(log, SWEEP_LAST) - _logged_at(log, SWEEP_FIRST)) / (
+        SWEEP_LAST - SWEEP_FIRST
+    )
+    return {"label": label, "scale": scale, "seconds_per_step": per_step}
+
+
+@app.function(image=image, gpu=GPU, cpu=CPUS, memory=16384, timeout=3600)
+def sweep_gpu(scale: int, label: str = GPU) -> dict:
+    import torch
+
+    result = _time_physics_steps(label, scale, "cuda", CPUS)
+    result["device_name"] = torch.cuda.get_device_name(0)
+    return result
+
+
+@app.function(image=image, cpu=8, memory=16384, timeout=3600)
+def sweep_cpu(scale: int) -> dict:
+    return _time_physics_steps("cpu8", scale, "cpu", 8)
+
+
+def _sweep() -> None:
+    """Every machine and batch scale in parallel, then one table."""
+    calls = [sweep_gpu.spawn(scale) for scale in (1, 2, 4, 8)]
+    for gpu in ("L4", "A100", "H100"):
+        calls += [sweep_gpu.with_options(gpu=gpu).spawn(scale, gpu) for scale in (1, 4)]
+    calls += [sweep_cpu.spawn(1)]
+    for call in calls:
+        result = call.get()
+        if "error" in result:
+            print(
+                f"{result['label']:>6} x{result['scale']}: failed\n{result['error']}",
+                flush=True,
+            )
+            continue
+        print(
+            f"{result['label']:>6} x{result['scale']}: {result['seconds_per_step']:.3f} s per step "
+            f"({result.get('device_name', 'cpu')})",
+            flush=True,
+        )
 
 
 def _unpack(run_name: str, payload: bytes) -> Path:
@@ -223,8 +331,11 @@ def main(
             f"per step: {per_step:.2f} s -> 12000 steps in about {per_step * 12000 / 60:.0f} min"
         )
         return
+    if mode == "sweep":
+        _sweep()
+        return
     if mode != "bench":
-        raise SystemExit("mode must be 'time' or 'bench'")
+        raise SystemExit("mode must be 'time', 'sweep' or 'bench'")
     wanted = [int(s) for s in seeds.split(",") if s.strip()]
     print(
         f"dispatching seeds {wanted} on {gpu} as {prefix}-s* {overrides}".rstrip(), flush=True

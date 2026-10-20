@@ -232,6 +232,10 @@ export interface OperatingConditions {
   T_wall_C: number | null;
   wet_fraction_mode: "fixed" | "fit";
   wet_fraction: number;
+  footprint_wetting: "uniform" | "microlayer";
+  microlayer_mode: "fixed" | "fit";
+  microlayer_um: number;
+  footprint_age_ms: number;
   dT_ref_K: number | null;
 }
 
@@ -294,6 +298,10 @@ export interface ConditionsUpdate {
   T_wall_C?: number | null;
   wet_fraction_mode?: "fixed" | "fit";
   wet_fraction?: number;
+  footprint_wetting?: "uniform" | "microlayer";
+  microlayer_mode?: "fixed" | "fit";
+  microlayer_um?: number;
+  footprint_age_ms?: number;
   dT_ref_K?: number | null;
 }
 

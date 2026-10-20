@@ -29,6 +29,37 @@ def _ratio(x, groups: dict[str, float], sigmoid):
     return ratio + (1.0 - ratio) * sigmoid((x - edge) / EDGE_SMOOTHING)
 
 
+# The microlayer's end is smoothed over this share of its life: a numerical
+# choice so the film thickness has a gradient to be fitted through; the film
+# thins at a constant rate and is physically gone at once.
+DEPLETION_SMOOTHING = 0.1
+# The cover time of floor the images never show covered: later than any event.
+NEVER_COVERED = 1.0e6
+
+
+def cover_times(data, age_star: float) -> np.ndarray:
+    """The instant the images first show each pixel of the floor covered,
+    ``(H, W)`` on ``t_ref``: where the vapour fraction first crosses
+    ``INTERFACE_ALPHA``, linear between the two frames around the crossing.
+    The first frame's footprint was covered ``age_star`` before it; floor never
+    covered in the event is ``NEVER_COVERED``."""
+    alpha = np.where(data.valid[: data.n_event] > 0, data.alpha[: data.n_event], 0.0)
+    times = np.asarray(data.t[: data.n_event], dtype=float)
+    covered = alpha > INTERFACE_ALPHA
+    first = np.argmax(covered, axis=0)
+    result = np.full(alpha.shape[1:], NEVER_COVERED)
+    result[covered[0]] = times[0] - age_star
+    later = covered.any(axis=0) & ~covered[0]
+    rows, cols = np.nonzero(later)
+    hit = first[rows, cols]
+    before, after = alpha[hit - 1, rows, cols], alpha[hit, rows, cols]
+    share = (INTERFACE_ALPHA - before) / np.maximum(after - before, 1e-9)
+    result[rows, cols] = times[hit - 1] + np.clip(share, 0.0, 1.0) * (
+        times[hit] - times[hit - 1]
+    )
+    return result
+
+
 def wall_flux_ratio(x, groups: dict[str, float]):
     """The floor's local flux over ``q_wall`` at points ``x`` ``(N, 3)``, as an
     ``(N, 1)`` tensor: the upstream zone's ratio before the heater edge, 1

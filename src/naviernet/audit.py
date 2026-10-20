@@ -41,6 +41,7 @@ import torch
 
 from naviernet.physics import mass_balance, registry
 from naviernet.physics.groups import compute_groups
+from naviernet.physics.growth_closure import measured_growth_rate
 from naviernet.physics.heating import wall_flux_ratio_np
 from naviernet.physics.residuals import (
     IN_PLANE_WEIGHT,
@@ -48,6 +49,7 @@ from naviernet.physics.residuals import (
     kinematic_residual,
     laplace_jump_residual,
 )
+from naviernet.relative_error import relative_errors
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -173,17 +175,24 @@ def _integral(values: np.ndarray, grid: AuditGrid) -> float:
     return float(np.trapezoid(np.trapezoid(values, grid.xs, axis=1), grid.ys))
 
 
-def _measured_growth_rate(data, row: int) -> float:
-    """``dA/dt`` of the measured vapour area at ``row``, in ``L_ref^2 / t_ref``."""
-    pixel = float(data.x[1] - data.x[0]) * float(data.y[1] - data.y[0])
-    areas = {
-        r: float(((data.alpha[r] > 0.5) & (data.valid[r] > 0)).sum()) * pixel
-        for r in (row - 1, row, row + 1)
-        if 0 <= r < data.n_event
+def _scalar(value) -> float:
+    return float(value) if isinstance(value, float) else float(value.detach())
+
+
+def wetting_record(model) -> dict:
+    """How the footprint is wetted and its fitted or declared value: the
+    uniform wet share, or the microlayer's film thickness."""
+    if getattr(model, "footprint_wetting", "uniform") == "microlayer":
+        return {
+            "footprint_wetting": "microlayer",
+            "microlayer_um": _scalar(model.microlayer_um),
+            "microlayer_mode": model.microlayer_mode,
+        }
+    return {
+        "footprint_wetting": "uniform",
+        "wet_fraction": _scalar(model.wet_fraction),
+        "wet_fraction_mode": model.wet_fraction_mode,
     }
-    rows = sorted(areas)
-    first, last = rows[0], rows[-1]
-    return (areas[last] - areas[first]) / (float(data.t[last]) - float(data.t[first]))
 
 
 def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGrid) -> dict:
@@ -203,7 +212,7 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
     specific_volume = 1.0 / fluid.rho_v - 1.0 / fluid.rho_l
     # A dimensionless source integral to the latent power its vapour volume cost.
     to_latent_mW = length * depth * speed / specific_volume * fluid.h_lv * 1e3
-    growth = _measured_growth_rate(data, row) * length**2 / t_ref
+    growth = measured_growth_rate(data, row) * length**2 / t_ref
     # The floor's local flux over each grid column (both heater zones counted).
     wall = float(exp.q_wall_W_cm2) * 1e4 * wall_flux_ratio_np(grid.xs, groups)[None, :]
     budget = {
@@ -224,10 +233,7 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
             footprint = model.footprint_source(points).detach().cpu().numpy()
             footprint = footprint.reshape(len(grid.ys), len(grid.xs))
             budget["latent_from_footprint_mW"] = _integral(footprint, grid) * to_latent_mW
-            wet = model.wet_fraction
-            budget["wet_fraction"] = (
-                float(wet) if isinstance(wet, float) else float(wet.detach())
-            )
+            budget.update(wetting_record(model))
         estimates.append(budget["latent_from_flux_mW"] + budget["latent_from_footprint_mW"])
     reference = max(abs(budget["latent_for_growth_mW"]), 1e-9)
     budget["spread"] = float((max(estimates) - min(estimates)) / reference)
@@ -364,6 +370,11 @@ def audit_frame(
         "heat": heat_budget(cfg, model, data, groups, row, fields, grid),
         "outline": outline_agreement(cfg, model, data, row),
     }
+    nx = int(getattr(cfg.evaluation, "relative_error_nx", 0))
+    if nx > 0:
+        record["relative_error"] = relative_errors(
+            model, groups, data, t, nx, int(cfg.evaluation.relative_error_ny)
+        )
     pixel = float(data.x[1] - data.x[0])
     record["front"], front = front_conditions(
         model, groups, t, pixel, float(data.y_hi - data.y_lo)

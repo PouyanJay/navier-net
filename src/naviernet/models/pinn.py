@@ -15,6 +15,7 @@ parameter rather than an emergent property of the fit.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import contextmanager
 
 import torch
 import torch.nn as nn
@@ -35,7 +36,7 @@ from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softp
 # Neither module imports back into naviernet.models, so no cycle is possible.
 from naviernet.physics.film import deposited_thickness
 from naviernet.physics.groups import compute_groups
-from naviernet.physics.heating import wall_flux_ratio
+from naviernet.physics.heating import DEPLETION_SMOOTHING, wall_flux_ratio
 
 # Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
 # one smooth scalar curve in time, and capacity beyond this buys nothing but the
@@ -134,6 +135,10 @@ class BubblePINN(nn.Module):
         self._validate_pressure_representation(cfg, names)
         self._validate_thermal(cfg, names)
         self._validate_mirror_symmetry(cfg, geometry)
+        self._init_hard_kinematics(cfg)
+        self._field_cache: dict | None = None
+        # Read on every thermal-source call; the groups are fixed for the model.
+        self._source_coefficient = float(compute_groups(cfg)["mass_flux_to_source"])
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
@@ -340,6 +345,60 @@ class BubblePINN(nn.Module):
             )
         self.mirror_axis = 0.5 * (float(geometry.y_min) + float(geometry.y_max))
 
+    @contextmanager
+    def caching_fields(self):
+        """Within the block, each field is computed once per point batch and
+        shared: the equations of a training step read the velocity, the volume
+        fraction, the temperature and the pressure at the same collocation
+        points, and recomputing them per equation doubled the step's graph (and
+        its backward pass) for no change in any value. Entries are keyed on the
+        batch tensor itself, so a different batch is never served another's."""
+        self._field_cache = {}
+        try:
+            yield
+        finally:
+            self._field_cache = None
+
+    def _shared(self, name: str, x: torch.Tensor, c, compute):
+        """``compute()``, or its value from this block's cache for the same
+        batch ``x`` and context ``c``."""
+        cache = self._field_cache
+        if cache is None:
+            return compute()
+        key = (name, id(x), id(c))
+        hit = cache.get(key)
+        if hit is not None and hit[0] is x and hit[1] is c:
+            return hit[2]
+        value = compute()
+        cache[key] = (x, c, value)  # holding x and c keeps their ids unique
+        return value
+
+    def _init_hard_kinematics(self, cfg) -> None:
+        """The exact kinematic condition (``model.hard_kinematics``): it reads the
+        interface's normal and speed off the explicit geometry, so it needs one."""
+        self.hard_kinematics = bool(getattr(cfg.model, "hard_kinematics", False))
+        # Evaluation and every run without a warm-up apply it from the start;
+        # the trainer holds it off through the warm-up, as it does the thermal
+        # source, so the warm-up stays the outline fit alone.
+        self.kinematics_engaged = True
+        self.kinematic_blend_length = float(getattr(cfg.model, "kinematic_blend_length", 0.04))
+        self.kinematic_side = str(getattr(cfg.model, "kinematic_side", "both"))
+        if self.kinematic_side not in ("both", "liquid"):
+            raise ValueError(
+                f"model.kinematic_side must be 'both' or 'liquid', got {self.kinematic_side!r}"
+            )
+        if not self.hard_kinematics:
+            return
+        if not self.front_geometry:
+            raise ValueError(
+                "model.hard_kinematics reads the interface's normal and speed off the explicit "
+                "geometry, so it requires model.front_geometry=true"
+            )
+        if self.kinematic_blend_length <= 0.0:
+            raise ValueError(
+                f"model.kinematic_blend_length={self.kinematic_blend_length} must be > 0"
+            )
+
     def _reflect(self, x: torch.Tensor) -> torch.Tensor:
         """``(x, y, t) -> (x, 2 y_c - y, t)``: the point's mirror image across the axis."""
         return torch.cat([x[:, :1], 2.0 * self.mirror_axis - x[:, 1:2], x[:, 2:]], dim=1)
@@ -382,6 +441,50 @@ class BubblePINN(nn.Module):
         self.wet_fraction_mode = str(getattr(cfg.experiment, "wet_fraction_mode", "fixed"))
         if self.wet_fraction_mode == "fit":
             self._wet_fraction_raw = nn.Parameter(torch.zeros(1))
+        self.footprint_wetting = str(getattr(cfg.experiment, "footprint_wetting", "uniform"))
+        if self.footprint_wetting == "microlayer":
+            self._tau_per_um = float(groups["microlayer_tau_star_per_um"])
+            self._microlayer_init = float(groups["microlayer_um_init"])
+            self.microlayer_mode = str(cfg.experiment.microlayer_mode)
+            if self.microlayer_mode == "fit":
+                self._log_microlayer_raw = nn.Parameter(torch.zeros(1))
+            self._cover: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None
+
+    def bind_cover_times(self, xs, ys, times) -> None:
+        """The instant the images first show each pixel of the floor covered
+        (``heating.cover_times``, on the dataset's uniform pixel grid ``xs`` by
+        ``ys``), which the microlayer wetting reads."""
+        device = next(self.parameters()).device
+        self._cover = tuple(
+            torch.as_tensor(a, dtype=torch.float32, device=device) for a in (xs, ys, times)
+        )
+
+    @property
+    def microlayer_um(self):
+        """The film the bubble leaves on the floor, microns: the declared value
+        when fixed; when fitted, a trained positive scalar starting there."""
+        if self.microlayer_mode == "fixed":
+            return self._microlayer_init
+        return self._microlayer_init * torch.exp(self._log_microlayer_raw)
+
+    def _wetness(self, x: torch.Tensor, local: torch.Tensor) -> torch.Tensor:
+        """The share of the floor still wet at ``x``: the uniform wet share, or
+        under the microlayer wetting one while the film the bubble left when it
+        covered the spot lasts (its life is the film over the local flux) and
+        zero after, ``(N, 1)``."""
+        if self.footprint_wetting == "uniform":
+            return self.wet_fraction
+        if self._cover is None:
+            raise RuntimeError(
+                "the microlayer wetting reads when the images first cover each spot of the "
+                "floor: bind them with bind_cover_times before evaluating the source"
+            )
+        xs, ys, times = self._cover
+        col = ((x[:, 0] - xs[0]) / (xs[1] - xs[0])).round().long().clamp(0, len(xs) - 1)
+        row = ((x[:, 1] - ys[0]) / (ys[1] - ys[0])).round().long().clamp(0, len(ys) - 1)
+        covered_at = times[row, col].unsqueeze(1)
+        life = self._tau_per_um * self.microlayer_um / local.clamp_min(1e-6)
+        return torch.sigmoid((covered_at + life - x[:, 2:3]) / (DEPLETION_SMOOTHING * life))
 
     @property
     def wet_fraction(self):
@@ -411,7 +514,10 @@ class BubblePINN(nn.Module):
             return torch.zeros_like(x[:, :1])
         local = wall_flux_ratio(x, self._heater_zones)
         return (
-            self._footprint_source_star * local * self.wet_fraction * self.alpha(x, c).detach()
+            self._footprint_source_star
+            * local
+            * self._wetness(x, local)
+            * self.alpha(x, c).detach()
         )
 
     def _init_vapor_pressure(self) -> None:
@@ -824,7 +930,9 @@ class BubblePINN(nn.Module):
         geometry: GeometryPriors | None = None,
     ) -> torch.Tensor:
         """Volume fraction, bounded in (0, 1) by construction."""
-        return torch.sigmoid(self.phi(x, c, pin=pin, geometry=geometry) / self.eps)
+        if pin is not None or geometry is not None:
+            return torch.sigmoid(self.phi(x, c, pin=pin, geometry=geometry) / self.eps)
+        return self._shared("alpha", x, c, lambda: torch.sigmoid(self.phi(x, c) / self.eps))
 
     def front(
         self,
@@ -874,7 +982,59 @@ class BubblePINN(nn.Module):
     def velocity(
         self, x: torch.Tensor, c: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
+        return self._shared("velocity", x, c, lambda: self._velocity(x, c))
+
+    def _velocity(
+        self, x: torch.Tensor, c: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        u, v = self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
+        if not (self.hard_kinematics and self.kinematics_engaged):
+            return u, v
+        return self._kinematic_correction(x, c, u, v)
+
+    # Below this |grad phi| the normal is undefined (the medial axis deep inside
+    # the vapour, where the blend has long faded); the floor only keeps the
+    # division finite there.
+    _GRAD_FLOOR = 1e-6
+    # Points sampled on the interface sit within rounding of it (3e-8 measured),
+    # on either side; they belong to the liquid side the condition is set on.
+    _ON_INTERFACE = 1e-6
+
+    def _kinematic_correction(
+        self, x: torch.Tensor, c: torch.Tensor | None, u: torch.Tensor, v: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """``u + (V_n - u.n) n psi``: the network's velocity with its normal part
+        replaced by the interface's speed ``V_n`` where ``psi = sech^2(phi / l)``
+        is one (the interface), blending back to the network over the length
+        ``l``. The tangential part is untouched.
+
+        ``n = -grad phi / |grad phi|`` (out of the vapour) and ``V_n = phi_t /
+        |grad phi|`` are the level set's own normal and normal speed, exact on the
+        interface and its natural extension off it; ``phi`` is read with the
+        geometry's parameters detached, so no flow term can move the outline
+        through this. Both are even about a mirror axis, so the correction keeps
+        ``u`` even and ``v`` odd.
+        """
+        grad_on = torch.is_grad_enabled()
+        with torch.enable_grad():
+            leaf = x if x.requires_grad else x.detach().requires_grad_(True)
+            phi = self._phi_with_frozen_geometry(leaf, c)
+            phi_x, phi_y, phi_t = torch.autograd.grad(
+                phi, leaf, torch.ones_like(phi), create_graph=True
+            )[0].split(1, dim=1)
+            norm = torch.sqrt(phi_x**2 + phi_y**2).clamp_min(self._GRAD_FLOOR)
+            n_x, n_y = -phi_x / norm, -phi_y / norm
+            speed = phi_t / norm
+            blend = 1.0 - torch.tanh(phi / self.kinematic_blend_length) ** 2
+            if self.kinematic_side == "liquid":
+                # The vapour (phi > 0) keeps the network's velocity: a step at
+                # the interface, where the real velocity jumps too.
+                blend = torch.where(phi <= self._ON_INTERFACE, blend, torch.zeros_like(blend))
+            shortfall = blend * (speed - (u * n_x + v * n_y))
+            u, v = u + shortfall * n_x, v + shortfall * n_y
+        if not grad_on:
+            return u.detach(), v.detach()
+        return u, v
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The volumetric dilatation from phase change: the free ``s`` network, or
@@ -910,8 +1070,7 @@ class BubblePINN(nn.Module):
         (:meth:`footprint_source`) is added: the wall flux under the bubble
         creates vapour across the footprint, the outline flux along the front.
         """
-        groups = compute_groups(self.cfg)
-        coefficient = groups["mass_flux_to_source"]
+        coefficient = self._source_coefficient
         sigma = self.source_kernel_width
         source = torch.zeros_like(x[:, :1])
         instants, inverse = torch.unique(x[:, 2].detach(), return_inverse=True)
@@ -985,6 +1144,9 @@ class BubblePINN(nn.Module):
         return vapour_fraction * self.p_vapor(x[:, 2:3]) + (1.0 - vapour_fraction) * liquid
 
     def liquid_pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._shared("liquid_pressure", x, c, lambda: self._liquid_pressure(x, c))
+
+    def _liquid_pressure(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
         """The liquid-side pressure: the ``p`` network itself. Identical to
         :meth:`pressure` under the single representation."""
         return self._even(self._require("p"), x, c)
@@ -1006,6 +1168,9 @@ class BubblePINN(nn.Module):
         return nn.functional.softplus(self._log_q_pulse)
 
     def temperature(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
+        return self._shared("temperature", x, c, lambda: self._temperature(x, c))
+
+    def _temperature(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
         """Non-dimensional superheat. Stage B; raises if T was not configured.
 
         Bounded to ``(theta_in, 1)`` -- inlet to wall -- by default. Under
@@ -1048,6 +1213,9 @@ class BubblePINN(nn.Module):
     def _phi_with_frozen_geometry(
         self, x: torch.Tensor, c: torch.Tensor | None
     ) -> torch.Tensor:
+        return self._shared("phi_frozen", x, c, lambda: self._phi_frozen(x, c))
+
+    def _phi_frozen(self, x: torch.Tensor, c: torch.Tensor | None) -> torch.Tensor:
         """``phi(x)`` with the geometry's parameters detached but its dependence on
         ``x`` kept: the temperature's spatial derivatives see the interface, while
         no thermal term can move it through the gate."""
