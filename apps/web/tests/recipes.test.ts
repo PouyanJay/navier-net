@@ -49,7 +49,7 @@ describe("recipe stamped states", () => {
     expect(state.front_velocity).toBe(true);
     expect(state.rebalance_max_ratio).toBe(10);
     expect(state.grad_clip).toBe(50);
-    expect(state.outline_guard_every).toBe(500);
+    expect(state.outline_guard_every).toBe(125);
     expect(state.causal_weighting).toBe(true);
     expect(state.causal_gate_min_weight).toBe(0.99);
     expect(state.log_chunk_residuals).toBe(true);
@@ -60,7 +60,7 @@ describe("recipe stamped states", () => {
     expect(state.film_pressure).toBe(false);
     expect(state.depletable_superheat).toBe(false);
     expect(state.evap_closure_two_way).toBe(false);
-    expect(state.steps).toBe(12000);
+    expect(state.steps).toBe(5250);
   });
 
   it("has a card for every recipe name", () => {
