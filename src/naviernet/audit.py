@@ -49,6 +49,7 @@ from naviernet.physics.residuals import (
     kinematic_residual,
     laplace_jump_residual,
 )
+from naviernet.relative_error import relative_errors
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
 
@@ -369,6 +370,11 @@ def audit_frame(
         "heat": heat_budget(cfg, model, data, groups, row, fields, grid),
         "outline": outline_agreement(cfg, model, data, row),
     }
+    nx = int(getattr(cfg.evaluation, "relative_error_nx", 0))
+    if nx > 0:
+        record["relative_error"] = relative_errors(
+            model, groups, data, t, nx, int(cfg.evaluation.relative_error_ny)
+        )
     pixel = float(data.x[1] - data.x[0])
     record["front"], front = front_conditions(
         model, groups, t, pixel, float(data.y_hi - data.y_lo)

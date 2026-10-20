@@ -636,6 +636,9 @@ li.v .bound { color: var(--muted); }
 li.v .tag { font: 700 .72rem var(--mono); text-transform: uppercase; text-align: right; }
 li.v.pass .tag { color: var(--pass); } li.v.fail .tag { color: var(--fail); }
 .tw { overflow-x: auto; }
+table.relt td.rel { font-family: var(--mono); text-align: right; }
+table.relt td.rel.good { color: var(--pass); } table.relt td.rel.poor { color: var(--fail); }
+table.relt th[rowspan] { text-align: left; vertical-align: top; }
 table { border-collapse: collapse; font: .85rem var(--mono); font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 4px 14px 4px 0; border-bottom: 1px solid var(--rule); }
 th { color: var(--muted); font-weight: 600; }
@@ -650,8 +653,75 @@ figcaption { color: var(--muted); font-size: .9rem; max-width: 80ch; }
 """
 
 
+# A relative error at or below the first is shown as good, above the second as poor.
+RELATIVE_GOOD, RELATIVE_POOR = 0.10, 0.25
+RELATIVE_LABELS = {
+    "near edge": "liquid within {near} um of the edge",
+    "edge band": "liquid {near} to {far} um from the edge",
+    "open liquid": "liquid beyond {far} um",
+    "all liquid": "all liquid",
+    "vapour": "inside the vapour",
+}
+
+
+def relative_error_table(run: Run) -> dict:
+    """Each frame's relative equation errors: the audit's, or computed now from
+    the checkpoint for an audit that predates them (naviernet.relative_error)."""
+    frames = run.audit["frames"]
+    if all("relative_error" in f for f in frames):
+        return {f["frame"]: f["relative_error"] for f in frames}
+    from naviernet.relative_error import relative_errors
+
+    model, data, _ = load_model(run.cfg, RunPaths.from_config(run.cfg))
+    groups = compute_groups(run.cfg)
+    nx, ny = (
+        int(run.cfg.evaluation.relative_error_nx),
+        int(run.cfg.evaluation.relative_error_ny),
+    )
+    return {
+        f["frame"]: relative_errors(model, groups, data, f["t_star"], nx, ny) for f in frames
+    }
+
+
+def _relative_html(run: Run, table: dict) -> str:
+    frames = sorted(table)
+    layer_um = next(iter(table.values()))["layer"] * run.l_um
+    near, far = f"{layer_um:.0f}", f"{3 * layer_um:.0f}"
+    head = "".join(f"<th>{f}</th>" for f in frames)
+    body = []
+    for name in ("temperature", "momentum", "continuity", "edge transport"):
+        regions = [r for r in RELATIVE_LABELS if r in table[frames[0]].get(name, {})]
+        for i, region in enumerate(regions):
+            cells = []
+            for f in frames:
+                value = table[f][name][region]
+                grade = (
+                    "good"
+                    if value <= RELATIVE_GOOD
+                    else ("poor" if value > RELATIVE_POOR else "mid")
+                )
+                cells.append(f'<td class="rel {grade}">{100 * value:.0f}%</td>')
+            label = RELATIVE_LABELS[region].format(near=near, far=far)
+            first = f'<th rowspan="{len(regions)}">{name}</th>' if i == 0 else ""
+            body.append(f"<tr>{first}<td>{label}</td>{''.join(cells)}</tr>")
+    return (
+        '<section class="check" id="relative"><div class="head"><h3>Each equation against its own terms</h3></div>'
+        '<p class="question">The error relative to the size of the terms that should balance, '
+        "rms(residual) / rms(sum of the terms' magnitudes), per region and frame. 10% means the terms "
+        f"balance to within a tenth of their size. Green at or below {100 * RELATIVE_GOOD:.0f}%, "
+        f"red above {100 * RELATIVE_POOR:.0f}%. Not a gate verdict yet.</p>"
+        f'<div class="tw"><table class="relt"><thead><tr><th>equation</th><th>region</th>{head}</tr>'
+        f"</thead><tbody>{''.join(body)}</tbody></table></div></section>"
+    )
+
+
 def page(
-    run: Run, checks: list[dict], figs: dict, outline: dict, seeds_named: list[str]
+    run: Run,
+    checks: list[dict],
+    figs: dict,
+    outline: dict,
+    seeds_named: list[str],
+    relative: dict | None = None,
 ) -> str:
     cfg = run.cfg
     tcfg = cfg.training
@@ -762,6 +832,7 @@ rest is read against the bubble the physics was given.</p>
 <ul class="verdicts">{"".join(_verdict_html(v) for v in outline_rows)}</ul></section>
 <h2>The five checks</h2>
 {"".join(sections)}
+{_relative_html(run, relative) if relative else ""}
 <h2>Figures</h2>
 <div class="figs">{figures}</div>
 </main>
@@ -815,7 +886,15 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     (out / "index.html").write_text(
-        page(primary, checks, figs, outline, [r.name for r in runs[1:]]), encoding="utf-8"
+        page(
+            primary,
+            checks,
+            figs,
+            outline,
+            [r.name for r in runs[1:]],
+            relative_error_table(primary),
+        ),
+        encoding="utf-8",
     )
     print(f"wrote {out / 'index.html'}")
     for c in checks:

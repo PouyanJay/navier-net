@@ -917,6 +917,12 @@ class EvaluationConfig:
     # at the instants it was trained on and violate it between them; this is
     # what sees it. 0 skips the scan.
     audit_scan_times: int = 61
+    # The grid each frame's relative equation errors are taken on
+    # (naviernet.relative_error); nx 0 skips them. The layer at the interface
+    # is about 12 um thick: on trust-bc4-s0 the values settle from 432 x 101 on
+    # (to within 0.01), while 288 x 81 read the edge band at 45% for 12%.
+    relative_error_nx: int = 576
+    relative_error_ny: int = 121
     acceptance: AcceptanceConfig = field(default_factory=AcceptanceConfig)
 
 
