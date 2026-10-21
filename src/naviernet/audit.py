@@ -297,6 +297,28 @@ def jump_shape_pixels(
     return np.abs(laplace) / per_pixel
 
 
+def _laplace_in_pascals(model, laplace: np.ndarray, codes: np.ndarray, t: float) -> dict:
+    """The Young-Laplace jump around the front in pascals: the vapour pressure
+    (gauge), the jump's mean error (zero when imposed on average), and its
+    scatter about that mean, overall and per segment: the part a uniform vapour
+    pressure cannot satisfy, which is the 2D model's form error at the front."""
+    scale = float(model.cfg.fluid.rho_l) * float(model.cfg.scales.U_ref) ** 2
+    instant = torch.tensor([[t]], dtype=torch.float32, device=_device(model))
+    vapour = float(model.p_vapor(instant).detach()) * scale
+    mean = float(laplace.mean())
+    scatter = (laplace - mean) * scale
+    return {
+        "vapour_pressure_Pa": vapour,
+        "laplace_mean_Pa": mean * scale,
+        "laplace_scatter_Pa": _rms(scatter),
+        "laplace_scatter_Pa_by_segment": {
+            name: _rms(scatter[codes == k])
+            for k, name in enumerate(SEGMENTS)
+            if (codes == k).any()
+        },
+    }
+
+
 def front_conditions(
     model, groups, t: float, pixel: float = 0.0, width: float = 1.0
 ) -> tuple[dict | None, dict[str, np.ndarray]]:
@@ -335,7 +357,7 @@ def front_conditions(
         return record, {}
     kappa = front.kappa_par.detach().cpu().numpy().ravel()
     pixels = jump_shape_pixels(laplace, kappa, groups, pixel, width)
-    codes = _segment_codes(front)
+    record.update(_laplace_in_pascals(model, laplace, codes := _segment_codes(front), t))
     record["jump_px_median"] = float(np.median(pixels))
     record["jump_px_p90"] = float(np.percentile(pixels, 90))
     record["jump_px_by_segment"] = {

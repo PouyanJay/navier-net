@@ -466,6 +466,26 @@
     "default": 0.04
   },
   {
+    "key": "model.laplace_condition",
+    "label": "Young-Laplace condition",
+    "kind": "enum",
+    "section": "physics",
+    "owner": "override",
+    "help": "the pressure jump across the bubble edge imposed at every edge point, or on average around the edge, which sets the vapour pressure and reports the rest",
+    "unit": "",
+    "options": [
+      "pointwise",
+      "mean"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "laplace_condition",
+    "default": "pointwise"
+  },
+  {
     "key": "model.momentum_inertia",
     "label": "Inertia in the momentum law",
     "kind": "bool",

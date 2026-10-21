@@ -418,6 +418,14 @@ class ModelConfig:
     # The depth-averaged momentum law in sharp mode: Darcy, or Darcy plus the
     # Brinkman viscous term (1/Re) mu~ lap(u).
     momentum_closure: str = "darcy"  # "darcy" | "brinkman"
+    # How the Young-Laplace jump is imposed on the explicit front. "pointwise":
+    # at every front sample. "mean": its average around the front at each
+    # instant, which sets the (uniform) vapour pressure the way a bubble's own
+    # does, while the pointwise departure is left to the audit as the 2D
+    # model's form error. With the front's motion taken from the images, the
+    # pointwise jump over-determines the depth-averaged flow there (its error
+    # held near 0.29 in every run while the flow law failed beside the front).
+    laplace_condition: str = "pointwise"  # "pointwise" | "mean"
     # Depth-averaged inertia in the Brinkman law, rho~ (u_t + 6/5 u.grad u),
     # making it the depth-averaged Navier-Stokes of a Hele-Shaw cell (Gondret &
     # Rabaud 1997). Without it the law balances pressure against friction alone,

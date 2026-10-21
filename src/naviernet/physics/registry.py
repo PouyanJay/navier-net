@@ -319,7 +319,20 @@ def _evap_flux_sq(ctx: LossContext) -> torch.Tensor:
 
 
 def _laplace_term(ctx: LossContext) -> torch.Tensor:
-    return (laplace_jump_residual(ctx.model, ctx.front, ctx.groups) ** 2).mean()
+    residual = laplace_jump_residual(ctx.model, ctx.front, ctx.groups)
+    if str(getattr(ctx.model.cfg.model, "laplace_condition", "pointwise")) == "mean":
+        residual = per_instant_mean(residual, ctx.front.points[:, 2])
+    return (residual**2).mean()
+
+
+def per_instant_mean(values: torch.Tensor, times: torch.Tensor) -> torch.Tensor:
+    """``values`` ``(N, 1)`` averaged over the samples sharing each instant of
+    ``times`` ``(N,)``: one mean per instant, ``(K, 1)``."""
+    _, which = torch.unique(times.detach(), return_inverse=True)
+    count = torch.zeros(int(which.max()) + 1, 1, device=values.device, dtype=values.dtype)
+    total = torch.zeros_like(count).index_add(0, which, values)
+    count = count.index_add(0, which, torch.ones_like(values))
+    return total / count
 
 
 def _film_term(ctx: LossContext) -> torch.Tensor:

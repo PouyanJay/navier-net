@@ -394,6 +394,19 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.laplace_condition",
+        "Young-Laplace condition",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "the pressure jump across the bubble edge imposed at every edge point, or on "
+            "average around the edge, which sets the vapour pressure and reports the rest"
+        ),
+        options=("pointwise", "mean"),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.momentum_inertia",
         "Inertia in the momentum law",
         "bool",
