@@ -43,6 +43,15 @@ receding_cap: true
 walls_at: physical
 wall_condition: no_slip
 momentum_closure: brinkman
+# Young-Laplace on average around the front: it sets the bubble's uniform
+# vapour pressure (about 180 Pa above the outlet, the jump the 300 x 150 um
+# geometry predicts), and its pointwise departure is reported, not forced.
+# Imposed at every point, with the front's motion taken from the images, it
+# over-determined the depth-averaged flow: the momentum law's error beside the
+# front fell from 49-63% of its terms to 29-36% (trust-lapmean4-s0 against
+# trust-bc4-s0), all else unchanged; the departure left sits mostly at the
+# pinned root.
+laplace_condition: mean
 outlet_condition: zero_gradient
 # A velocity inlet and a pressure outlet: the developed profile of the
 # depth-averaged law at the series' flow rate (zero at the side walls, so no
