@@ -4,162 +4,89 @@
 
 # NavierNet
 
-**Ten camera frames of a boiling bubble go in. The velocity, pressure and temperature fields come out.**
-
-A high-speed camera can only record the shape of a bubble. NavierNet trains a neural network to fit
-those frames *and* satisfy the conservation laws at the same time, so it can hand back the flow fields
-the camera never saw, at any instant between the frames.
+**Ten camera frames of a boiling bubble in, the velocity, pressure and temperature around it out.**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-2e6cca?style=flat-square)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](.python-version)
 [![PyTorch](https://img.shields.io/badge/PyTorch-PINN-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](src/naviernet)
-[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=flat-square&logo=fastapi&logoColor=white)](apps/api)
-[![React 19](https://img.shields.io/badge/React-19-149ECA?style=flat-square&logo=react&logoColor=white)](apps/web)
-[![Hydra](https://img.shields.io/badge/Config-Hydra-89b4fa?style=flat-square)](configs)
-
-[Why it exists](#why-it-exists) ·
-[Results](#results) ·
-[Architecture](#architecture) ·
-[Pipeline](#the-pipeline) ·
-[Quick start](#quick-start) ·
-[Development](#development)
 
 </div>
 
----
+A high-speed camera sees only a bubble's outline. NavierNet fits a physics-informed neural network to
+those outlines and to the conservation laws at once, and so recovers the fields the camera cannot see,
+at any instant between the frames. The case studied is FC-72 boiling in a 300 × 150 µm heated channel.
 
-## Why it exists
+## How it works
 
-A vapour bubble growing in a heated microchannel decides how well the channel cools. Watching one is
-hard: the camera gives a silhouette every half millisecond and nothing else. The velocity, the
-pressure and the temperature that drive the growth are all invisible.
+Training runs in two stages.
 
-The two usual answers both fall short.
+1. **Outline.** The bubble is an explicit capsule rooted at the nucleation site. It is fitted to the
+   traced outlines (the centre of the dark rim, made mirror-symmetric about the channel), then frozen.
+2. **Fields.** With the outline fixed, the network solves for the flow, pressure and temperature
+   around it.
 
-| | Approach | Where it breaks |
-|---|---|---|
-| **A** | Fit or interpolate the images | Gives a prettier silhouette, still no physics and no velocity |
-| **B** | Simulate it with CFD | Needs the nucleation site, the local superheat and the wall condition, which are exactly what you do not have |
-
-NavierNet takes the third route. One network represents each field as a smooth function of space and
-time. The recorded frames pull it toward the measurement, and the governing equations, evaluated by
-automatic differentiation, pull it toward physics. What comes out satisfies both.
-
-The interface is not left free to be any shape. It is built as an explicit capsule whose root sits at
-the measured nucleation site and whose nose can only move forward, so the reconstruction stays a
-bubble even where there are no frames to hold it in place.
-
-## Results
-
-Measured on one imaged event: FC-72 at 2 W/cm² in a 300 x 150 um channel, frames 0.5 ms apart.
+The physics, in the depth-averaged 2D model:
 
 | | |
 |---|---|
-| Agreement with the recorded frames | **IoU 0.93 to 0.98** |
-| A frame withheld from training entirely | **IoU 0.968** |
-| Nose speed, with no velocity data supplied | **177 mm/s** against 180 mm/s measured |
-| Film thickness against Bretherton theory | **4.9 um**, matching the imaged side films |
-| Energy budget against the wall setpoint | **1.9 W/cm²** against 2.0 W/cm² |
+| Flow | Brinkman law: pressure against the floor and ceiling drag and in-plane viscous friction |
+| Channel | Developed velocity profile at the inlet (10 mL/h); stress-free outlet at a fixed pressure |
+| Bubble edge | Moves with the liquid; held at the boiling point; Young–Laplace imposed on average, which sets the vapour pressure |
+| Heat | Liquid energy equation, two heater zones on the floor |
+| Evaporation | A thin film under the bubble dries out as the floor heats it; the total vapour made is held to the bubble's measured growth |
 
-The mid-bubble waist that precedes pinch-off appears on frames the model never saw, which a freely
-shaped interface does not produce at all.
+## Where it stands
 
-## Architecture
+From the current default (one seed), measured against the images and against each equation's own terms:
 
-A normal product surface wraps the solver. The browser drives the same pipeline the CLI does, so a
-run started in either place is the same run.
+| | |
+|---|---|
+| Outline against the frames | IoU 0.979 to 0.989 |
+| Vapour pressure | about 180 Pa above the outlet, as Young–Laplace predicts for this channel |
+| Equation errors near the bubble, relative to their terms | temperature 10–17%, continuity 7–11% |
+| Still open | temperature in the open liquid (50–74%), flow next to the bubble (29–36%) |
 
-```mermaid
-flowchart TB
-    subgraph UI["apps/web (React + Vite)"]
-        S["Datasets"] --- P["Physics & model"] --- V["Solver"] --- R["Results"]
-    end
-    subgraph API["apps/api (FastAPI)"]
-        J["run manager + SSE stream"]
-    end
-    subgraph CORE["src/naviernet (PyTorch + Hydra)"]
-        M["field networks"] --- G["interface geometry"] --- E["equation registry"]
-    end
-    UI -->|"REST + server-sent events"| API --> CORE
-    CORE -->|"checkpoints, metrics, figures"| FS[("outputs/<run>")]
-    FS --> API
-```
-
-Every run writes its fully resolved config next to its results, so any figure can be traced back to
-the settings that produced it.
-
-## The pipeline
-
-Five stages, each reading its inputs from disk. Run them together or one at a time.
-
-```mermaid
-flowchart LR
-    A["preprocess<br/>segment frames"] --> B["train<br/>fit data + physics"]
-    B --> C["evaluate<br/>IoU, speeds, budgets"]
-    C --> D["figures"] --> E(["video"])
-```
-
-```bash
-naviernet stage=all                        # everything
-naviernet stage=train training.steps=500   # resumable, run it again to continue
-```
+Every run ends with an audit and a report: the five-check gate, these relative errors, and figures of
+every field.
 
 ## Quick start
 
-One command from a fresh clone:
-
 ```bash
-make run
+make run    # install everything, start the API and the web app, print the URLs
+make test   # Python and web tests
+make lint   # ruff, eslint, tsc
 ```
 
-That installs the toolchain, both Python packages and the web dependencies, then starts the API and
-the web app on free ports and prints the URLs.
+Run the pipeline from the command line:
 
 ```bash
-make            # command reference
-make setup      # dependencies only
-make stop       # tear everything down
-make test       # Python and web suites
-make lint       # ruff, eslint, tsc
+naviernet dataset=Series-1-w300 experiment=trusted_w300 model=trusted training=trusted
+naviernet --cfg job --resolve        # print the composed config, run nothing
 ```
 
-The raw camera frames are not distributed with the repository. Drop your own TIFFs into
-`data/raw/<name>/` and add a matching `configs/experiment/<name>.yaml`, or upload them in the browser
-under Datasets.
-
-## Configuration
-
-Configuration is [Hydra](https://hydra.cc)-composed from typed dataclasses, so a wrong key or a wrong
-type fails immediately instead of quietly producing wrong physics. One directory per group.
+On a rented GPU through [Modal](https://modal.com), with a report afterwards:
 
 ```bash
-naviernet stage=all model.alpha_eps=0.03      # sharper interface
-naviernet --multirun training.seed=0,1,2      # seed sweep
-naviernet --cfg job --resolve                 # print the config, run nothing
+modal run scripts/modal_bench.py --mode bench --seeds 0 --prefix my-run
+python scripts/run_report.py my-run-s0
 ```
 
-| Group | Holds |
+The outline fit is cached and reused by every later run on the same outlines, settings and code, so a
+run is about 45 minutes after the first.
+
+The raw camera frames are not in the repository. Put TIFFs in `data/raw/<name>/` with a matching
+`configs/experiment/<name>.yaml`, or upload them in the browser.
+
+## Layout
+
+| | |
 |---|---|
-| `experiment/` | Operating conditions of one imaged dataset |
-| `fluid/` | Saturated two-phase properties |
-| `imaging/` | Segmentation and calibration |
-| `scales/` | Non-dimensionalisation |
-| `model/`, `training/` | Network architecture and optimisation |
+| `src/naviernet` | The solver: models, physics, training, audit |
+| `configs` | [Hydra](https://hydra.cc) configs; `trusted` is the default recipe |
+| `apps/api`, `apps/web` | FastAPI server and React app over the same pipeline |
+| `scripts` | Modal runs, run reports |
 
-Derived quantities such as the dimensionless groups are computed rather than configured, so they can
-never drift away from the inputs they come from.
-
-## Development
-
-```bash
-make test-all   # adds the slow and data-dependent tests, plus end-to-end
-make lint-fix   # apply autofixes, then re-check
-```
-
-Tests that need the raw dataset or a trained checkpoint are marked and skip cleanly without them.
-
-The server is meant for a local or trusted network. It has no authentication and it can start
-training jobs and write to the repository, so do not expose it to the internet as it stands.
+The server has no authentication and can start training jobs. Keep it on a local or trusted network.
 
 ## License
 
