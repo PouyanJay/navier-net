@@ -465,7 +465,13 @@ class GeometricInterface(nn.Module):
             [torch.zeros(1, device=grid.device), torch.cumsum(slopes * steps, dim=0)]
         )
 
-        tq = t.clamp(min=float(grid[0]))
+        # Held at the grid's start before it, with the derivative 1 from it on.
+        # Not `clamp`: its derivative AT the bound differs between builds (0 on
+        # Modal's Linux torch, 1 on macOS), and the bound is the first frame's
+        # instant, so frame 1's nose speed read as zero there and its transport
+        # and temperature residuals doubled.
+        start = grid[0].to(t.dtype)
+        tq = torch.where(t < start, start, t)
         idx = (torch.searchsorted(grid, tq.reshape(-1), right=True) - 1).clamp(
             0, grid.numel() - 2
         )

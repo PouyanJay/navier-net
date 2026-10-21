@@ -483,3 +483,21 @@ def test_front_geometry_composes_with_causal_and_kinematics(tmp_path):
     assert any(
         plain_last[k] != causal_last[k] for k in plain_last if k not in ("step", "lr")
     ), "causal weighting had no effect on the trajectory"
+
+
+def test_the_nose_speed_at_the_grid_start_is_the_speed_just_after_it():
+    """The first frame sits exactly at the nose grid's start. Its speed there is
+    the first segment's, not zero: a clamp's derivative at its own bound is
+    build dependent (0 on Modal's Linux torch), which zeroed frame 1's front
+    speed and doubled its transport and temperature residuals."""
+    geo = _random_geo(3)
+    start = float(geo.time_grid()[0])
+
+    def speed(at: float) -> float:
+        t = torch.tensor([[at]], requires_grad=True)
+        (s,) = torch.autograd.grad(geo.nose(t).sum(), t)
+        return float(s)
+
+    assert speed(start) == pytest.approx(speed(start + 1e-6), rel=1e-4)
+    assert speed(start) > 0.0
+    assert speed(start - 0.1) == 0.0, "held at the start before the window"
