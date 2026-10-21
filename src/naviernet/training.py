@@ -604,6 +604,7 @@ _BOUNDARY_CHOICES = {
     "momentum_closure": ("darcy", "brinkman"),
     "outlet_condition": ("none", "zero_gradient"),
     "inlet_profile": ("plug", "developed"),
+    "laplace_condition": ("pointwise", "mean"),
 }
 
 
