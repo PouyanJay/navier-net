@@ -497,6 +497,7 @@ def _validate_training_config(cfg) -> None:
     _validate_freeze_geometry(tcfg, cfg.model)
     _validate_temperature_stage(tcfg, cfg.model)
     _validate_growth_closure(tcfg, cfg.model)
+    _validate_energy_relative(tcfg)
     if int(getattr(tcfg, "physics_lr_halflife", 0)) < 0:
         raise ValueError(
             f"training.physics_lr_halflife must be >= 0, got {tcfg.physics_lr_halflife}"
@@ -565,6 +566,26 @@ def _validate_temperature_stage(tcfg, model_cfg) -> None:
             "training.temperature_stage_from runs on the gradient-norm weighting; the RBA "
             "attention pool is not rebuilt for the temperature terms"
         )
+
+
+def _validate_energy_relative(tcfg) -> None:
+    """The relative energy objective enters through the soft causal weighting's
+    per-point losses, the path the trusted recipe trains on; the other paths
+    would silently keep the absolute residual."""
+    if not bool(getattr(tcfg, "energy_relative", False)):
+        return
+    if (
+        not bool(tcfg.causal_weighting)
+        or str(tcfg.causal_mode) != "weight"
+        or tcfg.weighting == "rba"
+    ):
+        raise ValueError(
+            "training.energy_relative is applied through the causal weighting's per-point "
+            "losses, so it needs training.causal_weighting=true with causal_mode=weight and "
+            "the gradient-norm weighting"
+        )
+    if float(getattr(tcfg, "energy_relative_floor", 0.02)) <= 0.0:
+        raise ValueError("training.energy_relative_floor must be > 0")
 
 
 def _validate_outline_guard(tcfg) -> None:
@@ -1187,7 +1208,9 @@ def _chunk_losses(
     """
     order = torch.argsort(ctx.x_coll.detach()[:, 2])
     per_point = sum(
-        weights[eq.weight_key] * schedule.get(eq.weight_key, 1.0) * eq.pointwise(ctx)
+        weights[eq.weight_key]
+        * schedule.get(eq.weight_key, 1.0)
+        * registry.training_pointwise(eq, ctx)
         for eq in coll_equations
     )[order]
     bounds = _chunk_bounds(len(order), n_chunks)

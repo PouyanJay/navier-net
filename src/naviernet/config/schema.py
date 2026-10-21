@@ -692,6 +692,14 @@ class TrainingConfig:
     # momentum weight down to 0.26 (its gradient is the largest), and its
     # Brinkman residual doubled against the coupled run's.
     frozen_weighting: str = "fixed"  # "fixed" | "equalised"
+    # Train the liquid energy equation on its residual over the size of its own
+    # terms (floored at energy_relative_floor), not the absolute residual: at
+    # the interface the terms are some 40 times larger than in the open liquid,
+    # so the absolute loss is all interface, and the open liquid's temperature
+    # equation held at 54-73% of its terms on trust-bc4-s0. The audit and the
+    # log keep the absolute residual.
+    energy_relative: bool = False
+    energy_relative_floor: float = 0.02
     # The temperature equation trains the temperature only: the velocity in its
     # advection term is detached, so the equation's error cannot bend the flow
     # (see residuals.energy_liquid_residual). Off keeps the two-way gradient.
