@@ -71,6 +71,7 @@ class FieldNet(nn.Module):
             in_dim=3,
             n_feats=_resolve(arch, "fourier_feats", model_cfg.fourier_feats),
             scale=_resolve(arch, "fourier_scale", model_cfg.fourier_scale),
+            scales=_resolve(arch, "fourier_scales", None),
         )
 
         # The conditioning vector is appended to the Fourier features, not fed

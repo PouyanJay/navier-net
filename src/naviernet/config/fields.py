@@ -513,8 +513,8 @@ PHYSICS: tuple[FieldSpec, ...] = (
         "physics",
         "form",
         help=(
-            "build the symmetry about the channel centreline into every field; for "
-            "after the physics passes its tests without it"
+            "build the symmetry about the channel centreline into every field; on "
+            "in the trusted recipe"
         ),
     ),
 )

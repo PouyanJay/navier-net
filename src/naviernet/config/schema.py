@@ -194,6 +194,9 @@ class FieldArch:
     layers: Optional[int] = None  # noqa: UP045
     fourier_feats: Optional[int] = None  # noqa: UP045
     fourier_scale: Optional[float] = None  # noqa: UP045
+    # Several Fourier scales, the features split evenly between them; takes
+    # the place of fourier_scale (models/layers.py FourierFeatures).
+    fourier_scales: Optional[list[float]] = None  # noqa: UP045
 
 
 @dataclass

@@ -642,7 +642,7 @@
     "kind": "bool",
     "section": "physics",
     "owner": "form",
-    "help": "build the symmetry about the channel centreline into every field; for after the physics passes its tests without it",
+    "help": "build the symmetry about the channel centreline into every field; on in the trusted recipe",
     "unit": "",
     "options": [],
     "lo": null,
