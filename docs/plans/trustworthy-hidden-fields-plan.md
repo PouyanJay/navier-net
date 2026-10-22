@@ -494,8 +494,8 @@ debugging with their closed pull requests.
   the sharp thermal model.
 - 2026-10-15, WP5 (#8): `model.mirror_symmetry` (opt-in): every field network
   averaged with its reflection about the centre of the wall span (v odd), the
-  capsule centreline pinned to the axis; `configs/model/trusted_mirror.yaml`.
-  Joint runs refuse it.
+  capsule centreline pinned to the axis. Joint runs refuse it. On in the trusted
+  recipe since 2026-10-22 (`configs/model/trusted.yaml`).
 - 2026-10-15, WP6 (#7): `naviernet/audit.py` run by `evaluate` on every checkpoint
   (`audit.json`, `audit_fields.npz`, verdicts in `metrics.json`); thresholds under
   `evaluation.acceptance`; `scripts/audit_ensemble.py` for the seed-agreement test.

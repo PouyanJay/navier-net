@@ -9,7 +9,7 @@
   "front_geometry": true,
   "hard_pin": false,
   "liquid_film": false,
-  "mirror_symmetry": false,
+  "mirror_symmetry": true,
   "momentum_closure": "brinkman",
   "nose_shape": false,
   "nucleation_root": true,

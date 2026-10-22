@@ -31,6 +31,13 @@ per_field:
   # an order of magnitude low.
   T: { hidden: 149, layers: 8, fourier_scale: 10.0 }
 
+# Every field exactly even about the channel centreline (v odd), the capsule's
+# centreline pinned to it. The first run to pass the symmetry check (0.013
+# against 0.05, trust-holdmirror4-s0), with the equations' errors unchanged or
+# lower against trust-lapmean4-s0; it needs the pressure and temperature nets
+# held through the warm-up, whose Adam drift otherwise broke the momentum law.
+mirror_symmetry: true
+
 front_geometry: true
 sharp_interface: true
 nucleation_root: true

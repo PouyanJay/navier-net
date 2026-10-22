@@ -42,7 +42,7 @@ log = get_logger(__name__)
 # terms read, those terms, the sampler, the rebalancer, the loop. A physics-only
 # change leaves it alone. Over-bumping costs one warm-up; under-bumping reuses a
 # stale one, so when in doubt, bump.
-WARMUP_CODE_VERSION = 1
+WARMUP_CODE_VERSION = 2  # 2: the pressure and temperature nets held through it
 
 # Modules the warm-up runs and the physics stage rarely touches: hashed whole.
 WARMUP_MODULES = (
