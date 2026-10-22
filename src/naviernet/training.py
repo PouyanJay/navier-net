@@ -584,8 +584,11 @@ def _validate_energy_relative(tcfg) -> None:
             "losses, so it needs training.causal_weighting=true with causal_mode=weight and "
             "the gradient-norm weighting"
         )
-    if float(getattr(tcfg, "energy_relative_floor", 0.02)) <= 0.0:
+    floor = float(getattr(tcfg, "energy_relative_floor", 0.02))
+    if floor <= 0.0:
         raise ValueError("training.energy_relative_floor must be > 0")
+    if float(getattr(tcfg, "energy_relative_cap", 5.0)) <= floor:
+        raise ValueError("training.energy_relative_cap must be above energy_relative_floor")
 
 
 def _validate_outline_guard(tcfg) -> None:

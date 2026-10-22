@@ -395,7 +395,14 @@ def audit_frame(
     nx = int(getattr(cfg.evaluation, "relative_error_nx", 0))
     if nx > 0:
         record["relative_error"] = relative_errors(
-            model, groups, data, t, nx, int(cfg.evaluation.relative_error_ny)
+            model,
+            groups,
+            data,
+            t,
+            nx,
+            int(cfg.evaluation.relative_error_ny),
+            int(getattr(cfg.evaluation, "relative_error_random", 0)),
+            int(cfg.training.seed),
         )
     pixel = float(data.x[1] - data.x[0])
     record["front"], front = front_conditions(

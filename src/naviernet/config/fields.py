@@ -773,6 +773,20 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.energy_relative_cap",
+        "Relative temperature loss cap",
+        "float",
+        "training",
+        "override",
+        help=(
+            "the largest term size the relative temperature loss divides by; above it a "
+            "point counts at its absolute error, so a spike cannot hide behind its own size"
+        ),
+        lo=1e-3,
+        hi=1e4,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.frozen_weighting",
         "Weights after the freeze",
         "enum",
@@ -930,6 +944,19 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         help="points across the channel the relative equation errors are taken on",
         lo=3,
         hi=1025,
+        advanced=True,
+    ),
+    FieldSpec(
+        "evaluation.relative_error_random",
+        "Relative error random points",
+        "int",
+        *_GATE,
+        help=(
+            "random points added to the grid, so a feature thinner than its spacing "
+            "cannot fall between its lines; 0 keeps the grid alone"
+        ),
+        lo=0,
+        hi=4_000_000,
         advanced=True,
     ),
     FieldSpec(

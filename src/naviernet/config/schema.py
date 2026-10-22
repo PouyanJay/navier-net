@@ -703,6 +703,13 @@ class TrainingConfig:
     # log keep the absolute residual.
     energy_relative: bool = False
     energy_relative_floor: float = 0.02
+    # The largest term size the relative loss divides by. Uncapped, a point's
+    # weight fell as its own terms grew, so a spike cost nothing: at the pinned
+    # root the conduction term grew to 1117 (29 absolute-trained) at every frame
+    # of scale-relmulti4-s0. Above the cap a point counts at its absolute error.
+    # 5 is the size of the terms within the thermal layer on trust-holdmirror4-s0
+    # (rms 5.4 to 7.6 within 12 um of the edge).
+    energy_relative_cap: float = 5.0
     # The temperature equation trains the temperature only: the velocity in its
     # advection term is detached, so the equation's error cannot bend the flow
     # (see residuals.energy_liquid_residual). Off keeps the two-way gradient.
@@ -942,6 +949,11 @@ class EvaluationConfig:
     # (to within 0.01), while 288 x 81 read the edge band at 45% for 12%.
     relative_error_nx: int = 576
     relative_error_ny: int = 121
+    # Random points added to that grid (seeded by training.seed), so a feature
+    # thinner than the grid's spacing cannot fall between its lines: a spike at
+    # the root of scale-relmulti4-s0 read 11% on the grid and 100% off it. As
+    # many as the grid has.
+    relative_error_random: int = 69696
     acceptance: AcceptanceConfig = field(default_factory=AcceptanceConfig)
 
 

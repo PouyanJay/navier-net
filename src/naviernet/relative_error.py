@@ -11,6 +11,11 @@ balance to within a tenth of their size there.
 The regions are the liquid within one layer length of the interface, between
 one and three, and beyond three (the layer is the temperature gate's length,
 ``model.theta_gate_length``), all of the liquid, and for continuity the vapour.
+
+The points are a regular grid and, optionally, as many again drawn at random
+across the channel. A feature thinner than the grid's spacing can fall between
+its lines at every frame: on scale-relmulti4-s0 a spike at the pinned root held
+the temperature equation at 100% of its terms, read as 11% on the grid alone.
 """
 
 from __future__ import annotations
@@ -94,13 +99,36 @@ def _terms(model, x: torch.Tensor, groups: dict, inertia: bool) -> dict[str, tup
     return out
 
 
-def relative_errors(model, groups: dict, data, t: float, nx: int, ny: int) -> dict:
-    """``{equation: {region: relative error}}`` at instant ``t`` on an ``nx`` by
-    ``ny`` grid across the channel; also the layer length used, in L_ref."""
+def _points(data, t: float, nx: int, ny: int, n_random: int, seed: int) -> np.ndarray:
+    """An ``nx`` by ``ny`` grid across the channel at ``t``, plus ``n_random``
+    points drawn uniformly over it from ``seed``."""
     xs = np.linspace(data.domain.x_min, data.domain.x_max, nx)
     ys = np.linspace(data.y_lo, data.y_hi, ny)
     grid_x, grid_y = np.meshgrid(xs, ys)
-    points = np.column_stack([grid_x.ravel(), grid_y.ravel(), np.full(grid_x.size, t)])
+    plane = [np.column_stack([grid_x.ravel(), grid_y.ravel()])]
+    if n_random > 0:
+        rng = np.random.default_rng(seed)
+        low = [data.domain.x_min, data.y_lo]
+        high = [data.domain.x_max, data.y_hi]
+        plane.append(rng.uniform(low, high, size=(n_random, 2)))
+    plane = np.concatenate(plane)
+    return np.column_stack([plane, np.full(len(plane), t)])
+
+
+def relative_errors(
+    model,
+    groups: dict,
+    data,
+    t: float,
+    nx: int,
+    ny: int,
+    n_random: int = 0,
+    seed: int = 0,
+) -> dict:
+    """``{equation: {region: relative error}}`` at instant ``t`` on an ``nx`` by
+    ``ny`` grid across the channel and ``n_random`` random points drawn from
+    ``seed``; also the layer length used, in L_ref."""
+    points = _points(data, t, nx, ny, n_random, seed)
     device = next(model.parameters()).device
     inertia = bool(getattr(model.cfg.model, "momentum_inertia", False))
     parts: dict[str, list] = {}

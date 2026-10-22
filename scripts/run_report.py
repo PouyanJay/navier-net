@@ -678,8 +678,11 @@ def relative_error_table(run: Run) -> dict:
         int(run.cfg.evaluation.relative_error_nx),
         int(run.cfg.evaluation.relative_error_ny),
     )
+    n_random = int(run.cfg.evaluation.relative_error_random)
+    seed = int(run.cfg.training.seed)
     return {
-        f["frame"]: relative_errors(model, groups, data, f["t_star"], nx, ny) for f in frames
+        f["frame"]: relative_errors(model, groups, data, f["t_star"], nx, ny, n_random, seed)
+        for f in frames
     }
 
 
