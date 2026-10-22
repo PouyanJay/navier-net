@@ -513,6 +513,19 @@ def energy_liquid_residual(
     ahead of the bubble 2 to 30 times harder than the momentum equation did,
     bending it into the lopsided swirl the mirror test failed on.
     """
+    return energy_liquid_balance(model, x, groups, c, one_way)[0]
+
+
+def energy_liquid_balance(
+    model,
+    x: torch.Tensor,
+    groups: dict[str, float],
+    c: torch.Tensor | None = None,
+    one_way: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """:func:`energy_liquid_residual` with the size of its terms: the liquid-
+    weighted sum of their magnitudes ``|theta_t| + |u.grad theta| + |lap/Pe| +
+    |q*|``, detached, the scale the relative error is measured against."""
     cx = _ctx(c, x)
     alpha = model.alpha(x, cx)
     theta = model.temperature(x, cx)
@@ -520,11 +533,13 @@ def energy_liquid_residual(
     if one_way:
         u, v = u.detach(), v.detach()
     t_x, t_y, t_t = gradients(theta, x)
-    heat = groups["q_wall_star"] * wall_flux_ratio(x, groups)
-    residual = (
-        t_t + u * t_x + v * t_y - _laplacian(theta, x) / groups["Pe"] - heat * (1.0 - alpha)
-    )
-    return (1.0 - alpha.detach()) * residual
+    heat = groups["q_wall_star"] * wall_flux_ratio(x, groups) * (1.0 - alpha)
+    advection = u * t_x + v * t_y
+    diffusion = _laplacian(theta, x) / groups["Pe"]
+    liquid = 1.0 - alpha.detach()
+    residual = liquid * (t_t + advection - diffusion - heat)
+    scale = liquid * (t_t.abs() + advection.abs() + diffusion.abs() + heat.abs())
+    return residual, scale.detach()
 
 
 class ThermalBatches(NamedTuple):

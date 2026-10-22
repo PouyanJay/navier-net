@@ -750,6 +750,29 @@ TRAINING: tuple[FieldSpec, ...] = (
         ),
     ),
     FieldSpec(
+        "training.energy_relative",
+        "Relative temperature loss",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "train the temperature equation on its error relative to the size of its own "
+            "terms, so the open liquid counts as much as the edge of the bubble"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.energy_relative_floor",
+        "Relative temperature loss floor",
+        "float",
+        "training",
+        "override",
+        help="the smallest term size the relative temperature loss divides by",
+        lo=1e-6,
+        hi=10.0,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.frozen_weighting",
         "Weights after the freeze",
         "enum",

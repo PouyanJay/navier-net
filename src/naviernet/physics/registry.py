@@ -37,7 +37,7 @@ from naviernet.physics.residuals import (
     boundary_losses,
     brinkman_residuals,
     darcy_residuals,
-    energy_liquid_residual,
+    energy_liquid_balance,
     energy_residuals,
     evap_flux_closure,
     footprint_source_penalty_sq,
@@ -109,7 +109,7 @@ class LossContext:
         self._brinkman: MomentumResiduals | None = None
         self._vapour_potential: torch.Tensor | None = None
         self._energy: EnergyResiduals | None = None
-        self._energy_liquid: torch.Tensor | None = None
+        self._energy_liquid: tuple[torch.Tensor, torch.Tensor] | None = None
         self._mass_flux: torch.Tensor | None = None
 
     @property
@@ -172,8 +172,16 @@ class LossContext:
 
     @property
     def energy_liquid_res(self) -> torch.Tensor:
+        return self._energy_liquid_balance()[0]
+
+    @property
+    def energy_liquid_scale(self) -> torch.Tensor:
+        """The size of the liquid energy equation's terms at each point, detached."""
+        return self._energy_liquid_balance()[1]
+
+    def _energy_liquid_balance(self) -> tuple[torch.Tensor, torch.Tensor]:
         if self._energy_liquid is None:
-            self._energy_liquid = energy_liquid_residual(
+            self._energy_liquid = energy_liquid_balance(
                 self.model,
                 self.x_coll,
                 self.groups,
@@ -309,6 +317,31 @@ def _energy_liquid_sq(ctx: LossContext) -> torch.Tensor:
     return ctx.energy_liquid_res**2
 
 
+def _energy_liquid_objective(ctx: LossContext) -> torch.Tensor:
+    """What training minimises for the liquid energy equation: its squared
+    residual, or under ``training.energy_relative`` that residual over the size
+    of its own terms (floored at ``training.energy_relative_floor``), so the
+    open liquid, whose terms are some 40 times smaller than at the interface,
+    counts as much as the interface does. The reported residual stays absolute."""
+    tcfg = ctx.model.cfg.training
+    if not bool(getattr(tcfg, "energy_relative", False)):
+        return _energy_liquid_sq(ctx)
+    floor = float(getattr(tcfg, "energy_relative_floor", ENERGY_RELATIVE_FLOOR))
+    return (ctx.energy_liquid_res / (ctx.energy_liquid_scale + floor)) ** 2
+
+
+# The relative energy objective's floor on the terms' size, dimensionless: about
+# the heating term over the upstream heater zone (q* times its 0.225 share on
+# Series-1-w300), so a point where every term vanishes is not divided by zero.
+ENERGY_RELATIVE_FLOOR = 0.02
+
+
+def training_pointwise(eq: Equation, ctx: LossContext) -> torch.Tensor:
+    """The per-point quantity training minimises for ``eq``: its own objective
+    when it has one, else its squared residual (what the audit reports)."""
+    return (eq.objective or eq.pointwise)(ctx)
+
+
 def _theta_bc_term(ctx: LossContext) -> torch.Tensor:
     batches = ThermalBatches(ctx.inlet, ctx.initial, ctx.walls)
     return thermal_boundary_losses(ctx.model, ctx.groups, batches, ctx.c)
@@ -406,6 +439,9 @@ class Equation:
     # active. ``None`` = independent of the closure.
     closure: str | None = None
     term: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
+    # What training minimises per point when it differs from ``pointwise``
+    # (which the audit and the log report); None is ``pointwise`` itself.
+    objective: Callable[[LossContext], torch.Tensor] | None = field(default=None, repr=False)
     # Per-point squared residual (shape ``(n_coll, 1)``, non-negative) for the
     # collocation terms; ``term`` is its mean. ``None`` for boundary terms (bc), which
     # are not evaluated on the collocation points. Read by the per-point RBA attention
@@ -631,6 +667,7 @@ REGISTRY: tuple[Equation, ...] = (
         flag="sharp_thermal",
         pointwise=_energy_liquid_sq,
         term=_mean(_energy_liquid_sq),
+        objective=_energy_liquid_objective,
     ),
     Equation(
         id="theta_bc",
