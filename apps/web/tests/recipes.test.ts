@@ -53,8 +53,8 @@ describe("recipe stamped states", () => {
     expect(state.causal_weighting).toBe(true);
     expect(state.causal_gate_min_weight).toBe(0.99);
     expect(state.log_chunk_residuals).toBe(true);
-    // Mirror symmetry is a safety net for AFTER the audit passes, never stamped.
-    expect(state.mirror_symmetry).toBe(false);
+    // Mirror symmetry is part of the recipe: the first run to pass the symmetry check.
+    expect(state.mirror_symmetry).toBe(true);
     // What the YAMLs leave off stays off, even where the platform default is on:
     // the stamp is the CLI recipe, not the form's defaults with extras.
     expect(state.film_pressure).toBe(false);
