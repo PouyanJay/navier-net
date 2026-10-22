@@ -861,6 +861,12 @@ class PerFieldArch(BaseModel):
 
     hidden: int | None = Field(default=None, ge=8, le=1024)
     layers: int | None = Field(default=None, ge=1, le=32)
+    # One Fourier scale in place of the global one, or several the features are
+    # split between (bounds mirror datasets.PER_FIELD_SCALES).
+    fourier_scale: float | None = Field(default=None, ge=0.1, le=100.0)
+    fourier_scales: list[Annotated[float, Field(ge=0.1, le=100.0)]] | None = Field(
+        default=None, min_length=2, max_length=8
+    )
 
 
 class ModelArchitecture(BaseModel):

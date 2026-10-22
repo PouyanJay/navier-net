@@ -13,12 +13,24 @@ from naviernet_api.settings import Settings, get_settings
 router = APIRouter(prefix="/api/model", tags=["model"])
 
 
+def _scales(scales) -> list[float] | None:
+    """Several scales as a list; a one-entry list reads as its single scale."""
+    if not scales or len(scales) < 2:
+        return None
+    return [float(s) for s in scales]
+
+
 def _architecture(settings: Settings, dataset: str) -> ModelArchitecture:
     net = compose_cfg(
         dataset, overrides=datasets_service.series_overrides(settings, dataset)
     ).model
     per_field = {
-        name: PerFieldArch(hidden=sub.get("hidden"), layers=sub.get("layers"))
+        name: PerFieldArch(
+            hidden=sub.get("hidden"),
+            layers=sub.get("layers"),
+            fourier_scale=None if sub.get("fourier_scales") else sub.get("fourier_scale"),
+            fourier_scales=_scales(sub.get("fourier_scales")),
+        )
         for name, sub in (net.get("per_field") or {}).items()
     }
     return ModelArchitecture(

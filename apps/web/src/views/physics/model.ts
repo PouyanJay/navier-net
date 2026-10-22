@@ -95,6 +95,55 @@ export const STAGE_B_SCALE = { width: 1.33, depth: 2 };
 export interface FieldArch {
   width: number;
   depth: number;
+  /** The field's own Fourier scales: null takes the global σ_B, one entry
+   * replaces it, several split the features between them. */
+  scales: number[] | null;
+}
+
+/** Bounds on a field's Fourier scales (the API's PER_FIELD_SCALES and its
+ * σ_B range). */
+export const FIELD_SCALES = { min: 0.1, max: 100, most: 8 };
+
+/** Parse a field's Fourier scales as typed ("3, 10"): null when blank (the
+ * global σ_B), the list when every entry is in range, or the reason it is not. */
+export function parseScales(
+  text: string,
+): { scales: number[] | null } | { error: string } {
+  const parts = text.split(/[\s,]+/).filter(Boolean);
+  if (parts.length === 0) return { scales: null };
+  if (parts.length > FIELD_SCALES.most) {
+    return { error: `At most ${FIELD_SCALES.most} scales.` };
+  }
+  const scales = parts.map(Number);
+  if (
+    scales.some(
+      (s) =>
+        !Number.isFinite(s) || s < FIELD_SCALES.min || s > FIELD_SCALES.max,
+    )
+  ) {
+    return {
+      error: `Each scale is a number from ${FIELD_SCALES.min} to ${FIELD_SCALES.max}.`,
+    };
+  }
+  return { scales };
+}
+
+/** Two scale lists are the same setting. */
+export function sameScales(a: number[] | null, b: number[] | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.length === b.length && a.every((s, i) => s === b[i]);
+}
+
+/** A field's scales as the API stores them: one is fourier_scale, several are
+ * fourier_scales. */
+export function scalesEntry(scales: number[] | null): {
+  fourier_scale?: number;
+  fourier_scales?: number[];
+} {
+  if (scales === null) return {};
+  return scales.length === 1
+    ? { fourier_scale: scales[0] }
+    : { fourier_scales: scales };
 }
 
 /** The per-field width/depth a preset derives (Stage-B fields scaled up). */
@@ -107,6 +156,7 @@ export function derivePerField(preset: Preset): Record<FieldName, FieldArch> {
         ? Math.round(preset.width * STAGE_B_SCALE.width)
         : preset.width,
       depth: stageB ? preset.depth + STAGE_B_SCALE.depth : preset.depth,
+      scales: null,
     };
   }
   return out;
