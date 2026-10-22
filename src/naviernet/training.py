@@ -949,13 +949,19 @@ def _initial_state(cfg, equations) -> dict:
 
 
 def _gradient_norms(model, losses: dict[str, torch.Tensor], opt) -> dict[str, float]:
-    """Per-term gradient norms, measured with throwaway backward passes."""
+    """Per-term gradient norms, measured with throwaway backward passes. A term
+    that reaches no trainable parameter at the moment (the temperature's while
+    its net is held through the warm-up) has no norm and is left out."""
     norms = {}
     for name, loss in losses.items():
+        if not loss.requires_grad:
+            continue
         opt.zero_grad()
         loss.backward(retain_graph=True)
-        total = sum((p.grad**2).sum() for p in model.parameters() if p.grad is not None)
-        norms[name] = float(torch.sqrt(total)) + 1e-12
+        grads = [(p.grad**2).sum() for p in model.parameters() if p.grad is not None]
+        if not grads:
+            continue
+        norms[name] = float(torch.sqrt(sum(grads))) + 1e-12
     opt.zero_grad()
     return norms
 
@@ -1562,6 +1568,35 @@ def _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step: int) -> N
         )
 
 
+# The fields with no part in the Stage-A objective: held at their
+# initialisation through the warm-up (see _hold_physics_fields).
+PHYSICS_ONLY_FIELDS = ("p", "T")
+
+
+def _hold_physics_fields(model, held: bool) -> None:
+    """Hold the nets of the fields the warm-up does not train (the pressure
+    and the temperature) at their initialisation, or release them.
+
+    Through the warm-up their only pull is incidental: the pressure's is the
+    outlet condition, some 0.0006 against the 1e4 the momentum law exerts once
+    it engages. Adam normalises a step to the gradient's own size, so that
+    near-zero, noisy pull still moved the pressure net by full-size steps: on
+    trust-mirror4-s0 it drifted 49% from its initialisation over the warm-up
+    and grew pressure spikes the physics stage never removed (the momentum law
+    failed at 99% of its terms); without mirror symmetry it drifted 7% and the
+    momentum residual still crept up tenfold. Held, the physics stage starts
+    them from initialisation, with the optimiser it restarts at the handoff.
+    """
+    for name in PHYSICS_ONLY_FIELDS:
+        if name in model.nets:
+            for p in model.nets[name].parameters():
+                p.requires_grad_(not held)
+    if held:
+        log.info(
+            "pressure and temperature nets held at their initialisation through the warm-up"
+        )
+
+
 def _release_nose_dof(model) -> None:
     """Let the nose DOF move -- the warm-up freeze's other half, called at the
     same step Stage-B engages (and BEFORE the optimiser restart, so the fresh
@@ -1837,6 +1872,8 @@ def _rebalance(
     if max_ratio > 0.0:
         ceiling = min(ceiling, max_ratio * weights["data"])
     for name in terms:
+        if name not in norms:
+            continue  # nothing trainable answers it now: its weight is kept
         target = reference / norms[name]
         # Half-step towards the target: full steps oscillate.
         weights[name] = float(
@@ -1980,6 +2017,9 @@ def train(
         _causal_schedule(tcfg, first_step, last_step, state),
     )
     _freeze_nose_through_warmup(model, tcfg, stage_b_keys, first_step)
+    _hold_physics_fields(
+        model, bool(stage_b_keys) and 0 < first_step <= int(tcfg.stage_b_warmup_steps)
+    )
     _require_guard_arms(tcfg, stage_b_keys, state, first_step)
     if _geometry_frozen(first_step, tcfg, stage_b_keys):
         _freeze_geometry(model, True)  # a run resumed inside the physics stage
@@ -2108,6 +2148,7 @@ def train(
                 # trainable.
                 _record_warmup_fit(cfg, model, data, state)
                 _release_nose_dof(model)
+                _hold_physics_fields(model, False)
                 if frozen:
                     _freeze_geometry(model, True)
                 opt, weights = _restart_for_stage_b(model, lr, reset_weights)
