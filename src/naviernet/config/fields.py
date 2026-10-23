@@ -785,6 +785,43 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.energy_relative_mode",
+        "Relative temperature loss form",
+        "enum",
+        "training",
+        "override",
+        help=(
+            "relative: the error relative to the terms alone; mixed: the absolute error "
+            "plus the relative one, so no point counts less than under the absolute loss"
+        ),
+        options=("relative", "mixed"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.self_adaptive",
+        "Self-adaptive weights",
+        "enum",
+        "training",
+        "override",
+        help=(
+            "a map over space and time that raises a term's weight where its residual "
+            "stays high: on the liquid energy equation, or on every collocation equation"
+        ),
+        options=("off", "energy", "all"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.self_adaptive_ratio",
+        "Self-adaptive weight range",
+        "float",
+        "training",
+        "override",
+        help="the largest self-adaptive weight over the smallest",
+        lo=1.01,
+        hi=1e3,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.energy_relative_cap",
         "Relative temperature loss cap",
         "float",

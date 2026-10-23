@@ -498,6 +498,7 @@ def _validate_training_config(cfg) -> None:
     _validate_temperature_stage(tcfg, cfg.model)
     _validate_growth_closure(tcfg, cfg.model)
     _validate_energy_relative(tcfg)
+    _validate_self_adaptive(tcfg)
     if int(getattr(tcfg, "physics_lr_halflife", 0)) < 0:
         raise ValueError(
             f"training.physics_lr_halflife must be >= 0, got {tcfg.physics_lr_halflife}"
@@ -568,6 +569,27 @@ def _validate_temperature_stage(tcfg, model_cfg) -> None:
         )
 
 
+ENERGY_RELATIVE_MODES = ("relative", "mixed")
+
+
+def _validate_self_adaptive(tcfg) -> None:
+    """The self-adaptive weights act on the causal weighting's per-point
+    losses, like the relative energy objective; elsewhere they would be built
+    and never read."""
+    if str(getattr(tcfg, "self_adaptive", "off")) == "off":
+        return
+    if (
+        not bool(tcfg.causal_weighting)
+        or str(tcfg.causal_mode) != "weight"
+        or tcfg.weighting == "rba"
+    ):
+        raise ValueError(
+            "training.self_adaptive acts on the causal weighting's per-point losses, so it "
+            "needs training.causal_weighting=true with causal_mode=weight and the "
+            "gradient-norm weighting"
+        )
+
+
 def _validate_energy_relative(tcfg) -> None:
     """The relative energy objective enters through the soft causal weighting's
     per-point losses, the path the trusted recipe trains on; the other paths
@@ -589,6 +611,11 @@ def _validate_energy_relative(tcfg) -> None:
         raise ValueError("training.energy_relative_floor must be > 0")
     if float(getattr(tcfg, "energy_relative_cap", 5.0)) <= floor:
         raise ValueError("training.energy_relative_cap must be above energy_relative_floor")
+    mode = str(getattr(tcfg, "energy_relative_mode", "relative"))
+    if mode not in ENERGY_RELATIVE_MODES:
+        raise ValueError(
+            f"training.energy_relative_mode must be one of {ENERGY_RELATIVE_MODES}, got {mode!r}"
+        )
 
 
 def _validate_outline_guard(tcfg) -> None:
@@ -1216,9 +1243,12 @@ def _chunk_losses(
     every one.
     """
     order = torch.argsort(ctx.x_coll.detach()[:, 2])
+    attention = getattr(ctx.model, "attention", None)
+    adaptive = attention(ctx.x_coll) if attention is not None else {}
     per_point = sum(
         weights[eq.weight_key]
         * schedule.get(eq.weight_key, 1.0)
+        * adaptive.get(eq.weight_key, 1.0)
         * registry.training_pointwise(eq, ctx)
         for eq in coll_equations
     )[order]

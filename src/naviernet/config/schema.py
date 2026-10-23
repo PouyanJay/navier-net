@@ -715,6 +715,21 @@ class TrainingConfig:
     # 5 is the size of the terms within the thermal layer on trust-holdmirror4-s0
     # (rms 5.4 to 7.6 within 12 um of the edge).
     energy_relative_cap: float = 5.0
+    # "relative": the relative error alone. "mixed": the squared residual plus
+    # the relative error, so no point counts less than under the absolute loss.
+    # Alone, the relative loss set the temperature equation's weight within the
+    # thermal layer at 1/25 of the absolute one (the cap), and its worst absolute
+    # residual rose from 0.27 to 0.32 (apex-relmulti4-s0 against
+    # trust-holdmirror4-s0) while the open liquid fell from 47-73% to 5-14%.
+    energy_relative_mode: str = "relative"  # "relative" | "mixed"
+    # Self-adaptive weights (models/attention.py): a small map over (x, y, t)
+    # that raises a term's weight where its residual stays high, trained to
+    # ascend the loss the fields descend. "energy" weights the liquid energy
+    # equation, "all" every collocation equation, each with its own map. The
+    # weights average 1 and the largest is at most self_adaptive_ratio times the
+    # smallest, so the map moves emphasis, never the terms' balance.
+    self_adaptive: str = "off"  # "off" | "energy" | "all"
+    self_adaptive_ratio: float = 10.0
     # The temperature equation trains the temperature only: the velocity in its
     # advection term is detached, so the equation's error cannot bend the flow
     # (see residuals.energy_liquid_residual). Off keeps the two-way gradient.

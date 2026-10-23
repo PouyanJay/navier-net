@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 from torch.func import functional_call
 
+from naviernet.models.attention import SelfAdaptiveWeights
 from naviernet.models.film import LiquidFilm
 from naviernet.models.geometry import (
     GeometricInterface,
@@ -37,6 +38,10 @@ from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softp
 from naviernet.physics.film import deposited_thickness
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.heating import DEPLETION_SMOOTHING, wall_flux_ratio
+
+# What training.self_adaptive weights: nothing, the liquid energy equation, or
+# every collocation equation.
+SELF_ADAPTIVE_MODES = ("off", "energy", "all")
 
 # Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
 # one smooth scalar curve in time, and capacity beyond this buys nothing but the
@@ -175,6 +180,8 @@ class BubblePINN(nn.Module):
         # After the film for tidiness; consumes no RNG (zero-init scalars).
         self._init_root_attachment()
         self._init_film_evaporation(cfg)
+        # After every field, so a run with it off builds bit-identical nets.
+        self._init_self_adaptive(cfg)
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -416,6 +423,29 @@ class BubblePINN(nn.Module):
         if self.mirror_axis is None:
             return net(x, c)
         return 0.5 * (net(x, c) - net(self._reflect(x), c))
+
+    def _init_self_adaptive(self, cfg) -> None:
+        """The self-adaptive weight map (``training.self_adaptive``), or None."""
+        mode = str(getattr(cfg.training, "self_adaptive", "off"))
+        self.attention: SelfAdaptiveWeights | None = None
+        if mode == "off":
+            return
+        from naviernet.physics import registry
+
+        equations = registry.enabled_equations(
+            cfg.model.fields, **registry.flags_from(cfg.model)
+        )
+        keys = [e.weight_key for e in registry.collocation_equations(equations)]
+        if mode == "energy":
+            keys = [k for k in keys if k == "energy_liquid"]
+        if mode not in SELF_ADAPTIVE_MODES or not keys:
+            raise ValueError(
+                f"training.self_adaptive={mode!r} needs one of {SELF_ADAPTIVE_MODES} "
+                "and an equation to weight (energy needs the liquid energy equation)"
+            )
+        self.attention = SelfAdaptiveWeights(
+            tuple(keys), float(cfg.training.self_adaptive_ratio)
+        )
 
     def _init_film_evaporation(self, cfg) -> None:
         """Film evaporation under the footprint (``model.footprint_evaporation``):

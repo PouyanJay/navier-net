@@ -80,6 +80,7 @@ AFTER_WARMUP = (
     "training.energy_relative",
     "training.energy_relative_floor",
     "training.energy_relative_cap",
+    "training.energy_relative_mode",
     "training.one_way_advection",
     "model.momentum_inertia",
     "model.laplace_condition",

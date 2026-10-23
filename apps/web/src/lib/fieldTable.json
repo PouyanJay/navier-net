@@ -1037,6 +1037,64 @@
     "default": 0.02
   },
   {
+    "key": "training.energy_relative_mode",
+    "label": "Relative temperature loss form",
+    "kind": "enum",
+    "section": "training",
+    "owner": "override",
+    "help": "relative: the error relative to the terms alone; mixed: the absolute error plus the relative one, so no point counts less than under the absolute loss",
+    "unit": "",
+    "options": [
+      "relative",
+      "mixed"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "energy_relative_mode",
+    "default": "relative"
+  },
+  {
+    "key": "training.self_adaptive",
+    "label": "Self-adaptive weights",
+    "kind": "enum",
+    "section": "training",
+    "owner": "override",
+    "help": "a map over space and time that raises a term's weight where its residual stays high: on the liquid energy equation, or on every collocation equation",
+    "unit": "",
+    "options": [
+      "off",
+      "energy",
+      "all"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "self_adaptive",
+    "default": "off"
+  },
+  {
+    "key": "training.self_adaptive_ratio",
+    "label": "Self-adaptive weight range",
+    "kind": "float",
+    "section": "training",
+    "owner": "override",
+    "help": "the largest self-adaptive weight over the smallest",
+    "unit": "",
+    "options": [],
+    "lo": 1.01,
+    "hi": 1000.0,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "self_adaptive_ratio",
+    "default": 10.0
+  },
+  {
     "key": "training.energy_relative_cap",
     "label": "Relative temperature loss cap",
     "kind": "float",

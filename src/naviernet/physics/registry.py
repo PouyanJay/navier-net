@@ -330,7 +330,10 @@ def _energy_liquid_objective(ctx: LossContext) -> torch.Tensor:
     floor = float(getattr(tcfg, "energy_relative_floor", ENERGY_RELATIVE_FLOOR))
     cap = float(getattr(tcfg, "energy_relative_cap", ENERGY_RELATIVE_CAP))
     size = ctx.energy_liquid_scale.clamp(max=cap)
-    return (ctx.energy_liquid_res / (size + floor)) ** 2
+    relative = (ctx.energy_liquid_res / (size + floor)) ** 2
+    if str(getattr(tcfg, "energy_relative_mode", "relative")) == "mixed":
+        return _energy_liquid_sq(ctx) + relative
+    return relative
 
 
 # The relative energy objective's floor on the terms' size, dimensionless: about
