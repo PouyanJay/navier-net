@@ -429,6 +429,23 @@
     "default": false
   },
   {
+    "key": "model.hard_walls",
+    "label": "No flow through the walls, exactly",
+    "kind": "bool",
+    "section": "physics",
+    "owner": "override",
+    "help": "the flow across the channel is zero at both side walls by construction instead of as a penalty; the flow along them stays a penalty",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "hard_walls",
+    "default": false
+  },
+  {
     "key": "model.kinematic_side",
     "label": "Exact kinematic side",
     "kind": "enum",

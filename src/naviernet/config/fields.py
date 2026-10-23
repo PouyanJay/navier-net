@@ -370,6 +370,18 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.hard_walls",
+        "No flow through the walls, exactly",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the flow across the channel is zero at both side walls by construction "
+            "instead of as a penalty; the flow along them stays a penalty"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.kinematic_side",
         "Exact kinematic side",
         "enum",

@@ -142,6 +142,7 @@ class BubblePINN(nn.Module):
         self._validate_thermal(cfg, names)
         self._validate_mirror_symmetry(cfg, geometry)
         self._init_hard_kinematics(cfg)
+        self._init_hard_walls(cfg, geometry)
         self._field_cache: dict | None = None
         # Read on every thermal-source call; the groups are fixed for the model.
         self._source_coefficient = float(compute_groups(cfg)["mass_flux_to_source"])
@@ -381,6 +382,32 @@ class BubblePINN(nn.Module):
         value = compute()
         cache[key] = (x, c, value)  # holding x and c keeps their ids unique
         return value
+
+    def _init_hard_walls(self, cfg, geometry: GeometryPriors | None) -> None:
+        """No flow through the side walls by construction (``model.hard_walls``):
+        the walls are the physical ones the front geometry's priors carry."""
+        self.hard_walls = bool(getattr(cfg.model, "hard_walls", False))
+        self.wall_span: tuple[float, float] | None = None
+        if not self.hard_walls:
+            return
+        if str(getattr(cfg.model, "walls_at", "crop")) != "physical" or geometry is None:
+            raise ValueError(
+                "model.hard_walls holds the flow at the channel's side walls, so it needs "
+                "model.walls_at=physical and the front geometry that carries them"
+            )
+        if self.hard_kinematics:
+            raise ValueError(
+                "model.hard_walls and model.hard_kinematics both rewrite the velocity, and "
+                "would contend where the interface nears a wall; enable one"
+            )
+        self.wall_span = (float(geometry.y_min), float(geometry.y_max))
+
+    def _wall_factor(self, x: torch.Tensor) -> torch.Tensor:
+        """``4 (y - y_lo)(y_hi - y) / (y_hi - y_lo)^2``: zero at both walls, one
+        on the centreline, even about it."""
+        lo, hi = self.wall_span
+        y = x[:, 1:2]
+        return 4.0 * (y - lo) * (hi - y) / (hi - lo) ** 2
 
     def _init_hard_kinematics(self, cfg) -> None:
         """The exact kinematic condition (``model.hard_kinematics``): it reads the
@@ -1020,6 +1047,8 @@ class BubblePINN(nn.Module):
         self, x: torch.Tensor, c: torch.Tensor | None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         u, v = self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
+        if self.hard_walls:
+            v = v * self._wall_factor(x)
         if not (self.hard_kinematics and self.kinematics_engaged):
             return u, v
         return self._kinematic_correction(x, c, u, v)

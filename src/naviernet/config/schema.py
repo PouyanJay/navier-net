@@ -455,6 +455,14 @@ class ModelConfig:
     # of the head's speed) is not included.
     hard_kinematics: bool = False
     kinematic_blend_length: float = 0.04
+    # No flow through the side walls by construction: v carries the factor
+    # 4 (y - y_lo)(y_hi - y) / (y_hi - y_lo)^2, zero at both walls and one on
+    # the centreline (even, so v stays odd under mirror symmetry). As a penalty
+    # (the bc term) the walls let liquid in beside the nose late in the event,
+    # at up to 0.08 against an axial 0.09 (trust-holdmirror4-s0, frames 8-10),
+    # which was the whole of the flux check's defect there. Needs the physical
+    # walls (model.walls_at=physical); the tangential no-slip stays a penalty.
+    hard_walls: bool = False
     # Which side of the interface the exact condition corrects. "liquid": the
     # liquid only, the vapour's velocity left to its own equations (inside, the
     # vapour leaves the interface at V_n - m/rho_v, not V_n). "both": the blend
