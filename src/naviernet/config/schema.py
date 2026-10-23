@@ -358,6 +358,11 @@ class ModelConfig:
     # Bound on the Hugelschaffer nose bluntness |w_nose| as a fraction of the
     # nose cap radius; the same rationale (and value) as root_delta.
     nose_delta: float = 0.6
+    # The Hugelschaffer caps' field made smooth through the apex: the outline,
+    # the pinned root and the apex stay exactly where they are, but the field
+    # around them no longer has a corner on the line through the apex, which
+    # put a spike in the temperature at the root (geometry._smooth_cap_phi).
+    smooth_apex: bool = False
     # The attachment pressure (nucleation-root R2): over the dry contact patch
     # on the heated plate the gap-direction capillary term is NOT the
     # both-plates-wetted 2/H* -- contact-angle cosines ADD across the gap

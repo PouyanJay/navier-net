@@ -750,6 +750,18 @@ TRAINING: tuple[FieldSpec, ...] = (
         ),
     ),
     FieldSpec(
+        "model.smooth_apex",
+        "Smooth cap apex",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the field around the bubble has no corner on the line through the root's "
+            "apex; the outline and the pinned root are unchanged"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "training.energy_relative",
         "Relative temperature loss",
         "bool",

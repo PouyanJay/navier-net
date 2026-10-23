@@ -986,6 +986,23 @@
     "default": false
   },
   {
+    "key": "model.smooth_apex",
+    "label": "Smooth cap apex",
+    "kind": "bool",
+    "section": "physics",
+    "owner": "override",
+    "help": "the field around the bubble has no corner on the line through the root's apex; the outline and the pinned root are unchanged",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "smooth_apex",
+    "default": false
+  },
+  {
     "key": "training.energy_relative",
     "label": "Relative temperature loss",
     "kind": "bool",

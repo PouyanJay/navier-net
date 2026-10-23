@@ -159,6 +159,7 @@ class BubblePINN(nn.Module):
                     nose_shape=self.nose_shape,
                     nose_delta=self.nose_delta,
                     mirror_axis=self.mirror_axis,
+                    smooth_apex=bool(getattr(cfg.model, "smooth_apex", False)),
                 )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)

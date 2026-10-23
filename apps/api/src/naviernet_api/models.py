@@ -589,7 +589,7 @@ class RunLaunchRequest(BaseModel):
     # Requires the sharp thermal model.
     footprint_evaporation: bool = False
     # Every field exactly even (v odd) about the channel centreline. Requires
-    # front_geometry; for after the physics passes its tests without it.
+    # front_geometry; on in the trusted recipe.
     mirror_symmetry: bool = False
     # The cross-section mass balance functional and its weight.
     mass_balance: bool = False
