@@ -413,7 +413,7 @@ class BubblePINN(nn.Module):
         # source, so the warm-up stays the outline fit alone.
         self.kinematics_engaged = True
         self.kinematic_blend_length = float(getattr(cfg.model, "kinematic_blend_length", 0.04))
-        self.kinematic_side = str(getattr(cfg.model, "kinematic_side", "both"))
+        self.kinematic_side = str(getattr(cfg.model, "kinematic_side", "liquid"))
         if self.kinematic_side not in ("both", "liquid"):
             raise ValueError(
                 f"model.kinematic_side must be 'both' or 'liquid', got {self.kinematic_side!r}"

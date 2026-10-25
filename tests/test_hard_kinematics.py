@@ -100,8 +100,8 @@ def test_a_run_with_the_exact_condition_trains_and_scores_no_kinematic_error(tmp
     assert torch.isfinite(torch.tensor(last["brinkman"]))
 
 
-def test_the_liquid_side_correction_leaves_the_vapour_to_its_own_velocity(tmp_path):
-    data, soft, hard = _pair(tmp_path, ["model.kinematic_side=liquid"])
+def test_the_default_liquid_side_correction_leaves_the_vapour_to_its_own_velocity(tmp_path):
+    data, soft, hard = _pair(tmp_path)
     front = _front(hard, data)
     inward = front.points.detach().clone()
     inward[:, :2] -= 0.01 * front.normal.detach()  # 3 um into the vapour

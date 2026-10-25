@@ -467,8 +467,10 @@ class ModelConfig:
     # liquid only, the vapour's velocity left to its own equations (inside, the
     # vapour leaves the interface at V_n - m/rho_v, not V_n). "both": the blend
     # on both sides, as the first exact-condition run (trust-hk4-s0) had it,
-    # whose continuity failed most just inside the advancing head.
-    kinematic_side: str = "both"  # "both" | "liquid"
+    # whose continuity failed most just inside the advancing head, and which is
+    # singular at a neck: there the distance field's gradient vanishes inside
+    # the vapour and the correction divides by it (kin4-s0, strict4-s0 frame 9).
+    kinematic_side: str = "liquid"  # "liquid" | "both"
     # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.

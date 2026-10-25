@@ -402,9 +402,9 @@ PHYSICS: tuple[FieldSpec, ...] = (
         "override",
         help=(
             "where the exact kinematic correction acts: the liquid only, or both sides of "
-            "the bubble edge"
+            "the bubble edge (singular where the bubble necks)"
         ),
-        options=("both", "liquid"),
+        options=("liquid", "both"),
         advanced=True,
     ),
     FieldSpec(
