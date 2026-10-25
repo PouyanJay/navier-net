@@ -91,6 +91,14 @@ kin_ramp: 75
 # frame; it trains the footprint's film thickness (naviernet.growth_closure).
 growth_closure_weight: 1.0
 growth_closure_stride: 6
+# The closure also trains the temperature, whose outline flux ran high late in
+# the event: the heat budget's spread fell from 0.30 to 0.21 and passes the
+# gate (wallsgrow4-s0 against walls4-s0).
+growth_closure_outline_gradient: true
+# The liquid energy equation trained on its error relative to its own terms
+# (capped, so a spike cannot hide behind its size), so the open liquid counts
+# as much as the edge of the bubble.
+energy_relative: true
 # The temperature equation trains the temperature only: its advection term
 # reads the velocity detached, so its error cannot bend the flow (it pulled
 # the liquid ahead of the bubble 2 to 30 times harder than momentum did).
