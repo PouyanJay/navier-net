@@ -446,6 +446,26 @@
     "default": false
   },
   {
+    "key": "model.vapour_potential_region",
+    "label": "Curl-free vapour, where",
+    "kind": "enum",
+    "section": "physics",
+    "owner": "override",
+    "help": "where the vapour's curl-free condition is scored: band (weighted by the smoothed interface, so it reaches into the liquid beside it) or vapour (inside the bubble only)",
+    "unit": "",
+    "options": [
+      "band",
+      "vapour"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "vapour_potential_region",
+    "default": "band"
+  },
+  {
     "key": "model.kinematic_side",
     "label": "Exact kinematic side",
     "kind": "enum",
@@ -1018,6 +1038,40 @@
     "advanced": true,
     "name": "smooth_apex",
     "default": false
+  },
+  {
+    "key": "training.edge_transport_after_freeze",
+    "label": "Edge transport after the freeze",
+    "kind": "bool",
+    "section": "training",
+    "owner": "override",
+    "help": "keep the edge-transport term once the outline is frozen; off leaves the velocity to the kinematic condition on the front",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "edge_transport_after_freeze",
+    "default": true
+  },
+  {
+    "key": "training.continuity_weight_after_freeze",
+    "label": "Continuity weight after the freeze",
+    "kind": "float",
+    "section": "training",
+    "owner": "override",
+    "help": "the continuity weight from the physics stage on; unset keeps the configured one",
+    "unit": "",
+    "options": [],
+    "lo": 0.0,
+    "hi": 10000.0,
+    "optional": true,
+    "baked": false,
+    "advanced": true,
+    "name": "continuity_weight_after_freeze",
+    "default": null
   },
   {
     "key": "training.energy_relative",

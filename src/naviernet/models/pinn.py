@@ -395,11 +395,6 @@ class BubblePINN(nn.Module):
                 "model.hard_walls holds the flow at the channel's side walls, so it needs "
                 "model.walls_at=physical and the front geometry that carries them"
             )
-        if self.hard_kinematics:
-            raise ValueError(
-                "model.hard_walls and model.hard_kinematics both rewrite the velocity, and "
-                "would contend where the interface nears a wall; enable one"
-            )
         self.wall_span = (float(geometry.y_min), float(geometry.y_max))
 
     def _wall_factor(self, x: torch.Tensor) -> torch.Tensor:
@@ -1047,6 +1042,11 @@ class BubblePINN(nn.Module):
         self, x: torch.Tensor, c: torch.Tensor | None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         u, v = self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
+        # The wall factor goes on the network's velocity, before the kinematic
+        # correction, so the correction stays exact on the interface; what it
+        # adds at a wall is its blend's tail, sech^2 of the gap over the blend
+        # length (about 1.5% of the interface's normal-speed mismatch across a
+        # 34 um gap at the default 12 um blend).
         if self.hard_walls:
             v = v * self._wall_factor(x)
         if not (self.hard_kinematics and self.kinematics_engaged):

@@ -382,6 +382,19 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.vapour_potential_region",
+        "Curl-free vapour, where",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "where the vapour's curl-free condition is scored: band (weighted by the smoothed "
+            "interface, so it reaches into the liquid beside it) or vapour (inside the bubble only)"
+        ),
+        options=("band", "vapour"),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.kinematic_side",
         "Exact kinematic side",
         "enum",
@@ -771,6 +784,30 @@ TRAINING: tuple[FieldSpec, ...] = (
             "the field around the bubble has no corner on the line through the root's "
             "apex; the outline and the pinned root are unchanged"
         ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.edge_transport_after_freeze",
+        "Edge transport after the freeze",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "keep the edge-transport term once the outline is frozen; off leaves the "
+            "velocity to the kinematic condition on the front"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.continuity_weight_after_freeze",
+        "Continuity weight after the freeze",
+        "float",
+        "training",
+        "override",
+        help="the continuity weight from the physics stage on; unset keeps the configured one",
+        lo=0.0,
+        hi=1e4,
+        optional=True,
         advanced=True,
     ),
     FieldSpec(

@@ -95,19 +95,31 @@ def test_v_stays_odd_under_mirror_symmetry(tmp_path):
     assert torch.allclose(v, -v_mirror, atol=1e-6)
 
 
-@pytest.mark.parametrize(
-    ("override", "message"),
-    [
-        ("model.walls_at=crop", "walls_at=physical"),
-        ("model.hard_kinematics=true", "hard_kinematics"),
-    ],
-)
-def test_an_unsupported_hard_walls_setup_is_refused(tmp_path, override, message):
-    cfg, paths = staged_capsule_run(tmp_path, [*WALLED, "model.hard_walls=true", override])
+def test_physical_walls_are_required(tmp_path):
+    cfg, paths = staged_capsule_run(
+        tmp_path, [*WALLED, "model.hard_walls=true", "model.walls_at=crop"]
+    )
     data = BubbleDataset(cfg, paths)
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="walls_at=physical"):
         BubblePINN(cfg, geometry=training._geometry_priors(cfg, data))
+
+
+def test_with_the_exact_kinematic_condition_both_hold(tmp_path):
+    """The wall factor acts before the kinematic correction: the interface
+    keeps its exact normal speed, and the walls pass only the correction's
+    blend tail, a small fraction of the interface's mismatch."""
+    data, soft, hard = _pair(tmp_path, ["model.hard_kinematics=true"])
+    t = float(data.t[3])
+    front = hard.front(torch.tensor([[t]], requires_grad=True), 32, 8)
+
+    u, v = hard.velocity(front.points)
+    gap = (u * front.normal[:, 0:1] + v * front.normal[:, 1:2] - front.normal_speed).abs()
+    assert int((gap > 1e-5).sum()) <= 4, "exact on the interface but the four cap joins"
+    _, v_soft = soft.velocity(_line(data, float(data.y_lo), t))
+    for wall in (float(data.y_lo), float(data.y_hi)):
+        _, v_wall = hard.velocity(_line(data, wall, t))
+        assert float(v_wall.abs().max()) < 0.1 * float(v_soft.abs().max())
 
 
 def test_a_hard_walls_run_trains(tmp_path):

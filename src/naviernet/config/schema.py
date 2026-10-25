@@ -494,6 +494,11 @@ class ModelConfig:
     # curl-free (the Darcy law with a uniform vapour pressure). Requires
     # `sharp_interface` (p_v exists only there).
     pressure_representation: str = "single"  # "single" | "two_phase"
+    # Where the curl-free vapour condition is scored. "band": weighted by alpha,
+    # so it reaches through the smoothed interface into the liquid beside it
+    # (alpha 0.1 to 0.5 across the 34 um gaps beside the head, where it scored
+    # the backflow 20 times worse). "vapour": inside the bubble only (phi > 0).
+    vapour_potential_region: str = "band"  # "band" | "vapour"
     # --- The thermal model (trustworthy-fields WP4). ---
     # "legacy": the diffuse energy equation with the |grad alpha| latent sink, the
     # kinetic (Schrage-type) closure through a learned resistance, and the inlet
@@ -701,6 +706,17 @@ class TrainingConfig:
     # velocity, the root and nose supervision) are not evaluated once it is
     # frozen. Needs a warm-up (stage_b_warmup_steps > 0) and the front geometry.
     freeze_geometry: bool = False
+    # Once the geometry is frozen the edge-transport (vof) term constrains only
+    # the velocity, and with the smoothed interface (alpha_eps, about 15 um) it
+    # does so across a band wider than the 34 um gaps beside the head, holding
+    # the liquid there to the bubble's motion: the backflow mass conservation
+    # requires scored 4 times worse on it (wallsgrow4-s0, frame 9). False drops
+    # it from the physics stage; the kinematic condition on the front remains.
+    edge_transport_after_freeze: bool = True
+    # The continuity weight from the physics stage on, in place of
+    # training.weights.div (None keeps it). The warm-up, and so the cached
+    # outline fit, is untouched.
+    continuity_weight_after_freeze: Optional[float] = None  # noqa: UP045
     # How the physics terms are weighted once the geometry is frozen. "fixed":
     # each at its configured weight, never rebalanced. "equalised": rebalanced
     # to equal gradient contributions (the median of the weighted norms is the

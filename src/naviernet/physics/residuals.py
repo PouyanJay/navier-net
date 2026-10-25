@@ -637,7 +637,14 @@ def vapour_potential_residual(
     u, v = model.velocity(x, cx)
     _, u_y, _ = gradients(u, x)
     v_x, _, _ = gradients(v, x)
-    return model.alpha(x, cx).detach() * (v_x - u_y)
+    weight = model.alpha(x, cx).detach()
+    cfg = getattr(model, "cfg", None)
+    region = (
+        getattr(cfg.model, "vapour_potential_region", "band") if cfg is not None else "band"
+    )
+    if str(region) == "vapour":
+        weight = (weight > 0.5).to(weight.dtype)
+    return weight * (v_x - u_y)
 
 
 def darcy_residuals(
