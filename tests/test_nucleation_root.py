@@ -1050,20 +1050,29 @@ def test_the_smooth_apex_keeps_the_outline_and_the_pin(raw):
 
 @pytest.mark.parametrize("raw", [-2.0, 2.0])
 def test_the_smooth_apex_removes_the_corner_across_the_apex_line(raw):
+    import torch
 
     from naviernet.physics.residuals import _laplacian
 
-    worst = {}
+    # The corner is a jump in the field's slope across the apex line, read just
+    # either side of it (two of its own smoothing widths, 2e-3): sampling ON the
+    # line, a spike narrower than float rounding, read differently per platform.
+    jump, curvature = {}, {}
     for smooth in (False, True):
         geometry = _geo(5, nucleation_root=True, smooth_apex=smooth)
         _force_bluntness(geometry, raw)
-        x = _row_through_the_apex(geometry, t=0.4, dy=0.02)
-        worst[smooth] = float(_laplacian(geometry(x), x).detach().abs().max())
+        x = _row_through_the_apex(geometry, t=0.4, dy=0.02, n=3, half=2e-3)
+        slope = torch.autograd.grad(geometry(x).sum(), x, create_graph=True)[0][:, 0]
+        jump[smooth] = float((slope[2] - slope[0]).abs())
+        wide = _row_through_the_apex(geometry, t=0.4, dy=0.02)
+        curvature[smooth] = float(_laplacian(geometry(wide), wide).detach().abs().max())
 
-    assert worst[False] > 1e5, "the matched-floor field has the corner"
+    assert jump[False] > 1.0, "the matched-floor field has the corner"
+    # Measured 0.05 and 0.34 against 2.7 and 7.6: what remains is the cap's own
+    # curvature over the 4e-3 the slope is read across.
+    assert jump[True] < 0.1 * jump[False], "the smooth field's slope runs through the apex line"
     # What is left is the cap's own curvature, steep for a blunt root but finite.
-    assert worst[True] < 1e-3 * worst[False]
-    assert worst[True] < 1e3
+    assert curvature[True] < 1e3
 
 
 def test_the_smooth_apex_meets_the_body_at_the_seam_unchanged():
