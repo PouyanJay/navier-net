@@ -24,11 +24,31 @@ class FourierFeatures(nn.Module):
         n_feats: Number of random frequencies; output width is ``2 * n_feats``.
         scale: Standard deviation of ``B``. Larger values represent sharper
             gradients but make optimisation harder.
+        scales: Several standard deviations instead of ``scale``, the
+            frequencies split evenly between them (Wang, Wang & Perdikaris
+            2021): a high scale for a thin layer, a low one for the smooth
+            field around it, which a single high scale fills with ripples.
+            The draw is the same as one scale's, column groups rescaled, so a
+            single entry reproduces ``scale`` exactly.
     """
 
-    def __init__(self, in_dim: int = 3, n_feats: int = 64, scale: float = 3.0):
+    def __init__(
+        self,
+        in_dim: int = 3,
+        n_feats: int = 64,
+        scale: float = 3.0,
+        scales: tuple[float, ...] | None = None,
+    ):
         super().__init__()
-        self.register_buffer("B", torch.randn(in_dim, n_feats) * scale)
+        if scales and len(scales) > n_feats:
+            raise ValueError(f"{len(scales)} Fourier scales for {n_feats} features")
+        draw = torch.randn(in_dim, n_feats)
+        column_scale = torch.full((n_feats,), float(scale))
+        if scales:
+            groups = torch.arange(n_feats).tensor_split(len(scales))
+            for columns, value in zip(groups, scales, strict=True):
+                column_scale[columns] = float(value)
+        self.register_buffer("B", draw * column_scale)
 
     @property
     def out_dim(self) -> int:

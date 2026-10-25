@@ -194,6 +194,9 @@ class FieldArch:
     layers: Optional[int] = None  # noqa: UP045
     fourier_feats: Optional[int] = None  # noqa: UP045
     fourier_scale: Optional[float] = None  # noqa: UP045
+    # Several Fourier scales, the features split evenly between them; takes
+    # the place of fourier_scale (models/layers.py FourierFeatures).
+    fourier_scales: Optional[list[float]] = None  # noqa: UP045
 
 
 @dataclass
@@ -355,6 +358,11 @@ class ModelConfig:
     # Bound on the Hugelschaffer nose bluntness |w_nose| as a fraction of the
     # nose cap radius; the same rationale (and value) as root_delta.
     nose_delta: float = 0.6
+    # The Hugelschaffer caps' field made smooth through the apex: the outline,
+    # the pinned root and the apex stay exactly where they are, but the field
+    # around them no longer has a corner on the line through the apex, which
+    # put a spike in the temperature at the root (geometry._smooth_cap_phi).
+    smooth_apex: bool = False
     # The attachment pressure (nucleation-root R2): over the dry contact patch
     # on the heated plate the gap-direction capillary term is NOT the
     # both-plates-wetted 2/H* -- contact-angle cosines ADD across the gap
@@ -447,6 +455,14 @@ class ModelConfig:
     # of the head's speed) is not included.
     hard_kinematics: bool = False
     kinematic_blend_length: float = 0.04
+    # No flow through the side walls by construction: v carries the factor
+    # 4 (y - y_lo)(y_hi - y) / (y_hi - y_lo)^2, zero at both walls and one on
+    # the centreline (even, so v stays odd under mirror symmetry). As a penalty
+    # (the bc term) the walls let liquid in beside the nose late in the event,
+    # at up to 0.08 against an axial 0.09 (trust-holdmirror4-s0, frames 8-10),
+    # which was the whole of the flux check's defect there. Needs the physical
+    # walls (model.walls_at=physical); the tangential no-slip stays a penalty.
+    hard_walls: bool = False
     # Which side of the interface the exact condition corrects. "liquid": the
     # liquid only, the vapour's velocity left to its own equations (inside, the
     # vapour leaves the interface at V_n - m/rho_v, not V_n). "both": the blend
@@ -478,6 +494,11 @@ class ModelConfig:
     # curl-free (the Darcy law with a uniform vapour pressure). Requires
     # `sharp_interface` (p_v exists only there).
     pressure_representation: str = "single"  # "single" | "two_phase"
+    # Where the curl-free vapour condition is scored. "band": weighted by alpha,
+    # so it reaches through the smoothed interface into the liquid beside it
+    # (alpha 0.1 to 0.5 across the 34 um gaps beside the head, where it scored
+    # the backflow 20 times worse). "vapour": inside the bubble only (phi > 0).
+    vapour_potential_region: str = "band"  # "band" | "vapour"
     # --- The thermal model (trustworthy-fields WP4). ---
     # "legacy": the diffuse energy equation with the |grad alpha| latent sink, the
     # kinetic (Schrage-type) closure through a learned resistance, and the inlet
@@ -685,6 +706,17 @@ class TrainingConfig:
     # velocity, the root and nose supervision) are not evaluated once it is
     # frozen. Needs a warm-up (stage_b_warmup_steps > 0) and the front geometry.
     freeze_geometry: bool = False
+    # Once the geometry is frozen the edge-transport (vof) term constrains only
+    # the velocity, and with the smoothed interface (alpha_eps, about 15 um) it
+    # does so across a band wider than the 34 um gaps beside the head, holding
+    # the liquid there to the bubble's motion: the backflow mass conservation
+    # requires scored 4 times worse on it (wallsgrow4-s0, frame 9). False drops
+    # it from the physics stage; the kinematic condition on the front remains.
+    edge_transport_after_freeze: bool = True
+    # The continuity weight from the physics stage on, in place of
+    # training.weights.div (None keeps it). The warm-up, and so the cached
+    # outline fit, is untouched.
+    continuity_weight_after_freeze: Optional[float] = None  # noqa: UP045
     # How the physics terms are weighted once the geometry is frozen. "fixed":
     # each at its configured weight, never rebalanced. "equalised": rebalanced
     # to equal gradient contributions (the median of the weighted norms is the
@@ -700,6 +732,28 @@ class TrainingConfig:
     # log keep the absolute residual.
     energy_relative: bool = False
     energy_relative_floor: float = 0.02
+    # The largest term size the relative loss divides by. Uncapped, a point's
+    # weight fell as its own terms grew, so a spike cost nothing: at the pinned
+    # root the conduction term grew to 1117 (29 absolute-trained) at every frame
+    # of scale-relmulti4-s0. Above the cap a point counts at its absolute error.
+    # 5 is the size of the terms within the thermal layer on trust-holdmirror4-s0
+    # (rms 5.4 to 7.6 within 12 um of the edge).
+    energy_relative_cap: float = 5.0
+    # "relative": the relative error alone. "mixed": the squared residual plus
+    # the relative error, so no point counts less than under the absolute loss.
+    # Alone, the relative loss set the temperature equation's weight within the
+    # thermal layer at 1/25 of the absolute one (the cap), and its worst absolute
+    # residual rose from 0.27 to 0.32 (apex-relmulti4-s0 against
+    # trust-holdmirror4-s0) while the open liquid fell from 47-73% to 5-14%.
+    energy_relative_mode: str = "relative"  # "relative" | "mixed"
+    # Self-adaptive weights (models/attention.py): a small map over (x, y, t)
+    # that raises a term's weight where its residual stays high, trained to
+    # ascend the loss the fields descend. "energy" weights the liquid energy
+    # equation, "all" every collocation equation, each with its own map. The
+    # weights average 1 and the largest is at most self_adaptive_ratio times the
+    # smallest, so the map moves emphasis, never the terms' balance.
+    self_adaptive: str = "off"  # "off" | "energy" | "all"
+    self_adaptive_ratio: float = 10.0
     # The temperature equation trains the temperature only: the velocity in its
     # advection term is detached, so the equation's error cannot bend the flow
     # (see residuals.energy_liquid_residual). Off keeps the two-way gradient.
@@ -939,6 +993,11 @@ class EvaluationConfig:
     # (to within 0.01), while 288 x 81 read the edge band at 45% for 12%.
     relative_error_nx: int = 576
     relative_error_ny: int = 121
+    # Random points added to that grid (seeded by training.seed), so a feature
+    # thinner than the grid's spacing cannot fall between its lines: a spike at
+    # the root of scale-relmulti4-s0 read 11% on the grid and 100% off it. As
+    # many as the grid has.
+    relative_error_random: int = 69696
     acceptance: AcceptanceConfig = field(default_factory=AcceptanceConfig)
 
 

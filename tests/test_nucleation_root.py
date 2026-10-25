@@ -1003,3 +1003,88 @@ class TestSeries1RootDrift:
                 early = np.nanmean([f.taper_exponent for f in fits[:2]])
                 late = np.nanmean([f.taper_exponent for f in fits[-2:]])
                 assert late < early, (level, window, early, late)
+
+
+# --- The smooth apex (model.smooth_apex): the root cap's field without the
+# corner on the line through its apex, the outline left where it is.
+
+
+def _row_through_the_apex(geometry, t: float, dy: float, n: int = 41, half: float = 0.02):
+    import torch
+
+    tt = torch.tensor([[t]])
+    frame = geometry.frame(tt)
+    apex = frame.ax.item() - frame.r_root.abs().item()
+    centre = geometry.centerline(torch.zeros(1, 1), tt).item()
+    xs = torch.linspace(apex - half, apex + half, n)
+    return torch.stack(
+        [xs, torch.full_like(xs, centre + dy), torch.full_like(xs, t)], dim=1
+    ).requires_grad_(True)
+
+
+def test_smooth_apex_is_off_by_default(cfg):
+    assert cfg.model.smooth_apex is False
+
+
+@pytest.mark.parametrize("raw", [-2.0, 0.0, 2.0])
+def test_the_smooth_apex_keeps_the_outline_and_the_pin(raw):
+    import torch
+
+    geometry = _geo(5, nucleation_root=True, smooth_apex=True)
+    _force_bluntness(geometry, raw)
+    front, on_root = _root_cap_front(geometry, t=0.4)
+
+    phi = geometry(front.points[on_root]).detach()
+
+    assert float(phi.abs().max()) < 1e-4, "every root-cap front sample sits on phi = 0"
+    xs = torch.linspace(0.0, 1.2, 241)
+    ys = torch.linspace(0.0, 0.5, 101)
+    gx, gy = torch.meshgrid(xs, ys, indexing="xy")
+    grid = torch.stack([gx.ravel(), gy.ravel(), torch.full_like(gx.ravel(), 0.4)], 1)
+    plain = _geo(5, nucleation_root=True)
+    _force_bluntness(plain, raw)
+    with torch.no_grad():
+        same_side = (geometry(grid) > 0) == (plain(grid) > 0)
+    assert bool(same_side.all()), "no point changes between vapour and liquid"
+
+
+@pytest.mark.parametrize("raw", [-2.0, 2.0])
+def test_the_smooth_apex_removes_the_corner_across_the_apex_line(raw):
+    import torch
+
+    from naviernet.physics.residuals import _laplacian
+
+    # The corner is a jump in the field's slope across the apex line, read just
+    # either side of it (two of its own smoothing widths, 2e-3): sampling ON the
+    # line, a spike narrower than float rounding, read differently per platform.
+    jump, curvature = {}, {}
+    for smooth in (False, True):
+        geometry = _geo(5, nucleation_root=True, smooth_apex=smooth)
+        _force_bluntness(geometry, raw)
+        x = _row_through_the_apex(geometry, t=0.4, dy=0.02, n=3, half=2e-3)
+        slope = torch.autograd.grad(geometry(x).sum(), x, create_graph=True)[0][:, 0]
+        jump[smooth] = float((slope[2] - slope[0]).abs())
+        wide = _row_through_the_apex(geometry, t=0.4, dy=0.02)
+        curvature[smooth] = float(_laplacian(geometry(wide), wide).detach().abs().max())
+
+    assert jump[False] > 1.0, "the matched-floor field has the corner"
+    # Measured 0.05 and 0.34 against 2.7 and 7.6: what remains is the cap's own
+    # curvature over the 4e-3 the slope is read across.
+    assert jump[True] < 0.1 * jump[False], "the smooth field's slope runs through the apex line"
+    # What is left is the cap's own curvature, steep for a blunt root but finite.
+    assert curvature[True] < 1e3
+
+
+def test_the_smooth_apex_meets_the_body_at_the_seam_unchanged():
+    import torch
+
+    smooth = _geo(5, nucleation_root=True, smooth_apex=True)
+    plain = _geo(5, nucleation_root=True)
+    _force_bluntness(smooth, 1.0)
+    _force_bluntness(plain, 1.0)
+    tt = torch.tensor([[0.4]])
+    ax = smooth.frame(tt).ax.item()
+    ys = torch.linspace(0.05, 0.45, 9)
+    seam = torch.stack([torch.full_like(ys, ax - 1e-6), ys, torch.full_like(ys, 0.4)], 1)
+
+    assert torch.allclose(smooth(seam), plain(seam), atol=1e-5)

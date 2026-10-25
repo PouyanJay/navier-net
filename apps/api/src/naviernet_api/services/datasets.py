@@ -425,6 +425,9 @@ MODEL_ARCH_FIELDS: dict[str, tuple[str, float, float]] = {
     "fourier_scale": ("model.fourier_scale", 0.1, 100.0),
     "alpha_eps": ("model.alpha_eps", 1e-4, 1.0),
 }
+# How many Fourier scales one field may split its features between: two is the
+# least that is a split, and more than a handful leaves each scale too few.
+PER_FIELD_SCALES = (2, 8)
 # The Stage-A field set the base architecture always trains (mirrors
 # `configs/model/stage_a.yaml`; a small, stable fact not worth a compose to read).
 _STAGE_A_FIELDS = ("phi", "u", "v", "s")
@@ -488,13 +491,33 @@ def _validate_arch(arch: dict) -> None:
     for name, sub in arch.get("per_field", {}).items():
         if name not in FIELD_NAMES:
             raise ModelConfigError(f"unknown field {name!r} in per_field")
+        if "fourier_scale" in sub and "fourier_scales" in sub:
+            raise ModelConfigError(
+                f"per_field.{name} sets both fourier_scale and fourier_scales; "
+                "a single scale is fourier_scale, several are fourier_scales"
+            )
         for key, value in sub.items():
-            if key not in ("hidden", "layers"):
-                raise ModelConfigError(f"per_field.{name}.{key} is not overridable")
+            label = f"per_field.{name}.{key}"
+            if key == "fourier_scales":
+                _validate_scales(value, label)
+                continue
+            if key not in ("hidden", "layers", "fourier_scale"):
+                raise ModelConfigError(f"{label} is not overridable")
             _, lo, hi = MODEL_ARCH_FIELDS[key]
-            if not isinstance(value, int) or isinstance(value, bool):
-                raise ModelConfigError(f"per_field.{name}.{key} must be an integer")
-            _require_finite(value, f"per_field.{name}.{key}", lo, hi)
+            if key != "fourier_scale" and (
+                not isinstance(value, int) or isinstance(value, bool)
+            ):
+                raise ModelConfigError(f"{label} must be an integer")
+            _require_finite(value, label, lo, hi)
+
+
+def _validate_scales(value: object, label: str) -> None:
+    lo_count, hi_count = PER_FIELD_SCALES
+    if not isinstance(value, list) or not lo_count <= len(value) <= hi_count:
+        raise ModelConfigError(f"{label} must be a list of {lo_count} to {hi_count} scales")
+    _, lo, hi = MODEL_ARCH_FIELDS["fourier_scale"]
+    for i, scale in enumerate(value):
+        _require_finite(scale, f"{label}[{i}]", lo, hi)
 
 
 def save_model_arch(settings: Settings, dataset: str, arch: dict) -> dict:
@@ -585,11 +608,18 @@ def series_is_stage_b(settings: Settings, dataset: str, cfg: dict | None = None)
     return bool(stage_b_terms(enabled_equations(series_fields(settings, dataset, cfg))))
 
 
+def _inline_value(value: object) -> str:
+    if isinstance(value, list):
+        return "[" + ",".join(str(v) for v in value) + "]"
+    return str(value)
+
+
 def _inline_per_field(per_field: dict) -> str:
-    """Serialise per_field as a Hydra inline dict: `{p:{hidden:64,layers:3}}`."""
+    """Serialise per_field as a Hydra inline dict:
+    `{p:{hidden:64,layers:3},T:{fourier_scales:[3.0,10.0]}}`."""
     parts = []
     for name, sub in per_field.items():
-        inner = ",".join(f"{k}:{v}" for k, v in sub.items())
+        inner = ",".join(f"{k}:{_inline_value(v)}" for k, v in sub.items())
         parts.append(f"{name}:{{{inner}}}")
     return "{" + ",".join(parts) + "}"
 

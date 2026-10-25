@@ -370,6 +370,31 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.hard_walls",
+        "No flow through the walls, exactly",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the flow across the channel is zero at both side walls by construction "
+            "instead of as a penalty; the flow along them stays a penalty"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.vapour_potential_region",
+        "Curl-free vapour, where",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "where the vapour's curl-free condition is scored: band (weighted by the smoothed "
+            "interface, so it reaches into the liquid beside it) or vapour (inside the bubble only)"
+        ),
+        options=("band", "vapour"),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.kinematic_side",
         "Exact kinematic side",
         "enum",
@@ -513,8 +538,8 @@ PHYSICS: tuple[FieldSpec, ...] = (
         "physics",
         "form",
         help=(
-            "build the symmetry about the channel centreline into every field; for "
-            "after the physics passes its tests without it"
+            "build the symmetry about the channel centreline into every field; on "
+            "in the trusted recipe"
         ),
     ),
 )
@@ -750,6 +775,42 @@ TRAINING: tuple[FieldSpec, ...] = (
         ),
     ),
     FieldSpec(
+        "model.smooth_apex",
+        "Smooth cap apex",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the field around the bubble has no corner on the line through the root's "
+            "apex; the outline and the pinned root are unchanged"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.edge_transport_after_freeze",
+        "Edge transport after the freeze",
+        "bool",
+        "training",
+        "override",
+        help=(
+            "keep the edge-transport term once the outline is frozen; off leaves the "
+            "velocity to the kinematic condition on the front"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.continuity_weight_after_freeze",
+        "Continuity weight after the freeze",
+        "float",
+        "training",
+        "override",
+        help="the continuity weight from the physics stage on; unset keeps the configured one",
+        lo=0.0,
+        hi=1e4,
+        optional=True,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.energy_relative",
         "Relative temperature loss",
         "bool",
@@ -770,6 +831,57 @@ TRAINING: tuple[FieldSpec, ...] = (
         help="the smallest term size the relative temperature loss divides by",
         lo=1e-6,
         hi=10.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.energy_relative_mode",
+        "Relative temperature loss form",
+        "enum",
+        "training",
+        "override",
+        help=(
+            "relative: the error relative to the terms alone; mixed: the absolute error "
+            "plus the relative one, so no point counts less than under the absolute loss"
+        ),
+        options=("relative", "mixed"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.self_adaptive",
+        "Self-adaptive weights",
+        "enum",
+        "training",
+        "override",
+        help=(
+            "a map over space and time that raises a term's weight where its residual "
+            "stays high: on the liquid energy equation, or on every collocation equation"
+        ),
+        options=("off", "energy", "all"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.self_adaptive_ratio",
+        "Self-adaptive weight range",
+        "float",
+        "training",
+        "override",
+        help="the largest self-adaptive weight over the smallest",
+        lo=1.01,
+        hi=1e3,
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.energy_relative_cap",
+        "Relative temperature loss cap",
+        "float",
+        "training",
+        "override",
+        help=(
+            "the largest term size the relative temperature loss divides by; above it a "
+            "point counts at its absolute error, so a spike cannot hide behind its own size"
+        ),
+        lo=1e-3,
+        hi=1e4,
         advanced=True,
     ),
     FieldSpec(
@@ -930,6 +1042,19 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         help="points across the channel the relative equation errors are taken on",
         lo=3,
         hi=1025,
+        advanced=True,
+    ),
+    FieldSpec(
+        "evaluation.relative_error_random",
+        "Relative error random points",
+        "int",
+        *_GATE,
+        help=(
+            "random points added to the grid, so a feature thinner than its spacing "
+            "cannot fall between its lines; 0 keeps the grid alone"
+        ),
+        lo=0,
+        hi=4_000_000,
         advanced=True,
     ),
     FieldSpec(

@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import { Band, EquationBlock, InfoPopover } from "../../components";
 import {
   CapacityIcon,
@@ -6,7 +8,13 @@ import {
   OptionalPhysicsIcon,
   WarningIcon,
 } from "../../components/icons";
-import { ALL_FIELDS, FIELDS, type FieldName, PRESET_META } from "./model";
+import {
+  ALL_FIELDS,
+  FIELDS,
+  type FieldName,
+  parseScales,
+  PRESET_META,
+} from "./model";
 import type { EquationDisplay, PhysicsModel, Warning } from "./usePhysicsModel";
 
 /** The equation that unlocks a Stage-B field, for the locked rows' reason. */
@@ -354,7 +362,7 @@ export function PhysicsAside({
                 className={
                   "pmarch" +
                   (on ? "" : " off") +
-                  (model.fieldOverridden(f) ? " over" : "")
+                  (model.sizeOverridden(f) ? " over" : "")
                 }
               >
                 <dt>
@@ -412,8 +420,93 @@ export function PhysicsAside({
         {at("width").map((w, i) => (
           <Caution key={i} warning={w} />
         ))}
+
+        {/* Per-field Fourier scales: one replaces the global σ_B for that
+            field, several split its features between them (a low scale for
+            the smooth far field, a high one for a thin layer). */}
+        <p className="pmsub">Per field · Fourier scales</p>
+        <dl className="pmfields">
+          {ALL_FIELDS.map((f) => (
+            <ScalesRow key={f} field={f} model={model} />
+          ))}
+        </dl>
       </Band>
     </>
+  );
+}
+
+/** One field's Fourier scales, typed as a list ("3, 10") and committed on
+ * blur or Enter; blank takes the global σ_B. A list that does not parse stays
+ * in the box, marked invalid with the reason, and is not committed. */
+function ScalesRow({
+  field,
+  model,
+}: {
+  field: FieldName;
+  model: PhysicsModel;
+}) {
+  const on = model.fieldOn(field);
+  const scales = model.perField[field].scales;
+  const shown = scales ? scales.join(", ") : "";
+  const [text, setText] = useState(shown);
+  const [error, setError] = useState<string | null>(null);
+  // A reset or a preset changes the scales from outside: show what they are.
+  useEffect(() => {
+    setText(shown);
+    setError(null);
+  }, [shown]);
+
+  const commit = () => {
+    const parsed = parseScales(text);
+    if ("error" in parsed) {
+      setError(parsed.error);
+      return;
+    }
+    setError(null);
+    model.setFieldArch(field, "scales", parsed.scales);
+  };
+  const label = `${FIELDS[field].label} Fourier scales`;
+  const errorId = `scales-${field}-error`;
+  return (
+    <div
+      className={
+        "pmarch pmscales" +
+        (on ? "" : " off") +
+        (model.scalesOverridden(field) ? " over" : "") +
+        (error ? " invalid" : "")
+      }
+    >
+      <dt>
+        <span
+          className="hue"
+          style={{ background: FIELDS[field].hue }}
+          aria-hidden="true"
+        />
+        {FIELDS[field].label}
+      </dt>
+      <dd>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={text}
+          placeholder={`${model.globals.ffScale} global`}
+          disabled={!on}
+          aria-label={label}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+          }}
+        />
+      </dd>
+      {error && (
+        <p id={errorId} className="pmscales-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -32,7 +32,12 @@ def test_model_arch_edit_persists_globals_and_per_field(client):
     assert r.status_code == 200
     net = r.json()
     assert net["hidden"] == 128
-    assert net["per_field"]["p"] == {"hidden": 64, "layers": 3}
+    assert net["per_field"]["p"] == {
+        "hidden": 64,
+        "layers": 3,
+        "fourier_scale": None,
+        "fourier_scales": None,
+    }
 
     again = client.get("/api/model/sample").json()
     assert again["hidden"] == 128 and again["per_field"]["p"]["hidden"] == 64
@@ -92,6 +97,41 @@ def test_saved_model_config_reaches_a_launched_run(client, repo_root):
     assert "p" in list(cfg.model.fields), "momentum's pressure field trains"
     assert cfg.model.per_field.p.hidden == 64
     assert cfg.training.weights.mom == pytest.approx(3.0)
+
+
+def test_per_field_fourier_scales_reach_a_launched_run(client, repo_root):
+    from naviernet_api.services import datasets as datasets_service
+    from naviernet_api.services.config_service import compose_cfg_once
+    from naviernet_api.settings import Settings
+
+    r = client.put(
+        "/api/model/sample",
+        json={"per_field": {"u": {"fourier_scales": [3.0, 10.0]}, "v": {"fourier_scale": 5.0}}},
+    )
+
+    assert r.status_code == 200
+    assert r.json()["per_field"]["u"]["fourier_scales"] == [3.0, 10.0]
+    assert r.json()["per_field"]["v"]["fourier_scale"] == pytest.approx(5.0)
+    settings = Settings(repo_root=repo_root)
+    cfg = compose_cfg_once(
+        "sample", overrides=datasets_service.series_overrides(settings, "sample")
+    )
+    assert list(cfg.model.per_field.u.fourier_scales) == [3.0, 10.0]
+    assert cfg.model.per_field.v.fourier_scale == pytest.approx(5.0)
+
+
+@pytest.mark.parametrize(
+    ("per_field", "status"),
+    [
+        ({"u": {"fourier_scales": [3.0]}}, 422),  # one scale is fourier_scale
+        ({"u": {"fourier_scales": [3.0, 1000.0]}}, 422),  # out of bounds
+        ({"u": {"fourier_scale": 3.0, "fourier_scales": [1.0, 9.0]}}, 400),  # both
+    ],
+)
+def test_bad_per_field_fourier_scales_are_rejected(client, per_field, status):
+    r = client.put("/api/model/sample", json={"per_field": per_field})
+
+    assert r.status_code == status
 
 
 def test_series_is_stage_b_triggers_on_any_stage_b_physics():

@@ -306,6 +306,61 @@ describe("PhysicsModelView", () => {
     );
   });
 
+  it("splits a field's Fourier features between the scales typed for it", async () => {
+    const fetchMock = mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    const scales = await screen.findByLabelText("u Fourier scales");
+
+    fireEvent.change(scales, { target: { value: "3, 10" } });
+    fireEvent.blur(scales);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.getByText("saved")).toBeInTheDocument());
+    const sent = JSON.parse(
+      String(
+        (fetchMock.mock.calls.find(
+          ([url, init]) =>
+            String(url).includes("/api/model/") &&
+            (init as RequestInit | undefined)?.method,
+        )?.[1] as RequestInit)!.body,
+      ),
+    ) as { per_field: Record<string, unknown> };
+    expect(sent.per_field.u).toEqual({ fourier_scales: [3, 10] });
+    expect(sent.per_field.v).toBeUndefined();
+  });
+
+  it("puts a field's single Fourier scale in the reproducible command", async () => {
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    const scales = await screen.findByLabelText("u Fourier scales");
+
+    fireEvent.change(scales, { target: { value: "5" } });
+    fireEvent.keyDown(scales, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "The exact command" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/\+model\.per_field=\{u:\{fourier_scale:5\}\}/),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/overridden/)).toBeInTheDocument();
+  });
+
+  it("keeps Fourier scales that do not parse out of the config and says why", async () => {
+    mockApi();
+    renderStage(<PhysicsModelView datasets={DATASETS} />);
+    const scales = await screen.findByLabelText("u Fourier scales");
+
+    fireEvent.change(scales, { target: { value: "3, 500" } });
+    fireEvent.blur(scales);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Each scale is a number from 0.1 to 100.",
+    );
+    expect(scales).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText(/overridden/)).not.toBeInTheDocument();
+  });
+
   it("core-equation weights are stated, not offered as dead inputs", async () => {
     mockApi();
     renderStage(<PhysicsModelView datasets={DATASETS} />);

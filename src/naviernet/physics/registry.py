@@ -320,20 +320,29 @@ def _energy_liquid_sq(ctx: LossContext) -> torch.Tensor:
 def _energy_liquid_objective(ctx: LossContext) -> torch.Tensor:
     """What training minimises for the liquid energy equation: its squared
     residual, or under ``training.energy_relative`` that residual over the size
-    of its own terms (floored at ``training.energy_relative_floor``), so the
+    of its own terms (floored at ``training.energy_relative_floor``, capped at
+    ``training.energy_relative_cap``), so the
     open liquid, whose terms are some 40 times smaller than at the interface,
     counts as much as the interface does. The reported residual stays absolute."""
     tcfg = ctx.model.cfg.training
     if not bool(getattr(tcfg, "energy_relative", False)):
         return _energy_liquid_sq(ctx)
     floor = float(getattr(tcfg, "energy_relative_floor", ENERGY_RELATIVE_FLOOR))
-    return (ctx.energy_liquid_res / (ctx.energy_liquid_scale + floor)) ** 2
+    cap = float(getattr(tcfg, "energy_relative_cap", ENERGY_RELATIVE_CAP))
+    size = ctx.energy_liquid_scale.clamp(max=cap)
+    relative = (ctx.energy_liquid_res / (size + floor)) ** 2
+    if str(getattr(tcfg, "energy_relative_mode", "relative")) == "mixed":
+        return _energy_liquid_sq(ctx) + relative
+    return relative
 
 
 # The relative energy objective's floor on the terms' size, dimensionless: about
 # the heating term over the upstream heater zone (q* times its 0.225 share on
 # Series-1-w300), so a point where every term vanishes is not divided by zero.
 ENERGY_RELATIVE_FLOOR = 0.02
+# Its cap: above it a point counts at its absolute error, so a point cannot
+# lower its own weight by growing its terms (schema: energy_relative_cap).
+ENERGY_RELATIVE_CAP = 5.0
 
 
 def training_pointwise(eq: Equation, ctx: LossContext) -> torch.Tensor:

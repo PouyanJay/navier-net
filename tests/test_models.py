@@ -34,6 +34,44 @@ def test_fourier_matrix_is_a_buffer_not_a_parameter():
     assert list(ff.parameters()) == []
 
 
+def test_one_fourier_scale_in_the_list_reproduces_the_single_scale_exactly():
+    torch.manual_seed(0)
+    single = FourierFeatures(3, 8, scale=10.0)
+    torch.manual_seed(0)
+    listed = FourierFeatures(3, 8, scale=3.0, scales=(10.0,))
+
+    assert torch.equal(single.B, listed.B)
+
+
+def test_several_fourier_scales_split_the_frequencies_evenly():
+    torch.manual_seed(0)
+    draw = torch.randn(3, 8)
+    torch.manual_seed(0)
+
+    ff = FourierFeatures(3, 8, scales=(3.0, 10.0))
+
+    assert torch.allclose(ff.B[:, :4], draw[:, :4] * 3.0)
+    assert torch.allclose(ff.B[:, 4:], draw[:, 4:] * 10.0)
+
+
+def test_more_fourier_scales_than_features_is_refused():
+    with pytest.raises(ValueError, match="3 Fourier scales for 2 features"):
+        FourierFeatures(3, 2, scales=(1.0, 3.0, 10.0))
+
+
+def test_per_field_fourier_scales_reach_only_that_field():
+    torch.manual_seed(0)
+    plain = BubblePINN(make_config(_TINY))
+    torch.manual_seed(0)
+
+    model = BubblePINN(make_config([*_TINY, "+model.per_field={s:{fourier_scales:[1.0,9.0]}}"]))
+
+    ratio = model.nets["s"].ff.B / plain.nets["s"].ff.B
+    assert torch.allclose(ratio[:, :2], torch.full((3, 2), 1.0 / 3.0))
+    assert torch.allclose(ratio[:, 2:], torch.full((3, 2), 3.0))
+    assert torch.equal(model.nets["u"].ff.B, plain.nets["u"].ff.B)
+
+
 def test_adaptive_tanh_starts_as_plain_tanh():
     x = torch.randn(5, 4)
     assert torch.allclose(AdaptiveTanh(4)(x), torch.tanh(x))

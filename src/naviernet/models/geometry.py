@@ -262,12 +262,16 @@ class GeometricInterface(nn.Module):
         nose_shape: bool = False,
         nose_delta: float = 0.6,
         mirror_axis: float | None = None,
+        smooth_apex: bool = False,
     ):
         super().__init__()
         # Mirror symmetry (model.mirror_symmetry): the centreline is pinned to this
         # axis, so the capsule, whose radius profile is one function of (u, t), is
         # exactly symmetric about it. None leaves the centreline learned.
         self.mirror_axis = mirror_axis
+        # The Hugelschaffer caps' field made smooth through the apex
+        # (model.smooth_apex, see `_smooth_cap_phi`); the outline is unchanged.
+        self.smooth_apex = bool(smooth_apex)
         # The REFERENCE dataset's anchors. A single-dataset run has only these; a
         # joint run passes each dataset's own per call (see `priors=` below) and
         # uses these solely to set the nets' initial scales.
@@ -842,7 +846,11 @@ class GeometricInterface(nn.Module):
         width_sq = self._root_width_sq(query, ctx)
         excess = (-query.x_c - query.r_abs).clamp(min=0.0)
         inflated = torch.copysign(torch.sqrt(width_sq + ABS_SMOOTH**2), query.radius)
-        return inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
+        phi = inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
+        if not self.smooth_apex:
+            return phi
+        smooth = self._smooth_cap_phi(-query.x_c, dy, query, self.root_bluntness(query.t, ctx))
+        return torch.where(query.radius > 0, smooth, phi)
 
     def _nose_cap_phi(
         self, query: CapQuery, dy: torch.Tensor, ctx: GeometryContext
@@ -856,7 +864,61 @@ class GeometricInterface(nn.Module):
         width_sq = self._nose_width_sq(query, ctx)
         excess = (query.x_c - query.r_abs).clamp(min=0.0)
         inflated = torch.copysign(torch.sqrt(width_sq + ABS_SMOOTH**2), query.radius)
-        return inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
+        phi = inflated - torch.sqrt(dy**2 + excess**2 + ABS_SMOOTH**2)
+        if not self.smooth_apex:
+            return phi
+        smooth = self._smooth_cap_phi(query.x_c, dy, query, self.nose_bluntness(query.t, ctx))
+        return torch.where(query.radius > 0, smooth, phi)
+
+    @staticmethod
+    def _smooth_cap_phi(
+        s: torch.Tensor, dy: torch.Tensor, query: CapQuery, w: torch.Tensor
+    ) -> torch.Tensor:
+        """A cap's field without the corner at its apex (``model.smooth_apex``).
+
+        The matched-floor field is ``N / D`` with ``N = W^2 - dy^2 - excess^2``
+        and ``D = sqrt(W^2 + e^2) + sqrt(dy^2 + excess^2 + e^2)``. Its zero set,
+        the outline, is ``N = 0`` alone; ``D`` only scales it. Two things put a
+        corner on the line through the apex, across the whole channel: ``W^2``
+        is clamped to zero past the apex, a kink in ``N``, and ``sqrt(W^2 + e^2)``
+        turns over within ``e`` (0.3 um) of it, so the field's slope across that
+        line jumped from 0.04 to 5 (163 on it) and the temperature gated on it
+        took a conduction term of 1117 there (scale-relmulti4-s0).
+
+        Here ``W^2`` continues past the apex along its tangent (negative there,
+        so the outline gains no point), which makes ``N`` C1, and ``D`` turns
+        from the matched-floor sum at the seam into ``|grad N|`` at the apex,
+        which keeps the field a distance there (slope 1 for a circle) instead of
+        a square root. The blend ``xi^2 (2 - xi^2)`` is flat at both ends, so the
+        seam with the body is the matched-floor field exactly, and nothing
+        changes in value or slope there.
+
+        ``s`` is the axial offset from the cap centre towards the apex, ``w``
+        the cap's bluntness; the outline, the pinned root and the apex are
+        exactly where the matched-floor field puts them.
+        """
+        r = query.r_abs
+        xi = -s / r
+        inside = xi.clamp(min=-1.0, max=0.0)
+        k = 1.0 + w**2
+        den = 1.0 + 2.0 * w * inside + w**2
+        shape = (1.0 - inside**2) * k / den
+        apex_slope = 2.0 * k / (1.0 - w) ** 2
+        beyond = xi < -1.0
+        width_sq = r**2 * torch.where(beyond, apex_slope * (xi + 1.0), shape)
+        excess = (s - r).clamp(min=0.0)
+        numerator = width_sq - dy**2 - excess**2
+        matched = torch.sqrt(width_sq.clamp(min=0.0) + ABS_SMOOTH**2) + torch.sqrt(
+            dy**2 + excess**2 + ABS_SMOOTH**2
+        )
+        # |grad N| near the apex, where the blend uses it: the apex slope of W^2
+        # and the growth of excess^2 past it, combined in squares so the sum is
+        # C1 across the apex (excess^2 is; excess itself is not).
+        gradient = torch.sqrt(
+            (r * apex_slope) ** 2 + 4.0 * excess**2 + 4.0 * dy**2 + (0.5 * r) ** 2
+        )
+        blend = inside**2 * (2.0 - inside**2)
+        return numerator / ((1.0 - blend) * matched + blend * gradient)
 
     @staticmethod
     def _hugelschaffer_width_sq(

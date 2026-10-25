@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 from torch.func import functional_call
 
+from naviernet.models.attention import SelfAdaptiveWeights
 from naviernet.models.film import LiquidFilm
 from naviernet.models.geometry import (
     GeometricInterface,
@@ -37,6 +38,10 @@ from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softp
 from naviernet.physics.film import deposited_thickness
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.heating import DEPLETION_SMOOTHING, wall_flux_ratio
+
+# What training.self_adaptive weights: nothing, the liquid energy equation, or
+# every collocation equation.
+SELF_ADAPTIVE_MODES = ("off", "energy", "all")
 
 # Hidden layout of the vapour-pressure net. A module constant, not config: p_v is
 # one smooth scalar curve in time, and capacity beyond this buys nothing but the
@@ -71,6 +76,7 @@ class FieldNet(nn.Module):
             in_dim=3,
             n_feats=_resolve(arch, "fourier_feats", model_cfg.fourier_feats),
             scale=_resolve(arch, "fourier_scale", model_cfg.fourier_scale),
+            scales=_resolve(arch, "fourier_scales", None),
         )
 
         # The conditioning vector is appended to the Fourier features, not fed
@@ -136,6 +142,7 @@ class BubblePINN(nn.Module):
         self._validate_thermal(cfg, names)
         self._validate_mirror_symmetry(cfg, geometry)
         self._init_hard_kinematics(cfg)
+        self._init_hard_walls(cfg, geometry)
         self._field_cache: dict | None = None
         # Read on every thermal-source call; the groups are fixed for the model.
         self._source_coefficient = float(compute_groups(cfg)["mass_flux_to_source"])
@@ -158,6 +165,7 @@ class BubblePINN(nn.Module):
                     nose_shape=self.nose_shape,
                     nose_delta=self.nose_delta,
                     mirror_axis=self.mirror_axis,
+                    smooth_apex=bool(getattr(cfg.model, "smooth_apex", False)),
                 )
                 if name == "phi" and self.front_geometry
                 else FieldNet(cfg, arch=per_field.get(name), n_cond=self.n_cond)
@@ -173,6 +181,8 @@ class BubblePINN(nn.Module):
         # After the film for tidiness; consumes no RNG (zero-init scalars).
         self._init_root_attachment()
         self._init_film_evaporation(cfg)
+        # After every field, so a run with it off builds bit-identical nets.
+        self._init_self_adaptive(cfg)
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -373,6 +383,27 @@ class BubblePINN(nn.Module):
         cache[key] = (x, c, value)  # holding x and c keeps their ids unique
         return value
 
+    def _init_hard_walls(self, cfg, geometry: GeometryPriors | None) -> None:
+        """No flow through the side walls by construction (``model.hard_walls``):
+        the walls are the physical ones the front geometry's priors carry."""
+        self.hard_walls = bool(getattr(cfg.model, "hard_walls", False))
+        self.wall_span: tuple[float, float] | None = None
+        if not self.hard_walls:
+            return
+        if str(getattr(cfg.model, "walls_at", "crop")) != "physical" or geometry is None:
+            raise ValueError(
+                "model.hard_walls holds the flow at the channel's side walls, so it needs "
+                "model.walls_at=physical and the front geometry that carries them"
+            )
+        self.wall_span = (float(geometry.y_min), float(geometry.y_max))
+
+    def _wall_factor(self, x: torch.Tensor) -> torch.Tensor:
+        """``4 (y - y_lo)(y_hi - y) / (y_hi - y_lo)^2``: zero at both walls, one
+        on the centreline, even about it."""
+        lo, hi = self.wall_span
+        y = x[:, 1:2]
+        return 4.0 * (y - lo) * (hi - y) / (hi - lo) ** 2
+
     def _init_hard_kinematics(self, cfg) -> None:
         """The exact kinematic condition (``model.hard_kinematics``): it reads the
         interface's normal and speed off the explicit geometry, so it needs one."""
@@ -414,6 +445,29 @@ class BubblePINN(nn.Module):
         if self.mirror_axis is None:
             return net(x, c)
         return 0.5 * (net(x, c) - net(self._reflect(x), c))
+
+    def _init_self_adaptive(self, cfg) -> None:
+        """The self-adaptive weight map (``training.self_adaptive``), or None."""
+        mode = str(getattr(cfg.training, "self_adaptive", "off"))
+        self.attention: SelfAdaptiveWeights | None = None
+        if mode == "off":
+            return
+        from naviernet.physics import registry
+
+        equations = registry.enabled_equations(
+            cfg.model.fields, **registry.flags_from(cfg.model)
+        )
+        keys = [e.weight_key for e in registry.collocation_equations(equations)]
+        if mode == "energy":
+            keys = [k for k in keys if k == "energy_liquid"]
+        if mode not in SELF_ADAPTIVE_MODES or not keys:
+            raise ValueError(
+                f"training.self_adaptive={mode!r} needs one of {SELF_ADAPTIVE_MODES} "
+                "and an equation to weight (energy needs the liquid energy equation)"
+            )
+        self.attention = SelfAdaptiveWeights(
+            tuple(keys), float(cfg.training.self_adaptive_ratio)
+        )
 
     def _init_film_evaporation(self, cfg) -> None:
         """Film evaporation under the footprint (``model.footprint_evaporation``):
@@ -988,6 +1042,13 @@ class BubblePINN(nn.Module):
         self, x: torch.Tensor, c: torch.Tensor | None
     ) -> tuple[torch.Tensor, torch.Tensor]:
         u, v = self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
+        # The wall factor goes on the network's velocity, before the kinematic
+        # correction, so the correction stays exact on the interface; what it
+        # adds at a wall is its blend's tail, sech^2 of the gap over the blend
+        # length (about 1.5% of the interface's normal-speed mismatch across a
+        # 34 um gap at the default 12 um blend).
+        if self.hard_walls:
+            v = v * self._wall_factor(x)
         if not (self.hard_kinematics and self.kinematics_engaged):
             return u, v
         return self._kinematic_correction(x, c, u, v)

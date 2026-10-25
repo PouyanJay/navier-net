@@ -379,6 +379,10 @@ export interface PreprocessStatus {
 export interface PerFieldArch {
   hidden?: number | null;
   layers?: number | null;
+  /** One Fourier scale in place of the global σ_B. */
+  fourier_scale?: number | null;
+  /** Several scales the field's Fourier features are split between. */
+  fourier_scales?: number[] | null;
 }
 
 export interface ModelArchitecture {

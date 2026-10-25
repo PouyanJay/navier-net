@@ -4,6 +4,7 @@ import {
   api,
   type EquationState,
   type ModelArchitecture,
+  type PerFieldArch,
   type PhysicsState,
 } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
@@ -16,6 +17,8 @@ import {
   derivePerField,
   PRESETS,
   type PresetName,
+  sameScales,
+  scalesEntry,
 } from "./model";
 
 interface Globals {
@@ -87,6 +90,10 @@ export interface PhysicsModel {
   fieldOn: (field: FieldName) => boolean;
   fieldParamCount: (field: FieldName) => number;
   fieldOverridden: (field: FieldName) => boolean;
+  /** Width or depth moved from the baseline. */
+  sizeOverridden: (field: FieldName) => boolean;
+  /** Fourier scales moved from the baseline. */
+  scalesOverridden: (field: FieldName) => boolean;
   globalOverridden: (key: "ff" | "ffScale") => boolean;
   totalParams: number;
   overrideCount: number;
@@ -99,7 +106,11 @@ export interface PhysicsModel {
   setWeight: (weightKey: string, value: number) => void;
   applyPreset: (preset: PresetName) => void;
   setGlobal: <K extends keyof Globals>(key: K, value: Globals[K]) => void;
-  setFieldArch: (field: FieldName, key: keyof FieldArch, value: number) => void;
+  setFieldArch: <K extends keyof FieldArch>(
+    field: FieldName,
+    key: K,
+    value: FieldArch[K],
+  ) => void;
   resetToPreset: () => void;
   hydraCommand: string;
   save: () => void;
@@ -123,6 +134,9 @@ function baseFrom(model: ModelArchitecture, field: FieldName): FieldArch {
   return {
     width: over?.hidden ?? model.hidden,
     depth: over?.layers ?? model.layers,
+    scales:
+      over?.fourier_scales ??
+      (over?.fourier_scale != null ? [over.fourier_scale] : null),
   };
 }
 
@@ -214,12 +228,15 @@ export function usePhysicsModel(dataset: string | null): PhysicsLoad {
         weights[e.weight_key] = edit.weights[e.weight_key] ?? e.weight;
     }
     const base = edit.perField.phi;
-    const per_field: Record<string, { hidden: number; layers: number }> = {};
+    const per_field: Record<string, PerFieldArch> = {};
     for (const f of ALL_FIELDS) {
       const a = edit.perField[f];
-      if (a.width !== base.width || a.depth !== base.depth) {
-        per_field[f] = { hidden: a.width, layers: a.depth };
-      }
+      const sized =
+        a.width !== base.width || a.depth !== base.depth
+          ? { hidden: a.width, layers: a.depth }
+          : {};
+      const entry = { ...sized, ...scalesEntry(a.scales) };
+      if (Object.keys(entry).length > 0) per_field[f] = entry;
     }
     // Save physics first, then the architecture: both write the same model.json,
     // so they must be sequential (the model save merges onto the physics save).
@@ -341,9 +358,13 @@ function deriveView(edit: EditState, activeFields: FieldName[]) {
     FIELDS[f].needs === null || edit.enabled[FIELDS[f].needs as string];
   const fieldParamCount = (f: FieldName) =>
     fieldParams(edit.perField[f], edit.globals.ff, edit.globals.nodewise);
-  const fieldOverridden = (f: FieldName) =>
+  const scalesOverridden = (f: FieldName) =>
+    !sameScales(edit.perField[f].scales, edit.baseline.perField[f].scales);
+  const sizeOverridden = (f: FieldName) =>
     edit.perField[f].width !== edit.baseline.perField[f].width ||
     edit.perField[f].depth !== edit.baseline.perField[f].depth;
+  const fieldOverridden = (f: FieldName) =>
+    sizeOverridden(f) || scalesOverridden(f);
   const globalOverridden = (key: "ff" | "ffScale") =>
     edit.globals[key] !== edit.baseline.globals[key];
   const overrideCount =
@@ -351,7 +372,8 @@ function deriveView(edit: EditState, activeFields: FieldName[]) {
       (n, f) =>
         n +
         (edit.perField[f].width !== edit.baseline.perField[f].width ? 1 : 0) +
-        (edit.perField[f].depth !== edit.baseline.perField[f].depth ? 1 : 0),
+        (edit.perField[f].depth !== edit.baseline.perField[f].depth ? 1 : 0) +
+        (scalesOverridden(f) ? 1 : 0),
       0,
     ) +
     (globalOverridden("ff") ? 1 : 0) +
@@ -378,6 +400,8 @@ function deriveView(edit: EditState, activeFields: FieldName[]) {
     fieldOn,
     fieldParamCount,
     fieldOverridden,
+    sizeOverridden,
+    scalesOverridden,
     globalOverridden,
     overrideCount,
     equations,
@@ -411,7 +435,11 @@ function buildActions(
       key: K,
       value: EditState["globals"][K],
     ) => patch({ globals: { ...edit.globals, [key]: value } }),
-    setFieldArch: (field: FieldName, key: keyof FieldArch, value: number) =>
+    setFieldArch: <K extends keyof FieldArch>(
+      field: FieldName,
+      key: K,
+      value: FieldArch[K],
+    ) =>
       patch({
         perField: {
           ...edit.perField,
@@ -451,9 +479,15 @@ function buildHydra(
   const perField: string[] = [];
   for (const f of activeFields) {
     const a = edit.perField[f];
+    const inner: string[] = [];
     if (a.width !== baseArch.width || a.depth !== baseArch.depth) {
-      perField.push(`${f}:{hidden:${a.width},layers:${a.depth}}`);
+      inner.push(`hidden:${a.width}`, `layers:${a.depth}`);
     }
+    if (a.scales?.length === 1) inner.push(`fourier_scale:${a.scales[0]}`);
+    if (a.scales && a.scales.length > 1) {
+      inner.push(`fourier_scales:[${a.scales.join(",")}]`);
+    }
+    if (inner.length) perField.push(`${f}:{${inner.join(",")}}`);
   }
   if (perField.length) parts.push(`+model.per_field={${perField.join(",")}}`);
   for (const eq of edit.equations) {

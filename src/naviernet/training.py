@@ -498,6 +498,8 @@ def _validate_training_config(cfg) -> None:
     _validate_temperature_stage(tcfg, cfg.model)
     _validate_growth_closure(tcfg, cfg.model)
     _validate_energy_relative(tcfg)
+    _validate_self_adaptive(tcfg)
+    _validate_physics_stage(cfg)
     if int(getattr(tcfg, "physics_lr_halflife", 0)) < 0:
         raise ValueError(
             f"training.physics_lr_halflife must be >= 0, got {tcfg.physics_lr_halflife}"
@@ -568,6 +570,44 @@ def _validate_temperature_stage(tcfg, model_cfg) -> None:
         )
 
 
+ENERGY_RELATIVE_MODES = ("relative", "mixed")
+
+
+VAPOUR_POTENTIAL_REGIONS = ("band", "vapour")
+
+
+def _validate_physics_stage(cfg) -> None:
+    """The after-freeze options name real choices; a negative continuity
+    weight is a typo."""
+    region = str(getattr(cfg.model, "vapour_potential_region", "band"))
+    if region not in VAPOUR_POTENTIAL_REGIONS:
+        raise ValueError(
+            f"model.vapour_potential_region must be one of {VAPOUR_POTENTIAL_REGIONS}, "
+            f"got {region!r}"
+        )
+    weight = getattr(cfg.training, "continuity_weight_after_freeze", None)
+    if weight is not None and float(weight) < 0.0:
+        raise ValueError(f"training.continuity_weight_after_freeze must be >= 0, got {weight}")
+
+
+def _validate_self_adaptive(tcfg) -> None:
+    """The self-adaptive weights act on the causal weighting's per-point
+    losses, like the relative energy objective; elsewhere they would be built
+    and never read."""
+    if str(getattr(tcfg, "self_adaptive", "off")) == "off":
+        return
+    if (
+        not bool(tcfg.causal_weighting)
+        or str(tcfg.causal_mode) != "weight"
+        or tcfg.weighting == "rba"
+    ):
+        raise ValueError(
+            "training.self_adaptive acts on the causal weighting's per-point losses, so it "
+            "needs training.causal_weighting=true with causal_mode=weight and the "
+            "gradient-norm weighting"
+        )
+
+
 def _validate_energy_relative(tcfg) -> None:
     """The relative energy objective enters through the soft causal weighting's
     per-point losses, the path the trusted recipe trains on; the other paths
@@ -584,8 +624,16 @@ def _validate_energy_relative(tcfg) -> None:
             "losses, so it needs training.causal_weighting=true with causal_mode=weight and "
             "the gradient-norm weighting"
         )
-    if float(getattr(tcfg, "energy_relative_floor", 0.02)) <= 0.0:
+    floor = float(getattr(tcfg, "energy_relative_floor", 0.02))
+    if floor <= 0.0:
         raise ValueError("training.energy_relative_floor must be > 0")
+    if float(getattr(tcfg, "energy_relative_cap", 5.0)) <= floor:
+        raise ValueError("training.energy_relative_cap must be above energy_relative_floor")
+    mode = str(getattr(tcfg, "energy_relative_mode", "relative"))
+    if mode not in ENERGY_RELATIVE_MODES:
+        raise ValueError(
+            f"training.energy_relative_mode must be one of {ENERGY_RELATIVE_MODES}, got {mode!r}"
+        )
 
 
 def _validate_outline_guard(tcfg) -> None:
@@ -1213,9 +1261,12 @@ def _chunk_losses(
     every one.
     """
     order = torch.argsort(ctx.x_coll.detach()[:, 2])
+    attention = getattr(ctx.model, "attention", None)
+    adaptive = attention(ctx.x_coll) if attention is not None else {}
     per_point = sum(
         weights[eq.weight_key]
         * schedule.get(eq.weight_key, 1.0)
+        * adaptive.get(eq.weight_key, 1.0)
         * registry.training_pointwise(eq, ctx)
         for eq in coll_equations
     )[order]
@@ -1749,6 +1800,19 @@ def _geometry_frozen(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
     )
 
 
+def _physics_stage_weights(weights: dict[str, float], tcfg) -> None:
+    """The weights that change once the geometry is frozen: the edge transport
+    dropped (``training.edge_transport_after_freeze``) and the continuity set
+    (``training.continuity_weight_after_freeze``). Applied at the handoff, so
+    they persist through the run's state from there."""
+    if not bool(getattr(tcfg, "edge_transport_after_freeze", True)) and "vof" in weights:
+        weights["vof"] = 0.0
+    continuity = getattr(tcfg, "continuity_weight_after_freeze", None)
+    if continuity is not None and "div" in weights:
+        weights["div"] = float(continuity)
+    log.info("physics-stage weights: vof %s, div %s", weights.get("vof"), weights.get("div"))
+
+
 def _freeze_geometry(model, frozen: bool) -> None:
     """Hold every parameter of the explicit geometry (the capsule, its nose,
     root and width nets) where it is, or release it. The fields' own nets and
@@ -2152,6 +2216,8 @@ def train(
                 if frozen:
                     _freeze_geometry(model, True)
                 opt, weights = _restart_for_stage_b(model, lr, reset_weights)
+                if frozen:
+                    _physics_stage_weights(weights, tcfg)
                 log.info(
                     "step %5d | Stage-B physics engaged (%s)", step, ", ".join(stage_b_keys)
                 )

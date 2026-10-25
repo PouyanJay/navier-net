@@ -9,7 +9,7 @@ import torch
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BubblePINN
 from naviernet.physics.groups import compute_groups
-from naviernet.relative_error import _balance, relative_errors
+from naviernet.relative_error import _balance, _points, relative_errors
 from naviernet.training import _geometry_priors
 
 from .conftest import staged_capsule_run
@@ -46,3 +46,18 @@ def test_every_equation_the_model_has_is_reported_by_region(tmp_path):
     for name in ("temperature", "momentum", "continuity", "edge transport"):
         assert {"near edge", "all liquid"} <= set(result[name])
         assert all(math.isfinite(v) and v >= 0 for v in result[name].values())
+
+
+def test_random_points_are_added_to_the_grid_inside_the_channel(tmp_path):
+    cfg, paths = staged_capsule_run(tmp_path, [])
+    data = BubbleDataset(cfg, paths)
+
+    points = _points(data, 0.5, 8, 5, 100, seed=3)
+
+    assert points.shape == (8 * 5 + 100, 3)
+    extra = points[40:]
+    assert (extra[:, 0] >= data.domain.x_min).all() and (extra[:, 0] <= data.domain.x_max).all()
+    assert (extra[:, 1] >= data.y_lo).all() and (extra[:, 1] <= data.y_hi).all()
+    assert (points[:, 2] == 0.5).all()
+    again = _points(data, 0.5, 8, 5, 100, seed=3)
+    assert (again == points).all(), "the same seed draws the same points"

@@ -221,6 +221,23 @@
   font-size: 10px;
   color: var(--faint);
 }
+/* A field's Fourier scales: a list, so a wider box, and a reason under the row
+   when what was typed does not parse. */
+.pmscales {
+  flex-wrap: wrap;
+}
+.pmscales input {
+  width: 96px;
+}
+.pmscales.invalid input {
+  border-color: var(--danger);
+}
+.pmscales-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 11px;
+  color: var(--danger);
+}
 /* Overridden away from the preset: the same amber the platform uses for every
    deliberate departure. */
 .pmarch.over input {

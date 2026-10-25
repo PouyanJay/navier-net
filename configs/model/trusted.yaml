@@ -29,7 +29,11 @@ per_field:
   # factor of two, and the footprint source, which needs no layer, carries the
   # rest of the growth. 3 (the smooth-field value) would read the outline flux
   # an order of magnitude low.
-  T: { hidden: 149, layers: 8, fourier_scale: 10.0 }
+  # Half its features at scale 3 for the open liquid, half at 10 for the
+  # layer at the edge: with the relative loss below, the open liquid's
+  # temperature equation fell from 47-73% of its terms to 5-13%
+  # (wallsgrow4-s0 against trust-holdmirror4-s0).
+  T: { hidden: 149, layers: 8, fourier_scale: 10.0, fourier_scales: [3.0, 10.0] }
 
 # Every field exactly even about the channel centreline (v odd), the capsule's
 # centreline pinned to it. The first run to pass the symmetry check (0.013
@@ -41,6 +45,10 @@ mirror_symmetry: true
 front_geometry: true
 sharp_interface: true
 nucleation_root: true
+# The root cap's field without the corner on the line through its apex, the
+# outline unchanged: the corner put a spike in the temperature at the root
+# that the relative temperature loss grew (geometry._smooth_cap_phi).
+smooth_apex: true
 root_attachment: true
 receding_cap: true
 
@@ -49,6 +57,10 @@ receding_cap: true
 # of view.
 walls_at: physical
 wall_condition: no_slip
+# No flow through the side walls by construction: as a penalty they let liquid
+# in beside the nose late in the event, the whole of the flux check's defect
+# there (trust-holdmirror4-s0, frames 8-10).
+hard_walls: true
 momentum_closure: brinkman
 # Young-Laplace on average around the front: it sets the bubble's uniform
 # vapour pressure (about 180 Pa above the outlet, the jump the 300 x 150 um

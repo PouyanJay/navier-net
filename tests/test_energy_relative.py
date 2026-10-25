@@ -63,11 +63,48 @@ def test_on_the_objective_is_the_residual_over_its_floored_terms(tmp_path):
     )
     energy = next(e for e in registry.REGISTRY if e.id == "energy_liquid")
 
-    expected = (ctx.energy_liquid_res / (ctx.energy_liquid_scale + 0.05)) ** 2
+    expected = (ctx.energy_liquid_res / (ctx.energy_liquid_scale.clamp(max=5.0) + 0.05)) ** 2
     assert torch.allclose(registry.training_pointwise(energy, ctx), expected)
     assert torch.equal(energy.pointwise(ctx), ctx.energy_liquid_res**2), (
         "reported stays absolute"
     )
+
+
+def test_above_the_cap_a_point_counts_at_its_absolute_error(tmp_path):
+    _, _, ctx = _context(
+        tmp_path,
+        [
+            "training.energy_relative=true",
+            "training.energy_relative_floor=0.05",
+            "training.energy_relative_cap=0.1",
+        ],
+    )
+    energy = next(e for e in registry.REGISTRY if e.id == "energy_liquid")
+    large = ctx.energy_liquid_scale > 0.1
+    assert large.any(), "the fixture has points whose terms exceed the cap"
+
+    objective = registry.training_pointwise(energy, ctx)
+
+    expected = (ctx.energy_liquid_res / 0.15) ** 2
+    assert torch.allclose(objective[large], expected[large])
+
+
+def test_mixed_the_objective_is_the_absolute_plus_the_relative_error(tmp_path):
+    _, _, ctx = _context(
+        tmp_path,
+        [
+            "training.energy_relative=true",
+            "training.energy_relative_floor=0.05",
+            "training.energy_relative_mode=mixed",
+        ],
+    )
+    energy = next(e for e in registry.REGISTRY if e.id == "energy_liquid")
+
+    objective = registry.training_pointwise(energy, ctx)
+
+    relative = (ctx.energy_liquid_res / (ctx.energy_liquid_scale.clamp(max=5.0) + 0.05)) ** 2
+    assert torch.allclose(objective, ctx.energy_liquid_res**2 + relative)
+    assert bool((objective >= ctx.energy_liquid_res**2).all()), "never below the absolute loss"
 
 
 def test_a_relative_energy_run_trains(tmp_path):
@@ -93,6 +130,8 @@ def test_a_relative_energy_run_trains(tmp_path):
     [
         ("training.causal_weighting=false", "causal_weighting"),
         ("training.energy_relative_floor=0.0", "energy_relative_floor"),
+        ("training.energy_relative_cap=0.01", "energy_relative_cap"),
+        ("training.energy_relative_mode=both", "energy_relative_mode"),
     ],
 )
 def test_an_unsupported_relative_energy_setup_is_refused(tmp_path, override, message):
