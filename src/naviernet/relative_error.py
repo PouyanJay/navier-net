@@ -72,8 +72,11 @@ def _terms(model, x: torch.Tensor, groups: dict, inertia: bool) -> dict[str, tup
     v_x, v_y, v_t = gradients(v, x)
     a_x, a_y, a_t = gradients(alpha, x)
     liquid = (1.0 - alpha).detach()
+    # Under model.exact_continuity the liquid conserves volume by construction
+    # and continuity is the vapour's alone, as the trainer scores it.
+    scored = (~model.liquid_side(x)).unsqueeze(1).float() if model.exact_liquid else 1.0
     out = {
-        "continuity": _balance([u_x, v_y, -model.source(x)], 1.0),
+        "continuity": _balance([u_x, v_y, -model.source(x)], scored),
         "edge transport": _balance([a_t, u * a_x, v * a_y], 1.0),
     }
     if "T" in model.fields:
