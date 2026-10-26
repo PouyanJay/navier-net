@@ -53,6 +53,9 @@ CHUNK = 2048
 # Halvings of a source's offset before a source that will not sit inside the
 # vapour is an error.
 OFFSET_HALVINGS = 6
+# Point batches whose derivatives a field keeps: one step's batches at one
+# instant, each at every order the losses reach.
+MEMO_SIZE = 64
 # Distinct instants whose solves are kept. Training draws fresh instants every
 # step, so only the fixed quadratures and evaluation frames repeat.
 CACHE_SIZE = 64
@@ -130,6 +133,8 @@ class HarmonicField:
         self.signs = torch.tensor(signs, dtype=torch.float64, device=self.images.device)
         weights = strengths.double().to(self.images.device)
         self.strengths = torch.cat([s * weights for s in signs]) / (2.0 * math.pi)
+        self._complex_strengths = self.strengths.to(torch.complex128)
+        self._memo: OrderedDict[tuple, tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
 
     def to(self, device) -> HarmonicField:
         return HarmonicField(
@@ -141,8 +146,9 @@ class HarmonicField:
         )
 
     def value(self, xy: torch.Tensor, a: int, b: int) -> torch.Tensor:
-        """``d^a/dx^a d^b/dy^b`` of the field at ``xy``, ``(N, 1)`` in ``xy``'s dtype."""
-        out = self._sum(xy, a, b, lambda terms: terms @ self.strengths).reshape(-1, 1)
+        """``d^a/dx^a d^b/dy^b`` of the field at ``xy``, ``(N, 1)`` in ``xy``'s dtype:
+        ``Re(i^b F^(a+b))``, every derivative of one order from the same sum."""
+        out = ((1j) ** (b % 4) * self._derivative(xy, a + b)).real.reshape(-1, 1)
         if a + b == 0:
             out = out + self.offset
         return out.to(dtype=xy.dtype, device=xy.device)
@@ -154,37 +160,58 @@ class HarmonicField:
         n_sources = len(self.images) // n_images
 
         def reduce(terms):
-            blocks = terms.reshape(len(terms), n_images, n_sources)
+            blocks = ((1j) ** (b % 4) * terms).real.reshape(len(terms), n_images, n_sources)
             return (blocks * self.signs.reshape(1, -1, 1)).sum(dim=1) / (2.0 * math.pi)
 
-        return self._sum(xy, a, b, reduce)
+        return self._chunked(xy, a + b, reduce)
 
-    def _sum(self, xy: torch.Tensor, a: int, b: int, reduce) -> torch.Tensor:
-        n = a + b
+    def _derivative(self, xy: torch.Tensor, n: int) -> torch.Tensor:
+        """``F^(n)`` at ``xy``, ``(N,)`` complex, memoised per point batch: a
+        step's autograd asks for each order of the same points hundreds of times
+        (every derivative's backward is two more), and they all share it. The
+        entry holds the batch, so its storage cannot be reused under the key,
+        and the key holds a fingerprint of its values, so an edit in place (which
+        ``.data`` hides from the version counter) misses."""
+        key = (xy.data_ptr(), tuple(xy.shape), str(xy.device), _fingerprint(xy), n)
+        hit = self._memo.get(key)
+        if hit is None:
+            hit = (xy, self._chunked(xy, n, lambda terms: terms @ self._complex_strengths))
+            self._memo[key] = hit
+            while len(self._memo) > MEMO_SIZE:
+                self._memo.popitem(last=False)
+        return hit[1]
+
+    def _chunked(self, xy: torch.Tensor, n: int, reduce) -> torch.Tensor:
         if n > MAX_ORDER + 1:
             raise ValueError(f"derivative order {n} exceeds the supported {MAX_ORDER + 1}")
         xy = xy.detach().to(device=self.images.device, dtype=torch.float64)
         z = torch.complex(xy[:, 0], xy[:, 1] - self.channel.y_lo)
         return torch.cat(
-            [
-                reduce(self._terms(z[i : i + CHUNK], n, b))
-                for i in range(0, max(len(z), 1), CHUNK)
-            ]
+            [reduce(self._terms(z[i : i + CHUNK], n)) for i in range(0, max(len(z), 1), CHUNK)]
         )
 
-    def _terms(self, z: torch.Tensor, n: int, b: int) -> torch.Tensor:
-        """Each image's term of the derivative of order ``n`` (``b`` of them in
-        y), ``(N, n_images)``, without strengths or signs."""
+    def _terms(self, z: torch.Tensor, n: int) -> torch.Tensor:
+        """Each image's term of ``F^(n)``, ``(N, n_images)`` complex, without
+        strengths or signs."""
         k = self.channel.k
         w = k * (z.unsqueeze(1) - self.images.unsqueeze(0))
         if n == 0:
-            # Re log sinh w = log |sinh w|, single-valued: no branch cut.
-            return 0.5 * torch.log(torch.sinh(w.real) ** 2 + torch.sin(w.imag) ** 2)
+            # Re log sinh w = log |sinh w|, single-valued: no branch cut, and only
+            # the real part is ever read.
+            real = 0.5 * torch.log(torch.sinh(w.real) ** 2 + torch.sin(w.imag) ** 2)
+            return torch.complex(real, torch.zeros_like(real))
         coth = 1.0 / torch.tanh(w)
         poly = torch.zeros_like(coth)
         for coefficient in _COTH_POLYS[n - 1][::-1]:
             poly = poly * coth + coefficient
-        return ((1j) ** (b % 4) * (k**n) * poly).real
+        return (k**n) * poly
+
+
+def _fingerprint(xy: torch.Tensor) -> tuple[float, float]:
+    """Two weighted sums of the points: different after any edit to their values."""
+    values = xy.detach().double().reshape(-1)
+    weights = torch.arange(1, len(values) + 1, device=values.device, dtype=values.dtype)
+    return float(values.sum()), float((values * weights).sum())
 
 
 class _HarmonicDerivative(torch.autograd.Function):
