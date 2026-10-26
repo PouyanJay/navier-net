@@ -31,8 +31,6 @@ log = get_logger(__name__)
 # exactly on phi's zero contour. This is a definition, NOT the tunable IoU
 # threshold in cfg.evaluation.threshold -- do not wire it to config.
 INTERFACE_ALPHA = 0.5
-# Where the channel's inlet condition is scored: the field of view's upstream edge.
-INLET_X = 0.0
 
 
 def mask_x_extent(mask: np.ndarray) -> tuple[int, int] | None:
@@ -532,14 +530,14 @@ class BubbleDataset:
         return np.concatenate([uniform, near_interface], axis=0)
 
     def sample_boundary(self, n: int, rng) -> tuple[torch.Tensor, torch.Tensor]:
-        """Inlet points (``x* = INLET_X``) and side-wall points (``y*`` at either wall of
+        """Inlet points (``x*=0``) and side-wall points (``y*`` at either wall of
         this run's span, see :meth:`_wall_span`)."""
         d = self.domain
         t = rng.uniform(d.t_min, d.t_max, n).astype(np.float32)
 
         inlet = np.stack(
             [
-                np.full(n, INLET_X, np.float32),
+                np.zeros(n, np.float32),
                 rng.uniform(self.y_lo, self.y_hi, n).astype(np.float32),
                 t,
             ],

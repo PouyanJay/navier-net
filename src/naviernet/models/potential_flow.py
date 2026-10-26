@@ -61,6 +61,11 @@ CACHE_SIZE = 64
 # points one more; the rest is headroom.
 MAX_ORDER = 8
 
+# Where the trainer scores the inlet condition (BubbleDataset.sample_boundary
+# puts its inlet points at x* = 0): the potentials' image plane. Kept here, not
+# in the dataset module, whose source keys the shared warm-up.
+INLET_X = 0.0
+
 # A kinematic miss above this share of the front's largest speed is logged: the
 # fit degrades where the outline necks and the sources crowd.
 KINEMATIC_WARNING = 0.05

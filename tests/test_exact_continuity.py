@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 import torch
 
@@ -430,3 +431,12 @@ def test_a_stream_net_trained_past_the_warm_up_is_not_dropped(tmp_path):
 
     with pytest.raises(RuntimeError, match="exact_continuity past its warm-up"):
         training.train(cfg_off, paths)
+
+
+def test_the_image_plane_is_where_the_inlet_is_scored(tmp_path):
+    cfg, paths = staged_walled_capsule_run(tmp_path, EXACT)
+    data = BubbleDataset(cfg, paths)
+
+    inlet, _ = data.sample_boundary(16, np.random.default_rng(0))
+
+    assert torch.all(inlet[:, 0] == pf.INLET_X)

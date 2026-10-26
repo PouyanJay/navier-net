@@ -21,7 +21,6 @@ import torch
 import torch.nn as nn
 from torch.func import functional_call
 
-from naviernet.data.dataset import INLET_X
 from naviernet.models.attention import SelfAdaptiveWeights
 from naviernet.models.film import LiquidFilm
 from naviernet.models.geometry import (
@@ -31,6 +30,7 @@ from naviernet.models.geometry import (
 )
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softplus, logit
 from naviernet.models.potential_flow import (
+    INLET_X,
     Channel,
     FieldCache,
     FrontProblem,
