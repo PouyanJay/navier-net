@@ -40,6 +40,8 @@ const DESC: Record<string, string> = {
     "The front moves with the normal component of the velocity it is immersed in.",
   laplace:
     "The pressure jump across the front is its curvature over the Weber number.",
+  interface_shear:
+    "The liquid slides along the front without being dragged: a vapour cannot hold the liquid by friction, so the pressure has to push it. The tangential condition the Brinkman law needs beside the kinematic one.",
   energy:
     "Wall heating with an interfacial mass–energy closure; unlocks temperature. Pe and the saturation properties come from the selected fluid.",
   evap: "One evaporation flux closes the continuity source and removes latent heat.",

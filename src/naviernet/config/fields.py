@@ -421,6 +421,31 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.interface_shear",
+        "Shear-free bubble edge",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the liquid slides along the bubble edge without being dragged: a vapour cannot "
+            "hold the liquid by friction, so pressure has to push it. Brinkman momentum only"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.momentum_phases",
+        "Momentum law: phase properties",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "where the momentum law takes the liquid's friction and viscosity: blended across "
+            "the smoothed interface, or the liquid's own up to the bubble edge"
+        ),
+        options=("mixture", "sharp"),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.exact_continuity_body_sources",
         "Exact continuity: sources per side",
         "int",

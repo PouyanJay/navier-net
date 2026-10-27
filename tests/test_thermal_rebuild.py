@@ -242,6 +242,7 @@ def test_flags_from_reads_every_registry_gate():
         "two_phase_pressure": True,
         "sharp_thermal": True,
         "thermal_source": True,
+        "interface_shear": False,
     }
 
 

@@ -489,6 +489,20 @@ class ModelConfig:
     exact_continuity_body_sources: int = 160
     exact_continuity_cap_sources: int = 40
     exact_continuity_offset: float = 1.0
+    # Zero tangential stress on the liquid side of the front (the Brinkman law
+    # only). The law is second order, so the front needs a tangential condition
+    # beside the kinematic one; without it the liquid can be dragged along the
+    # front at any speed, and exact4-s0 drove its gap backflow that way (the
+    # liquid on the edge at -590 mm/s, the pressure along the gap flat) instead
+    # of with the pressure. A vapour 37 times less viscous holds almost no shear.
+    interface_shear: bool = False
+    # Where the momentum law takes its properties and its weight. "mixture": the
+    # smoothed alpha (15 um either side of the front, so 0.1 to 0.5 across the
+    # 34 um gaps beside the head). "sharp": the explicit front's own side, the
+    # liquid's friction and viscosity up to the front and nothing scored in the
+    # vapour (its uniform pressure and the curl-free condition cover it). Needs
+    # front_geometry and the two-phase pressure.
+    momentum_phases: str = "mixture"  # "mixture" | "sharp"
     # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.
@@ -603,6 +617,7 @@ class LossWeights:
     evap_flux: float = 1.0  # WP4: free source pulled to the interface flux, two-way
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
+    interface_shear: float = 10.0  # shear-free front; fixed, not rebalanced
     film: float = 1.0  # liquid film: deposition where the meniscus advances
     film_depletion: float = 1.0  # liquid film: evaporative thinning behind the front
     film_source: float = 1.0  # liquid film: its evaporation as the mass source

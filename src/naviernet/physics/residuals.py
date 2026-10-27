@@ -746,7 +746,7 @@ def brinkman_residuals(
     jump on the front carries it, and the liquid pressure is smooth up to it.
     """
     cx = _ctx(c, x)
-    alpha = model.alpha(x, cx)
+    alpha = _momentum_phase(model, x, cx)
     drag = confinement_drag(alpha, groups)
     viscosity = mixture(alpha, groups["mu_ratio"]) / groups["Re"]
     weight = liquid_weight(model, alpha)
@@ -762,6 +762,51 @@ def brinkman_residuals(
         mom_x = mom_x + density * (u_t + convect * (u * u_x + v * u_y))
         mom_y = mom_y + density * (v_t + convect * (u * v_x + v * v_y))
     return MomentumResiduals(weight * mom_x, weight * mom_y, torch.zeros_like(u))
+
+
+def _momentum_phase(model, x: torch.Tensor, cx: torch.Tensor | None) -> torch.Tensor:
+    """The vapour fraction the momentum law takes its properties and its weight
+    from: the smoothed ``alpha``, or under ``model.momentum_phases=sharp`` the
+    explicit front's own side (0 in the liquid, 1 in the vapour).
+
+    The smoothed fraction spans 15 um either side of the front, so across a
+    34 um gap beside the head (0.5 at the edge, 0.25 mid-gap, 0.1 at the wall)
+    it understates the liquid's friction and viscosity by up to half, and
+    scores the law at up to half weight where the liquid flows backward."""
+    cfg = getattr(model, "cfg", None)
+    phases = getattr(cfg.model, "momentum_phases", "mixture") if cfg is not None else "mixture"
+    if str(phases) != "sharp":
+        return model.alpha(x, cx)
+    return (~model.liquid_side(x)).to(x.dtype)[:, None]
+
+
+def interface_shear_residual(
+    model, front, groups: dict[str, float], c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """The tangential viscous stress the liquid puts on the front, per sample
+    ``(N, 1)``, on the pressure scale ``rho_l U^2``::
+
+        (1/Re) t . (grad u + grad u^T) . n = 0
+
+    A clean interface against a vapour 37 times less viscous carries next to no
+    shear. The Brinkman law is second order in ``u``, so the front needs this
+    tangential condition beside the kinematic (normal) one; without it the
+    velocity can slide along the front at any speed, and its in-plane viscous
+    term then drives the liquid beside the front instead of the pressure
+    (exact4-s0: the liquid on the edge of the gap at -590 mm/s, its pressure
+    flat). Read on the liquid side, where the front's samples evaluate. The
+    points are detached: this is a condition on the flow, not on the outline.
+    """
+    x = front.points.detach().requires_grad_(True)
+    u, v = model.velocity(x, _ctx(c, x))
+    u_x, u_y, _ = gradients(u, x)
+    v_x, v_y, _ = gradients(v, x)
+    n_x, n_y = front.normal[:, 0:1].detach(), front.normal[:, 1:2].detach()
+    t_x, t_y = -n_y, n_x
+    strain = (
+        2.0 * n_x * t_x * u_x + (n_x * t_y + n_y * t_x) * (u_y + v_x) + 2.0 * n_y * t_y * v_y
+    )
+    return strain / groups["Re"]
 
 
 # Dynamic correction to the gap-direction capillary pressure across an advancing

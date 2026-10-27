@@ -34,6 +34,10 @@ const TERM_LABELS: Record<string, { family: Family; label: string }> = {
   mass_bal: { family: "extra", label: "mass_bal · cross-section flux balance" },
   laplace: { family: "interface", label: "laplace · Young–Laplace jump" },
   kinematic: { family: "interface", label: "kinematic · front condition" },
+  interface_shear: {
+    family: "interface",
+    label: "interface_shear · shear-free edge",
+  },
   mom: { family: "interface", label: "mom · 2-D momentum" },
   energy: { family: "extra", label: "energy · wall heating" },
   evap: { family: "extra", label: "evap · phase-change closure" },
