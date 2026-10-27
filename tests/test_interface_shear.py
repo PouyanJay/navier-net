@@ -218,3 +218,72 @@ def test_both_join_the_warm_up_others_already_share():
     )
 
     assert warmup_cache._key_config(base, ()) == warmup_cache._key_config(variant, ())
+
+
+# --- inertia on the exact liquid flow ------------------------------------------
+
+
+def test_the_exact_flow_rate_is_the_difference_of_its_solves(tmp_path):
+    data, model = _model(tmp_path)
+    points, liquid = _liquid_and_vapour(data, model)
+    x = points.clone().requires_grad_(True)
+    u, v = model.velocity(x)
+    autograd_u_t = torch.autograd.grad(u.sum(), x, retain_graph=True)[0][:, 2:3]
+    autograd_v_t = torch.autograd.grad(v.sum(), x)[0][:, 2:3]
+
+    u_t, v_t = model.velocity_rate(x, autograd_u_t, autograd_v_t)
+
+    step = torch.tensor([0.0, 0.0, 1e-3])
+    ahead, behind = (
+        model._liquid_velocity((points[liquid] + step).requires_grad_(True), False),
+        model._liquid_velocity((points[liquid] - step).requires_grad_(True), False),
+    )
+    expected = (ahead[0] - behind[0]) / 2e-3
+    assert torch.allclose(u_t[liquid], expected.detach(), atol=1e-4)
+    assert u_t[liquid].abs().max() > 0.0, "the capsule grows, so its liquid flow changes"
+    assert torch.equal(u_t[~liquid], autograd_u_t[~liquid])
+    assert torch.equal(v_t[~liquid], autograd_v_t[~liquid])
+
+
+def test_before_the_physics_engages_the_rate_is_autograd(tmp_path):
+    data, model = _model(tmp_path)
+    model.kinematics_engaged = False
+    u_t, v_t = torch.ones(3, 1), torch.zeros(3, 1)
+
+    assert model.velocity_rate(torch.zeros(3, 3), u_t, v_t) == (u_t, v_t)
+
+
+def test_the_inertia_trains_the_stream_net(tmp_path):
+    data, model = _model(tmp_path, ["model.momentum_inertia=true", *BOTH_FLAGS])
+    points, liquid = _liquid_and_vapour(data, model)
+    x = points[liquid].clone().requires_grad_(True)
+    groups = {"hele_shaw": 0.2, "mu_ratio": 37.0, "Re": 50.0, "rho_ratio": 120.0}
+
+    residual = brinkman_residuals(model, x, groups, inertia=True)
+    (residual.mom_x**2 + residual.mom_y**2).mean().backward()
+
+    grads = [p.grad for p in model.stream_net.parameters() if p.grad is not None]
+    assert grads and any(g.abs().sum() > 0 for g in grads)
+    assert torch.isfinite(residual.mom_x).all()
+
+
+def test_a_run_with_inertia_trains_with_finite_losses(tmp_path):
+    cfg, paths = staged_walled_capsule_run(
+        tmp_path,
+        [
+            *EXACT_BRINKMAN,
+            *BOTH_FLAGS,
+            "model.momentum_inertia=true",
+            "model.outlet_condition=zero_gradient",
+            "training.stage_b_warmup_steps=1",
+            "training.freeze_geometry=true",
+            "training.edge_transport_after_freeze=false",
+            "training.steps=3",
+            "training.log_every=1",
+        ],
+    )
+
+    _, _, state = training.train(cfg, paths)
+
+    losses = [float(v) for v in state["hist"][-1].values() if isinstance(v, int | float)]
+    assert losses and all(math.isfinite(v) for v in losses)

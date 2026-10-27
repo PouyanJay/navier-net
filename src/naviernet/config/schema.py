@@ -440,6 +440,10 @@ class ModelConfig:
     # valid only when Re (h/L)^2 / 12 << 1; on Series-1-w300 that is about 4.5,
     # and measured at the advancing head the omitted inertia matched the drag
     # and reached the in-plane viscous term in the side gaps. Brinkman only.
+    # Under exact_continuity the liquid's rate is a central difference of its
+    # per-instant construction; on exact4-s0's frame-9 gap the inertia it gives
+    # reaches 30 times the friction locally and needs a larger pressure rise
+    # along the gap than the friction does.
     momentum_inertia: bool = False
     # The kinematic condition imposed exactly instead of as a penalty: the
     # liquid's velocity across the interface equals the interface's own normal

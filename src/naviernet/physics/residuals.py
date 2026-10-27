@@ -742,6 +742,9 @@ def brinkman_residuals(
     ``rho~(alpha) (u_t + 6/5 u.grad u)`` on the left, making the law the
     depth-averaged Navier-Stokes of a Hele-Shaw cell. Pressure is on
     ``rho_l U^2`` and time on ``L/U``, so the coefficient is one in the liquid.
+    The time derivative is the model's own (:meth:`BubblePINN.velocity_rate`):
+    under exact continuity the liquid's flow is solved per instant, so autograd
+    in ``t`` would miss all of it but the stream net's part.
     No surface-tension body force: under the sharp interface the Young-Laplace
     jump on the front carries it, and the liquid pressure is smooth up to it.
     """
@@ -757,6 +760,9 @@ def brinkman_residuals(
     if inertia:
         u_x, u_y, u_t = gradients(u, x)
         v_x, v_y, v_t = gradients(v, x)
+        rate = getattr(model, "velocity_rate", None)
+        if rate is not None:
+            u_t, v_t = rate(x, u_t, v_t)
         density = mixture(alpha, groups["rho_ratio"])
         convect = DEPTH_PROFILE_CONVECTION
         mom_x = mom_x + density * (u_t + convect * (u * u_x + v * u_y))

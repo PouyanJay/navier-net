@@ -327,7 +327,6 @@ def test_with_the_flag_off_every_other_net_starts_the_same(tmp_path):
     [
         (["model.hard_kinematics=true"], "hard_kinematics"),
         (["model.hard_walls=false"], "hard_walls"),
-        (["model.momentum_inertia=true"], "momentum_inertia"),
         (["model.exact_continuity_offset=0"], "offset"),
         (["model.sharp_interface=false"], "sharp_interface"),
     ],

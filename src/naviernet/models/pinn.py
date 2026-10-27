@@ -68,6 +68,12 @@ VAPOR_DEPTH = 2
 # trainer recognises a shared warm-up saved with or without it.
 STREAM_PREFIX = "stream_net."
 
+# The time step (t* units, 1.5 us) of the central difference that gives the
+# exact liquid flow its rate of change: the flow is solved per instant, so u_t
+# is the difference of two solves. On exact4-s0's frame-9 gap the inertia it
+# gives agrees to 0.1% for steps from 3e-4 to 1e-2.
+RATE_STEP = 1e-3
+
 
 def _resolve(arch, key: str, fallback):
     """A per-field override value if set, otherwise the global default."""
@@ -460,11 +466,6 @@ class BubblePINN(nn.Module):
                 "momentum law reads the velocity's time derivative, which the potentials, "
                 "solved per instant, do not carry"
             )
-        if bool(getattr(model, "momentum_inertia", False)):
-            raise ValueError(
-                "model.exact_continuity solves its potentials per instant and gives them no "
-                "time derivative, which model.momentum_inertia would read"
-            )
         if str(cfg.training.device).startswith("mps"):
             raise ValueError(
                 "model.exact_continuity evaluates its potentials in float64, which MPS "
@@ -493,6 +494,33 @@ class BubblePINN(nn.Module):
         """Whether the liquid's velocity is the exact construction now: the flag,
         engaged with the physics like the exact kinematic condition."""
         return self.exact_continuity and self.kinematics_engaged
+
+    def velocity_rate(
+        self, x: torch.Tensor, u_t: torch.Tensor, v_t: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """``(u_t, v_t)`` at ``x``, given their autograd values: those, except on
+        the exact liquid flow's rows, whose rate is the central difference of
+        the construction over ``RATE_STEP`` (its potentials are solved per
+        instant and carry no derivative in ``t``; the stream net's own
+        dependence on ``t`` is in the difference too). The shifted instants
+        are evaluated on the liquid's construction whichever side of the moving
+        front a point is at them: the front moves well under a micron in a step
+        and the potentials are smooth there, their sources a spacing inside."""
+        if not self.exact_liquid:
+            return u_t, v_t
+        rows = self.liquid_side(x).nonzero()[:, 0]
+        if len(rows) == 0:
+            return u_t, v_t
+        base = x[rows].detach()
+        step = torch.zeros_like(base)
+        step[:, 2] = RATE_STEP
+        grad_on = torch.is_grad_enabled()
+        with torch.enable_grad():
+            ahead = self._liquid_velocity((base + step).requires_grad_(True), grad_on)
+            behind = self._liquid_velocity((base - step).requires_grad_(True), grad_on)
+        u_rate = (ahead[0] - behind[0]) / (2.0 * RATE_STEP)
+        v_rate = (ahead[1] - behind[1]) / (2.0 * RATE_STEP)
+        return u_t.index_copy(0, rows, u_rate), v_t.index_copy(0, rows, v_rate)
 
     def liquid_side(self, x: torch.Tensor) -> torch.Tensor:
         """``(N,)`` bool: the points the exact liquid velocity covers, the front
