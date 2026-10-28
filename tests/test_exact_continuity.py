@@ -251,7 +251,7 @@ def test_the_capacity_lies_between_the_front_and_the_walls(tmp_path):
     t = float(data.t[3])
     x = _liquid_points(data, model, t)
 
-    capacity = model._fields_at(t).capacity
+    capacity = model._fields_at([t])[0].capacity
     front = model.front(torch.tensor([[t]], requires_grad=True), 128, 32).points.detach()
     lo, hi = model.wall_span
     xs = torch.linspace(0.0, float(data.x.max()), 64, dtype=torch.float64)
@@ -308,7 +308,7 @@ def test_it_starts_as_the_potential_flow(tmp_path):
     data, model = _model(tmp_path)
     t = float(data.t[3])
     x = _liquid_points(data, model, t).detach()
-    fields = model._fields_at(t)
+    fields = model._fields_at([t])[0]
 
     u, v = model.velocity(x)
 

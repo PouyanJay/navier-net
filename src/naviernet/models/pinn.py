@@ -1293,7 +1293,7 @@ class BubblePINN(nn.Module):
         """``(Phi_x, Phi_y, C)`` at ``x``, each point at its own instant's fields,
         all instants in one sum."""
         instants, groups = torch.unique(x[:, 2].detach(), return_inverse=True)
-        solved = [self._fields_at(instant) for instant in instants.tolist()]
+        solved = self._fields_at(instants.tolist())
         potential = FieldStack([fields.potential for fields in solved], groups)
         capacity = FieldStack([fields.capacity for fields in solved], groups)
         xy = x[:, :2]
@@ -1312,63 +1312,84 @@ class BubblePINN(nn.Module):
         lo, hi = self.wall_span
         return developed_inlet_profile(y, lo, hi, mean, self._inflow_groups)
 
-    def _fields_at(self, instant: float) -> LiquidFields:
-        """The potentials at ``instant``, solved on its first use."""
-        return self._liquid_fields.get(instant, lambda: self._solve_fields(instant))
+    def _fields_at(self, instants: list[float]) -> list[LiquidFields]:
+        """The potentials at each of ``instants``, those not yet held solved
+        together."""
+        return self._liquid_fields.get(instants, self._solve_fields)
 
-    def _solve_fields(self, instant: float) -> LiquidFields:
+    def _solve_fields(self, instants: list[float]) -> list[LiquidFields]:
+        """The potentials at ``instants``, every front sampled in one call and
+        every solve in one batch: one instant at a time, the small launches and
+        solves were most of a step. Instants whose mirrored halves keep a
+        different number of samples are solved in batches of their own."""
         body, cap = self.exact_sources
-        sources = self._front_sample(instant, body, cap)
-        collocation = self._front_sample(instant, 2 * body, 2 * cap)
-        problem = FrontProblem(
-            sources,
-            collocation,
-            collocation.normal[:, 0] * self._inflow(collocation.points[:, 1:2])[:, 0],
-        )
+        sources = self._front_samples(instants, body, cap)
+        collocation = self._front_samples(instants, 2 * body, 2 * cap)
+        batches: dict[tuple[int, int], list[int]] = {}
+        for i, (s, c) in enumerate(zip(sources, collocation, strict=True)):
+            batches.setdefault((s.points.shape[1], c.points.shape[1]), []).append(i)
         layout = SourceLayout(self.exact_offset, self.mirror_axis)
-        fields = solve_liquid_fields(self.channel, problem, layout, self._vapour_test(instant))
-        device = next(self.parameters()).device
-        return LiquidFields(
-            fields.potential.to(device), fields.capacity.to(device), fields.kinematic_rms
-        )
+        solved: list[LiquidFields | None] = [None] * len(instants)
+        for members in batches.values():
+            stacked = _stack([sources[i] for i in members])
+            dense = _stack([collocation[i] for i in members])
+            inflow = self._inflow(dense.points[..., 1].reshape(-1, 1)).reshape(
+                dense.speed.shape
+            )
+            problem = FrontProblem(stacked, dense, dense.normal[..., 0] * inflow)
+            times = [instants[i] for i in members]
+            fields = solve_liquid_fields(
+                self.channel, problem, layout, self._vapour_test(times)
+            )
+            for i, field in zip(members, fields, strict=True):
+                solved[i] = field
+        return solved
 
-    def _vapour_test(self, instant: float):
-        """A callable: which of the float64 CPU points ``(n, 2)`` lie inside the
-        vapour at ``instant``, ``(n,)`` bool on the CPU."""
-        device = next(self.parameters()).device
+    def _vapour_test(self, instants: list[float]):
+        """A callable: which of the float64 points ``(T, n, 2)`` lie inside the
+        vapour, each row of them at its own of ``instants``, ``(T, n)`` bool."""
 
         def inside(points: torch.Tensor) -> torch.Tensor:
-            query = torch.cat([points, torch.full_like(points[:, :1], instant)], dim=1)
+            times = torch.tensor(instants, dtype=points.dtype, device=points.device)
+            query = torch.cat(
+                [points, times.reshape(-1, 1, 1).expand(*points.shape[:2], 1)], dim=2
+            )
             with torch.no_grad():
-                phi = self._phi_frozen(query.to(device=device, dtype=torch.float32), None)
-            return (phi > 0.0)[:, 0].cpu()
+                phi = self._phi_frozen(query.reshape(-1, 3).float(), None)
+            return (phi > 0.0).reshape(points.shape[:2])
 
         return inside
 
-    def _front_sample(self, instant: float, n_body: int, n_cap: int) -> FrontSample:
-        """The frozen front at ``instant`` in float64 on the CPU: the upper half
-        only under a mirror axis (the solves mirror it)."""
+    def _front_samples(
+        self, instants: list[float], n_body: int, n_cap: int
+    ) -> list[FrontSample]:
+        """The frozen front at each of ``instants`` in float64 on the model's
+        device, one geometry call for all: each the upper half only under a
+        mirror axis (the solves mirror it), as a one-instant stack."""
         device = next(self.parameters()).device
         with torch.enable_grad():
-            t = torch.tensor([[instant]], device=device, requires_grad=True)
+            t = torch.tensor(instants, device=device).reshape(-1, 1).requires_grad_(True)
             front = self.front(t, n_body, n_cap)
-        points = front.points.detach()
-        spacing = _arclength_weights(points, n_body, n_cap)[:, 0]
-        sample = FrontSample(
-            points[:, :2].cpu().double(),
-            front.normal.detach().cpu().double(),
-            front.normal_speed.detach()[:, 0].cpu().double(),
-            spacing.cpu().double(),
-        )
-        if self.mirror_axis is None:
-            return sample
-        upper = sample.points[:, 1] >= self.mirror_axis - self._ON_INTERFACE
-        return FrontSample(
-            sample.points[upper],
-            sample.normal[upper],
-            sample.speed[upper],
-            sample.spacing[upper],
-        )
+        counts = (n_body, n_body, n_cap, n_cap)
+        points = _by_instant(front.points.detach(), len(instants), counts)
+        normal = _by_instant(front.normal.detach().double(), len(instants), counts)
+        speed = _by_instant(front.normal_speed.detach().double(), len(instants), counts)[..., 0]
+        spacing = _arclength_weights(points, n_body, n_cap)[..., 0].double()
+        points = points[..., :2].double()
+        samples = []
+        for i in range(len(instants)):
+            keep = slice(None)
+            if self.mirror_axis is not None:
+                keep = points[i, :, 1] >= self.mirror_axis - self._ON_INTERFACE
+            samples.append(
+                FrontSample(
+                    points[i, keep][None],
+                    normal[i, keep][None],
+                    speed[i, keep][None],
+                    spacing[i, keep][None],
+                )
+            )
+        return samples
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The volumetric dilatation from phase change: the free ``s`` network, or
@@ -1579,23 +1600,48 @@ class BubblePINN(nn.Module):
 
 
 def _arclength_weights(points: torch.Tensor, n_body: int, n_cap: int) -> torch.Tensor:
-    """Trapezoid weights along the front, ``(N, 1)``, from the sampler's layout:
-    the upper and lower profiles then the two caps, each ordered along its own
-    curve. An open end carries half a spacing beyond its last sample, which is
-    how the profiles (which exclude the seams) reach the caps (which include them)."""
+    """Trapezoid weights along the front, ``(..., N, 1)``, from the sampler's
+    layout: the upper and lower profiles then the two caps, each ordered along
+    its own curve. An open end carries half a spacing beyond its last sample,
+    which is how the profiles (which exclude the seams) reach the caps (which
+    include them). Leading dimensions are separate fronts."""
     weights = []
     start = 0
     for count in (n_body, n_body, n_cap, n_cap):
-        segment = points[start : start + count]
+        segment = points[..., start : start + count, :]
         start += count
-        spacing = (segment[1:] - segment[:-1]).norm(dim=1)
-        weight = torch.zeros(count, device=points.device, dtype=points.dtype)
-        weight[:-1] = weight[:-1] + 0.5 * spacing
-        weight[1:] = weight[1:] + 0.5 * spacing
-        weight[0] = weight[0] + 0.5 * spacing[0]
-        weight[-1] = weight[-1] + 0.5 * spacing[-1]
+        spacing = (segment[..., 1:, :] - segment[..., :-1, :]).norm(dim=-1)
+        weight = torch.zeros(segment.shape[:-1], device=points.device, dtype=points.dtype)
+        weight[..., :-1] = weight[..., :-1] + 0.5 * spacing
+        weight[..., 1:] = weight[..., 1:] + 0.5 * spacing
+        weight[..., 0] = weight[..., 0] + 0.5 * spacing[..., 0]
+        weight[..., -1] = weight[..., -1] + 0.5 * spacing[..., -1]
         weights.append(weight)
-    return torch.cat(weights).unsqueeze(1)
+    return torch.cat(weights, dim=-1).unsqueeze(-1)
+
+
+def _by_instant(values: torch.Tensor, n_times: int, counts: tuple[int, ...]) -> torch.Tensor:
+    """The sampler's rows (each segment's, time-major, one segment after the
+    other) as ``(n_times, sum(counts), ...)``: each instant's whole front in the
+    layout :func:`_arclength_weights` reads."""
+    segments = values.split([n_times * count for count in counts])
+    return torch.cat(
+        [
+            seg.reshape(n_times, count, *values.shape[1:])
+            for seg, count in zip(segments, counts, strict=True)
+        ],
+        dim=1,
+    )
+
+
+def _stack(samples: list[FrontSample]) -> FrontSample:
+    """One-instant stacks of equal size as one stack."""
+    return FrontSample(
+        *(
+            torch.cat([getattr(s, name) for s in samples])
+            for name in FrontSample.__dataclass_fields__
+        )
+    )
 
 
 class BoundPINN:
