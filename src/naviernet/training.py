@@ -33,7 +33,7 @@ from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.geometry import GeometryPriors
-from naviernet.models.pinn import BoundPINN, BubblePINN
+from naviernet.models.pinn import STREAM_PREFIX, BoundPINN, BubblePINN
 from naviernet.physics import (
     cap_supervision,
     front_velocity,
@@ -278,6 +278,43 @@ def _front_times(cfg, data: BubbleDataset, device, rng=None) -> torch.Tensor | N
     if rng is not None:
         return torch.tensor(_stratified_times(d, n, rng), device=device).reshape(-1, 1)
     return torch.linspace(d.t_min, d.t_max, n, device=device).reshape(-1, 1)
+
+
+def _stream_net_only_differs(incompatible, ckpt: dict, path, tcfg) -> bool:
+    """Whether the checkpoint and the model differ only by model.exact_continuity's
+    stream-function net, as a shared warm-up does. Any other unexpected
+    parameter, or a stream net the physics stage has trained, is an error."""
+    unexpected = [k for k in incompatible.unexpected_keys if not k.startswith(STREAM_PREFIX)]
+    if unexpected:
+        raise RuntimeError(f"checkpoint {path} has parameters not in this model: {unexpected}")
+    dropped = bool(incompatible.unexpected_keys)
+    if dropped and int(ckpt["state"]["done"]) > int(tcfg.stage_b_warmup_steps):
+        raise RuntimeError(
+            f"checkpoint {path} was trained with model.exact_continuity past its warm-up; "
+            "resume it with the flag on"
+        )
+    fresh = bool(incompatible.missing_keys) and all(
+        k.startswith(STREAM_PREFIX) for k in incompatible.missing_keys
+    )
+    return dropped or fresh
+
+
+def _at_collocation_instants(x_coll, inlet, walls, outlet):
+    """The boundary batches with each time moved to the nearest of the step's
+    collocation instants. Under ``model.exact_continuity`` every distinct
+    instant costs a potential-flow solve, and the boundary samplers draw one
+    time per point; the rng is not touched, so the draw sequence is unchanged."""
+    instants = torch.unique(x_coll[:, 2].detach())
+
+    def snap(points):
+        if points is None:
+            return None
+        moved = points.detach().clone()
+        nearest = (moved[:, 2:3] - instants.reshape(1, -1)).abs().argmin(dim=1)
+        moved[:, 2] = instants[nearest]
+        return moved.requires_grad_(points.requires_grad)
+
+    return snap(inlet), snap(walls), snap(outlet)
 
 
 def _jitter_rng(tcfg, rng):
@@ -588,6 +625,26 @@ def _validate_physics_stage(cfg) -> None:
     weight = getattr(cfg.training, "continuity_weight_after_freeze", None)
     if weight is not None and float(weight) < 0.0:
         raise ValueError(f"training.continuity_weight_after_freeze must be >= 0, got {weight}")
+    _validate_exact_continuity(cfg)
+
+
+def _validate_exact_continuity(cfg) -> None:
+    """The exact liquid flow is built around the frozen outline, and the edge
+    transport would only bend its stream function in the band once the outline
+    no longer moves."""
+    if not bool(getattr(cfg.model, "exact_continuity", False)):
+        return
+    if not bool(getattr(cfg.training, "freeze_geometry", False)):
+        raise ValueError(
+            "model.exact_continuity solves its potentials on the frozen outline, so it "
+            "requires training.freeze_geometry=true"
+        )
+    if bool(getattr(cfg.training, "edge_transport_after_freeze", True)):
+        raise ValueError(
+            "model.exact_continuity moves the liquid with the front by construction; the "
+            "edge transport would only distort its stream function in the band, so set "
+            "training.edge_transport_after_freeze=false"
+        )
 
 
 def _validate_self_adaptive(tcfg) -> None:
@@ -2020,12 +2077,19 @@ def train(
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
         _check_architecture_compat(cfg, ckpt, paths.checkpoint)
         incompatible = model.load_state_dict(ckpt["model"], strict=False)
-        if incompatible.unexpected_keys:
-            raise RuntimeError(
-                f"checkpoint {paths.checkpoint} has parameters not in this model: "
-                f"{incompatible.unexpected_keys}"
+        if _stream_net_only_differs(incompatible, ckpt, paths.checkpoint, tcfg):
+            # A shared warm-up crossing model.exact_continuity (saved with the
+            # stream function's net, untouched through the warm-up, or without
+            # it): the run resumes the warm-up's state whole, causal gate
+            # included, so it is comparable with the runs that share it. The
+            # optimiser's parameters differ, and it restarts at the handoff anyway.
+            state = ckpt["state"]
+            log.info(
+                "resuming from %s at step %d across model.exact_continuity's stream net",
+                paths.checkpoint,
+                state["done"],
             )
-        if incompatible.missing_keys:
+        elif incompatible.missing_keys:
             # Warm start: e.g. a Stage-A checkpoint feeding a Stage-B run. Keep the
             # loaded fields, initialise the new ones fresh, start the optimiser
             # over, and carry the step count and Stage-A weights forward.
@@ -2143,6 +2207,8 @@ def train(
 
         _engage_thermal_source(model, step, tcfg, stage_b_keys)
         _engage_hard_kinematics(model, step, tcfg, stage_b_keys)
+        if getattr(model, "exact_liquid", False):
+            inlet, walls, outlet = _at_collocation_instants(x_coll, inlet, walls, outlet)
         if _jitter_rng(tcfg, rng) is not None:
             front_times = _front_times(cfg, data, device, rng)
             mass_plan = _mass_balance_plan(cfg, data, groups, device, rng)

@@ -29,6 +29,17 @@ from naviernet.models.geometry import (
     GeometryPriors,
 )
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softplus, logit
+from naviernet.models.potential_flow import (
+    INLET_X,
+    Channel,
+    FieldCache,
+    FrontProblem,
+    FrontSample,
+    LiquidFields,
+    SourceLayout,
+    harmonic,
+    solve_liquid_fields,
+)
 
 # A deliberate exception to the usual physics -> models dependency direction
 # (the only one): the film net's channel bound and data-anchored start are
@@ -39,6 +50,10 @@ from naviernet.physics.film import deposited_thickness
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.heating import DEPLETION_SMOOTHING, wall_flux_ratio
 
+# Likewise: the exact liquid flow starts from the developed inlet profile the
+# trainer scores the inlet against, and residuals imports nothing from models.
+from naviernet.physics.residuals import developed_inlet_profile
+
 # What training.self_adaptive weights: nothing, the liquid energy equation, or
 # every collocation equation.
 SELF_ADAPTIVE_MODES = ("off", "energy", "all")
@@ -48,6 +63,10 @@ SELF_ADAPTIVE_MODES = ("off", "energy", "all")
 # freedom to wobble -- which would undo the near-isobaric constraint it encodes.
 VAPOR_HIDDEN = 32
 VAPOR_DEPTH = 2
+
+# The state-dict prefix of model.exact_continuity's stream-function net: the
+# trainer recognises a shared warm-up saved with or without it.
+STREAM_PREFIX = "stream_net."
 
 
 def _resolve(arch, key: str, fallback):
@@ -183,6 +202,9 @@ class BubblePINN(nn.Module):
         self._init_film_evaporation(cfg)
         # After every field, so a run with it off builds bit-identical nets.
         self._init_self_adaptive(cfg)
+        # Last of all, for the same reason: its stream-function net draws from
+        # the RNG only when the flag is on.
+        self._init_exact_continuity(cfg)
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -397,6 +419,95 @@ class BubblePINN(nn.Module):
             )
         self.wall_span = (float(geometry.y_min), float(geometry.y_max))
 
+    def _init_exact_continuity(self, cfg) -> None:
+        """The liquid's velocity divergence-free by construction
+        (``model.exact_continuity``, see :meth:`_exact_velocity`): the stream
+        function's net, and the cache of the potentials solved per instant."""
+        self.exact_continuity = bool(getattr(cfg.model, "exact_continuity", False))
+        if not self.exact_continuity:
+            return
+        self._validate_exact_continuity(cfg)
+        self._inflow_groups = compute_groups(cfg)
+        self._inflow_profile = str(getattr(cfg.model, "inlet_profile", "plug"))
+        # The image plane is where the inlet condition is scored, so no growth
+        # leaves upstream through it.
+        self.channel = Channel(self.wall_span[0], self.wall_span[1], x_in=INLET_X)
+        self.exact_sources = (
+            int(cfg.model.exact_continuity_body_sources),
+            int(cfg.model.exact_continuity_cap_sources),
+        )
+        self.exact_offset = float(cfg.model.exact_continuity_offset)
+        per_field = getattr(cfg.model, "per_field", None) or {}
+        self.stream_net = FieldNet(cfg, arch=per_field.get("psi"))
+        # Zero at the start: the liquid's velocity begins as the potential flow,
+        # which already moves with the interface and carries the inlet flux.
+        with torch.no_grad():
+            self.stream_net.mlp[-1].weight.zero_()
+            self.stream_net.mlp[-1].bias.zero_()
+        self._liquid_fields = FieldCache()
+
+    def _validate_exact_continuity(self, cfg) -> None:
+        model = cfg.model
+        if not self.front_geometry or not self.hard_walls:
+            raise ValueError(
+                "model.exact_continuity builds the liquid's flow around the explicit front "
+                "between the physical walls, so it needs model.front_geometry=true and "
+                "model.hard_walls=true"
+            )
+        if not bool(getattr(model, "sharp_interface", False)):
+            raise ValueError(
+                "model.exact_continuity needs model.sharp_interface=true: the diffuse "
+                "momentum law reads the velocity's time derivative, which the potentials, "
+                "solved per instant, do not carry"
+            )
+        if bool(getattr(model, "momentum_inertia", False)):
+            raise ValueError(
+                "model.exact_continuity solves its potentials per instant and gives them no "
+                "time derivative, which model.momentum_inertia would read"
+            )
+        if str(cfg.training.device).startswith("mps"):
+            raise ValueError(
+                "model.exact_continuity evaluates its potentials in float64, which MPS "
+                "lacks; train on cpu or cuda"
+            )
+        if self.hard_kinematics:
+            raise ValueError(
+                "model.exact_continuity carries the kinematic condition itself; turn "
+                "model.hard_kinematics off"
+            )
+        if self.n_cond > 0:
+            raise ValueError("model.exact_continuity supports a single dataset (n_cond = 0)")
+        if float(model.exact_continuity_offset) <= 0.0:
+            raise ValueError("model.exact_continuity_offset must be > 0")
+        if (
+            min(
+                int(model.exact_continuity_body_sources),
+                int(model.exact_continuity_cap_sources),
+            )
+            < 4
+        ):
+            raise ValueError("model.exact_continuity's source counts must be >= 4")
+
+    @property
+    def exact_liquid(self) -> bool:
+        """Whether the liquid's velocity is the exact construction now: the flag,
+        engaged with the physics like the exact kinematic condition."""
+        return self.exact_continuity and self.kinematics_engaged
+
+    def liquid_side(self, x: torch.Tensor) -> torch.Tensor:
+        """``(N,)`` bool: the points the exact liquid velocity covers, the front
+        itself included (its samples sit within rounding of it on either side)."""
+        with torch.no_grad():
+            phi = self._phi_with_frozen_geometry(x.detach(), None)
+        return (phi <= self._ON_INTERFACE)[:, 0]
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        """As ``nn.Module``'s, and forgets every potential solved on the old outline."""
+        result = super().load_state_dict(state_dict, strict=strict, assign=assign)
+        if getattr(self, "exact_continuity", False):
+            self._liquid_fields.clear()
+        return result
+
     def _wall_factor(self, x: torch.Tensor) -> torch.Tensor:
         """``4 (y - y_lo)(y_hi - y) / (y_hi - y_lo)^2``: zero at both walls, one
         on the centreline, even about it."""
@@ -413,7 +524,7 @@ class BubblePINN(nn.Module):
         # source, so the warm-up stays the outline fit alone.
         self.kinematics_engaged = True
         self.kinematic_blend_length = float(getattr(cfg.model, "kinematic_blend_length", 0.04))
-        self.kinematic_side = str(getattr(cfg.model, "kinematic_side", "both"))
+        self.kinematic_side = str(getattr(cfg.model, "kinematic_side", "liquid"))
         if self.kinematic_side not in ("both", "liquid"):
             raise ValueError(
                 f"model.kinematic_side must be 'both' or 'liquid', got {self.kinematic_side!r}"
@@ -1041,6 +1152,13 @@ class BubblePINN(nn.Module):
     def _velocity(
         self, x: torch.Tensor, c: torch.Tensor | None
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.exact_liquid:
+            return self._exact_velocity(x)
+        return self._network_velocity(x, c)
+
+    def _network_velocity(
+        self, x: torch.Tensor, c: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         u, v = self._even(self.nets["u"], x, c), self._odd(self.nets["v"], x, c)
         # The wall factor goes on the network's velocity, before the kinematic
         # correction, so the correction stays exact on the interface; what it
@@ -1096,6 +1214,140 @@ class BubblePINN(nn.Module):
         if not grad_on:
             return u.detach(), v.detach()
         return u, v
+
+    def _exact_velocity(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The liquid's velocity divergence-free by construction, the vapour's
+        from its networks.
+
+        In the liquid ``u = U_in(y) e_x + grad Phi + curl(W N)``: the inlet
+        profile, the potential that moves the liquid with the interface
+        (``dPhi/dn = V_n - n.U_in`` on the front, no flux through the walls or
+        the inlet plane), and the stream function ``W N``, with ``N`` the net
+        and ``W = wall_factor * C`` zero on both walls and on the front (``C``
+        harmonic, zero on the front and one on the walls), so it adds no flux
+        through any of them. Each part is divergence-free, so the volume each section
+        carries is the inlet's plus the bubble's growth behind it, exactly.
+
+        The vapour (``phi > 0``) keeps the network's velocity, as under
+        ``model.kinematic_side=liquid``. The two sides are evaluated on their
+        own rows: the potentials' sources sit inside the vapour, and evaluating
+        them there would put infinities into the backward pass.
+        """
+        grad_on = torch.is_grad_enabled()
+        with torch.enable_grad():
+            leaf = x if x.requires_grad else x.detach().requires_grad_(True)
+            liquid = self.liquid_side(leaf)
+            rows_l, rows_v = liquid.nonzero()[:, 0], (~liquid).nonzero()[:, 0]
+            u_l, v_l = self._liquid_velocity(leaf[rows_l], create_graph=grad_on)
+            u_v, v_v = self._network_velocity(leaf[rows_v], None)
+            order = torch.argsort(torch.cat([rows_l, rows_v]))
+            u, v = torch.cat([u_l, u_v])[order], torch.cat([v_l, v_v])[order]
+        if not grad_on:
+            return u.detach(), v.detach()
+        return u, v
+
+    def _liquid_velocity(
+        self, x: torch.Tensor, create_graph: bool
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """:meth:`_exact_velocity` on liquid points ``x``."""
+        if len(x) == 0:
+            empty = x.new_zeros((0, 1))
+            return empty, empty
+        u_phi, v_phi, capacity = self._potential_terms(x)
+        psi = self._wall_factor(x) * capacity * self._odd(self.stream_net, x, None)
+        psi_x, psi_y, _ = torch.autograd.grad(
+            psi, x, torch.ones_like(psi), create_graph=create_graph
+        )[0].split(1, dim=1)
+        return self._inflow(x[:, 1:2]) + u_phi + psi_y, v_phi - psi_x
+
+    def _potential_terms(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """``(Phi_x, Phi_y, C)`` at ``x``, each point at its own instant's fields."""
+        instants, inverse = torch.unique(x[:, 2].detach(), return_inverse=True)
+        rows, terms = [], []
+        for k, instant in enumerate(instants):
+            members = (inverse == k).nonzero()[:, 0]
+            fields = self._fields_at(float(instant))
+            xy = x[members, :2]
+            rows.append(members)
+            terms.append(
+                torch.cat(
+                    [
+                        harmonic(fields.potential, xy, 1, 0),
+                        harmonic(fields.potential, xy, 0, 1),
+                        harmonic(fields.capacity, xy, 0, 0),
+                    ],
+                    dim=1,
+                )
+            )
+        order = torch.argsort(torch.cat(rows))
+        return torch.cat(terms)[order].split(1, dim=1)
+
+    def _inflow(self, y: torch.Tensor) -> torch.Tensor:
+        """The inlet's streamwise profile ``U_in(y)``, ``(N, 1)``: uniform in x,
+        divergence-free, zero across the walls."""
+        mean = float(self._inflow_groups["u_inlet_star"])
+        if self._inflow_profile == "plug":
+            return torch.full_like(y, mean)
+        lo, hi = self.wall_span
+        return developed_inlet_profile(y, lo, hi, mean, self._inflow_groups)
+
+    def _fields_at(self, instant: float) -> LiquidFields:
+        """The potentials at ``instant``, solved on its first use."""
+        return self._liquid_fields.get(instant, lambda: self._solve_fields(instant))
+
+    def _solve_fields(self, instant: float) -> LiquidFields:
+        body, cap = self.exact_sources
+        sources = self._front_sample(instant, body, cap)
+        collocation = self._front_sample(instant, 2 * body, 2 * cap)
+        problem = FrontProblem(
+            sources,
+            collocation,
+            collocation.normal[:, 0] * self._inflow(collocation.points[:, 1:2])[:, 0],
+        )
+        layout = SourceLayout(self.exact_offset, self.mirror_axis)
+        fields = solve_liquid_fields(self.channel, problem, layout, self._vapour_test(instant))
+        device = next(self.parameters()).device
+        return LiquidFields(
+            fields.potential.to(device), fields.capacity.to(device), fields.kinematic_rms
+        )
+
+    def _vapour_test(self, instant: float):
+        """A callable: which of the float64 CPU points ``(n, 2)`` lie inside the
+        vapour at ``instant``, ``(n,)`` bool on the CPU."""
+        device = next(self.parameters()).device
+
+        def inside(points: torch.Tensor) -> torch.Tensor:
+            query = torch.cat([points, torch.full_like(points[:, :1], instant)], dim=1)
+            with torch.no_grad():
+                phi = self._phi_frozen(query.to(device=device, dtype=torch.float32), None)
+            return (phi > 0.0)[:, 0].cpu()
+
+        return inside
+
+    def _front_sample(self, instant: float, n_body: int, n_cap: int) -> FrontSample:
+        """The frozen front at ``instant`` in float64 on the CPU: the upper half
+        only under a mirror axis (the solves mirror it)."""
+        device = next(self.parameters()).device
+        with torch.enable_grad():
+            t = torch.tensor([[instant]], device=device, requires_grad=True)
+            front = self.front(t, n_body, n_cap)
+        points = front.points.detach()
+        spacing = _arclength_weights(points, n_body, n_cap)[:, 0]
+        sample = FrontSample(
+            points[:, :2].cpu().double(),
+            front.normal.detach().cpu().double(),
+            front.normal_speed.detach()[:, 0].cpu().double(),
+            spacing.cpu().double(),
+        )
+        if self.mirror_axis is None:
+            return sample
+        upper = sample.points[:, 1] >= self.mirror_axis - self._ON_INTERFACE
+        return FrontSample(
+            sample.points[upper],
+            sample.normal[upper],
+            sample.speed[upper],
+            sample.spacing[upper],
+        )
 
     def source(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The volumetric dilatation from phase change: the free ``s`` network, or

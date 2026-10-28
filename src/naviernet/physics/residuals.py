@@ -122,9 +122,16 @@ def stage_a_residuals(model, x: torch.Tensor, c: torch.Tensor | None = None) -> 
     u_x, _, _ = gradients(u, x)
     _, v_y, _ = gradients(v, x)
 
+    div = u_x + v_y - source
+    if getattr(model, "exact_liquid", False):
+        # The liquid is divergence-free by construction: there the residual is
+        # only the source's tail, and scoring it would pull the interface flux
+        # to zero. Continuity is the vapour's alone.
+        liquid = model.liquid_side(x).unsqueeze(1)
+        div = torch.where(liquid, torch.zeros_like(div), div)
     return StageAResiduals(
         vof=a_t + u * a_x + v * a_y,
-        div=u_x + v_y - source,
+        div=div,
         source=source,
         interface_weight=interface_indicator(alpha).detach(),
     )
@@ -230,10 +237,15 @@ def outlet_loss(
     ``outlet_x`` must carry ``requires_grad`` (the sampler sets it).
     """
     cx = _ctx(c, outlet_x)
-    u, v = model.velocity(outlet_x, cx)
-    u_x, _, _ = gradients(u, outlet_x)
-    v_x, _, _ = gradients(v, outlet_x)
-    total = (u_x**2).mean() + (v_x**2).mean()
+    total = outlet_x.new_zeros(())
+    # Under model.exact_continuity the liquid leaves as the potential flow
+    # continues past the field of view, not as a developed one (2% uneven at
+    # frame 9, more as the nose nears the outlet): only the pressure is held.
+    if not getattr(model, "exact_liquid", False):
+        u, v = model.velocity(outlet_x, cx)
+        u_x, _, _ = gradients(u, outlet_x)
+        v_x, _, _ = gradients(v, outlet_x)
+        total = (u_x**2).mean() + (v_x**2).mean()
     if pressure is not None:
         total = total + ((liquid_pressure(model, outlet_x, cx) - pressure) ** 2).mean()
     return total

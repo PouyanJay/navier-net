@@ -4,10 +4,8 @@ network's."""
 
 from __future__ import annotations
 
-import json
 import math
 
-import numpy as np
 import pytest
 import torch
 
@@ -15,7 +13,7 @@ from naviernet import training
 from naviernet.data.dataset import BubbleDataset
 from naviernet.models.pinn import BubblePINN
 
-from .conftest import staged_run, write_capsule
+from .conftest import staged_walled_capsule_run as staged_capsule_run
 
 WALLED = [
     "model=stage_b",
@@ -23,23 +21,6 @@ WALLED = [
     "model.sharp_interface=true",
     "model.walls_at=physical",
 ]
-
-
-def _write_with_walls(path) -> None:
-    """The analytic capsule with its physical walls recorded just outside the
-    imaged span, as preprocessing records them."""
-    write_capsule(path)
-    archive = dict(np.load(path))
-    meta = json.loads(str(archive["meta"]))
-    ys = archive["y_star"]
-    lo, hi = float(ys.min()) - 0.01, float(ys.max()) + 0.01
-    meta.update(y_wall_lo_star=lo, y_wall_hi_star=hi, y_center_star=0.5 * (lo + hi))
-    archive["meta"] = json.dumps(meta)
-    np.savez_compressed(path, **archive)
-
-
-def staged_capsule_run(tmp_path, overrides=None):
-    return staged_run(tmp_path, overrides, write=_write_with_walls)
 
 
 def _pair(tmp_path, extra=()):

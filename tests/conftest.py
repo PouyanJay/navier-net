@@ -213,6 +213,28 @@ def staged_capsule_run(tmp_path, overrides=None):
     return staged_run(tmp_path, overrides, write=write_capsule)
 
 
+def write_walled_capsule(path) -> None:
+    """The analytic capsule with its physical walls recorded just outside the
+    imaged span, as preprocessing records them."""
+    import json
+
+    import numpy as np
+
+    write_capsule(path)
+    archive = dict(np.load(path))
+    meta = json.loads(str(archive["meta"]))
+    ys = archive["y_star"]
+    lo, hi = float(ys.min()) - 0.01, float(ys.max()) + 0.01
+    meta.update(y_wall_lo_star=lo, y_wall_hi_star=hi, y_center_star=0.5 * (lo + hi))
+    archive["meta"] = json.dumps(meta)
+    np.savez_compressed(path, **archive)
+
+
+def staged_walled_capsule_run(tmp_path, overrides=None):
+    """The capsule between its physical walls, staged for a tiny run."""
+    return staged_run(tmp_path, overrides, write=write_walled_capsule)
+
+
 def staged_joint_run(tmp_path, overrides=None):
     """Two synthetic datasets with distinct regimes, roots, AND growth rates,
     staged for a conditioned joint run, as preprocess would have left them."""

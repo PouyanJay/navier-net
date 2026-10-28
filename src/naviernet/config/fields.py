@@ -402,9 +402,55 @@ PHYSICS: tuple[FieldSpec, ...] = (
         "override",
         help=(
             "where the exact kinematic correction acts: the liquid only, or both sides of "
-            "the bubble edge"
+            "the bubble edge (singular where the bubble necks)"
         ),
-        options=("both", "liquid"),
+        options=("liquid", "both"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.exact_continuity",
+        "Exact continuity in the liquid",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the liquid's velocity is built so no volume is created or lost in it, it moves "
+            "with the bubble edge and passes nothing through the walls; once the physics "
+            "starts, on the frozen outline. Replaces the exact kinematic condition"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.exact_continuity_body_sources",
+        "Exact continuity: sources per side",
+        "int",
+        "physics",
+        "override",
+        help="points per body side the liquid's potential flow is built from",
+        lo=4,
+        hi=1000,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.exact_continuity_cap_sources",
+        "Exact continuity: sources per cap",
+        "int",
+        "physics",
+        "override",
+        help="points per end cap the liquid's potential flow is built from",
+        lo=4,
+        hi=400,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.exact_continuity_offset",
+        "Exact continuity: source depth",
+        "float",
+        "physics",
+        "override",
+        help="how far inside the bubble the sources sit, in spacings between them",
+        lo=0.05,
+        hi=4.0,
         advanced=True,
     ),
     FieldSpec(

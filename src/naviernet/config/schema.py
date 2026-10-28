@@ -467,8 +467,28 @@ class ModelConfig:
     # liquid only, the vapour's velocity left to its own equations (inside, the
     # vapour leaves the interface at V_n - m/rho_v, not V_n). "both": the blend
     # on both sides, as the first exact-condition run (trust-hk4-s0) had it,
-    # whose continuity failed most just inside the advancing head.
-    kinematic_side: str = "both"  # "both" | "liquid"
+    # whose continuity failed most just inside the advancing head, and which is
+    # singular at a neck: there the distance field's gradient vanishes inside
+    # the vapour and the correction divides by it (kin4-s0, strict4-s0 frame 9).
+    kinematic_side: str = "liquid"  # "liquid" | "both"
+    # The liquid's velocity divergence-free by construction once the physics
+    # engages: the inlet profile, a potential flow that moves the liquid with the
+    # frozen front (no flux through the walls or the inlet plane), and a stream
+    # function that adds no flux through the walls or the front. Volume is then
+    # conserved exactly in the liquid, so each section carries the inlet flux
+    # plus the bubble's growth behind it; the penalty runs could not (liq10-s0,
+    # liq100-s0: the gap liquid at +0.02 / -0.01 against the -0.30 required,
+    # with the source inflated instead). The vapour keeps its networks. Needs
+    # front_geometry, hard_walls and training.freeze_geometry; replaces
+    # hard_kinematics. See models/potential_flow.py.
+    exact_continuity: bool = False
+    # The potentials' sources: the front sampled at these counts per body
+    # profile and per cap (the conditions at twice as many), each source this
+    # many local spacings inside the vapour. 64/16 underestimates the frame-9
+    # backflow by 5%; 160/40 by 2%.
+    exact_continuity_body_sources: int = 160
+    exact_continuity_cap_sources: int = 40
+    exact_continuity_offset: float = 1.0
     # The outlet at x_max: nothing (today), or zero streamwise velocity gradient.
     # The channel continues beyond the field of view and its pressure there is
     # unknown, so no pressure condition is imposed.
