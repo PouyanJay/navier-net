@@ -46,6 +46,7 @@ from naviernet.physics.heating import wall_flux_ratio_np
 from naviernet.physics.residuals import (
     IN_PLANE_WEIGHT,
     interface_mass_flux,
+    interface_shear_residual,
     kinematic_residual,
     laplace_jump_residual,
 )
@@ -319,6 +320,18 @@ def _laplace_in_pascals(model, laplace: np.ndarray, codes: np.ndarray, t: float)
     }
 
 
+def _shear_in_pascals(model, front, groups, upper: np.ndarray) -> dict:
+    """The tangential stress the liquid puts on the front (``model.interface_
+    shear``), RMS in pascals on each half: what a shear-free edge would make zero."""
+    scale = float(model.cfg.fluid.rho_l) * float(model.cfg.scales.U_ref) ** 2
+    with torch.enable_grad():
+        shear = interface_shear_residual(model, front, groups).detach().cpu().numpy().ravel()
+    return {
+        "shear_rms_upper_Pa": _rms(shear[upper]) * scale,
+        "shear_rms_lower_Pa": _rms(shear[~upper]) * scale,
+    }
+
+
 def front_conditions(
     model, groups, t: float, pixel: float = 0.0, width: float = 1.0
 ) -> tuple[dict | None, dict[str, np.ndarray]]:
@@ -353,6 +366,8 @@ def front_conditions(
         "laplace_rms_upper": _rms(laplace[upper]),
         "laplace_rms_lower": _rms(laplace[~upper]),
     }
+    if bool(getattr(model_cfg, "interface_shear", False)):
+        record.update(_shear_in_pascals(model, front, groups, upper))
     if pixel <= 0.0:
         return record, {}
     kappa = front.kappa_par.detach().cpu().numpy().ravel()

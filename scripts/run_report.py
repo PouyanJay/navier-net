@@ -51,7 +51,7 @@ SEGMENT_NAMES = ("upper", "lower", "root", "nose")
 # Loss groups of the training-record figure: what each panel is about.
 LOSS_GROUPS = {
     "images and front": ["data", "fv_normal", "fv_apex", "root_sdf", "root_blunt"],
-    "interface conditions": ["kinematic", "laplace", "vof"],
+    "interface conditions": ["kinematic", "laplace", "interface_shear", "vof"],
     "flow": ["div", "brinkman", "vapour_potential", "bc", "mass_bal"],
     "temperature": ["energy_liquid", "theta_bc"],
 }

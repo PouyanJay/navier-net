@@ -31,6 +31,7 @@ def test_physics_lists_the_registry_equations_with_state(client):
         "evap_flux",
         "kinematic",
         "laplace",
+        "interface_shear",
         "film",
         "film_depletion",
         "film_source",

@@ -42,6 +42,7 @@ from naviernet.physics.residuals import (
     evap_flux_closure,
     footprint_source_penalty_sq,
     interface_mass_flux,
+    interface_shear_residual,
     kinematic_residual,
     laplace_jump_residual,
     momentum_residuals,
@@ -311,6 +312,10 @@ def _kinematic_term(ctx: LossContext) -> torch.Tensor:
     return (
         kinematic_residual(ctx.model, ctx.front, ctx.c, mass_flux=ctx.mass_flux) ** 2
     ).mean()
+
+
+def _interface_shear_term(ctx: LossContext) -> torch.Tensor:
+    return (interface_shear_residual(ctx.model, ctx.front, ctx.groups, ctx.c) ** 2).mean()
 
 
 def _energy_liquid_sq(ctx: LossContext) -> torch.Tensor:
@@ -604,6 +609,28 @@ REGISTRY: tuple[Equation, ...] = (
         term=_laplace_term,
     ),
     Equation(
+        id="interface_shear",
+        stage="B",
+        name="Shear-free interface",
+        tex=r"\frac{1}{\mathrm{Re}}\,\mathbf{t}\cdot\left(\nabla\mathbf{u}"
+        r" + \nabla\mathbf{u}^{T}\right)\cdot\mathbf{n} = 0 \quad \text{on } \Gamma",
+        weight_key="interface_shear",
+        fields_required=("phi", "u", "v"),
+        groups=("Re",),
+        mode="sharp",
+        # The tangential condition the Brinkman law's viscous term needs on the
+        # front; Darcy is first order and takes the kinematic condition alone.
+        closure="brinkman",
+        flag="interface_shear",
+        # A condition ON the front, like `kinematic`.
+        on_collocation=False,
+        # NOT rebalanced, like `laplace`: it has to overrule the solution the
+        # network prefers (the liquid dragged along the front), and parity with
+        # the data term's gradient is the wrong target for that.
+        rebalanced=False,
+        term=_interface_shear_term,
+    ),
+    Equation(
         id="film",
         stage="B",
         name="Film deposition",
@@ -759,6 +786,7 @@ def enabled_equations(
     two_phase_pressure: bool = False,
     sharp_thermal: bool = False,
     thermal_source: bool = False,
+    interface_shear: bool = False,
 ) -> list[Equation]:
     """The equations active for a model with the given fields, in registry order.
 
@@ -773,7 +801,8 @@ def enabled_equations(
     energy equation, the temperature conditions and the flux closure
     (``model.thermal_model=sharp``); ``thermal_source`` then drops the free
     source's closure and its off-interface penalty (``model.source_mode=thermal``).
-    Every default keeps existing call sites composing byte-for-byte.
+    ``interface_shear`` opts in the shear-free condition on the front
+    (``model.interface_shear``). Every default keeps existing call sites composing byte-for-byte.
     """
     present = set(fields)
     allowed = {"any", "sharp" if sharp_interface else "diffuse"}
@@ -784,6 +813,7 @@ def enabled_equations(
             ("two_phase_pressure", two_phase_pressure),
             ("sharp_thermal", sharp_thermal),
             ("thermal_source", thermal_source),
+            ("interface_shear", interface_shear),
         )
         if on
     }
@@ -812,6 +842,7 @@ def flags_from(model_cfg) -> dict[str, object]:
         ),
         "sharp_thermal": str(getattr(model_cfg, "thermal_model", "legacy")) == "sharp",
         "thermal_source": str(getattr(model_cfg, "source_mode", "free")) == "thermal",
+        "interface_shear": bool(getattr(model_cfg, "interface_shear", False)),
     }
 
 
@@ -823,12 +854,14 @@ _FLAG_CHOICES = {
     "two_phase_pressure": "model.pressure_representation=two_phase",
     "sharp_thermal": "model.thermal_model=sharp",
     "thermal_source": "model.source_mode=thermal",
+    "interface_shear": "model.interface_shear=true",
 }
 _FLAG_DEFAULTS = {
     "liquid_film": "model.liquid_film=false",
     "two_phase_pressure": "model.pressure_representation=single",
     "sharp_thermal": "model.thermal_model=legacy",
     "thermal_source": "model.source_mode=free",
+    "interface_shear": "model.interface_shear=false",
 }
 
 

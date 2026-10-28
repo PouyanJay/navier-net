@@ -626,6 +626,43 @@ def _validate_physics_stage(cfg) -> None:
     if weight is not None and float(weight) < 0.0:
         raise ValueError(f"training.continuity_weight_after_freeze must be >= 0, got {weight}")
     _validate_exact_continuity(cfg)
+    _validate_liquid_momentum(cfg.model)
+
+
+MOMENTUM_PHASES = ("mixture", "sharp")
+
+
+def _validate_liquid_momentum(model_cfg) -> None:
+    """The shear-free front and the sharp phase properties belong to the
+    Brinkman law on the explicit front, the sharp properties to its liquid
+    pressure branch."""
+    phases = str(getattr(model_cfg, "momentum_phases", "mixture"))
+    if phases not in MOMENTUM_PHASES:
+        raise ValueError(
+            f"model.momentum_phases must be one of {MOMENTUM_PHASES}, got {phases!r}"
+        )
+    shear = bool(getattr(model_cfg, "interface_shear", False))
+    if not shear and phases == "mixture":
+        return
+    brinkman_on_front = (
+        bool(getattr(model_cfg, "front_geometry", False))
+        and bool(getattr(model_cfg, "sharp_interface", False))
+        and str(getattr(model_cfg, "momentum_closure", "darcy")) == "brinkman"
+    )
+    if not brinkman_on_front:
+        raise ValueError(
+            "model.interface_shear and model.momentum_phases=sharp act on the Brinkman law "
+            "on the explicit front: they need model.front_geometry=true, "
+            "model.sharp_interface=true and model.momentum_closure=brinkman"
+        )
+    if (
+        phases == "sharp"
+        and str(getattr(model_cfg, "pressure_representation", "")) != "two_phase"
+    ):
+        raise ValueError(
+            "model.momentum_phases=sharp scores the momentum law in the liquid only, which "
+            "reads the liquid pressure branch: it needs model.pressure_representation=two_phase"
+        )
 
 
 def _validate_exact_continuity(cfg) -> None:

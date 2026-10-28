@@ -503,6 +503,43 @@
     "default": false
   },
   {
+    "key": "model.interface_shear",
+    "label": "Shear-free bubble edge",
+    "kind": "bool",
+    "section": "physics",
+    "owner": "override",
+    "help": "the liquid slides along the bubble edge without being dragged: a vapour cannot hold the liquid by friction, so pressure has to push it. Brinkman momentum only",
+    "unit": "",
+    "options": [],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "interface_shear",
+    "default": false
+  },
+  {
+    "key": "model.momentum_phases",
+    "label": "Momentum law: phase properties",
+    "kind": "enum",
+    "section": "physics",
+    "owner": "override",
+    "help": "where the momentum law takes the liquid's friction and viscosity: blended across the smoothed interface, or the liquid's own up to the bubble edge",
+    "unit": "",
+    "options": [
+      "mixture",
+      "sharp"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "momentum_phases",
+    "default": "mixture"
+  },
+  {
     "key": "model.exact_continuity_body_sources",
     "label": "Exact continuity: sources per side",
     "kind": "int",

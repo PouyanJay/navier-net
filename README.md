@@ -41,11 +41,13 @@ From the current default (one seed), measured against the images and against eac
 
 | | |
 |---|---|
-| Outline against the frames | IoU 0.976 to 0.990 |
-| Vapour pressure | about 170 Pa above the outlet, as Young–Laplace predicts for this channel |
-| Temperature equation, relative to its terms | 10–19% at the bubble, 5–13% in the open liquid |
-| Heat budget | closes within the gate (spread 0.21) |
-| Still open | the flow beside the bubble's head: mass conservation on the images requires the liquid there to flow backward, and the model does not yet produce it (momentum 28–38% near the bubble, continuity up to 43%) |
+| Outline against the frames | IoU 0.977 to 0.990 |
+| Vapour pressure | 116 to 172 Pa above the outlet, as Young–Laplace predicts for this channel |
+| Liquid volume | conserved exactly: the backward flow beside the bubble's head that mass conservation on the images requires is there at every frame, reversing at 1.4 ms as in the outlines |
+| What drives that backflow | the liquid pressure, rising about 31 Pa toward the nose along the gap (frame 9) |
+| Temperature equation, relative to its terms | 7–9% at the bubble, 5–15% in the open liquid |
+| Heat budget | closes within the gate (spread 0.27) |
+| Still open | the pressure at the head's curved edge: 60–110 Pa above what Young–Laplace allows there, part of it a fixed step where the round nose meets the flat side; the liquid's inertia is not yet included (momentum 23–28% near the bubble) |
 
 Every run ends with an audit and a report: the five-check gate, these relative errors, and figures of
 every field.
