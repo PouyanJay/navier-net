@@ -33,6 +33,7 @@ from naviernet.models.potential_flow import (
     INLET_X,
     Channel,
     FieldCache,
+    FieldStack,
     FrontProblem,
     FrontSample,
     LiquidFields,
@@ -1289,26 +1290,18 @@ class BubblePINN(nn.Module):
         return self._inflow(x[:, 1:2]) + u_phi + psi_y, v_phi - psi_x
 
     def _potential_terms(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        """``(Phi_x, Phi_y, C)`` at ``x``, each point at its own instant's fields."""
-        instants, inverse = torch.unique(x[:, 2].detach(), return_inverse=True)
-        rows, terms = [], []
-        for k, instant in enumerate(instants):
-            members = (inverse == k).nonzero()[:, 0]
-            fields = self._fields_at(float(instant))
-            xy = x[members, :2]
-            rows.append(members)
-            terms.append(
-                torch.cat(
-                    [
-                        harmonic(fields.potential, xy, 1, 0),
-                        harmonic(fields.potential, xy, 0, 1),
-                        harmonic(fields.capacity, xy, 0, 0),
-                    ],
-                    dim=1,
-                )
-            )
-        order = torch.argsort(torch.cat(rows))
-        return torch.cat(terms)[order].split(1, dim=1)
+        """``(Phi_x, Phi_y, C)`` at ``x``, each point at its own instant's fields,
+        all instants in one sum."""
+        instants, groups = torch.unique(x[:, 2].detach(), return_inverse=True)
+        solved = [self._fields_at(instant) for instant in instants.tolist()]
+        potential = FieldStack([fields.potential for fields in solved], groups)
+        capacity = FieldStack([fields.capacity for fields in solved], groups)
+        xy = x[:, :2]
+        return (
+            harmonic(potential, xy, 1, 0),
+            harmonic(potential, xy, 0, 1),
+            harmonic(capacity, xy, 0, 0),
+        )
 
     def _inflow(self, y: torch.Tensor) -> torch.Tensor:
         """The inlet's streamwise profile ``U_in(y)``, ``(N, 1)``: uniform in x,

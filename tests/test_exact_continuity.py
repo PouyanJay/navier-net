@@ -154,6 +154,30 @@ def test_autograd_differentiates_the_fields_to_third_order():
             )
 
 
+@pytest.mark.parametrize("boundary", [pf.NEUMANN, pf.DIRICHLET])
+def test_a_stack_gives_each_point_its_own_fields_derivatives(boundary):
+    two_sources = torch.tensor([[0.8, 0.3], [1.4, 0.7]], dtype=torch.float64)
+    fields = [
+        pf.HarmonicField(
+            CHANNEL, two_sources, torch.tensor([1.0, -0.4], dtype=torch.float64), 0.2, boundary
+        ),
+        _field(boundary, strength=0.7),
+    ]
+    points = _grid(40).requires_grad_(True)
+    groups = torch.arange(len(points)) % 2
+    stack = pf.FieldStack(fields, groups)
+
+    for a, b in ((0, 0), (1, 0), (0, 1), (2, 1)):
+        stacked = pf.harmonic(stack, points, a, b)
+        own = torch.where(
+            groups.unsqueeze(1) == 0,
+            pf.harmonic(fields[0], points, a, b),
+            pf.harmonic(fields[1], points, a, b),
+        )
+        assert torch.allclose(stacked, own, rtol=1e-12, atol=1e-12)
+    assert torch.autograd.gradgradcheck(lambda z: pf.harmonic(stack, z, 1, 0), (points,))
+
+
 # --- the assembled velocity --------------------------------------------------
 
 
