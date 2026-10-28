@@ -329,8 +329,12 @@ describe("FrontVelocityTab", () => {
     // Two sub-paths (an "M" each) for the measured series: one either side of
     // the suppressed nose cap. A line drawn straight across the gap would be
     // one, and would assert a value the data never claimed.
-    const paths = [...container.querySelectorAll("path.chart-line")];
-    const measured = paths.find((node) => node.classList.contains("series-1"))!;
+    // The chart draws after the heading renders, so wait for the line itself.
+    const measured = await waitFor(() => {
+      const node = container.querySelector("path.chart-line.series-1");
+      expect(node).not.toBeNull();
+      return node!;
+    });
     expect((measured.getAttribute("d")!.match(/M/g) ?? []).length).toBe(2);
   });
 
