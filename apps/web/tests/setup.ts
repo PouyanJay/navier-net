@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom/vitest";
+import { configure } from "@testing-library/react";
 import { vi } from "vitest";
+
+// The default 1 s wait for an element is too short on the shared CI runners,
+// where a view that fetches, then draws, has missed it (physics and front
+// velocity tests, Oct 2026). A passing test returns as soon as it finds its
+// element, so the longer limit only gives slow renders time.
+configure({ asyncUtilTimeout: 5000 });
 
 // jsdom has no canvas; a silent stub keeps chart components renderable in
 // tests without "Not implemented" noise hiding real regressions.
