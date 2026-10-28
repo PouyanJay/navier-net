@@ -25,5 +25,7 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     css: true,
     include: ["tests/**/*.test.{ts,tsx}"],
+    // Room for the 5 s element wait in tests/setup.ts, more than once per test.
+    testTimeout: 15000,
   },
 });
