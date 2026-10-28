@@ -103,6 +103,10 @@ energy_relative: true
 # reads the velocity detached, so its error cannot bend the flow (it pulled
 # the liquid ahead of the bubble 2 to 30 times harder than momentum did).
 one_way_advection: true
+# The edge-transport (vof) term off once the outline is frozen: it acts on the
+# geometry alone, and its smoothed residual scored the gap's backflow 4x worse.
+# Exact continuity needs it off (model.exact_continuity).
+edge_transport_after_freeze: false
 
 causal_weighting: true
 causal_time_chunks: 16

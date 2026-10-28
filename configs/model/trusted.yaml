@@ -83,6 +83,30 @@ outlet_pressure_Pa: 5.0
 # the Young-Laplace jump built in and a curl-free vapour velocity.
 pressure_representation: two_phase
 
+# The liquid's velocity divergence-free by construction (exact continuity):
+# the inlet profile, a potential flow that moves with the frozen front and a
+# stream function that adds no flux through the walls or the front. Volume is
+# conserved exactly, so the backward flow beside the head that mass
+# conservation requires is there at every frame (gap flux -0.31 against -0.30
+# required at frame 9, the flip at 1.4 ms as in the outlines); with continuity
+# as a penalty the model inflated the source instead (wallsgrow4-s0).
+exact_continuity: true
+# The vapour's curl-free condition scored in the vapour only, not across the
+# smeared band, where it scored the gap's backflow 20x worse.
+vapour_potential_region: vapour
+# The momentum law is second order, so the front needs a tangential condition
+# as well as the kinematic one: zero shear on the liquid side, which a clean
+# interface against a vapour 37x thinner carries. Without it the edge dragged
+# the gap's liquid backward at -588 mm/s and the pressure stayed flat (-5 Pa);
+# with it the pressure rises +31 Pa toward the nose and drives the backflow
+# (shear4-s0 against exact4-s0).
+interface_shear: true
+# The liquid's own friction and viscosity, scored at full weight, up to the
+# front: the mixture's smoothed phase was 0.25-0.5 across the 34 um gap, so it
+# understated friction there by up to half and scored the law at half weight
+# exactly where the backflow runs.
+momentum_phases: sharp
+
 # WP4: the interface at saturation, the liquid energy equation with the series'
 # inlet, initial and wall conditions and its wall flux, and the continuity
 # source taken from the evaporation flux through the front.
