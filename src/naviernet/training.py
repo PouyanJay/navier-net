@@ -622,9 +622,10 @@ def _validate_physics_stage(cfg) -> None:
             f"model.vapour_potential_region must be one of {VAPOUR_POTENTIAL_REGIONS}, "
             f"got {region!r}"
         )
-    weight = getattr(cfg.training, "continuity_weight_after_freeze", None)
-    if weight is not None and float(weight) < 0.0:
-        raise ValueError(f"training.continuity_weight_after_freeze must be >= 0, got {weight}")
+    for name in ("continuity_weight_after_freeze", "wall_weight_after_freeze"):
+        weight = getattr(cfg.training, name, None)
+        if weight is not None and float(weight) < 0.0:
+            raise ValueError(f"training.{name} must be >= 0, got {weight}")
     _validate_exact_continuity(cfg)
     _validate_liquid_momentum(cfg.model)
 
@@ -1896,15 +1897,25 @@ def _geometry_frozen(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> bool:
 
 def _physics_stage_weights(weights: dict[str, float], tcfg) -> None:
     """The weights that change once the geometry is frozen: the edge transport
-    dropped (``training.edge_transport_after_freeze``) and the continuity set
-    (``training.continuity_weight_after_freeze``). Applied at the handoff, so
-    they persist through the run's state from there."""
+    dropped (``training.edge_transport_after_freeze``), and the continuity and
+    the wall conditions set (``training.continuity_weight_after_freeze``,
+    ``training.wall_weight_after_freeze``). Applied at the handoff, so they
+    persist through the run's state from there."""
     if not bool(getattr(tcfg, "edge_transport_after_freeze", True)) and "vof" in weights:
         weights["vof"] = 0.0
-    continuity = getattr(tcfg, "continuity_weight_after_freeze", None)
-    if continuity is not None and "div" in weights:
-        weights["div"] = float(continuity)
-    log.info("physics-stage weights: vof %s, div %s", weights.get("vof"), weights.get("div"))
+    for key, name in (
+        ("div", "continuity_weight_after_freeze"),
+        ("bc", "wall_weight_after_freeze"),
+    ):
+        weight = getattr(tcfg, name, None)
+        if weight is not None and key in weights:
+            weights[key] = float(weight)
+    log.info(
+        "physics-stage weights: vof %s, div %s, bc %s",
+        weights.get("vof"),
+        weights.get("div"),
+        weights.get("bc"),
+    )
 
 
 def _freeze_geometry(model, frozen: bool) -> None:

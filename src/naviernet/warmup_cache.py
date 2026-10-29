@@ -83,6 +83,7 @@ AFTER_WARMUP = (
     "training.energy_relative_mode",
     "training.edge_transport_after_freeze",
     "training.continuity_weight_after_freeze",
+    "training.wall_weight_after_freeze",
     "model.vapour_potential_region",
     "training.one_way_advection",
     "model.momentum_inertia",

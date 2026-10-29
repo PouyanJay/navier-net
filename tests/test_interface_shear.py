@@ -245,6 +245,28 @@ def test_the_exact_flow_rate_is_the_difference_of_its_solves(tmp_path):
     assert torch.equal(v_t[~liquid], autograd_v_t[~liquid])
 
 
+@pytest.mark.parametrize(("end", "sign"), [(0, 1.0), (-1, -1.0)])
+def test_at_the_window_ends_the_rate_looks_only_inward(tmp_path, end, sign):
+    data, model = _model(tmp_path)
+    points, _ = _liquid_and_vapour(data, model)
+    at_end = points.clone()
+    at_end[:, 2] = float(data.t[end])
+    at_end = at_end[model.liquid_side(at_end)]
+    zeros = torch.zeros(len(at_end), 1)
+
+    u_t, _ = model.velocity_rate(at_end, zeros, zeros)
+
+    h = sign * 1e-3
+
+    def u_at(k: float) -> torch.Tensor:
+        shifted = at_end + torch.tensor([0.0, 0.0, k * h])
+        return model._liquid_velocity(shifted.requires_grad_(True), False)[0].detach()
+
+    expected = (-3.0 * u_at(0.0) + 4.0 * u_at(1.0) - u_at(2.0)) / (2.0 * h)
+    assert torch.allclose(u_t, expected, atol=1e-4)
+    assert u_t.abs().max() > 0.0
+
+
 def test_before_the_physics_engages_the_rate_is_autograd(tmp_path):
     data, model = _model(tmp_path)
     model.kinematics_engaged = False

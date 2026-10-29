@@ -1179,6 +1179,23 @@
     "default": null
   },
   {
+    "key": "training.wall_weight_after_freeze",
+    "label": "Wall weight after the freeze",
+    "kind": "float",
+    "section": "training",
+    "owner": "override",
+    "help": "the inlet and wall conditions' weight from the physics stage on; unset keeps the configured one",
+    "unit": "",
+    "options": [],
+    "lo": 0.0,
+    "hi": 10000.0,
+    "optional": true,
+    "baked": false,
+    "advanced": true,
+    "name": "wall_weight_after_freeze",
+    "default": null
+  },
+  {
     "key": "training.energy_relative",
     "label": "Relative temperature loss",
     "kind": "bool",
