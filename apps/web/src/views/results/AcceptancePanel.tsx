@@ -9,6 +9,7 @@ const VERDICT_IDS = [
   "outline_drop",
   "nose",
   "jump_shape",
+  "jump_pressure",
   "mirror",
   "residuals",
   "residuals_in_time",
@@ -77,6 +78,12 @@ const ROWS: { id: VerdictId; name: string; detail: string }[] = [
     name: "Shape the jump condition asks for",
     detail:
       "Young-Laplace mismatch on the front as the shape change that would remove it (90th percentile, pixels)",
+  },
+  {
+    id: "jump_pressure",
+    name: "Pressure the jump condition misses by",
+    detail:
+      "Young-Laplace mismatch on the front as a pressure (RMS over the front, worst frame, pascals)",
   },
   {
     id: "mirror",

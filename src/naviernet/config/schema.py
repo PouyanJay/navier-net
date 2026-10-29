@@ -1020,6 +1020,10 @@ class AcceptanceConfig:
     # event may not exceed this: within it the measured outline and the
     # physics agree to the measurement's own resolution.
     jump_px_max: float = 2.0
+    # The same mismatch as a pressure: its RMS over the whole front (mean and
+    # scatter together), in pascals, at the worst frame. About 5 Pa is what the
+    # outline's own error (~2 um, ~5% of the nose curvature) leaves on its own.
+    jump_pa_max: float = 5.0
 
 
 @dataclass

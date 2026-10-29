@@ -2328,6 +2328,7 @@ def train(
                 wall_condition=boundaries.wall_condition,
                 initial=initial,
                 outlet_pressure=_outlet_pressure(cfg),
+                view_x_max=float(data.domain.x_max),
             )
             # The temperature-only stage has no use for the outline's data term: the
             # outline is locked, and the term would only cost a forward pass.

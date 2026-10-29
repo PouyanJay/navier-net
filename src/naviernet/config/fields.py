@@ -1252,6 +1252,19 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         lo=0.0,
         hi=1e3,
     ),
+    FieldSpec(
+        "evaluation.acceptance.jump_pa_max",
+        "Pressure the jump misses by",
+        "float",
+        *_GATE,
+        help=(
+            "the Young-Laplace mismatch on the front as a pressure; its RMS over the front "
+            "may not exceed this at any frame"
+        ),
+        unit="Pa",
+        lo=0.0,
+        hi=1e4,
+    ),
 )
 
 FIELD_TABLE: tuple[FieldSpec, ...] = (

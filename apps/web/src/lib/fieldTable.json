@@ -1748,5 +1748,22 @@
     "advanced": false,
     "name": "jump_px_max",
     "default": 2.0
+  },
+  {
+    "key": "evaluation.acceptance.jump_pa_max",
+    "label": "Pressure the jump misses by",
+    "kind": "float",
+    "section": "acceptance",
+    "owner": "override",
+    "help": "the Young-Laplace mismatch on the front as a pressure; its RMS over the front may not exceed this at any frame",
+    "unit": "Pa",
+    "options": [],
+    "lo": 0.0,
+    "hi": 10000.0,
+    "optional": false,
+    "baked": false,
+    "advanced": false,
+    "name": "jump_pa_max",
+    "default": 5.0
   }
 ]
