@@ -76,6 +76,40 @@ STREAM_PREFIX = "stream_net."
 RATE_STEP = 1e-3
 
 
+def _shifted(velocity, base: torch.Tensor, shift: float):
+    """``velocity`` at ``base`` moved ``shift`` in time, on a fresh leaf; its graph
+    kept only when the caller records one."""
+    step = torch.zeros_like(base)
+    step[:, 2] = shift
+    grad_on = torch.is_grad_enabled()
+    with torch.enable_grad():
+        return velocity((base + step).requires_grad_(True), grad_on)
+
+
+def _central_rate(velocity, base: torch.Tensor, rows: torch.Tensor):
+    """The central difference over ``RATE_STEP`` of ``velocity`` at ``base``,
+    ``(u_t, v_t)`` each ``(N, 1)``, on ``rows`` (zero elsewhere)."""
+    u_rate = base.new_zeros((len(base), 1))
+    v_rate = base.new_zeros((len(base), 1))
+    if not bool(rows.any()):
+        return u_rate, v_rate
+    ahead = _shifted(velocity, base[rows], RATE_STEP)
+    behind = _shifted(velocity, base[rows], -RATE_STEP)
+    u_rate = u_rate.index_put((rows,), (ahead[0] - behind[0]) / (2.0 * RATE_STEP))
+    v_rate = v_rate.index_put((rows,), (ahead[1] - behind[1]) / (2.0 * RATE_STEP))
+    return u_rate, v_rate
+
+
+def _one_sided_rate(velocity, base: torch.Tensor, sign: float):
+    """The second-order one-sided difference ``(-3 f(t) + 4 f(t + h) - f(t + 2h))
+    / 2h`` with ``h = sign * RATE_STEP``: towards later times for ``sign`` 1."""
+    h = sign * RATE_STEP
+    here, one, two = (_shifted(velocity, base, k * h) for k in (0.0, 1.0, 2.0))
+    return tuple(
+        (-3.0 * a + 4.0 * b - c) / (2.0 * h) for a, b, c in zip(here, one, two, strict=True)
+    )
+
+
 def _resolve(arch, key: str, fallback):
     """A per-field override value if set, otherwise the global default."""
     if arch is None:
@@ -513,14 +547,22 @@ class BubblePINN(nn.Module):
         if len(rows) == 0:
             return u_t, v_t
         base = x[rows].detach()
-        step = torch.zeros_like(base)
-        step[:, 2] = RATE_STEP
-        grad_on = torch.is_grad_enabled()
-        with torch.enable_grad():
-            ahead = self._liquid_velocity((base + step).requires_grad_(True), grad_on)
-            behind = self._liquid_velocity((base - step).requires_grad_(True), grad_on)
-        u_rate = (ahead[0] - behind[0]) / (2.0 * RATE_STEP)
-        v_rate = (ahead[1] - behind[1]) / (2.0 * RATE_STEP)
+        # Within a step of the window's ends the stencil turns inward (second
+        # order, one-sided), so it never reaches before the first image or past
+        # the last, where the outline is extrapolated (inert4-s0's frame-1 audit
+        # residual came from the step before the first image).
+        priors = self.nets["phi"].priors
+        t = base[:, 2]
+        direction = torch.zeros_like(t)
+        direction = torch.where(t - RATE_STEP < float(priors.t_min), 1.0, direction)
+        direction = torch.where(t + RATE_STEP > float(priors.t_max), -1.0, direction)
+        u_rate, v_rate = _central_rate(self._liquid_velocity, base, direction == 0.0)
+        for sign in (1.0, -1.0):
+            edge = direction == sign
+            if bool(edge.any()):
+                one_sided = _one_sided_rate(self._liquid_velocity, base[edge], sign)
+                u_rate = u_rate.index_put((edge,), one_sided[0])
+                v_rate = v_rate.index_put((edge,), one_sided[1])
         return u_t.index_copy(0, rows, u_rate), v_t.index_copy(0, rows, v_rate)
 
     def liquid_side(self, x: torch.Tensor) -> torch.Tensor:

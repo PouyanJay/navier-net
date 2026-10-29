@@ -25,18 +25,19 @@ def test_the_default_physics_stage_keeps_the_weights():
     assert weights == {"vof": 1.0, "div": 1.0}
 
 
-def test_the_physics_stage_drops_edge_transport_and_sets_continuity():
+def test_the_physics_stage_drops_edge_transport_and_sets_continuity_and_walls():
     tcfg = make_config(
         [
             "training.edge_transport_after_freeze=false",
             "training.continuity_weight_after_freeze=10.0",
+            "training.wall_weight_after_freeze=50.0",
         ]
     ).training
-    weights = {"vof": 1.0, "div": 1.0, "brinkman": 5.0}
+    weights = {"vof": 1.0, "div": 1.0, "bc": 5.0, "brinkman": 5.0}
 
     training._physics_stage_weights(weights, tcfg)
 
-    assert weights == {"vof": 0.0, "div": 10.0, "brinkman": 5.0}
+    assert weights == {"vof": 0.0, "div": 10.0, "bc": 50.0, "brinkman": 5.0}
 
 
 def _model(tmp_path, extra=()):
@@ -69,6 +70,7 @@ def test_inside_the_vapour_the_curl_free_condition_is_unchanged_and_off_it_is_ze
     [
         ("model.vapour_potential_region=liquid", "vapour_potential_region"),
         ("training.continuity_weight_after_freeze=-1.0", "continuity_weight_after_freeze"),
+        ("training.wall_weight_after_freeze=-1.0", "wall_weight_after_freeze"),
     ],
 )
 def test_an_unsupported_physics_stage_setup_is_refused(tmp_path, override, message):

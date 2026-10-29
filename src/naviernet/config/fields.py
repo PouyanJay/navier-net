@@ -882,6 +882,21 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.wall_weight_after_freeze",
+        "Wall weight after the freeze",
+        "float",
+        "training",
+        "override",
+        help=(
+            "the inlet and wall conditions' weight from the physics stage on; unset keeps "
+            "the configured one"
+        ),
+        lo=0.0,
+        hi=1e4,
+        optional=True,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.energy_relative",
         "Relative temperature loss",
         "bool",

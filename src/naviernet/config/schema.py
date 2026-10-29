@@ -756,6 +756,10 @@ class TrainingConfig:
     # training.weights.div (None keeps it). The warm-up, and so the cached
     # outline fit, is untouched.
     continuity_weight_after_freeze: Optional[float] = None  # noqa: UP045
+    # The inlet and wall conditions' weight from the physics stage on, in place
+    # of training.weights.bc (None keeps it), the warm-up untouched as above:
+    # with inertia in, inert4-s0 slipped 107-146 mm/s along the walls.
+    wall_weight_after_freeze: Optional[float] = None  # noqa: UP045
     # How the physics terms are weighted once the geometry is frozen. "fixed":
     # each at its configured weight, never rebalanced. "equalised": rebalanced
     # to equal gradient contributions (the median of the weighted norms is the
