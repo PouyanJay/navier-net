@@ -131,7 +131,7 @@ def wall_positions_star(calibration: Calibration, l_ref_um: float) -> dict[str, 
     }
 
 
-def _fill_holes(component: np.ndarray) -> np.ndarray:
+def fill_holes(component: np.ndarray) -> np.ndarray:
     """Fill enclosed holes by flood-filling the background from a padded corner."""
     padded = np.pad(component, 1)
     flooded = padded.copy()
@@ -227,7 +227,7 @@ def _snake_centreline(signed: np.ndarray, init: np.ndarray) -> np.ndarray:
     return np.column_stack([x, y])
 
 
-def _seal_fov_cut(band: np.ndarray) -> np.ndarray:
+def seal_fov_cut(band: np.ndarray) -> np.ndarray:
     """Close the rim across a field-of-view edge the bubble runs off.
 
     The bubble is capped at the image edge -- all that is seen of it -- so its
@@ -240,6 +240,21 @@ def _seal_fov_cut(band: np.ndarray) -> np.ndarray:
         if rows.size:
             sealed[rows.min() : rows.max() + 1, col] = 1
     return sealed
+
+
+def medial_field(filled: np.ndarray, hole: np.ndarray) -> np.ndarray:
+    """Distance to the rim's outer edge minus distance to its inner edge: zero
+    exactly midway across the rim, negative toward the outer edge.
+
+    The crop's top and bottom rows count as outer edge: where the rim runs into a
+    wall line it is cut there, and without that edge the distance runs on past the
+    crop and the centreline slides toward the wall (Series-1-w300's head traced 8
+    to 20 um off the walls instead of the rim centre's 32 to 35 um, and lopsided
+    top to bottom).
+    """
+    to_outer = cv2.distanceTransform(np.pad(filled, ((1, 1), (0, 0))), cv2.DIST_L2, 5)[1:-1]
+    to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
+    return (to_outer - to_inner).astype(np.float32)
 
 
 def _meniscus_interface(
@@ -262,40 +277,26 @@ def _meniscus_interface(
     at all to centre in: a near-solid nucleus.
     """
     if band[:, 0].any() or band[:, -1].any():
-        band = _seal_fov_cut(band)
-    filled = _fill_holes(band)
+        band = seal_fov_cut(band)
+    filled = fill_holes(band)
     hole = (filled & (1 - band)).astype(np.uint8)
     if int(hole.sum()) < min_hole_fraction * int(filled.sum()):
         return fair_closed_contour(_outer_contour(filled), wavelength_px, _INTERFACE_POINTS)
-
-    # 0 at the outer edge. The crop's top and bottom rows count as outer edge:
-    # where the rim runs into a wall line it is cut there, and without that edge
-    # the distance runs on past the crop and the centreline slides toward the
-    # wall (Series-1-w300's head traced 8 to 20 um off the walls instead of the
-    # rim centre's 32 to 35 um, and lopsided top to bottom).
-    to_outer = cv2.distanceTransform(np.pad(filled, ((1, 1), (0, 0))), cv2.DIST_L2, 5)[1:-1]
-    to_inner = cv2.distanceTransform(1 - hole, cv2.DIST_L2, 5)  # 0 at the inner edge
-    signed = (to_outer - to_inner).astype(np.float32)
+    signed = medial_field(filled, hole)
 
     seed_field = cv2.GaussianBlur(signed, (0, 0), seed_blur_px) if seed_blur_px > 0 else signed
     seed = _largest_component((seed_field >= 0).astype(np.uint8))
     if seed is None:  # no interior half survived the blur; take the outer edge
         return fair_closed_contour(_outer_contour(filled), wavelength_px, _INTERFACE_POINTS)
-    init = _resample_closed(_outer_contour(_fill_holes(seed)), _SNAKE_POINTS)
+    init = _resample_closed(_outer_contour(fill_holes(seed)), _SNAKE_POINTS)
     return fair_closed_contour(
         _snake_centreline(signed, init), wavelength_px, _INTERFACE_POINTS
     )
 
 
-def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
-    """Smooth closed interface contour for raw frame ``n`` (1-based), in ROI
-    pixel coordinates.
-
-    The contour is an active contour settled onto the meniscus centreline -- a
-    smooth closed curve. The same curve is rasterised into the training tensors
-    and, converted to ``x*``, drawn on the QC overlay -- one curve, so the model
-    and the picture never disagree.
-    """
+def rim_band(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
+    """The dark meniscus rim of raw frame ``n`` (1-based) as a binary mask, in
+    ROI pixel coordinates."""
     imaging = cfg.imaging
     y0, y1 = roi
     grey = np.asarray(Image.open(paths.raw_frame(n)).convert("L"))
@@ -313,9 +314,21 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
             f"no bubble found in frame {n}; check imaging.dark_thresh "
             f"(currently {imaging.dark_thresh})"
         )
+    return band
 
+
+def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndarray:
+    """Smooth closed interface contour for raw frame ``n`` (1-based), in ROI
+    pixel coordinates.
+
+    The contour is an active contour settled onto the meniscus centreline -- a
+    smooth closed curve. The same curve is rasterised into the training tensors
+    and, converted to ``x*``, drawn on the QC overlay -- one curve, so the model
+    and the picture never disagree.
+    """
+    imaging = cfg.imaging
     return _meniscus_interface(
-        band,
+        rim_band(cfg, paths, n, roi),
         imaging.min_rim_hole_fraction,
         imaging.contour_smooth_px,
         float(imaging.fair_wavelength_px),
@@ -494,6 +507,12 @@ def preprocess(cfg, paths: RunPaths) -> dict:
     from naviernet.viz.qc import qc_figure
 
     qc_figure(cfg, paths, alpha, sdf, x_star, y_star, t_star, um_per_px, x_pin, n_event)
+    if bool(cfg.imaging.mirror_symmetric):
+        # The fair outline model.measured_outline reads; traced mirror-symmetric,
+        # so only for a series preprocessed that way.
+        from naviernet.data.outline import write_measured_outline
+
+        write_measured_outline(cfg, paths)
     return meta
 
 

@@ -97,6 +97,7 @@ AFTER_WARMUP = (
     "model.exact_continuity_offset",
     "model.interface_shear",
     "model.momentum_phases",
+    "model.measured_outline",
     "training.weights.interface_shear",
     "experiment.footprint_wetting",
     "experiment.microlayer_mode",

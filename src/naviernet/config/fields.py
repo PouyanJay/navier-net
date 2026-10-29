@@ -858,6 +858,19 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.measured_outline",
+        "Measured outline",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "from the physics stage on, the bubble is the smooth outline traced from the "
+            "images rather than the fitted capsule, whose curvature jumps where its caps meet "
+            "its body"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
         "training.edge_transport_after_freeze",
         "Edge transport after the freeze",
         "bool",
