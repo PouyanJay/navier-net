@@ -154,6 +154,30 @@ def test_autograd_differentiates_the_fields_to_third_order():
             )
 
 
+@pytest.mark.parametrize("boundary", [pf.NEUMANN, pf.DIRICHLET])
+def test_a_stack_gives_each_point_its_own_fields_derivatives(boundary):
+    two_sources = torch.tensor([[0.8, 0.3], [1.4, 0.7]], dtype=torch.float64)
+    fields = [
+        pf.HarmonicField(
+            CHANNEL, two_sources, torch.tensor([1.0, -0.4], dtype=torch.float64), 0.2, boundary
+        ),
+        _field(boundary, strength=0.7),
+    ]
+    points = _grid(40).requires_grad_(True)
+    groups = torch.arange(len(points)) % 2
+    stack = pf.FieldStack(fields, groups)
+
+    for a, b in ((0, 0), (1, 0), (0, 1), (2, 1)):
+        stacked = pf.harmonic(stack, points, a, b)
+        own = torch.where(
+            groups.unsqueeze(1) == 0,
+            pf.harmonic(fields[0], points, a, b),
+            pf.harmonic(fields[1], points, a, b),
+        )
+        assert torch.allclose(stacked, own, rtol=1e-12, atol=1e-12)
+    assert torch.autograd.gradgradcheck(lambda z: pf.harmonic(stack, z, 1, 0), (points,))
+
+
 # --- the assembled velocity --------------------------------------------------
 
 
@@ -227,7 +251,7 @@ def test_the_capacity_lies_between_the_front_and_the_walls(tmp_path):
     t = float(data.t[3])
     x = _liquid_points(data, model, t)
 
-    capacity = model._fields_at(t).capacity
+    capacity = model._fields_at([t])[0].capacity
     front = model.front(torch.tensor([[t]], requires_grad=True), 128, 32).points.detach()
     lo, hi = model.wall_span
     xs = torch.linspace(0.0, float(data.x.max()), 64, dtype=torch.float64)
@@ -284,7 +308,7 @@ def test_it_starts_as_the_potential_flow(tmp_path):
     data, model = _model(tmp_path)
     t = float(data.t[3])
     x = _liquid_points(data, model, t).detach()
-    fields = model._fields_at(t)
+    fields = model._fields_at([t])[0]
 
     u, v = model.velocity(x)
 

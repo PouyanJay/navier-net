@@ -50,6 +50,9 @@ TIKHONOV = 1e-10
 # Points per chunk of the source sum: bounds the (points x images) complex
 # matrix at about 50 MB.
 CHUNK = 2048
+# The same on a GPU, about 400 MB: a whole step's liquid points in one or two
+# chunks, as small chunks leave the device waiting on the launches.
+GPU_CHUNK = 16384
 # Halvings of a source's offset before a source that will not sit inside the
 # vapour is an error.
 OFFSET_HALVINGS = 6
@@ -103,7 +106,115 @@ class Channel:
         return math.pi / (2.0 * (self.y_hi - self.y_lo))
 
 
-class HarmonicField:
+class _ClosedForm:
+    """A sum of the strip's Green functions, differentiated in closed form: a
+    subclass gives ``_sum``, ``F^(n)`` at the points, and ``_offset``."""
+
+    def __init__(self):
+        self._memo: OrderedDict[tuple, tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
+
+    def value(self, xy: torch.Tensor, a: int, b: int) -> torch.Tensor:
+        """``d^a/dx^a d^b/dy^b`` of the field at ``xy``, ``(N, 1)`` in ``xy``'s dtype:
+        ``Re(i^b F^(a+b))``, every derivative of one order from the same sum."""
+        out = ((1j) ** (b % 4) * self._derivative(xy, a + b)).real.reshape(-1, 1)
+        if a + b == 0:
+            out = out + self._offset()
+        return out.to(dtype=xy.dtype, device=xy.device)
+
+    def _derivative(self, xy: torch.Tensor, n: int) -> torch.Tensor:
+        """``F^(n)`` at ``xy``, ``(N,)`` complex, memoised per point batch: a
+        step's autograd asks for each order of the same points hundreds of times
+        (every derivative's backward is two more), and they all share it. The
+        entry holds the batch, so its storage cannot be reused under the key,
+        and the key holds its version counter, so an edit in place misses. An
+        edit through ``.data`` (as gradcheck makes) leaves the counter, so on
+        the CPU the key also holds a fingerprint of the values; on a GPU reading
+        it would make the device wait on every request, and no caller there
+        edits a batch that way."""
+        fingerprint = _fingerprint(xy) if xy.device.type == "cpu" else None
+        key = (
+            xy.data_ptr(),
+            tuple(xy.shape),
+            xy.stride(),
+            str(xy.device),
+            xy._version,
+            fingerprint,
+            n,
+        )
+        hit = self._memo.get(key)
+        if hit is None:
+            hit = (xy, self._sum(xy, n))
+            self._memo[key] = hit
+            while len(self._memo) > MEMO_SIZE:
+                self._memo.popitem(last=False)
+        return hit[1]
+
+    def _sum(self, xy: torch.Tensor, n: int) -> torch.Tensor:
+        raise NotImplementedError
+
+    def _offset(self) -> float | torch.Tensor:
+        raise NotImplementedError
+
+
+def _fingerprint(xy: torch.Tensor) -> tuple[float, float]:
+    """Two weighted sums of the points: different after any edit to their values."""
+    values = xy.detach().double().reshape(-1)
+    weights = torch.arange(1, len(values) + 1, device=values.device, dtype=values.dtype)
+    return float(values.sum()), float((values * weights).sum())
+
+
+def _as_complex(xy: torch.Tensor, channel: Channel, device) -> torch.Tensor:
+    """The points ``(..., 2)`` as ``z = x + i (y - y_lo)``, float64 on ``device``."""
+    xy = xy.detach().to(device=device, dtype=torch.float64)
+    return torch.complex(xy[..., 0], xy[..., 1] - channel.y_lo)
+
+
+def _images(channel: Channel, sources: torch.Tensor, boundary: str):
+    """The images of sources ``(..., S, 2)``, ``(..., n_images * S)`` complex, image
+    by image, and each image's sign."""
+    x0 = sources[..., 0].double()
+    eta0 = sources[..., 1].double() - channel.y_lo
+    images = [torch.complex(x0, eta0), torch.complex(x0, -eta0)]
+    signs = [1.0, 1.0]
+    if boundary == NEUMANN:
+        mirrored = 2.0 * channel.x_in - x0
+        images += [torch.complex(mirrored, eta0), torch.complex(mirrored, -eta0)]
+        signs += [1.0, 1.0]
+    elif boundary == DIRICHLET:
+        signs = [1.0, -1.0]
+    else:
+        raise ValueError(f"boundary must be {NEUMANN!r} or {DIRICHLET!r}, got {boundary!r}")
+    return torch.cat(images, dim=-1), signs
+
+
+def _chunk(device) -> int:
+    return GPU_CHUNK if torch.device(device).type == "cuda" else CHUNK
+
+
+def _check_order(n: int) -> None:
+    if n > MAX_ORDER + 1:
+        raise ValueError(f"derivative order {n} exceeds the supported {MAX_ORDER + 1}")
+
+
+def _image_terms(z: torch.Tensor, images: torch.Tensor, k: float, n: int) -> torch.Tensor:
+    """Each image's term of ``F^(n)`` at ``z`` ``(..., N)``, ``(..., N, n_images)``
+    complex, without strengths or signs; ``images`` broadcasts against it:
+    ``(n_images,)`` shared by every point, ``(N, n_images)`` each point's own, or
+    ``(T, 1, n_images)`` each instant's own."""
+    w = k * (z.unsqueeze(-1) - images)
+    if n == 0:
+        # Re log sinh w = log |sinh w|, single-valued: no branch cut, and only
+        # the real part is ever read.
+        real = 0.5 * torch.log(torch.sinh(w.real) ** 2 + torch.sin(w.imag) ** 2)
+        return torch.complex(real, torch.zeros_like(real))
+    coth = 1.0 / torch.tanh(w)
+    poly = torch.zeros_like(coth)
+    for coefficient in _COTH_POLYS[n - 1][::-1]:
+        poly = poly * coth + coefficient
+    return (k**n) * poly
+
+
+class HarmonicField(_ClosedForm):
     """``offset + sum_j q_j G(x; source_j)`` in the channel, ``G`` the strip's
     Neumann (``boundary="neumann"``) or Dirichlet Green function."""
 
@@ -115,26 +226,14 @@ class HarmonicField:
         offset: float = 0.0,
         boundary: str = NEUMANN,
     ):
+        super().__init__()
         self.channel, self.offset, self.boundary = channel, float(offset), boundary
         self.sources, self.raw_strengths = sources, strengths
-        x0 = sources[:, 0].double()
-        eta0 = sources[:, 1].double() - channel.y_lo
-        images = [torch.complex(x0, eta0), torch.complex(x0, -eta0)]
-        signs = [1.0, 1.0]
-        if boundary == NEUMANN:
-            mirrored = 2.0 * channel.x_in - x0
-            images += [torch.complex(mirrored, eta0), torch.complex(mirrored, -eta0)]
-            signs += [1.0, 1.0]
-        elif boundary == DIRICHLET:
-            signs = [1.0, -1.0]
-        else:
-            raise ValueError(f"boundary must be {NEUMANN!r} or {DIRICHLET!r}, got {boundary!r}")
-        self.images = torch.cat(images)
+        self.images, signs = _images(channel, sources, boundary)
         self.signs = torch.tensor(signs, dtype=torch.float64, device=self.images.device)
         weights = strengths.double().to(self.images.device)
         self.strengths = torch.cat([s * weights for s in signs]) / (2.0 * math.pi)
         self._complex_strengths = self.strengths.to(torch.complex128)
-        self._memo: OrderedDict[tuple, tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
 
     def to(self, device) -> HarmonicField:
         return HarmonicField(
@@ -145,73 +244,61 @@ class HarmonicField:
             self.boundary,
         )
 
-    def value(self, xy: torch.Tensor, a: int, b: int) -> torch.Tensor:
-        """``d^a/dx^a d^b/dy^b`` of the field at ``xy``, ``(N, 1)`` in ``xy``'s dtype:
-        ``Re(i^b F^(a+b))``, every derivative of one order from the same sum."""
-        out = ((1j) ** (b % 4) * self._derivative(xy, a + b)).real.reshape(-1, 1)
-        if a + b == 0:
-            out = out + self.offset
-        return out.to(dtype=xy.dtype, device=xy.device)
-
-    def basis(self, xy: torch.Tensor, a: int, b: int) -> torch.Tensor:
-        """The same derivative of each source's own field (its images summed,
-        strength one), ``(N, n_sources)`` float64: the solves' matrices."""
-        n_images = len(self.signs)
-        n_sources = len(self.images) // n_images
-
-        def reduce(terms):
-            blocks = ((1j) ** (b % 4) * terms).real.reshape(len(terms), n_images, n_sources)
-            return (blocks * self.signs.reshape(1, -1, 1)).sum(dim=1) / (2.0 * math.pi)
-
-        return self._chunked(xy, a + b, reduce)
-
-    def _derivative(self, xy: torch.Tensor, n: int) -> torch.Tensor:
-        """``F^(n)`` at ``xy``, ``(N,)`` complex, memoised per point batch: a
-        step's autograd asks for each order of the same points hundreds of times
-        (every derivative's backward is two more), and they all share it. The
-        entry holds the batch, so its storage cannot be reused under the key,
-        and the key holds a fingerprint of its values, so an edit in place (which
-        ``.data`` hides from the version counter) misses."""
-        key = (xy.data_ptr(), tuple(xy.shape), str(xy.device), _fingerprint(xy), n)
-        hit = self._memo.get(key)
-        if hit is None:
-            hit = (xy, self._chunked(xy, n, lambda terms: terms @ self._complex_strengths))
-            self._memo[key] = hit
-            while len(self._memo) > MEMO_SIZE:
-                self._memo.popitem(last=False)
-        return hit[1]
-
-    def _chunked(self, xy: torch.Tensor, n: int, reduce) -> torch.Tensor:
-        if n > MAX_ORDER + 1:
-            raise ValueError(f"derivative order {n} exceeds the supported {MAX_ORDER + 1}")
-        xy = xy.detach().to(device=self.images.device, dtype=torch.float64)
-        z = torch.complex(xy[:, 0], xy[:, 1] - self.channel.y_lo)
+    def _sum(self, xy: torch.Tensor, n: int) -> torch.Tensor:
+        _check_order(n)
+        z = _as_complex(xy, self.channel, self.images.device)
+        size, k = _chunk(z.device), self.channel.k
         return torch.cat(
-            [reduce(self._terms(z[i : i + CHUNK], n)) for i in range(0, max(len(z), 1), CHUNK)]
+            [
+                _image_terms(z[i : i + size], self.images, k, n) @ self._complex_strengths
+                for i in range(0, max(len(z), 1), size)
+            ]
         )
 
-    def _terms(self, z: torch.Tensor, n: int) -> torch.Tensor:
-        """Each image's term of ``F^(n)``, ``(N, n_images)`` complex, without
-        strengths or signs."""
-        k = self.channel.k
-        w = k * (z.unsqueeze(1) - self.images.unsqueeze(0))
-        if n == 0:
-            # Re log sinh w = log |sinh w|, single-valued: no branch cut, and only
-            # the real part is ever read.
-            real = 0.5 * torch.log(torch.sinh(w.real) ** 2 + torch.sin(w.imag) ** 2)
-            return torch.complex(real, torch.zeros_like(real))
-        coth = 1.0 / torch.tanh(w)
-        poly = torch.zeros_like(coth)
-        for coefficient in _COTH_POLYS[n - 1][::-1]:
-            poly = poly * coth + coefficient
-        return (k**n) * poly
+    def _offset(self) -> float:
+        return self.offset
 
 
-def _fingerprint(xy: torch.Tensor) -> tuple[float, float]:
-    """Two weighted sums of the points: different after any edit to their values."""
-    values = xy.detach().double().reshape(-1)
-    weights = torch.arange(1, len(values) + 1, device=values.device, dtype=values.dtype)
-    return float(values.sum()), float((values * weights).sum())
+class FieldStack(_ClosedForm):
+    """Several instants' fields of one boundary as one, for one point batch:
+    point ``i`` sums its own instant's field, ``fields[groups[i]]``. A step's
+    instants then cost one source sum, not one each. A field with fewer images
+    is padded with copies of its first at zero strength, which add nothing."""
+
+    def __init__(self, fields: list[HarmonicField], groups: torch.Tensor):
+        super().__init__()
+        first = fields[0]
+        if any(f.channel != first.channel or f.boundary != first.boundary for f in fields):
+            raise ValueError("a field stack takes fields of one channel and one boundary")
+        self.channel = first.channel
+        width = max(len(f.images) for f in fields)
+        images, strengths = [], []
+        for f in fields:
+            pad = width - len(f.images)
+            images.append(torch.cat([f.images, f.images[:1].expand(pad)]))
+            strengths.append(
+                torch.cat([f._complex_strengths, f._complex_strengths.new_zeros(pad)])
+            )
+        self.images, self.strengths = torch.stack(images), torch.stack(strengths)
+        offsets = torch.tensor([f.offset for f in fields], dtype=torch.float64)
+        self.groups = groups.to(self.images.device)
+        self.offsets = offsets.to(self.images.device)[self.groups]
+
+    def _sum(self, xy: torch.Tensor, n: int) -> torch.Tensor:
+        _check_order(n)
+        if len(xy) != len(self.groups):
+            raise ValueError(f"a stack built for {len(self.groups)} points got {len(xy)}")
+        z = _as_complex(xy, self.channel, self.images.device)
+        size, k = _chunk(z.device), self.channel.k
+        parts = []
+        for i in range(0, max(len(z), 1), size):
+            groups = self.groups[i : i + size]
+            terms = _image_terms(z[i : i + size], self.images[groups], k, n)
+            parts.append((terms * self.strengths[groups]).sum(dim=1))
+        return torch.cat(parts)
+
+    def _offset(self) -> torch.Tensor:
+        return self.offsets.reshape(-1, 1)
 
 
 class _HarmonicDerivative(torch.autograd.Function):
@@ -234,7 +321,9 @@ class _HarmonicDerivative(torch.autograd.Function):
         return grad * torch.cat([d_x, d_y], dim=1), None, None, None
 
 
-def harmonic(field: HarmonicField, xy: torch.Tensor, a: int = 0, b: int = 0) -> torch.Tensor:
+def harmonic(
+    field: HarmonicField | FieldStack, xy: torch.Tensor, a: int = 0, b: int = 0
+) -> torch.Tensor:
     """``d^a/dx^a d^b/dy^b`` of ``field`` at the points ``xy`` ``(N, 2)``, ``(N, 1)``,
     differentiable to any order."""
     return _HarmonicDerivative.apply(xy, field, a, b)
@@ -242,8 +331,9 @@ def harmonic(field: HarmonicField, xy: torch.Tensor, a: int = 0, b: int = 0) -> 
 
 @dataclass(frozen=True)
 class FrontSample:
-    """One instant's front: points ``(n, 2)``, outward normals (out of the
-    vapour), normal speeds and arclength weights ``(n,)``, all float64 on CPU."""
+    """Instants' fronts, stacked and each sampled alike: points ``(T, n, 2)``,
+    outward normals (out of the vapour) ``(T, n, 2)``, normal speeds and
+    arclength weights ``(T, n)``, all float64 on one device."""
 
     points: torch.Tensor
     normal: torch.Tensor
@@ -253,7 +343,7 @@ class FrontSample:
 
 @dataclass(frozen=True)
 class FrontProblem:
-    """What one instant's solves fit: the front sampled for the sources and,
+    """What the instants' solves fit: the fronts sampled for the sources and,
     about twice as dense, for the conditions, and ``n . U_in`` at the latter."""
 
     sources: FrontSample
@@ -282,8 +372,9 @@ class LiquidFields:
 
 @dataclass(frozen=True)
 class _Unknowns:
-    """The physical sources the unknowns stand for: rows ``j`` and ``j + m`` of
-    ``points`` share unknown ``j`` when ``multiplicity`` is 2 (a mirror pair)."""
+    """The physical sources the unknowns stand for, ``(T, P, 2)``: rows ``j`` and
+    ``j + m`` of each instant's ``points`` share unknown ``j`` when
+    ``multiplicity`` is 2 (a mirror pair)."""
 
     channel: Channel
     points: torch.Tensor
@@ -293,47 +384,71 @@ class _Unknowns:
     def placed(cls, channel: Channel, points: torch.Tensor, mirror_axis: float | None):
         if mirror_axis is None:
             return cls(channel, points, 1)
-        reflected = torch.stack([points[:, 0], 2.0 * mirror_axis - points[:, 1]], dim=1)
-        return cls(channel, torch.cat([points, reflected]), 2)
+        reflected = torch.stack([points[..., 0], 2.0 * mirror_axis - points[..., 1]], dim=-1)
+        return cls(channel, torch.cat([points, reflected], dim=1), 2)
 
-    def field(self, strengths: torch.Tensor, offset: float = 0.0, boundary: str = NEUMANN):
+    def field(
+        self,
+        instant: int,
+        strengths: torch.Tensor,
+        offset: float = 0.0,
+        boundary: str = NEUMANN,
+    ) -> HarmonicField:
         return HarmonicField(
-            self.channel, self.points, strengths.repeat(self.multiplicity), offset, boundary
+            self.channel,
+            self.points[instant],
+            strengths.repeat(self.multiplicity),
+            offset,
+            boundary,
         )
 
-    def basis(self, xy: torch.Tensor, a: int, b: int, boundary: str) -> torch.Tensor:
-        """``(n_points, n_unknowns)``: each unknown's unit field differentiated at ``xy``."""
-        unit = HarmonicField(
-            self.channel,
-            self.points,
-            torch.ones(len(self.points), dtype=torch.float64),
-            boundary=boundary,
-        )
-        m = len(self.points) // self.multiplicity
-        return unit.basis(xy, a, b).reshape(len(xy), self.multiplicity, m).sum(dim=1)
+    def basis(self, xy: torch.Tensor, n: int, boundary: str) -> torch.Tensor:
+        """``(T, N, n_unknowns)`` complex: ``F^(n)`` of each unknown's unit field
+        at its instant's points ``xy`` ``(T, N, 2)``; ``d^a/dx^a d^b/dy^b`` of the
+        field is ``Re(i^b F^(a+b))``, so one order serves every derivative of it."""
+        _check_order(n)
+        images, signs = _images(self.channel, self.points, boundary)
+        n_sources = self.points.shape[1]
+        signs = torch.tensor(signs, dtype=torch.float64, device=images.device)
+        z = _as_complex(xy, self.channel, images.device)
+        per_chunk = max(1, _chunk(z.device) // max(z.shape[1], 1))
+        parts = []
+        for i in range(0, len(z), per_chunk):
+            terms = _image_terms(
+                z[i : i + per_chunk], images[i : i + per_chunk, None], self.channel.k, n
+            )
+            blocks = terms.reshape(*terms.shape[:2], len(signs), n_sources)
+            parts.append((blocks * signs.reshape(-1, 1)).sum(dim=2) / (2.0 * math.pi))
+        unit = torch.cat(parts)
+        m = n_sources // self.multiplicity
+        return unit.reshape(*unit.shape[:2], self.multiplicity, m).sum(dim=2)
 
 
 def _regularised_solve(matrix: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
-    """``argmin |A q - b|^2 + (TIKHONOV sigma_max)^2 |q|^2``."""
-    u, s, vh = torch.linalg.svd(matrix, full_matrices=False)
-    lam = TIKHONOV * s[0]
-    return vh.T @ ((s / (s**2 + lam**2)) * (u.T @ rhs))
+    """``argmin |A q - b|^2 + (TIKHONOV sigma_max)^2 |q|^2`` for each instant's
+    ``A`` ``(T, N, n)`` and ``b`` ``(T, N)``, ``(T, n)``. The SVD runs on the CPU,
+    where LAPACK takes these small matrices faster than a GPU does."""
+    u, s, vh = torch.linalg.svd(matrix.cpu(), full_matrices=False)
+    lam = TIKHONOV * s[:, :1]
+    filtered = (s / (s**2 + lam**2)).unsqueeze(-1) * (u.mT @ rhs.cpu().unsqueeze(-1))
+    return (vh.mT @ filtered)[..., 0].to(matrix.device)
 
 
 def _place_sources(
     channel: Channel, sources: FrontSample, offset: float, inside
 ) -> torch.Tensor:
     """Each source ``offset`` local spacings into the vapour behind its sample,
-    halved until ``inside`` (a callable on ``(n, 2)``) says it is in the vapour.
-    A source upstream of the inlet plane would put its image in the liquid."""
-    if float(sources.points[:, 0].min()) <= channel.x_in:
+    halved until ``inside`` (a callable on ``(T, n, 2)``) says it is in the
+    vapour. A source upstream of the inlet plane would put its image in the
+    liquid."""
+    if float(sources.points[..., 0].min()) <= channel.x_in:
         raise ValueError(
             f"the front reaches the inlet plane x = {channel.x_in}: its potential flow "
             "would mirror sources into the liquid"
         )
     depth = offset * sources.spacing.clone()
     for _ in range(OFFSET_HALVINGS):
-        placed = sources.points - depth.unsqueeze(1) * sources.normal
+        placed = sources.points - depth.unsqueeze(-1) * sources.normal
         outside = ~inside(placed)
         if not bool(outside.any()):
             return placed
@@ -344,43 +459,49 @@ def _place_sources(
     )
 
 
-def _solve_potential(unknowns: _Unknowns, problem: FrontProblem) -> tuple[HarmonicField, float]:
-    """``Phi`` with ``dPhi/dn = V_n - n.U_in`` at the collocation points, in
-    least squares, and the root-mean-square miss there."""
+def _solve_potential(
+    unknowns: _Unknowns, problem: FrontProblem
+) -> tuple[list[HarmonicField], list[float]]:
+    """Each instant's ``Phi`` with ``dPhi/dn = V_n - n.U_in`` at its collocation
+    points, in least squares, and the root-mean-square miss there."""
     xy, normal = problem.collocation.points, problem.collocation.normal
-    flux = normal[:, :1] * unknowns.basis(xy, 1, 0, NEUMANN)
-    flux = flux + normal[:, 1:2] * unknowns.basis(xy, 0, 1, NEUMANN)
+    slope = unknowns.basis(xy, 1, NEUMANN)
+    flux = normal[..., :1] * slope.real + normal[..., 1:2] * (1j * slope).real
     rhs = problem.collocation.speed - problem.inflow_normal
     q = _regularised_solve(flux, rhs)
-    miss = float(torch.sqrt(((flux @ q - rhs) ** 2).mean()))
-    scale = float(problem.collocation.speed.abs().max())
-    if miss > KINEMATIC_WARNING * max(scale, 1e-12):
-        log.warning(
-            "the liquid's potential flow misses the front's speed by %.1f%% rms of its "
-            "largest; the outline may neck too thinly for model.exact_continuity's sources",
-            100.0 * miss / scale,
-        )
-    return unknowns.field(q), miss
+    misses = torch.sqrt(((flux @ q.unsqueeze(-1))[..., 0] - rhs).pow(2).mean(dim=1)).tolist()
+    scales = problem.collocation.speed.abs().amax(dim=1).tolist()
+    for miss, scale in zip(misses, scales, strict=True):
+        if miss > KINEMATIC_WARNING * max(scale, 1e-12):
+            log.warning(
+                "the liquid's potential flow misses the front's speed by %.1f%% rms of its "
+                "largest; the outline may neck too thinly for model.exact_continuity's "
+                "sources",
+                100.0 * miss / scale,
+            )
+    return [unknowns.field(i, q[i]) for i in range(len(q))], misses
 
 
-def _solve_capacity(unknowns: _Unknowns, problem: FrontProblem) -> HarmonicField:
-    """``C = 1 + sum p_j G_D``: one on the walls by construction, zero at the
-    collocation points in least squares."""
+def _solve_capacity(unknowns: _Unknowns, problem: FrontProblem) -> list[HarmonicField]:
+    """Each instant's ``C = 1 + sum p_j G_D``: one on the walls by construction,
+    zero at its collocation points in least squares."""
     xy = problem.collocation.points
-    values = unknowns.basis(xy, 0, 0, DIRICHLET)
-    p = _regularised_solve(values, -torch.ones(len(xy), dtype=values.dtype))
-    return unknowns.field(p, offset=1.0, boundary=DIRICHLET)
+    values = unknowns.basis(xy, 0, DIRICHLET).real
+    p = _regularised_solve(values, -torch.ones(values.shape[:2], dtype=values.dtype))
+    return [unknowns.field(i, p[i], offset=1.0, boundary=DIRICHLET) for i in range(len(p))]
 
 
 def solve_liquid_fields(
     channel: Channel, problem: FrontProblem, layout: SourceLayout, inside
-) -> LiquidFields:
-    """Both potentials at one instant. The fronts are the upper half only under
-    a mirror axis; ``inside`` says which points ``(n, 2)`` lie in the vapour."""
+) -> list[LiquidFields]:
+    """Both potentials at each of the problem's instants, all solved together.
+    The fronts are the upper half only under a mirror axis; ``inside`` says which
+    points ``(T, n, 2)`` lie in the vapour at their own instant."""
     placed = _place_sources(channel, problem.sources, layout.offset, inside)
     unknowns = _Unknowns.placed(channel, placed, layout.mirror_axis)
-    potential, miss = _solve_potential(unknowns, problem)
-    return LiquidFields(potential, _solve_capacity(unknowns, problem), miss)
+    potentials, misses = _solve_potential(unknowns, problem)
+    capacities = _solve_capacity(unknowns, problem)
+    return [LiquidFields(*parts) for parts in zip(potentials, capacities, misses, strict=True)]
 
 
 class FieldCache:
@@ -390,13 +511,19 @@ class FieldCache:
         self.size = size
         self._fields: OrderedDict[float, LiquidFields] = OrderedDict()
 
-    def get(self, instant: float, solve) -> LiquidFields:
-        key = round(float(instant), 7)
-        if key not in self._fields:
-            self._fields[key] = solve()
+    def get(self, instants: list[float], solve) -> list[LiquidFields]:
+        """The fields at each of ``instants``; ``solve`` takes the list of those
+        not yet held and solves them together."""
+        keys = [round(float(instant), 7) for instant in instants]
+        found = {key: self._fields[key] for key in keys if key in self._fields}
+        missing = list(dict.fromkeys(key for key in keys if key not in found))
+        if missing:
+            found.update(zip(missing, solve(missing), strict=True))
+            for key in missing:
+                self._fields[key] = found[key]
             while len(self._fields) > self.size:
                 self._fields.popitem(last=False)
-        return self._fields[key]
+        return [found[key] for key in keys]
 
     def clear(self) -> None:
         self._fields.clear()
