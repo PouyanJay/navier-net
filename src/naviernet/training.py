@@ -32,7 +32,9 @@ from naviernet import warmup_cache
 from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
+from naviernet.data.outline import outline_path
 from naviernet.models.geometry import GeometryPriors
+from naviernet.models.measured_outline import MeasuredInterface, MeasuredOutline
 from naviernet.models.pinn import STREAM_PREFIX, BoundPINN, BubblePINN
 from naviernet.physics import (
     cap_supervision,
@@ -627,6 +629,7 @@ def _validate_physics_stage(cfg) -> None:
         if weight is not None and float(weight) < 0.0:
             raise ValueError(f"training.{name} must be >= 0, got {weight}")
     _validate_exact_continuity(cfg)
+    _validate_measured_outline(cfg)
     _validate_liquid_momentum(cfg.model)
 
 
@@ -663,6 +666,27 @@ def _validate_liquid_momentum(model_cfg) -> None:
         raise ValueError(
             "model.momentum_phases=sharp scores the momentum law in the liquid only, which "
             "reads the liquid pressure branch: it needs model.pressure_representation=two_phase"
+        )
+
+
+def _validate_measured_outline(cfg) -> None:
+    """The measured outline replaces the capsule where the trainer freezes it, it
+    is traced mirror-symmetric, and it is one dataset's."""
+    if not bool(getattr(cfg.model, "measured_outline", False)):
+        return
+    if not bool(getattr(cfg.training, "freeze_geometry", False)):
+        raise ValueError(
+            "model.measured_outline takes over the interface where the geometry freezes, so it "
+            "requires training.freeze_geometry=true"
+        )
+    if not bool(getattr(cfg.model, "mirror_symmetry", False)):
+        raise ValueError(
+            "model.measured_outline is traced symmetric about the channel axis, so it requires "
+            "model.mirror_symmetry=true"
+        )
+    if len(resolved_datasets(cfg)) > 1:
+        raise ValueError(
+            "model.measured_outline is one dataset's outline; a joint run has several"
         )
 
 
@@ -1921,11 +1945,38 @@ def _physics_stage_weights(weights: dict[str, float], tcfg) -> None:
 def _freeze_geometry(model, frozen: bool) -> None:
     """Hold every parameter of the explicit geometry (the capsule, its nose,
     root and width nets) where it is, or release it. The fields' own nets and
-    the scalar unknowns stay trainable."""
-    for p in model.nets["phi"].parameters():
+    the scalar unknowns stay trainable. Under ``model.measured_outline`` the
+    frozen interface is the outline traced from the images instead."""
+    geometry = model.nets["phi"]
+    for p in geometry.parameters():
         p.requires_grad_(not frozen)
+    if isinstance(geometry, MeasuredInterface):
+        _engage_measured_outline(model, frozen)
     if frozen:
         log.info("geometry frozen at the warm-up's fit: the physics stage trains the fields")
+
+
+def _engage_measured_outline(model, on: bool) -> None:
+    """Switch the interface to the measured outline, forgetting every potential
+    the exact flow solved on the outline before."""
+    model.nets["phi"].engage(on)
+    if getattr(model, "exact_continuity", False):
+        model._liquid_fields.clear()
+    if on:
+        log.info("interface: the measured outline traced from the images")
+
+
+def _bind_measured_outline(cfg, model, paths: RunPaths) -> None:
+    """Give a ``model.measured_outline`` model its dataset's traced outline."""
+    if not isinstance(model.nets["phi"], MeasuredInterface):
+        return
+    path = outline_path(paths)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found: model.measured_outline reads the outline the preprocess "
+            f"stage traces, so re-run it (naviernet stage=preprocess dataset={cfg.dataset})"
+        )
+    model.nets["phi"].bind_outline(MeasuredOutline.load(path))
 
 
 # The terms the temperature-only stage trains on: the liquid energy equation and
@@ -2098,6 +2149,7 @@ def train(
     model = BubblePINN(
         cfg, pin=_pin_anchor(cfg, data), geometry=_geometry_priors(cfg, data)
     ).to(device)
+    _bind_measured_outline(cfg, model, paths)
     bind_cover_times(cfg, model, data)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
@@ -2908,6 +2960,10 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
         geometry=_geometry_priors(cfg, data),
     ).to(device)
     model.load_state_dict(ckpt["model"])
+    # A measured-outline run is scored on the outline its physics stage trained on.
+    _bind_measured_outline(cfg, model, paths)
+    if isinstance(model.nets["phi"], MeasuredInterface):
+        _engage_measured_outline(model, True)
     bind_cover_times(cfg, model, data)
     # The interface thickness the run ENDED at, not the one it started from:
     # scoring a sharpened model through its initial blur would measure a

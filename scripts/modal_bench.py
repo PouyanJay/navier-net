@@ -46,6 +46,8 @@ TIMEOUT_S = 12 * 3600
 TENSORS = Path(
     os.environ.get("NAVIERNET_TENSORS", REPO / "data" / "processed" / DATASET / "tensors.npz")
 )
+# The traced outline model.measured_outline reads, kept beside the tensors.
+OUTLINE = TENSORS.with_name("outline.npz")
 
 app = modal.App("navier-net-bench")
 
@@ -78,6 +80,8 @@ image = (
         f"{REMOTE_ROOT}/data/processed/{DATASET}/tensors.npz",
     )
 )
+if OUTLINE.exists():
+    image = image.add_local_file(OUTLINE, f"{REMOTE_ROOT}/data/processed/{DATASET}/outline.npz")
 
 # Every run directory is also kept here, so a lost download is not a lost run.
 volume = modal.Volume.from_name("navier-net-outputs", create_if_missing=True)

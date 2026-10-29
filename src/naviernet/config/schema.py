@@ -363,6 +363,14 @@ class ModelConfig:
     # around them no longer has a corner on the line through the apex, which
     # put a spike in the temperature at the root (geometry._smooth_cap_phi).
     smooth_apex: bool = False
+    # The measured outline (models/measured_outline.py): from the physics stage
+    # on, the interface is the outline traced from the images (data/outline.py),
+    # one fair curve per frame interpolated between them, in place of the trained
+    # capsule. The capsule's curvature jumps where its caps meet its body, which
+    # Young-Laplace reads as a pressure step the bubble does not have (about 70 Pa
+    # at the nose on Series-1-w300). Needs the frozen geometry and mirror symmetry
+    # (the traced outline is symmetric), and a single dataset.
+    measured_outline: bool = False
     # The attachment pressure (nucleation-root R2): over the dry contact patch
     # on the heated plate the gap-direction capillary term is NOT the
     # both-plates-wetted 2/H* -- contact-angle cosines ADD across the gap

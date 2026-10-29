@@ -29,6 +29,7 @@ from naviernet.models.geometry import (
     GeometryPriors,
 )
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softplus, logit
+from naviernet.models.measured_outline import MeasuredInterface
 from naviernet.models.potential_flow import (
     INLET_X,
     Channel,
@@ -209,9 +210,16 @@ class BubblePINN(nn.Module):
         self._init_hard_pin(cfg, pin)
 
         per_field = getattr(cfg.model, "per_field", None) or {}
+        # The measured outline's geometry is the capsule until the trainer engages
+        # it, built from the same parameters and random draws.
+        interface = (
+            MeasuredInterface
+            if bool(getattr(cfg.model, "measured_outline", False))
+            else GeometricInterface
+        )
         self.nets = nn.ModuleDict(
             {
-                name: GeometricInterface(
+                name: interface(
                     geometry,
                     allow_pinch=self.allow_pinch,
                     n_cond=self.n_cond,
