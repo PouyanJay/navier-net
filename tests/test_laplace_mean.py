@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from naviernet import training
-from naviernet.physics.registry import per_instant_mean
+from naviernet.physics.registry import in_view_mean, per_instant_mean
 
 from .conftest import staged_capsule_run
 
@@ -35,6 +35,22 @@ def test_a_jump_error_that_averages_out_costs_nothing_on_average():
 
     assert float((per_instant_mean(residual, times) ** 2).mean()) == pytest.approx(0.0)
     assert float((residual**2).mean()) > 0.0
+
+
+def test_the_pointwise_jump_leaves_out_the_front_past_the_camera_view():
+    # A nose that has left the view has a guessed shape: its samples carry no weight.
+    squared = torch.tensor([[1.0], [3.0], [100.0]])
+    x = torch.tensor([[0.5], [1.0], [1.2]])
+
+    assert float(in_view_mean(squared, x, view_x_max=1.0)) == pytest.approx(2.0)
+    assert float(in_view_mean(squared, x, view_x_max=None)) == pytest.approx(104.0 / 3.0)
+
+
+def test_a_front_wholly_past_the_view_costs_nothing():
+    squared = torch.tensor([[4.0], [9.0]])
+    x = torch.tensor([[2.0], [3.0]])
+
+    assert float(in_view_mean(squared, x, view_x_max=1.0)) == 0.0
 
 
 def test_a_mean_jump_run_trains_and_reports_the_scatter_in_pascals(tmp_path):

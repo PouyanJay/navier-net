@@ -310,6 +310,7 @@ def _laplace_in_pascals(model, laplace: np.ndarray, codes: np.ndarray, t: float)
     scatter = (laplace - mean) * scale
     return {
         "vapour_pressure_Pa": vapour,
+        "laplace_rms_Pa": _rms(laplace) * scale,
         "laplace_mean_Pa": mean * scale,
         "laplace_scatter_Pa": _rms(scatter),
         "laplace_scatter_Pa_by_segment": {
@@ -565,16 +566,23 @@ def _scan_verdicts(scan: dict | None, acceptance) -> dict:
 
 
 def _jump_verdict(frames: list[dict], acceptance) -> dict:
-    """The jump mismatch as shape change: the worst frame's 90th percentile, in
-    pixels, against ``jump_px_max``; nothing for a run without the sharp front."""
-    p90 = [
-        f["front"]["jump_px_p90"] for f in frames if f["front"] and "jump_px_p90" in f["front"]
-    ]
-    if not p90:
+    """The jump mismatch two ways: as shape change, the worst frame's 90th
+    percentile in pixels against ``jump_px_max``; and as pressure, the worst
+    frame's RMS in pascals against ``jump_pa_max``. Nothing for a run without
+    the sharp front."""
+    fronts = [f["front"] for f in frames if f["front"] and "jump_px_p90" in f["front"]]
+    if not fronts:
         return {}
-    worst = max(p90)
-    limit = float(acceptance.jump_px_max)
-    return {"jump_shape": {"worst": worst, "max": limit, "pass": worst <= limit}}
+    return {
+        "jump_shape": _at_most(max(f["jump_px_p90"] for f in fronts), acceptance.jump_px_max),
+        "jump_pressure": _at_most(
+            max(f["laplace_rms_Pa"] for f in fronts), acceptance.jump_pa_max
+        ),
+    }
+
+
+def _at_most(worst: float, limit) -> dict:
+    return {"worst": worst, "max": float(limit), "pass": worst <= float(limit)}
 
 
 def warmup_fit(paths: RunPaths) -> dict[str, float] | None:
@@ -629,6 +637,7 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
             "iou_drop_max": float(evaluation.acceptance.iou_drop_max),
             "nose_tol": float(evaluation.acceptance.nose_tol),
             "jump_px_max": float(evaluation.acceptance.jump_px_max),
+            "jump_pa_max": float(evaluation.acceptance.jump_pa_max),
         },
         "warmup_iou": warmup,
         "verdicts": verdicts,

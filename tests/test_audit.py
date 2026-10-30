@@ -49,6 +49,7 @@ VERDICTS = {
     "residuals_in_time",
     "flux_in_time",
     "jump_shape",
+    "jump_pressure",
 }
 
 
@@ -216,6 +217,24 @@ def test_the_jump_mismatch_reads_as_the_shape_change_that_removes_it():
     pixels = jump_shape_pixels(one_pixel * np.array([1.0, 3.0]), kappa, groups, pixel, width)
 
     assert pixels == pytest.approx([1.0, 3.0])
+
+
+def test_the_jump_pressure_verdict_holds_the_worst_frame_to_the_pascal_limit():
+    from naviernet.audit import _jump_verdict
+
+    class Acceptance:
+        jump_px_max, jump_pa_max = 2.0, 5.0
+
+    frames = [
+        {"front": {"jump_px_p90": 1.0, "laplace_rms_Pa": 3.0}},
+        {"front": {"jump_px_p90": 1.5, "laplace_rms_Pa": 7.0}},
+        {"front": None},
+    ]
+
+    verdicts = _jump_verdict(frames, Acceptance())
+
+    assert verdicts["jump_pressure"] == {"worst": 7.0, "max": 5.0, "pass": False}
+    assert verdicts["jump_shape"] == {"worst": 1.5, "max": 2.0, "pass": True}
 
 
 def test_seed_ensemble_comparison_scores_agreement_and_disagreement():

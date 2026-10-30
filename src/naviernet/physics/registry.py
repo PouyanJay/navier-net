@@ -80,6 +80,7 @@ class LossContext:
         wall_condition: str = "no_slip",
         initial: torch.Tensor | None = None,
         outlet_pressure: float | None = None,
+        view_x_max: float | None = None,
     ) -> None:
         self.model = model
         self.x_coll = x_coll
@@ -100,6 +101,9 @@ class LossContext:
         # term that reads it -- the same caching the residual bundles use.
         self.front_times = front_times
         self._front: FrontSamples | None = None
+        # The downstream edge of the camera's view (None: no limit). Past it the
+        # front is extrapolated, not measured, so the pointwise jump skips it.
+        self.view_x_max = view_x_max
         # The dataset's conditioning row for this batch (None when unconditioned).
         # Every residual bundle below is evaluated with it, so one joint step is
         # a sum of per-dataset LossContexts, each carrying its own `c`.
@@ -369,7 +373,20 @@ def _laplace_term(ctx: LossContext) -> torch.Tensor:
     residual = laplace_jump_residual(ctx.model, ctx.front, ctx.groups)
     if str(getattr(ctx.model.cfg.model, "laplace_condition", "pointwise")) == "mean":
         residual = per_instant_mean(residual, ctx.front.points[:, 2])
-    return (residual**2).mean()
+        return (residual**2).mean()
+    return in_view_mean(residual**2, ctx.front.points[:, 0:1], ctx.view_x_max)
+
+
+def in_view_mean(
+    values: torch.Tensor, x: torch.Tensor, view_x_max: float | None
+) -> torch.Tensor:
+    """The mean of ``values`` ``(N, 1)`` over the samples at ``x <= view_x_max``:
+    where the nose has left the camera's view its shape is a guess, and a
+    pointwise jump there would tie the pressure to that guess."""
+    if view_x_max is None:
+        return values.mean()
+    inside = (x.detach() <= view_x_max).to(values.dtype)
+    return (values * inside).sum() / inside.sum().clamp(min=1.0)
 
 
 def per_instant_mean(values: torch.Tensor, times: torch.Tensor) -> torch.Tensor:
