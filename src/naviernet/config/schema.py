@@ -371,6 +371,16 @@ class ModelConfig:
     # at the nose on Series-1-w300). Needs the frozen geometry and mirror symmetry
     # (the traced outline is symmetric), and a single dataset.
     measured_outline: bool = False
+    # The depth bypass (physics/depth.py): across the depth the bubble rides on
+    # films and its sides are half-circles, so the outline advancing displaces
+    # less liquid than a full-depth slab would: A_b / (w H) at the head (about
+    # 0.83 on Series-1-w300, the films and the four corners left behind) and
+    # (H - 2 delta) / H along the body (about 0.95). From the geometry and
+    # Bretherton's film, nothing fitted. The exact flow, the kinematic
+    # condition, the mass balance, the interface advection and the thermal
+    # conversion all carry it. Engages with the frozen geometry; needs
+    # exact_continuity.
+    depth_bypass: bool = False
     # The attachment pressure (nucleation-root R2): over the dry contact patch
     # on the heated plate the gap-direction capillary term is NOT the
     # both-plates-wetted 2/H* -- contact-angle cosines ADD across the gap

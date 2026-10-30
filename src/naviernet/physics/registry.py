@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 import torch
 
 from naviernet.models.geometry import FrontSamples
+from naviernet.physics import depth
 from naviernet.physics.film import (
     advancing_mask,
     depletion_residual,
@@ -313,9 +314,14 @@ def _vapour_potential_sq(ctx: LossContext) -> torch.Tensor:
 
 
 def _kinematic_term(ctx: LossContext) -> torch.Tensor:
-    return (
-        kinematic_residual(ctx.model, ctx.front, ctx.c, mass_flux=ctx.mass_flux) ** 2
-    ).mean()
+    residual = kinematic_residual(
+        ctx.model,
+        ctx.front,
+        ctx.c,
+        mass_flux=ctx.mass_flux,
+        bypass=depth.on_front(ctx.model, ctx.front),
+    )
+    return (residual**2).mean()
 
 
 def _interface_shear_term(ctx: LossContext) -> torch.Tensor:
