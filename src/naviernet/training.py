@@ -38,6 +38,7 @@ from naviernet.models.measured_outline import MeasuredInterface, MeasuredOutline
 from naviernet.models.pinn import STREAM_PREFIX, BoundPINN, BubblePINN
 from naviernet.physics import (
     cap_supervision,
+    depth,
     front_velocity,
     growth_closure,
     heating,
@@ -630,6 +631,7 @@ def _validate_physics_stage(cfg) -> None:
             raise ValueError(f"training.{name} must be >= 0, got {weight}")
     _validate_exact_continuity(cfg)
     _validate_measured_outline(cfg)
+    _validate_depth_bypass(cfg)
     _validate_liquid_momentum(cfg.model)
 
 
@@ -687,6 +689,18 @@ def _validate_measured_outline(cfg) -> None:
     if len(resolved_datasets(cfg)) > 1:
         raise ValueError(
             "model.measured_outline is one dataset's outline; a joint run has several"
+        )
+
+
+def _validate_depth_bypass(cfg) -> None:
+    """The depth bypass scales the displacement the exact liquid flow is built
+    from."""
+    if not bool(getattr(cfg.model, "depth_bypass", False)):
+        return
+    if not bool(getattr(cfg.model, "exact_continuity", False)):
+        raise ValueError(
+            "model.depth_bypass scales the outline's displacement in the exact liquid flow, "
+            "so it requires model.exact_continuity=true"
         )
 
 
@@ -1952,6 +1966,7 @@ def _freeze_geometry(model, frozen: bool) -> None:
         p.requires_grad_(not frozen)
     if isinstance(geometry, MeasuredInterface):
         _engage_measured_outline(model, frozen)
+    _engage_depth_bypass(model, frozen)
     if frozen:
         log.info("geometry frozen at the warm-up's fit: the physics stage trains the fields")
 
@@ -1964,6 +1979,27 @@ def _engage_measured_outline(model, on: bool) -> None:
         model._liquid_fields.clear()
     if on:
         log.info("interface: the measured outline traced from the images")
+
+
+def _engage_depth_bypass(model, on: bool) -> None:
+    """Under ``model.depth_bypass``, tabulate the depth fractions over the frozen
+    geometry and switch the bypass on (or off), forgetting every potential the
+    exact flow solved on the full displacement."""
+    if not getattr(model, "depth_bypass", False):
+        return
+    model.bypass_engaged = on
+    model._bypass_table = depth.build_table(model, compute_groups(model.cfg)) if on else None
+    if getattr(model, "exact_continuity", False):
+        model._liquid_fields.clear()
+    if on:
+        table = model._bypass_table
+        log.info(
+            "depth bypass: the outline displaces %.3f of a full-depth slab at the head and "
+            "%.3f along the body (%.3f weighted by the growth)",
+            float(table.nose.mean()),
+            float(table.body.mean()),
+            float(table.effective.mean()),
+        )
 
 
 def _bind_measured_outline(cfg, model, paths: RunPaths) -> None:
@@ -2433,7 +2469,9 @@ def train(
                 # A functional on a fixed quadrature, outside the causal gate, RBA and
                 # the rebalancer, like the terms above. A balance of the flow, so not
                 # evaluated once the flow is locked.
-                mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
+                # Through physics.depth: under the bypass, the liquid the outline
+                # passes over is taken out of what each station must carry.
+                mass_total, mass_record = depth.mass_balance_loss(model, mass_plan)
                 total = total + float(tcfg.mass_balance_weight) * mass_total
             closure_record: dict[str, float] = {}
             if (
@@ -2965,6 +3003,7 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
     _bind_measured_outline(cfg, model, paths)
     if isinstance(model.nets["phi"], MeasuredInterface):
         _engage_measured_outline(model, True)
+    _engage_depth_bypass(model, True)
     bind_cover_times(cfg, model, data)
     # The interface thickness the run ENDED at, not the one it started from:
     # scoring a sharpened model through its initial blur would measure a

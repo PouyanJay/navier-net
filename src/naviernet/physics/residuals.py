@@ -41,6 +41,7 @@ from typing import NamedTuple
 
 import torch
 
+from naviernet.physics import depth
 from naviernet.physics.film import film_surface_pressure
 from naviernet.physics.heating import wall_flux_ratio
 
@@ -122,6 +123,14 @@ def stage_a_residuals(model, x: torch.Tensor, c: torch.Tensor | None = None) -> 
     u_x, _, _ = gradients(u, x)
     _, v_y, _ = gradients(v, x)
 
+    vof = a_t + u * a_x + v * a_y
+    # Under model.depth_bypass the liquid moves with eta V_n at the outline
+    # (physics.depth); the rest of the outline's advance is liquid it passes
+    # over, which the advection on the liquid side must not count. V_n |grad
+    # alpha| is alpha_t exactly, so the sink is (1 - eta) alpha_t.
+    factor = depth.at_points(model, x)
+    if factor is not None:
+        vof = factor * a_t + u * a_x + v * a_y
     div = u_x + v_y - source
     if getattr(model, "exact_liquid", False):
         # The liquid is divergence-free by construction: there the residual is
@@ -130,7 +139,7 @@ def stage_a_residuals(model, x: torch.Tensor, c: torch.Tensor | None = None) -> 
         liquid = model.liquid_side(x).unsqueeze(1)
         div = torch.where(liquid, torch.zeros_like(div), div)
     return StageAResiduals(
-        vof=a_t + u * a_x + v * a_y,
+        vof=vof,
         div=div,
         source=source,
         interface_weight=interface_indicator(alpha).detach(),
@@ -912,7 +921,11 @@ def jump_total_curvature(model, front, groups: dict[str, float]) -> torch.Tensor
 
 
 def kinematic_residual(
-    model, front, c: torch.Tensor | None = None, mass_flux: torch.Tensor | None = None
+    model,
+    front,
+    c: torch.Tensor | None = None,
+    mass_flux: torch.Tensor | None = None,
+    bypass: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """The kinematic condition on the explicit interface, per sample ``(N, 1)``::
 
@@ -931,12 +944,16 @@ def kinematic_residual(
     reason it is worth having twice: ``vof`` is evaluated at bulk points, where
     ``grad alpha`` is ~0 and the equation is satisfied by doing nothing. Here
     every sample is on the interface, so every sample constrains it.
+
+    ``bypass`` (:mod:`naviernet.physics.depth`) scales the front's speed to the
+    share of its displacement the depth-averaged liquid carries.
     """
     u, v = model.velocity(front.points, _ctx(c, front.points))
     advance = u * front.normal[:, 0:1] + v * front.normal[:, 1:2]
     if mass_flux is not None:
         advance = advance + mass_flux
-    return front.normal_speed - advance
+    speed = front.normal_speed if bypass is None else front.normal_speed * bypass
+    return speed - advance
 
 
 def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:

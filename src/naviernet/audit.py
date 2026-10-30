@@ -39,7 +39,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from naviernet.physics import mass_balance, registry
+from naviernet.physics import depth, mass_balance, registry
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.growth_closure import measured_growth_rate
 from naviernet.physics.heating import wall_flux_ratio_np
@@ -161,7 +161,7 @@ def flux_balance(cfg, model, data, groups, t: float) -> dict:
         at_times=torch.tensor([t], dtype=torch.float32, device=device),
     )
     with torch.enable_grad():  # the thermal source needs autograd for its flux
-        defect = mass_balance.axial_flux_defect(model, plan).detach().cpu().numpy()[0]
+        defect = depth.flux_defect(model, plan).detach().cpu().numpy()[0]
     stations = plan.stations.cpu().numpy()
     upstream = stations < float(data.pin_anchor[0])
     return {
@@ -205,20 +205,24 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
     milliwatts."""
     fluid, exp = cfg.fluid, cfg.experiment
     length = cfg.scales.L_ref_um * 1e-6
-    depth = exp.channel_height_um * 1e-6
+    channel_depth = exp.channel_height_um * 1e-6
     speed = cfg.scales.U_ref
     t_ref = length / speed
     liquid = 1.0 - fields["alpha"]
+    # Under model.depth_bypass the outline's area stands for eta_eff of a
+    # full-depth slab's volume, and the source was scaled by 1 / eta_eff.
+    bypass = depth.record(model, float(data.t[row]))
+    eta = bypass["eta_eff"] if bypass else 1.0
 
     specific_volume = 1.0 / fluid.rho_v - 1.0 / fluid.rho_l
     # A dimensionless source integral to the latent power its vapour volume cost.
-    to_latent_mW = length * depth * speed / specific_volume * fluid.h_lv * 1e3
+    to_latent_mW = length * channel_depth * speed / specific_volume * fluid.h_lv * 1e3
     growth = measured_growth_rate(data, row) * length**2 / t_ref
     # The floor's local flux over each grid column (both heater zones counted).
     wall = float(exp.q_wall_W_cm2) * 1e4 * wall_flux_ratio_np(grid.xs, groups)[None, :]
     budget = {
-        "latent_from_source_mW": _integral(fields["s"], grid) * to_latent_mW,
-        "latent_for_growth_mW": fluid.rho_v * growth * depth * fluid.h_lv * 1e3,
+        "latent_from_source_mW": _integral(fields["s"], grid) * to_latent_mW * eta,
+        "latent_for_growth_mW": fluid.rho_v * growth * channel_depth * fluid.h_lv * 1e3 * eta,
         "wall_into_liquid_mW": _integral(wall * liquid, grid) * length**2 * 1e3,
         "wall_under_footprint_mW": _integral(wall * fields["alpha"], grid) * length**2 * 1e3,
     }
@@ -227,13 +231,15 @@ def heat_budget(cfg, model, data, groups, row: int, fields: dict, grid: AuditGri
         t_row = torch.tensor(float(data.t[row]), device=_device(model))
         flux, weights, _ = model._front_flux(t_row, None)
         along_front = float((flux * weights).sum().detach())
-        budget["latent_from_flux_mW"] = fluid.k_l * groups["dT_ref"] * depth * along_front * 1e3
+        budget["latent_from_flux_mW"] = (
+            fluid.k_l * groups["dT_ref"] * channel_depth * along_front * 1e3
+        )
         budget["latent_from_footprint_mW"] = 0.0
         if getattr(model, "footprint_evaporation", False):
             points = torch.tensor(_points(grid, float(data.t[row])), device=_device(model))
             footprint = model.footprint_source(points).detach().cpu().numpy()
             footprint = footprint.reshape(len(grid.ys), len(grid.xs))
-            budget["latent_from_footprint_mW"] = _integral(footprint, grid) * to_latent_mW
+            budget["latent_from_footprint_mW"] = _integral(footprint, grid) * to_latent_mW * eta
             budget.update(wetting_record(model))
         estimates.append(budget["latent_from_flux_mW"] + budget["latent_from_footprint_mW"])
     reference = max(abs(budget["latent_for_growth_mW"]), 1e-9)
@@ -356,9 +362,10 @@ def front_conditions(
             if getattr(model, "thermal_model", "legacy") == "sharp"
             else None
         )
-        kinematic = (
-            kinematic_residual(model, front, mass_flux=mass_flux).detach().cpu().numpy().ravel()
+        kinematic = kinematic_residual(
+            model, front, mass_flux=mass_flux, bypass=depth.on_front(model, front)
         )
+        kinematic = kinematic.detach().cpu().numpy().ravel()
         laplace = laplace_jump_residual(model, front, groups).detach().cpu().numpy().ravel()
     upper = front.side.detach().cpu().numpy().ravel() > 0
     record = {
@@ -369,6 +376,8 @@ def front_conditions(
     }
     if bool(getattr(model_cfg, "interface_shear", False)):
         record.update(_shear_in_pascals(model, front, groups, upper))
+    if (bypass := depth.record(model, t)) is not None:
+        record["bypass"] = bypass
     if pixel <= 0.0:
         return record, {}
     kappa = front.kappa_par.detach().cpu().numpy().ravel()

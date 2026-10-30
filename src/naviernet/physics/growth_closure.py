@@ -30,6 +30,7 @@ import numpy as np
 import torch
 
 from naviernet.data.dataset import INTERFACE_ALPHA
+from naviernet.physics import depth
 
 # The covered floor is widened by this many pixels before it is sampled, so the
 # footprint the model draws a little outside the masks is still integrated.
@@ -100,7 +101,9 @@ def outline_vapour(model, instant: torch.Tensor) -> torch.Tensor:
     """The outline flux's part of ``int s dA`` at one instant: the coefficient
     times the flux integrated along the front (the kernel is normalised)."""
     flux, weights, _ = model._front_flux(instant, None)
-    return model._source_coefficient * (flux * weights).sum()
+    # The same eta_eff the thermal source divides by (physics.depth).
+    coefficient = model._source_coefficient / depth.effective(model, instant)
+    return coefficient * (flux * weights).sum()
 
 
 @contextmanager
