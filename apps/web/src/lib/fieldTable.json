@@ -1162,23 +1162,6 @@
     "default": false
   },
   {
-    "key": "model.depth_bypass",
-    "label": "Depth bypass",
-    "kind": "bool",
-    "section": "physics",
-    "owner": "override",
-    "help": "the outline displaces only the liquid a bubble riding on films with rounded sides pushes aside (about 0.83 of a full-depth slab at the head, 0.95 along the body); the rest it passes over",
-    "unit": "",
-    "options": [],
-    "lo": null,
-    "hi": null,
-    "optional": false,
-    "baked": false,
-    "advanced": true,
-    "name": "depth_bypass",
-    "default": false
-  },
-  {
     "key": "training.edge_transport_after_freeze",
     "label": "Edge transport after the freeze",
     "kind": "bool",

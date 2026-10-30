@@ -98,7 +98,6 @@ AFTER_WARMUP = (
     "model.interface_shear",
     "model.momentum_phases",
     "model.measured_outline",
-    "model.depth_bypass",
     "training.weights.interface_shear",
     "experiment.footprint_wetting",
     "experiment.microlayer_mode",

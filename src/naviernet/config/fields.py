@@ -871,19 +871,6 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
-        "model.depth_bypass",
-        "Depth bypass",
-        "bool",
-        "physics",
-        "override",
-        help=(
-            "the outline displaces only the liquid a bubble riding on films with rounded "
-            "sides pushes aside (about 0.83 of a full-depth slab at the head, 0.95 along the "
-            "body); the rest it passes over"
-        ),
-        advanced=True,
-    ),
-    FieldSpec(
         "training.edge_transport_after_freeze",
         "Edge transport after the freeze",
         "bool",

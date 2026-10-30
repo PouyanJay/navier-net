@@ -42,7 +42,6 @@ from naviernet.models.potential_flow import (
     harmonic,
     solve_liquid_fields,
 )
-from naviernet.physics import depth
 
 # A deliberate exception to the usual physics -> models dependency direction
 # (the only one): the film net's channel bound and data-anchored start are
@@ -255,11 +254,6 @@ class BubblePINN(nn.Module):
         # Last of all, for the same reason: its stream-function net draws from
         # the RNG only when the flag is on.
         self._init_exact_continuity(cfg)
-        # The depth bypass (physics.depth) engages with the frozen geometry; the
-        # trainer builds its table then, so nothing here touches the RNG.
-        self.depth_bypass = bool(getattr(cfg.model, "depth_bypass", False))
-        self.bypass_engaged = False
-        self._bypass_table = None
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -768,7 +762,6 @@ class BubblePINN(nn.Module):
             * local
             * self._wetness(x, local)
             * self.alpha(x, c).detach()
-            / depth.effective(self, x[:, 2:3])
         )
 
     def _init_vapor_pressure(self) -> None:
@@ -1430,13 +1423,7 @@ class BubblePINN(nn.Module):
         counts = (n_body, n_body, n_cap, n_cap)
         points = _by_instant(front.points.detach(), len(instants), counts)
         normal = _by_instant(front.normal.detach().double(), len(instants), counts)
-        normal_speed = front.normal_speed.detach().double()
-        bypass = depth.on_front(self, front)
-        if bypass is not None:
-            # The potentials move the liquid with the share of the outline's
-            # advance it carries (physics.depth); the rest it passes over.
-            normal_speed = normal_speed * bypass.detach().double()
-        speed = _by_instant(normal_speed, len(instants), counts)[..., 0]
+        speed = _by_instant(front.normal_speed.detach().double(), len(instants), counts)[..., 0]
         spacing = _arclength_weights(points, n_body, n_cap)[..., 0].double()
         points = points[..., :2].double()
         samples = []
@@ -1498,10 +1485,9 @@ class BubblePINN(nn.Module):
             offsets = x[members, :2].unsqueeze(1) - points.unsqueeze(0)
             kernel = torch.exp(-(offsets**2).sum(dim=-1) / (2.0 * sigma**2))
             kernel = kernel / (2.0 * torch.pi * sigma**2)
-            # Divided by eta_eff (physics.depth): a bubble thinner than the
-            # channel grows its outline faster for the same evaporation.
-            scale = coefficient / depth.effective(self, instant)
-            source[members] = scale * (kernel * (flux * weights).T).sum(dim=1, keepdim=True)
+            source[members] = coefficient * (kernel * (flux * weights).T).sum(
+                dim=1, keepdim=True
+            )
         return source + self.footprint_source(x, c)
 
     def interface_flux_at(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
