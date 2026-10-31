@@ -14,7 +14,6 @@
   let agreement = $state<Agreement | null>(null);
   let all = $state<Agreement[]>([]);
   let showImage = $state(true);
-  let showMeasured = $state(true);
   let showModel = $state(true);
   let opacity = $state(1);
 
@@ -123,6 +122,9 @@
             >
           {/each}
         </div>
+        <label class="toggle"
+          ><input type="checkbox" bind:checked={studio.layers.measured} /> measured mask</label
+        >
         <label class="toggle"><input type="checkbox" bind:checked={showModel} /> model</label>
         <label class="toggle slider"
           >opacity <input type="range" min="0.2" max="1" step="0.05" bind:value={opacity} /></label
@@ -151,7 +153,7 @@
         imageOpacity={opacity}
         showField={false}
         showBoundary={showModel}
-        {showMeasured}
+        showMeasured={studio.layers.measured}
         showWalls={studio.layers.walls}
         showGrid={studio.layers.grid}
         probes={[]}

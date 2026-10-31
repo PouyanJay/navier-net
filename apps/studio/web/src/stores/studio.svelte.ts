@@ -93,7 +93,7 @@ class Studio {
     field: true,
     image: false,
     boundary: true,
-    measured: false,
+    measured: true,
     walls: true,
     probes: true,
     grid: false,

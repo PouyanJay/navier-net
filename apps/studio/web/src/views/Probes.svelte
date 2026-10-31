@@ -190,6 +190,9 @@
 <div class="view">
   <div class="stage scroll">
     <div class="toolbar">
+      <label class="toggle"
+        ><input type="checkbox" bind:checked={studio.layers.measured} /> measured mask</label
+      >
       <div class="tools segmented" role="group" aria-label="Tool">
         <button
           aria-pressed={studio.tool === "pan"}

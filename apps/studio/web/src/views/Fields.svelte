@@ -53,6 +53,9 @@
         {#if field.error}<span class="chip bad">{field.error}</span>{/if}
       </div>
       <div class="actions">
+        <label class="toggle"
+          ><input type="checkbox" bind:checked={studio.layers.measured} /> measured mask</label
+        >
         <div class="segmented" role="group" aria-label="Layout">
           <button aria-pressed={!multiples} onclick={() => (multiples = false)}>one frame</button>
           <button aria-pressed={multiples} onclick={() => (multiples = true)}>all frames</button>

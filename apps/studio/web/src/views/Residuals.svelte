@@ -108,6 +108,9 @@
 <div class="view">
   <div class="stage scroll">
     <div class="toolbar">
+      <label class="toggle"
+        ><input type="checkbox" bind:checked={studio.layers.measured} /> measured mask</label
+      >
       <div class="title">
         <strong>{studio.current?.label ?? studio.quantity}</strong>
         <span class="muted mono">frame {studio.frame}</span>
