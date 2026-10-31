@@ -8,11 +8,10 @@ import type { ColormapName } from "../lib/colormaps";
 
 export type ViewId = "geometry" | "fields" | "edge" | "residuals" | "probes" | "budgets" | "export";
 export type Theme = "dark" | "light";
-export type ImageMode = "actual" | "outline" | "illustrated";
+export type ImageMode = "actual" | "outline";
 export const IMAGE_MODES: { id: ImageMode; label: string }[] = [
   { id: "actual", label: "actual" },
   { id: "outline", label: "outline" },
-  { id: "illustrated", label: "illustrated" },
 ];
 export type Palette = "aurora" | "ember" | "tide";
 export type RangeMode = "frame" | "all" | "custom";
@@ -100,8 +99,7 @@ class Studio {
     grid: false,
   });
   imageOpacity = $state(0.85);
-  /** The camera frame as recorded (actual), the measured-outline render (outline), or the
-   * image model redraw (illustrated, never measured). */
+  /** The camera frame as recorded (actual) or the measured-outline render (outline). */
   imageMode = $state<ImageMode>("outline");
   tool = $state<Tool>("pan");
 

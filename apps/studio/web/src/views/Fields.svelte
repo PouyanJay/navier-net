@@ -50,9 +50,6 @@
         >
         {#if studio.frameInfo?.role === "holdout"}<span class="chip holdout">held out</span>{/if}
         {#if field.busy}<span class="muted">evaluating…</span>{/if}
-        {#if studio.imageMode === "illustrated" && studio.layers.image}<span class="chip warn"
-            >illustration, not measured</span
-          >{/if}
         {#if field.error}<span class="chip bad">{field.error}</span>{/if}
       </div>
       <div class="actions">
