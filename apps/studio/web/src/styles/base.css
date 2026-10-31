@@ -244,6 +244,11 @@ button:disabled {
   border-color: color-mix(in srgb, var(--bad) 40%, transparent);
 }
 
+.chip.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
 .chip.holdout {
   color: var(--holdout);
   border-color: color-mix(in srgb, var(--holdout) 45%, transparent);

@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
-from naviernet_studio import exports, geometry
+from naviernet_studio import exports, geometry, illustration
 from naviernet_studio.routes.common import scene_or_404
 from naviernet_studio.scene import Scene
 
@@ -24,13 +24,24 @@ def get_transform(scene: Scene = Depends(scene_or_404)) -> dict:
 def get_raw_frame(
     n: int,
     crop: bool = Query(default=True),
-    mode: Literal["actual", "cleaned", "outline"] = Query(default="actual"),
+    mode: Literal["actual", "cleaned", "outline", "illustrated"] = Query(default="actual"),
     scene: Scene = Depends(scene_or_404),
 ) -> Response:
     """The camera frame as PNG, cropped to the channel band (plus a margin)
     unless ``crop=false``. ``mode``: ``actual`` is the recording; ``cleaned``
     removes the set-up and keeps the bubble with its film; ``outline`` keeps the
-    bubble alone, edged by the measured outline (see :mod:`naviernet_studio.cleaning`)."""
+    bubble alone, edged by the measured outline; ``illustrated`` is an image
+    model's redraw, labelled as such and never used for measurement (see :mod:`naviernet_studio.cleaning`)."""
+    if mode == "illustrated":
+        try:
+            png = geometry.illustrated_frame_png(scene, n, crop)
+        except illustration.IllustrationUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return Response(
+            content=png,
+            media_type="image/png",
+            headers={"Cache-Control": "max-age=3600", "X-Image-Provenance": illustration.LABEL},
+        )
     png = (
         geometry.raw_frame_png(scene, n, crop)
         if mode == "actual"

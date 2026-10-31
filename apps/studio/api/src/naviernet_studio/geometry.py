@@ -13,7 +13,7 @@ from contourpy import contour_generator
 from PIL import Image
 
 from naviernet.evaluation import frame_iou, front_position, predict_alpha_fullres
-from naviernet_studio import cleaning
+from naviernet_studio import cleaning, illustration
 from naviernet_studio.scene import Scene
 
 CONTOUR_NX = 721
@@ -268,3 +268,49 @@ def rendered_frame_png(scene: Scene, frame: int, crop: bool, mode: str) -> bytes
     buffer = io.BytesIO()
     out.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
+
+
+def illustrated_frame_png(scene: Scene, frame: int, crop: bool) -> bytes:
+    """The camera frame redrawn by an image model, as PNG. Raises
+    :class:`illustration.IllustrationUnavailable` when it cannot be made here.
+
+    The first call asks the model and keeps the result under the run's
+    ``studio/illustrations`` directory; later calls read that file, so the
+    model is billed once per frame.
+    """
+    row = scene.row_of(frame)
+    path = scene.paths.raw_frame(frame)
+    if row is None or not path.is_file():
+        raise illustration.IllustrationUnavailable(f"no recorded frame {frame} to illustrate")
+    cache = scene.paths.output_dir / "studio" / "illustrations" / f"frame_{frame:02d}.png"
+    if not cache.is_file():
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(_make_illustration(scene, frame, row, path))
+    out = Image.open(cache)
+    if crop:
+        rows_crop = transform(scene)["crop_rows"]
+        out = out.crop((0, rows_crop[0], out.size[0], rows_crop[1]))
+    buffer = io.BytesIO()
+    out.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+def _make_illustration(scene: Scene, frame: int, row: int, path) -> bytes:
+    recorded_rgb = Image.open(path).convert("RGB")
+    recorded = np.asarray(recorded_rgb.convert("L"), dtype=np.float32)
+    bubble = np.zeros(recorded.shape, dtype=bool)
+    top = int(scene.data.meta["y_roi"][0])
+    rows = scene.data.masks_camera.shape[1]
+    bubble[top : top + rows] = scene.data.masks_camera[row] > 0
+    protected = illustration.protected_band(bubble)
+    buffer = io.BytesIO()
+    recorded_rgb.save(buffer, format="PNG")
+    settings = illustration.settings_from_env()
+    generated_png = illustration.request_illustration(
+        buffer.getvalue(), illustration.edit_mask_png(protected), settings
+    )
+    generated = np.asarray(Image.open(io.BytesIO(generated_png)).convert("L"), dtype=np.float32)
+    mixed = illustration.composite(generated, recorded, protected)
+    out = io.BytesIO()
+    Image.fromarray(np.clip(mixed, 0, 255).astype(np.uint8)).save(out, format="PNG")
+    return out.getvalue()
