@@ -49,9 +49,9 @@ def get_raw_frame(
         png = geometry.raw_frame_png(scene, n, crop)
     if png is None:
         raise HTTPException(status_code=404, detail=f"no frame {n} for {scene.run_id}")
-    return Response(
-        content=png, media_type="image/png", headers={"Cache-Control": "max-age=3600"}
-    )
+    # Cleaned frames are replaced in place when regenerated, so they are never cached.
+    cache = "no-cache" if mode == "cleaned" else "max-age=3600"
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": cache})
 
 
 @router.get("/{run}/geometry/agreement")
