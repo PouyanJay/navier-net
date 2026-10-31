@@ -43,6 +43,24 @@
     };
   });
 
+  let imageNotice = $state<string | null>(null);
+  $effect(() => {
+    const run = studio.runId;
+    const frame = studio.frame;
+    const mode = studio.imageMode;
+    imageNotice = null;
+    if (!run || !showImage) return;
+    let cancelled = false;
+    fetch(api.frameUrl(run, frame, mode)).then(async (response) => {
+      if (cancelled || response.ok) return;
+      const body = (await response.json().catch(() => ({ detail: "" }))) as { detail?: string };
+      imageNotice = body.detail || `the frame is unavailable (HTTP ${response.status})`;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
   const imageUrl = $derived(
     showImage && studio.runId ? api.frameUrl(studio.runId, studio.frame, studio.imageMode) : null,
   );
@@ -158,6 +176,9 @@
         showGrid={studio.layers.grid}
         probes={[]}
       />
+      {#if imageNotice}
+        <div class="notice">{imageNotice}</div>
+      {/if}
       <div class="key">
         <span><i class="model"></i> model outline</span>
         <span><i class="measured"></i> measured mask</span>
@@ -300,6 +321,17 @@
   .canvas {
     position: relative;
     min-height: 0;
+  }
+  .notice {
+    position: absolute;
+    left: var(--s3);
+    bottom: var(--s3);
+    max-width: 70%;
+    padding: var(--s2) var(--s3);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--canvas) 80%, transparent);
+    color: var(--warn);
+    font-size: 12px;
   }
   .key {
     position: absolute;

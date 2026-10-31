@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from naviernet_studio import exports, geometry
 from naviernet_studio.routes.common import scene_or_404
 from naviernet_studio.scene import Scene
+from naviernet_studio.settings import Settings, get_settings
 
 router = APIRouter(prefix="/api/runs", tags=["geometry"])
 
@@ -26,16 +27,26 @@ def get_raw_frame(
     crop: bool = Query(default=True),
     mode: Literal["actual", "cleaned", "outline"] = Query(default="actual"),
     scene: Scene = Depends(scene_or_404),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     """The camera frame as PNG, cropped to the channel band (plus a margin)
-    unless ``crop=false``. ``mode``: ``actual`` is the recording; ``cleaned``
-    removes the set-up and keeps the bubble with its film; ``outline`` keeps the
-    bubble alone, edged by the measured outline (see :mod:`naviernet_studio.cleaning`)."""
-    png = (
-        geometry.raw_frame_png(scene, n, crop)
-        if mode == "actual"
-        else geometry.rendered_frame_png(scene, n, crop, mode)
-    )
+    unless ``crop=false``. ``mode``: ``actual`` is the recording; ``cleaned`` is the
+    generated cleaned frame stored in the repository; ``outline`` keeps the bubble
+    alone, edged by the measured outline (see :mod:`naviernet_studio.cleaning`)."""
+    if mode == "cleaned":
+        png = geometry.cleaned_frame_png(settings.repo_root, scene.run_id, n, crop)
+        if png is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no cleaned frame {n} for {scene.run_id}: generate the cleaned frames with "
+                    "apps/studio/tools/generate_cleaned.py"
+                ),
+            )
+    elif mode == "outline":
+        png = geometry.rendered_frame_png(scene, n, crop)
+    else:
+        png = geometry.raw_frame_png(scene, n, crop)
     if png is None:
         raise HTTPException(status_code=404, detail=f"no frame {n} for {scene.run_id}")
     return Response(

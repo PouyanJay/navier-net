@@ -8,10 +8,11 @@ import type { ColormapName } from "../lib/colormaps";
 
 export type ViewId = "geometry" | "fields" | "edge" | "residuals" | "probes" | "budgets" | "export";
 export type Theme = "dark" | "light";
-export type ImageMode = "actual" | "outline";
+export type ImageMode = "actual" | "cleaned" | "outline";
 export const IMAGE_MODES: { id: ImageMode; label: string }[] = [
   { id: "actual", label: "actual" },
   { id: "outline", label: "outline" },
+  { id: "cleaned", label: "cleaned" },
 ];
 export type Palette = "aurora" | "ember" | "tide";
 export type RangeMode = "frame" | "all" | "custom";

@@ -4,8 +4,10 @@ the raw frames, and how well the model's outline agrees with the images."""
 from __future__ import annotations
 
 import io
+import re
 import threading
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -247,9 +249,9 @@ def _background(scene: Scene) -> np.ndarray | None:
     return background
 
 
-def rendered_frame_png(scene: Scene, frame: int, crop: bool, mode: str) -> bytes | None:
-    """The camera frame rendered as PNG: ``cleaned`` keeps the bubble and its
-    film, ``outline`` keeps the bubble alone with the measured edge."""
+def rendered_frame_png(scene: Scene, frame: int, crop: bool) -> bytes | None:
+    """The camera frame with the set-up removed and the bubble kept alone, edged
+    by the measured outline, as PNG."""
     row = scene.row_of(frame)
     background = _background(scene)
     path = scene.paths.raw_frame(frame)
@@ -260,11 +262,30 @@ def rendered_frame_png(scene: Scene, frame: int, crop: bool, mode: str) -> bytes
     top = int(scene.data.meta["y_roi"][0])
     rows = scene.data.masks_camera.shape[1]
     bubble[top : top + rows] = scene.data.masks_camera[row] > 0
-    render = cleaning.outline_frame if mode == "outline" else cleaning.clean_frame
+    render = cleaning.outline_frame
     out = Image.fromarray(np.clip(render(image, background, bubble), 0, 255).astype(np.uint8))
     if crop:
         rows_crop = transform(scene)["crop_rows"]
         out = out.crop((0, rows_crop[0], out.size[0], rows_crop[1]))
+    buffer = io.BytesIO()
+    out.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+CLEANED_DIR = Path("apps/studio/cleaned")
+
+
+def cleaned_frame_png(repo_root: Path, run_id: str, frame: int, crop: bool) -> bytes | None:
+    """The generated cleaned frame stored in the repository, as PNG; None when
+    it has not been generated yet (see ``apps/studio/tools/generate_cleaned.py``)."""
+    if not re.match(r"^[A-Za-z0-9._-]+$", run_id):
+        return None
+    path = Path(repo_root) / CLEANED_DIR / run_id / f"frame_{frame:02d}.png"
+    if not path.is_file():
+        return None
+    out = Image.open(path).convert("RGB")
+    if crop:
+        out = out.crop((0, 445, out.size[0], 671))
     buffer = io.BytesIO()
     out.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
