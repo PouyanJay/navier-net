@@ -8,10 +8,9 @@ import type { ColormapName } from "../lib/colormaps";
 
 export type ViewId = "geometry" | "fields" | "edge" | "residuals" | "probes" | "budgets" | "export";
 export type Theme = "dark" | "light";
-export type ImageMode = "actual" | "cleaned" | "outline" | "illustrated";
+export type ImageMode = "actual" | "outline" | "illustrated";
 export const IMAGE_MODES: { id: ImageMode; label: string }[] = [
   { id: "actual", label: "actual" },
-  { id: "cleaned", label: "cleaned" },
   { id: "outline", label: "outline" },
   { id: "illustrated", label: "illustrated" },
 ];
@@ -101,9 +100,9 @@ class Studio {
     grid: false,
   });
   imageOpacity = $state(0.85);
-  /** The camera frame as recorded, cleaned (set-up removed, bubble and film kept),
-   * or outlined (bubble alone, edged by the measured outline). */
-  imageMode = $state<ImageMode>("cleaned");
+  /** The camera frame as recorded (actual), the measured-outline render (outline), or the
+   * image model redraw (illustrated, never measured). */
+  imageMode = $state<ImageMode>("outline");
   tool = $state<Tool>("pan");
 
   probes = $state<Probe[]>([]);

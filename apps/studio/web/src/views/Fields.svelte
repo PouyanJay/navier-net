@@ -84,6 +84,7 @@
           transform={data.transform}
           imageOpacity={studio.imageOpacity}
           showField={studio.layers.field}
+          fieldOpacity={studio.layers.image ? 0.55 : 1}
           showBoundary={studio.layers.boundary}
           showMeasured={studio.layers.measured}
           showWalls={studio.layers.walls}

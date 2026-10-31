@@ -43,6 +43,8 @@
     transform?: Transform | null;
     imageOpacity?: number;
     showField?: boolean;
+    /** How opaque the field is over the camera frame (1 hides the frame). */
+    fieldOpacity?: number;
     showBoundary?: boolean;
     showMeasured?: boolean;
     showWalls?: boolean;
@@ -75,6 +77,7 @@
     transform = null,
     imageOpacity = 0.85,
     showField = true,
+    fieldOpacity = 1,
     showBoundary = true,
     showMeasured = false,
     showWalls = true,
@@ -192,7 +195,7 @@
   $effect(() => {
     if (!renderer) return;
     renderer.setRange(range);
-    renderer.setOpacity(showField && grid ? 1 : 0, image ? imageOpacity : 0);
+    renderer.setOpacity(showField && grid ? fieldOpacity : 0, image ? imageOpacity : 0);
     renderer.draw(view, width, sceneHeight, dpr());
   });
 
