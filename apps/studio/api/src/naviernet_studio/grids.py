@@ -40,22 +40,32 @@ def axes(scene: Scene, nx: int, ny: int) -> tuple[np.ndarray, np.ndarray]:
     return xs, ys
 
 
-def _one(scene: Scene, quantity_id: str, t_star: float, nx: int, ny: int) -> np.ndarray:
-    key = (scene.run_id, scene.checkpoint_mtime, quantity_id, round(t_star, 6), nx, ny)
+def _key(scene: Scene, quantity_id: str, t_star: float, nx: int, ny: int) -> tuple:
+    return (scene.run_id, scene.checkpoint_mtime, quantity_id, round(t_star, 6), nx, ny)
+
+
+def _arrays(
+    scene: Scene, quantity_ids: list[str], t_star: float, nx: int, ny: int
+) -> list[np.ndarray]:
+    """The grids of several quantities at one instant. The ones not yet cached
+    are evaluated in a single pass, so they share the flow solve and the model's
+    intermediates instead of paying for each one separately."""
     with _lock:
-        hit = _cache.get(key)
-    if hit is not None:
-        return hit[1][0]
-    xs, ys = axes(scene, nx, ny)
-    grid_x, grid_y = np.meshgrid(xs, ys)
-    points = sampler.points_at(grid_x.ravel(), grid_y.ravel(), t_star)
-    values = sampler.evaluate(scene, points, [quantity_id])[quantity_id]
-    array = values.reshape(ny, nx).astype(np.float32)
+        cached = {q: _cache.get(_key(scene, q, t_star, nx, ny)) for q in quantity_ids}
+    missing = list(dict.fromkeys(q for q in quantity_ids if cached[q] is None))
+    if missing:
+        xs, ys = axes(scene, nx, ny)
+        grid_x, grid_y = np.meshgrid(xs, ys)
+        points = sampler.points_at(grid_x.ravel(), grid_y.ravel(), t_star)
+        values = sampler.evaluate(scene, points, missing)
+        with _lock:
+            for q in missing:
+                array = values[q].reshape(ny, nx).astype(np.float32)
+                _cache[_key(scene, q, t_star, nx, ny)] = ({}, [array])
+            while len(_cache) > GRID_CACHE_SIZE:
+                del _cache[next(iter(_cache))]
     with _lock:
-        _cache[key] = ({}, [array])
-        while len(_cache) > GRID_CACHE_SIZE:
-            del _cache[next(iter(_cache))]
-    return array
+        return [_cache[_key(scene, q, t_star, nx, ny)][1][0] for q in quantity_ids]
 
 
 def _range(array: np.ndarray) -> tuple[float | None, float | None]:
@@ -69,7 +79,7 @@ def grid(
     scene: Scene, quantity_ids: list[str], t_star: float, nx: int, ny: int
 ) -> tuple[dict, list[np.ndarray]]:
     """The header and arrays for a set of quantities at one instant."""
-    arrays = [_one(scene, i, t_star, nx, ny) for i in quantity_ids]
+    arrays = _arrays(scene, quantity_ids, t_star, nx, ny)
     xs, ys = axes(scene, nx, ny)
     L = scene.scales.length_um
     outline = geometry.interface(scene, t_star)

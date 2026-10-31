@@ -50,7 +50,7 @@
 
   $effect(() => {
     const run = studio.runId;
-    const event = studio.eventFrames.map((f) => f.frame);
+    const event = studio.selectedFrames;
     if (!run || event.length === 0) return;
     let cancelled = false;
     Promise.all(event.map((f) => api.getHeatBudget(run, f))).then((list) => {
