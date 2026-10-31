@@ -45,7 +45,9 @@
   });
 
   const imageUrl = $derived(
-    showImage && studio.runId ? api.frameUrl(studio.runId, studio.frame, studio.cleanImage) : null,
+    showImage && studio.runId
+      ? api.frameUrl(studio.runId, studio.frame, !studio.actualImage)
+      : null,
   );
   const walls = $derived(studio.run ? studio.run.domain_um.y_walls : null);
   const rows = $derived(
@@ -115,8 +117,10 @@
       </div>
       <div class="actions">
         <label class="toggle"><input type="checkbox" bind:checked={showImage} /> frame</label>
-        <label class="toggle" title="Remove the heaters, electrodes and walls; keep the bubble"
-          ><input type="checkbox" bind:checked={studio.cleanImage} /> clean background</label
+        <label
+          class="toggle"
+          title="On: the camera frame as recorded. Off: the cleaned frame, heaters and walls removed"
+          ><input type="checkbox" bind:checked={studio.actualImage} /> actual image</label
         >
         <label class="toggle"><input type="checkbox" bind:checked={showMeasured} /> measured</label>
         <label class="toggle"><input type="checkbox" bind:checked={showModel} /> model</label>

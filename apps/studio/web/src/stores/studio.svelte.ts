@@ -94,8 +94,9 @@ class Studio {
     grid: false,
   });
   imageOpacity = $state(0.85);
-  /** Remove the set-up's heaters and walls from the camera frame. */
-  cleanImage = $state(false);
+  /** Show the camera frame as recorded. Off (the default) shows the cleaned
+   * frame, with the heaters, electrodes and walls removed. */
+  actualImage = $state(false);
   tool = $state<Tool>("pan");
 
   probes = $state<Probe[]>([]);

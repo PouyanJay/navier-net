@@ -98,7 +98,7 @@
     <div class="layers">
       <label><input type="checkbox" bind:checked={studio.layers.field} /> Field</label>
       <label><input type="checkbox" bind:checked={studio.layers.image} /> Camera frame</label>
-      <label><input type="checkbox" bind:checked={studio.cleanImage} /> Clean background</label>
+      <label><input type="checkbox" bind:checked={studio.actualImage} /> Actual image</label>
       <label><input type="checkbox" bind:checked={studio.layers.boundary} /> Bubble boundary</label>
       <label><input type="checkbox" bind:checked={studio.layers.measured} /> Measured mask</label>
       <label
