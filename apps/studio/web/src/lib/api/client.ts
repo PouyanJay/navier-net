@@ -111,8 +111,8 @@ export const api = {
   getTransform: (id: string) => getJson<Transform>(`${run(id)}/geometry/transform`),
   getAgreement: (id: string, frame: number) =>
     getJson<Agreement>(`${run(id)}/geometry/agreement?frame=${frame}`),
-  frameUrl: (id: string, frame: number, clean = false) =>
-    `${run(id)}/geometry/frame/${frame}.png?crop=true&clean=${clean}`,
+  frameUrl: (id: string, frame: number, mode: string = "actual") =>
+    `${run(id)}/geometry/frame/${frame}.png?crop=true&mode=${mode}`,
   getGrid: (id: string, quantities: string[], frame: number, nx: number, ny: number) => {
     const url = `${run(id)}/grid?q=${quantities.join(",")}&frame=${frame}&nx=${nx}&ny=${ny}`;
     return remember(url, async () => {

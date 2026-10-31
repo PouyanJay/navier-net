@@ -8,6 +8,12 @@ import type { ColormapName } from "../lib/colormaps";
 
 export type ViewId = "geometry" | "fields" | "edge" | "residuals" | "probes" | "budgets" | "export";
 export type Theme = "dark" | "light";
+export type ImageMode = "actual" | "cleaned" | "outline";
+export const IMAGE_MODES: { id: ImageMode; label: string }[] = [
+  { id: "actual", label: "actual" },
+  { id: "cleaned", label: "cleaned" },
+  { id: "outline", label: "outline" },
+];
 export type Palette = "aurora" | "ember" | "tide";
 export type RangeMode = "frame" | "all" | "custom";
 export type Tool = "pan" | "line" | "point";
@@ -94,9 +100,9 @@ class Studio {
     grid: false,
   });
   imageOpacity = $state(0.85);
-  /** Show the camera frame as recorded. Off (the default) shows the cleaned
-   * frame, with the heaters, electrodes and walls removed. */
-  actualImage = $state(false);
+  /** The camera frame as recorded, cleaned (set-up removed, bubble and film kept),
+   * or outlined (bubble alone, edged by the measured outline). */
+  imageMode = $state<ImageMode>("cleaned");
   tool = $state<Tool>("pan");
 
   probes = $state<Probe[]>([]);

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
@@ -22,19 +24,20 @@ def get_transform(scene: Scene = Depends(scene_or_404)) -> dict:
 def get_raw_frame(
     n: int,
     crop: bool = Query(default=True),
-    clean: bool = Query(default=False),
+    mode: Literal["actual", "cleaned", "outline"] = Query(default="actual"),
     scene: Scene = Depends(scene_or_404),
 ) -> Response:
-    """The camera frame at full resolution as PNG, cropped to the channel band
-    (plus a margin) unless ``crop=false``. ``clean=true`` removes the set-up's
-    heaters and walls, keeping the bubble (see :mod:`naviernet_studio.cleaning`)."""
+    """The camera frame as PNG, cropped to the channel band (plus a margin)
+    unless ``crop=false``. ``mode``: ``actual`` is the recording; ``cleaned``
+    removes the set-up and keeps the bubble with its film; ``outline`` keeps the
+    bubble alone, edged by the measured outline (see :mod:`naviernet_studio.cleaning`)."""
     png = (
-        geometry.cleaned_frame_png(scene, n, crop)
-        if clean
-        else geometry.raw_frame_png(scene, n, crop)
+        geometry.raw_frame_png(scene, n, crop)
+        if mode == "actual"
+        else geometry.rendered_frame_png(scene, n, crop, mode)
     )
     if png is None:
-        raise HTTPException(status_code=404, detail=f"no raw frame {n} for {scene.run_id}")
+        raise HTTPException(status_code=404, detail=f"no frame {n} for {scene.run_id}")
     return Response(
         content=png, media_type="image/png", headers={"Cache-Control": "max-age=3600"}
     )

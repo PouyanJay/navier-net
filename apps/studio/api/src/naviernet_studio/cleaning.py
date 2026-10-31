@@ -90,21 +90,42 @@ def _normalized_blur(values: np.ndarray, weights: np.ndarray, sigma: float) -> n
 
 
 def clean_frame(frame: np.ndarray, background: np.ndarray, bubble: np.ndarray) -> np.ndarray:
-    """The frame with everything but the bubble and its film flattened."""
+    """The frame with the set-up removed, keeping the bubble and its film."""
+    return _render(frame, background, bubble, include_film=True)
+
+
+def outline_frame(frame: np.ndarray, background: np.ndarray, bubble: np.ndarray) -> np.ndarray:
+    """The frame with the set-up removed and only the bubble kept.
+
+    The edge is the measured outline, smoothed, so it has no film wings and no
+    pixel-level raggedness. The film is left to the cleaned frame.
+    """
+    return _render(frame, background, bubble, include_film=False)
+
+
+def _render(
+    frame: np.ndarray, background: np.ndarray, bubble: np.ndarray, include_film: bool
+) -> np.ndarray:
     if not bubble.any():
         return np.full(frame.shape, float(np.median(frame)), dtype=np.float32)
-    distance = ndimage.distance_transform_edt(~bubble)
-    darkness = ndimage.gaussian_filter(
-        np.clip(background - frame, 0.0, None), DARKNESS_SMOOTH_SIGMA
-    )
-    keep = _film(darkness, bubble, distance) | bubble
-    # The outline is smoothed so no pixel-level ragged edge survives.
-    keep = ndimage.binary_fill_holes(
-        ndimage.gaussian_filter(keep.astype(np.float32), CONTOUR_SIGMA) > 0.5
-    )
+    outline = _smooth_region(bubble)
+    if include_film:
+        distance = ndimage.distance_transform_edt(~bubble)
+        darkness = ndimage.gaussian_filter(
+            np.clip(background - frame, 0.0, None), DARKNESS_SMOOTH_SIGMA
+        )
+        keep = _smooth_region(_film(darkness, bubble, distance) | outline)
+    else:
+        keep = outline
     tone = float(np.median(frame[~keep])) if (~keep).any() else FALLBACK_TONE
-    band = ndimage.binary_dilation(bubble, iterations=RIM_PX)
+    band = ndimage.binary_dilation(outline, iterations=RIM_PX)
     base = np.where(keep, frame, tone)
     base = np.where(band, _normalized_blur(frame, band, SMOOTH_SIGMA), base)
     soft = ndimage.gaussian_filter(keep.astype(np.float32), EDGE_SOFT_SIGMA)
     return (soft * base + (1.0 - soft) * tone).astype(np.float32)
+
+
+def _smooth_region(mask: np.ndarray) -> np.ndarray:
+    """A region with its outline smoothed and its holes filled."""
+    smooth = ndimage.gaussian_filter(mask.astype(np.float32), CONTOUR_SIGMA) > 0.5
+    return ndimage.binary_fill_holes(smooth | mask)

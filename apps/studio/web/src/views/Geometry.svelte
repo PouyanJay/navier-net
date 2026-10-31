@@ -7,7 +7,7 @@
   import { Icon, icons } from "../lib/icons";
   import { RunData, seriesColor } from "../lib/runData.svelte";
   import { fmt } from "../lib/units";
-  import { studio } from "../stores/studio.svelte";
+  import { IMAGE_MODES, studio } from "../stores/studio.svelte";
 
   const data = new RunData();
   let scene = $state<Scene | null>(null);
@@ -45,9 +45,7 @@
   });
 
   const imageUrl = $derived(
-    showImage && studio.runId
-      ? api.frameUrl(studio.runId, studio.frame, !studio.actualImage)
-      : null,
+    showImage && studio.runId ? api.frameUrl(studio.runId, studio.frame, studio.imageMode) : null,
   );
   const walls = $derived(studio.run ? studio.run.domain_um.y_walls : null);
   const rows = $derived(
@@ -117,12 +115,14 @@
       </div>
       <div class="actions">
         <label class="toggle"><input type="checkbox" bind:checked={showImage} /> frame</label>
-        <label
-          class="toggle"
-          title="On: the camera frame as recorded. Off: the cleaned frame, heaters and walls removed"
-          ><input type="checkbox" bind:checked={studio.actualImage} /> actual image</label
-        >
-        <label class="toggle"><input type="checkbox" bind:checked={showMeasured} /> measured</label>
+        <div class="segmented" role="group" aria-label="Image">
+          {#each IMAGE_MODES as m (m.id)}
+            <button
+              aria-pressed={studio.imageMode === m.id}
+              onclick={() => (studio.imageMode = m.id)}>{m.label}</button
+            >
+          {/each}
+        </div>
         <label class="toggle"><input type="checkbox" bind:checked={showModel} /> model</label>
         <label class="toggle slider"
           >opacity <input type="range" min="0.2" max="1" step="0.05" bind:value={opacity} /></label

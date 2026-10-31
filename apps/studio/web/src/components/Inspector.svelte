@@ -3,7 +3,7 @@
   import type { Quantity } from "../lib/api/types";
   import { cssGradient, SEQUENTIAL, type ColormapName } from "../lib/colormaps";
   import { fmt } from "../lib/units";
-  import { studio } from "../stores/studio.svelte";
+  import { IMAGE_MODES, studio } from "../stores/studio.svelte";
   import QuantityCard from "./QuantityCard.svelte";
   import QuantityPicker from "./QuantityPicker.svelte";
 
@@ -98,7 +98,13 @@
     <div class="layers">
       <label><input type="checkbox" bind:checked={studio.layers.field} /> Field</label>
       <label><input type="checkbox" bind:checked={studio.layers.image} /> Camera frame</label>
-      <label><input type="checkbox" bind:checked={studio.actualImage} /> Actual image</label>
+      <div class="segmented" role="group" aria-label="Image">
+        {#each IMAGE_MODES as m (m.id)}
+          <button aria-pressed={studio.imageMode === m.id} onclick={() => (studio.imageMode = m.id)}
+            >{m.label}</button
+          >
+        {/each}
+      </div>
       <label><input type="checkbox" bind:checked={studio.layers.boundary} /> Bubble boundary</label>
       <label><input type="checkbox" bind:checked={studio.layers.measured} /> Measured mask</label>
       <label

@@ -19,7 +19,7 @@
   const walls = $derived(studio.run ? studio.run.domain_um.y_walls : null);
   const imageUrl = $derived(
     studio.layers.image && studio.runId
-      ? api.frameUrl(studio.runId, studio.frame, !studio.actualImage)
+      ? api.frameUrl(studio.runId, studio.frame, studio.imageMode)
       : null,
   );
 

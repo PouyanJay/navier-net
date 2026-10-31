@@ -78,7 +78,7 @@ def test_edge_and_gap_budget_say_what_a_stage_a_run_lacks(client: TestClient):
 
 def test_the_cleaned_frame_is_a_png_and_the_cleaning_is_optional(client: TestClient):
     raw = client.get(f"/api/runs/{RUN_ID}/geometry/frame/3.png")
-    cleaned = client.get(f"/api/runs/{RUN_ID}/geometry/frame/3.png", params={"clean": "true"})
+    cleaned = client.get(f"/api/runs/{RUN_ID}/geometry/frame/3.png", params={"mode": "cleaned"})
 
     assert cleaned.status_code == 200, cleaned.text
     assert cleaned.content[:8] == b"\x89PNG\r\n\x1a\n"
