@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from "./Select.svelte";
   import { Icon, icons } from "../lib/icons";
   import { fmt } from "../lib/units";
   import { studio } from "../stores/studio.svelte";
@@ -10,18 +11,16 @@
 
 <header class="topbar">
   <div class="run">
-    <label class="field">
-      <span>Run</span>
-      <select
-        class="select"
+    <div class="field">
+      <span class="field-label">Run</span>
+      <Select
+        label="Run"
         value={studio.runId ?? ""}
-        onchange={(e) => studio.selectRun((e.currentTarget as HTMLSelectElement).value)}
-      >
-        {#each studio.runs as run (run.id)}
-          <option value={run.id}>{run.id}</option>
-        {/each}
-      </select>
-    </label>
+        options={studio.runs.map((r) => ({ value: r.id, label: r.id }))}
+        onChange={(id) => studio.selectRun(id)}
+        width="240px"
+      />
+    </div>
     {#if conditions}
       <div class="chips" aria-label="Run conditions">
         <span class="chip mono" title="Inlet flow rate"
@@ -81,9 +80,12 @@
     align-items: center;
     gap: var(--s2);
   }
-  .field .select {
-    width: 220px;
-    height: 30px;
+  .field-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
   }
   .chips {
     display: flex;

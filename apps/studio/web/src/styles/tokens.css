@@ -28,7 +28,7 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --duration: 150ms;
 
-  --rail-width: 64px;
+  --rail-width: 84px;
   --inspector-width: 340px;
   --topbar-height: 52px;
   --drawer-height: 300px;

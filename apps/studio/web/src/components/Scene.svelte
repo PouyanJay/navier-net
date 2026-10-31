@@ -96,13 +96,16 @@
   let width = $state(800);
   let boxHeight = $state(400);
   let view = $state<View>({ scale: 1, tx: 0, ty: 0 });
-  let fitted = $state(false);
   let renderer: FieldRenderer | null = null;
   let glMissing = $state(false);
   let draft = $state<[number, number][]>([]);
   let cursor = $state<{ x: number; y: number; value: number } | null>(null);
   let dragging: { sx: number; sy: number; view: View } | null = null;
   let image = $state<HTMLImageElement | null>(null);
+
+  // Without an explicit height the scene takes most of the viewport, so the
+  // size never depends on what the canvas holds.
+  const DEFAULT_HEIGHT = "min(72dvh, 820px)";
 
   const dpr = () => Math.max(1, window.devicePixelRatio || 1);
   const sceneHeight = $derived(height > 0 ? height : boxHeight);
@@ -112,7 +115,6 @@
 
   export function fit(): void {
     view = fitView(extent, { width, height: sceneHeight });
-    fitted = true;
   }
 
   export async function toPng(): Promise<Blob> {
@@ -132,17 +134,14 @@
     };
   });
 
+  // Fit whenever the extent or the canvas size changes, so the view is right
+  // on first paint and after a resize; pan and zoom keep their place otherwise.
+  let fitKey = "";
   $effect(() => {
-    if (!fitted && width > 0 && sceneHeight > 0) fit();
-  });
-
-  // Re-fit when the extent itself changes (another run, another crop).
-  let lastExtent = "";
-  $effect(() => {
-    const key = `${extent.x0}|${extent.x1}|${extent.y0}|${extent.y1}`;
-    if (key !== lastExtent) {
-      lastExtent = key;
-      fitted = false;
+    const key = `${extent.x0}|${extent.x1}|${extent.y0}|${extent.y1}|${width}|${sceneHeight}`;
+    if (width > 0 && sceneHeight > 0 && key !== fitKey) {
+      fitKey = key;
+      fit();
     }
   });
 
@@ -307,7 +306,7 @@
   class="scene"
   bind:clientWidth={width}
   bind:clientHeight={boxHeight}
-  style:height={height > 0 ? `${height}px` : undefined}
+  style:height={height > 0 ? `${height}px` : DEFAULT_HEIGHT}
   data-tool={tool}
 >
   <canvas bind:this={canvas} style:width="{width}px" style:height="{sceneHeight}px"></canvas>
@@ -437,7 +436,6 @@
   .scene {
     position: relative;
     width: 100%;
-    height: 100%;
     min-height: 240px;
     background: var(--canvas);
     border-radius: var(--radius);

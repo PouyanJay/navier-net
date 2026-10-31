@@ -135,7 +135,6 @@ button:disabled {
   color: var(--muted);
 }
 
-.select,
 .input {
   height: 32px;
   padding: 0 var(--s3);
@@ -146,7 +145,6 @@ button:disabled {
   width: 100%;
 }
 
-.select:focus,
 .input:focus {
   border-color: var(--primary);
   outline: none;

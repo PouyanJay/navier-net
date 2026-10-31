@@ -6,6 +6,7 @@
   import QuantityCard from "../components/QuantityCard.svelte";
   import QuantityPicker from "../components/QuantityPicker.svelte";
   import Scene from "../components/Scene.svelte";
+  import Select from "../components/Select.svelte";
   import { download, downloadJson } from "../lib/export";
   import { FieldState } from "../lib/fieldState.svelte";
   import { Icon, icons } from "../lib/icons";
@@ -209,11 +210,13 @@
         >
       </div>
       <div class="section">
-        <select class="select" bind:value={sectionKind} aria-label="Preset section">
-          {#each Object.entries(SECTION_LABELS) as [id, label] (id)}
-            <option value={id}>{label}</option>
-          {/each}
-        </select>
+        <Select
+          label="Preset section"
+          value={sectionKind}
+          options={Object.entries(SECTION_LABELS).map(([value, label]) => ({ value, label }))}
+          onChange={(id) => (sectionKind = id as SectionKind)}
+          width="220px"
+        />
         {#if sectionKind.startsWith("gap_")}
           <label class="inline mono"
             >behind nose <input
@@ -400,9 +403,6 @@
     display: flex;
     gap: var(--s2);
     align-items: center;
-  }
-  .section .select {
-    width: 220px;
   }
   .inline {
     display: inline-flex;
