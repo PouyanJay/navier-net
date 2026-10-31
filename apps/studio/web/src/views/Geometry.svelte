@@ -45,7 +45,7 @@
   });
 
   const imageUrl = $derived(
-    showImage && studio.runId ? api.frameUrl(studio.runId, studio.frame) : null,
+    showImage && studio.runId ? api.frameUrl(studio.runId, studio.frame, studio.cleanImage) : null,
   );
   const walls = $derived(studio.run ? studio.run.domain_um.y_walls : null);
   const rows = $derived(
@@ -115,6 +115,9 @@
       </div>
       <div class="actions">
         <label class="toggle"><input type="checkbox" bind:checked={showImage} /> frame</label>
+        <label class="toggle" title="Remove the heaters, electrodes and walls; keep the bubble"
+          ><input type="checkbox" bind:checked={studio.cleanImage} /> clean background</label
+        >
         <label class="toggle"><input type="checkbox" bind:checked={showMeasured} /> measured</label>
         <label class="toggle"><input type="checkbox" bind:checked={showModel} /> model</label>
         <label class="toggle slider"
@@ -225,7 +228,7 @@
     <h4>Per frame</h4>
     <table class="table mono">
       <thead>
-        <tr><th>frame</th><th>IoU</th><th>nose err µm</th><th>Δarea mm²</th></tr>
+        <tr><th>frame</th><th>IoU</th><th>nose µm</th><th>Δarea</th></tr>
       </thead>
       <tbody>
         {#each all as a (a.frame)}
@@ -338,6 +341,14 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--faint);
+  }
+  .side table th,
+  .side table td {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+  .side {
+    overflow-x: hidden;
   }
   tr {
     cursor: pointer;

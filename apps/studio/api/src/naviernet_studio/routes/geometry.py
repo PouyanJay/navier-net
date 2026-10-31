@@ -20,11 +20,19 @@ def get_transform(scene: Scene = Depends(scene_or_404)) -> dict:
 
 @router.get("/{run}/geometry/frame/{n}.png")
 def get_raw_frame(
-    n: int, crop: bool = Query(default=True), scene: Scene = Depends(scene_or_404)
+    n: int,
+    crop: bool = Query(default=True),
+    clean: bool = Query(default=False),
+    scene: Scene = Depends(scene_or_404),
 ) -> Response:
-    """The raw camera frame at full resolution as PNG, cropped to the channel
-    band (plus a margin) unless ``crop=false``."""
-    png = geometry.raw_frame_png(scene, n, crop)
+    """The camera frame at full resolution as PNG, cropped to the channel band
+    (plus a margin) unless ``crop=false``. ``clean=true`` removes the set-up's
+    heaters and walls, keeping the bubble (see :mod:`naviernet_studio.cleaning`)."""
+    png = (
+        geometry.cleaned_frame_png(scene, n, crop)
+        if clean
+        else geometry.raw_frame_png(scene, n, crop)
+    )
     if png is None:
         raise HTTPException(status_code=404, detail=f"no raw frame {n} for {scene.run_id}")
     return Response(

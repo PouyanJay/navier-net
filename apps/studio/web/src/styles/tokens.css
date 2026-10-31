@@ -54,7 +54,7 @@
   --canvas-wall: rgba(255, 255, 255, 0.42);
   --boundary-light: #ffffff;
   --boundary-dark: #000000;
-  --measured: #ffd166;
+  --measured: var(--primary);
   --probe: #ffffff;
   --probe-handle: #ffffff;
 
@@ -123,7 +123,6 @@
   --canvas-ink-strong: #000000;
   --canvas-grid: rgba(0, 0, 0, 0.08);
   --canvas-wall: rgba(0, 0, 0, 0.5);
-  --measured: #b45309;
   --probe: #111111;
   --probe-handle: #111111;
 

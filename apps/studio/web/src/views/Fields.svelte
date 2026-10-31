@@ -18,7 +18,9 @@
   const quantities = $derived(studio.quantitiesOfKind("volume", "derived"));
   const walls = $derived(studio.run ? studio.run.domain_um.y_walls : null);
   const imageUrl = $derived(
-    studio.layers.image && studio.runId ? api.frameUrl(studio.runId, studio.frame) : null,
+    studio.layers.image && studio.runId
+      ? api.frameUrl(studio.runId, studio.frame, studio.cleanImage)
+      : null,
   );
 
   async function exportPng() {

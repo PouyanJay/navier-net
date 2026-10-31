@@ -13,6 +13,7 @@ from contourpy import contour_generator
 from PIL import Image
 
 from naviernet.evaluation import frame_iou, front_position, predict_alpha_fullres
+from naviernet_studio import cleaning
 from naviernet_studio.scene import Scene
 
 CONTOUR_NX = 721
@@ -209,3 +210,60 @@ def agreement(scene: Scene, frame: int) -> dict | None:
         "model_rings_um": interface(scene, t_star)["rings_um"],
         "valid_fraction": float((data.valid[row] > 0).mean()),
     }
+
+
+_backgrounds: dict[str, tuple[float, np.ndarray]] = {}
+_background_lock = threading.Lock()
+
+
+def _event_stack(scene: Scene) -> tuple[np.ndarray, np.ndarray] | None:
+    """The event frames as grey levels and the bubble masks placed on the same
+    full-width pixel grid, or None when a raw frame is missing."""
+    data = scene.data
+    numbers = data.frame_numbers[: data.n_event]
+    paths = [scene.paths.raw_frame(n) for n in numbers]
+    if not all(p.is_file() for p in paths):
+        return None
+    stack = np.stack([np.asarray(Image.open(p).convert("L"), dtype=np.float32) for p in paths])
+    bubble = np.zeros(stack.shape, dtype=bool)
+    top = int(data.meta["y_roi"][0])
+    rows = data.masks_camera.shape[1]
+    bubble[:, top : top + rows, :] = data.masks_camera[: data.n_event] > 0
+    return stack, bubble
+
+
+def _background(scene: Scene) -> np.ndarray | None:
+    """The static background of the set-up, computed once per checkpoint."""
+    with _background_lock:
+        cached = _backgrounds.get(scene.run_id)
+        if cached is not None and cached[0] == scene.checkpoint_mtime:
+            return cached[1]
+    event = _event_stack(scene)
+    if event is None:
+        return None
+    background = cleaning.static_background(*event)
+    with _background_lock:
+        _backgrounds[scene.run_id] = (scene.checkpoint_mtime, background)
+    return background
+
+
+def cleaned_frame_png(scene: Scene, frame: int, crop: bool) -> bytes | None:
+    """The camera frame with the set-up's background removed, as PNG."""
+    row = scene.row_of(frame)
+    background = _background(scene)
+    path = scene.paths.raw_frame(frame)
+    if row is None or background is None or not path.is_file():
+        return None
+    image = np.asarray(Image.open(path).convert("L"), dtype=np.float32)
+    bubble = np.zeros(image.shape, dtype=bool)
+    top = int(scene.data.meta["y_roi"][0])
+    rows = scene.data.masks_camera.shape[1]
+    bubble[top : top + rows] = scene.data.masks_camera[row] > 0
+    cleaned = cleaning.clean_frame(image, background, bubble)
+    out = Image.fromarray(np.clip(cleaned, 0, 255).astype(np.uint8))
+    if crop:
+        rows_crop = transform(scene)["crop_rows"]
+        out = out.crop((0, rows_crop[0], out.size[0], rows_crop[1]))
+    buffer = io.BytesIO()
+    out.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
+
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from conftest import RUN_ID
 
@@ -71,3 +74,16 @@ def test_edge_and_gap_budget_say_what_a_stage_a_run_lacks(client: TestClient):
 
     assert edge.status_code == 404 and "front" in edge.json()["detail"]
     assert gap.status_code == 404 and "pressure" in gap.json()["detail"]
+
+
+def test_the_cleaned_frame_is_a_png_and_the_cleaning_is_optional(client: TestClient):
+    raw = client.get(f"/api/runs/{RUN_ID}/geometry/frame/3.png")
+    cleaned = client.get(f"/api/runs/{RUN_ID}/geometry/frame/3.png", params={"clean": "true"})
+
+    assert cleaned.status_code == 200, cleaned.text
+    assert cleaned.content[:8] == b"\x89PNG\r\n\x1a\n"
+    # The synthetic frames are flat, so cleaning leaves them alone; the check is
+    # that the cleaned frame has the same geometry as the raw one.
+    assert (
+        Image.open(io.BytesIO(cleaned.content)).size == Image.open(io.BytesIO(raw.content)).size
+    )

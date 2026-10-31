@@ -94,6 +94,8 @@ class Studio {
     grid: false,
   });
   imageOpacity = $state(0.85);
+  /** Remove the set-up's heaters and walls from the camera frame. */
+  cleanImage = $state(false);
   tool = $state<Tool>("pan");
 
   probes = $state<Probe[]>([]);
