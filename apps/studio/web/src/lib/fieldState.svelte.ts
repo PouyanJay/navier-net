@@ -11,6 +11,8 @@ import { niceRange, percentileRange } from "./units";
 const SCRUB_DEBOUNCE_MS = 150;
 
 export class FieldState {
+  /** The quantity of the grid on screen; plain, so reading it does not re-run effects. */
+  private shownQuantity: string | null = null;
   grid = $state<Grid | null>(null);
   error = $state<string | null>(null);
   busy = $state(false);
@@ -40,6 +42,9 @@ export class FieldState {
       const run = studio.runId;
       const quantity = studio.quantity;
       const frame = studio.frame;
+      // A picture of another quantity must not be drawn with this quantity's
+      // colour scale, so the old grid goes as soon as the quantity changes.
+      if (this.shownQuantity !== quantity) this.grid = null;
       if (!run || !studio.current?.available) {
         this.grid = null;
         return;
@@ -51,6 +56,7 @@ export class FieldState {
           .getGrid(run, [quantity], frame, GRID_NX, GRID_NY)
           .then((grid) => {
             if (cancelled) return;
+            this.shownQuantity = quantity;
             this.grid = grid;
             this.error = null;
           })
