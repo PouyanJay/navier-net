@@ -1,0 +1,174 @@
+/*
+ * naviernet studio tokens.
+ *
+ * Names describe roles, never appearance. Dark is the default and lives on
+ * :root; the canvas is pure black there so the fields and the camera frames
+ * carry all the light. Light redefines the theme-varying tokens only. The
+ * palette (aurora, ember, tide) changes the accent, the series colours and the
+ * default colormap family, and nothing else.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --font-ui: "Inter Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration: 150ms;
+
+  --rail-width: 64px;
+  --inspector-width: 340px;
+  --topbar-height: 52px;
+  --drawer-height: 300px;
+
+  /* Chrome */
+  --bg: #0a0a0c;
+  --surface: #121216;
+  --surface-raised: #1a1a20;
+  --surface-hover: #22222a;
+  --line: #26262e;
+  --line-strong: #34343e;
+  --text: #ededf2;
+  --text-soft: #b8b8c4;
+  --muted: #80808f;
+  --faint: #52525f;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+
+  /* Canvas: black in dark mode, so the data is the only light. */
+  --canvas: #000000;
+  --canvas-ink: #d8d8e0;
+  --canvas-ink-strong: #ffffff;
+  --canvas-grid: rgba(255, 255, 255, 0.08);
+  --canvas-wall: rgba(255, 255, 255, 0.42);
+  --boundary-light: #ffffff;
+  --boundary-dark: #000000;
+  --measured: #ffd166;
+  --probe: #ffffff;
+  --probe-handle: #ffffff;
+
+  /* Status */
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --bad: #fb7185;
+  --holdout: #c084fc;
+
+  /* Palette aurora (default) */
+  --primary: #5eead4;
+  --primary-strong: #2dd4bf;
+  --primary-ink: #04201c;
+  --focus: #99f6e4;
+  --series-1: #5eead4;
+  --series-2: #c084fc;
+  --series-3: #fb923c;
+  --series-4: #60a5fa;
+  --series-5: #f472b6;
+  --series-6: #a3e635;
+}
+
+:root[data-palette="ember"] {
+  --primary: #fb923c;
+  --primary-strong: #f97316;
+  --primary-ink: #2a1200;
+  --focus: #fdba74;
+  --series-1: #fb923c;
+  --series-2: #f472b6;
+  --series-3: #facc15;
+  --series-4: #5eead4;
+  --series-5: #a78bfa;
+  --series-6: #4ade80;
+}
+
+:root[data-palette="tide"] {
+  --primary: #60a5fa;
+  --primary-strong: #3b82f6;
+  --primary-ink: #041a3a;
+  --focus: #93c5fd;
+  --series-1: #60a5fa;
+  --series-2: #34d399;
+  --series-3: #fbbf24;
+  --series-4: #f472b6;
+  --series-5: #a78bfa;
+  --series-6: #f87171;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: #ededf1;
+  --line: #e2e2e8;
+  --line-strong: #cfcfd8;
+  --text: #15151a;
+  --text-soft: #3c3c48;
+  --muted: #6b6b7a;
+  --faint: #9b9ba8;
+  --shadow: 0 12px 32px rgba(20, 20, 40, 0.14);
+
+  --canvas: #fafafc;
+  --canvas-ink: #2a2a34;
+  --canvas-ink-strong: #000000;
+  --canvas-grid: rgba(0, 0, 0, 0.08);
+  --canvas-wall: rgba(0, 0, 0, 0.5);
+  --measured: #b45309;
+  --probe: #111111;
+  --probe-handle: #111111;
+
+  --ok: #15803d;
+  --warn: #b45309;
+  --bad: #be123c;
+  --holdout: #7e22ce;
+}
+
+:root[data-theme="light"][data-palette="aurora"],
+:root[data-theme="light"] {
+  --primary: #0f766e;
+  --primary-strong: #0d9488;
+  --primary-ink: #ffffff;
+  --focus: #14b8a6;
+  --series-1: #0f766e;
+  --series-2: #7e22ce;
+  --series-3: #c2410c;
+  --series-4: #1d4ed8;
+  --series-5: #be185d;
+  --series-6: #4d7c0f;
+}
+
+:root[data-theme="light"][data-palette="ember"] {
+  --primary: #c2410c;
+  --primary-strong: #ea580c;
+  --primary-ink: #ffffff;
+  --focus: #f97316;
+  --series-1: #c2410c;
+  --series-2: #be185d;
+  --series-3: #a16207;
+  --series-4: #0f766e;
+  --series-5: #6d28d9;
+  --series-6: #15803d;
+}
+
+:root[data-theme="light"][data-palette="tide"] {
+  --primary: #1d4ed8;
+  --primary-strong: #2563eb;
+  --primary-ink: #ffffff;
+  --focus: #3b82f6;
+  --series-1: #1d4ed8;
+  --series-2: #047857;
+  --series-3: #b45309;
+  --series-4: #be185d;
+  --series-5: #6d28d9;
+  --series-6: #b91c1c;
+}

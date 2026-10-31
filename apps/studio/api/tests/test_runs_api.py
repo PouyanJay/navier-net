@@ -28,8 +28,10 @@ def test_the_detail_names_the_frames_and_their_roles(client: TestClient):
 
 def test_an_unknown_or_unsafe_run_is_404(client: TestClient):
     assert client.get("/api/runs/nope").status_code == 404
-    assert client.get("/api/runs/..").status_code == 404
-    assert client.get("/api/runs/%2e%2e%2fetc").status_code == 404
+    # Encoded forms reach the handler; a bare ".." is normalised by the client.
+    assert client.get("/api/runs/%2E%2E").status_code == 404
+    assert client.get("/api/runs/bad%20id").status_code == 404
+    assert client.get("/api/runs/..%2Fetc").status_code == 404
 
 
 def test_artifacts_come_back_verbatim(client: TestClient):
