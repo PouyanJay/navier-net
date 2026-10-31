@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from naviernet_studio import exports, geometry, illustration
 from naviernet_studio.routes.common import scene_or_404
 from naviernet_studio.scene import Scene
+from naviernet_studio.settings import Settings, get_settings
 
 router = APIRouter(prefix="/api/runs", tags=["geometry"])
 
@@ -26,6 +27,7 @@ def get_raw_frame(
     crop: bool = Query(default=True),
     mode: Literal["actual", "cleaned", "outline", "illustrated"] = Query(default="actual"),
     scene: Scene = Depends(scene_or_404),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     """The camera frame as PNG, cropped to the channel band (plus a margin)
     unless ``crop=false``. ``mode``: ``actual`` is the recording; ``cleaned``
@@ -34,7 +36,7 @@ def get_raw_frame(
     model's redraw, labelled as such and never used for measurement (see :mod:`naviernet_studio.cleaning`)."""
     if mode == "illustrated":
         try:
-            png = geometry.illustrated_frame_png(scene, n, crop)
+            png = geometry.illustrated_frame_png(scene, n, crop, settings.repo_root)
         except illustration.IllustrationUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return Response(

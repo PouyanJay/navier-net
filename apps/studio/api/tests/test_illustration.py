@@ -62,3 +62,19 @@ def test_without_a_key_the_illustrated_frame_says_what_to_set(
 
     assert response.status_code == 503
     assert illustration.KEY_ENV in response.json()["detail"]
+
+
+def test_a_bundled_illustrated_frame_is_served_without_a_key(
+    client: TestClient, repo_root, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv(illustration.KEY_ENV, raising=False)
+    folder = repo_root / illustration.BUNDLED_DIR / RUN_ID
+    folder.mkdir(parents=True)
+    Image.new("RGB", (16, 140), (120, 120, 120)).save(folder / "frame_03.png")
+
+    response = client.get(
+        f"/api/runs/{RUN_ID}/geometry/frame/3.png", params={"mode": "illustrated"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["x-image-provenance"] == illustration.LABEL

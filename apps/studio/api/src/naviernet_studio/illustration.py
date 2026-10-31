@@ -15,7 +15,9 @@ from __future__ import annotations
 import base64
 import io
 import os
+import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 import numpy as np
@@ -34,6 +36,9 @@ DEFAULT_MODEL = "gpt-image-1"
 PROTECTED_PX = 6
 TIMEOUT_S = 180.0
 LABEL = "illustration, not measured"
+# Generated illustrated frames committed to the repository, one folder per run.
+BUNDLED_DIR = Path("apps/studio/illustrations")
+SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 PROMPT = (
     "A microscope photograph of a single vapour bubble growing in a 300 micrometre "
@@ -60,6 +65,17 @@ def settings_from_env() -> Settings:
             f"the illustrated image needs {KEY_ENV} set in the environment of the studio service"
         )
     return Settings(api_key=key, model=os.environ.get(MODEL_ENV, DEFAULT_MODEL))
+
+
+def bundled_path(repo_root: object, run_id: str, frame: int) -> Path | None:
+    """The illustrated frame committed to the repository, if there is one.
+
+    Bundled frames are generated once, offline, and need no key to be served.
+    """
+    if not SAFE_NAME.match(run_id):
+        return None
+    candidate = Path(str(repo_root)) / BUNDLED_DIR / run_id / f"frame_{frame:02d}.png"
+    return candidate if candidate.is_file() else None
 
 
 def protected_band(bubble: np.ndarray) -> np.ndarray:

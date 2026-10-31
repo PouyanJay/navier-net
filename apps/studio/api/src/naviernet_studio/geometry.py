@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 import threading
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -270,7 +271,7 @@ def rendered_frame_png(scene: Scene, frame: int, crop: bool, mode: str) -> bytes
     return buffer.getvalue()
 
 
-def illustrated_frame_png(scene: Scene, frame: int, crop: bool) -> bytes:
+def illustrated_frame_png(scene: Scene, frame: int, crop: bool, repo_root: Path) -> bytes:
     """The camera frame redrawn by an image model, as PNG. Raises
     :class:`illustration.IllustrationUnavailable` when it cannot be made here.
 
@@ -282,11 +283,15 @@ def illustrated_frame_png(scene: Scene, frame: int, crop: bool) -> bytes:
     path = scene.paths.raw_frame(frame)
     if row is None or not path.is_file():
         raise illustration.IllustrationUnavailable(f"no recorded frame {frame} to illustrate")
-    cache = scene.paths.output_dir / "studio" / "illustrations" / f"frame_{frame:02d}.png"
-    if not cache.is_file():
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_bytes(_make_illustration(scene, frame, row, path))
-    out = Image.open(cache)
+    bundled = illustration.bundled_path(repo_root, scene.run_id, frame)
+    if bundled is not None:
+        out = Image.open(bundled).convert("L")
+    else:
+        cache = scene.paths.output_dir / "studio" / "illustrations" / f"frame_{frame:02d}.png"
+        if not cache.is_file():
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_bytes(_make_illustration(scene, frame, row, path))
+        out = Image.open(cache)
     if crop:
         rows_crop = transform(scene)["crop_rows"]
         out = out.crop((0, rows_crop[0], out.size[0], rows_crop[1]))
