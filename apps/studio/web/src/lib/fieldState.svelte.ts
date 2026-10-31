@@ -8,6 +8,8 @@ import { defaultColormap, type ColormapName } from "./colormaps";
 import { GRID_NX, GRID_NY, studio } from "../stores/studio.svelte";
 import { niceRange, percentileRange } from "./units";
 
+const SCRUB_DEBOUNCE_MS = 150;
+
 export class FieldState {
   grid = $state<Grid | null>(null);
   error = $state<string | null>(null);
@@ -32,6 +34,8 @@ export class FieldState {
   });
 
   constructor() {
+    // The grid for the frame on screen. Scrubbing waits a moment before asking,
+    // so the server is not queued with a request for every frame passed.
     $effect(() => {
       const run = studio.runId;
       const quantity = studio.quantity;
@@ -42,45 +46,49 @@ export class FieldState {
       }
       let cancelled = false;
       this.busy = true;
-      api
-        .getGrid(run, [quantity], frame, GRID_NX, GRID_NY)
-        .then((grid) => {
-          if (cancelled) return;
-          this.grid = grid;
-          this.error = null;
-        })
-        .catch((error: Error) => {
-          if (!cancelled) this.error = error.message;
-        })
-        .finally(() => {
-          if (!cancelled) this.busy = false;
-        });
+      const wait = setTimeout(() => {
+        api
+          .getGrid(run, [quantity], frame, GRID_NX, GRID_NY)
+          .then((grid) => {
+            if (cancelled) return;
+            this.grid = grid;
+            this.error = null;
+          })
+          .catch((error: Error) => {
+            if (!cancelled) this.error = error.message;
+          })
+          .finally(() => {
+            if (!cancelled) this.busy = false;
+          });
+      }, SCRUB_DEBOUNCE_MS);
       return () => {
         cancelled = true;
+        clearTimeout(wait);
       };
     });
 
-    // Prefetch the other event frames so scrubbing and play never wait.
+    // The colour range over all event frames is only needed for the "all frames"
+    // rule. Those grids are requested one at a time, after the frame on screen.
     $effect(() => {
       const run = studio.runId;
       const quantity = studio.quantity;
+      const mode = studio.rangeMode;
       const frames = studio.eventFrames.map((f) => f.frame);
-      if (!run || !studio.current?.available || frames.length === 0) return;
-      let cancelled = false;
       this.allRange = null;
-      Promise.all(frames.map((f) => api.getGrid(run, [quantity], f, GRID_NX, GRID_NY))).then(
-        (grids) => {
+      if (!run || mode !== "all" || !studio.current?.available || frames.length === 0) return;
+      let cancelled = false;
+      (async () => {
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (const f of frames) {
           if (cancelled) return;
-          let lo = Infinity;
-          let hi = -Infinity;
-          for (const g of grids) {
-            const [a, b] = percentileRange(g.planes[0]);
-            lo = Math.min(lo, a);
-            hi = Math.max(hi, b);
-          }
-          this.allRange = [lo, hi];
-        },
-      );
+          const grid = await api.getGrid(run, [quantity], f, GRID_NX, GRID_NY);
+          const [a, b] = percentileRange(grid.planes[0]);
+          lo = Math.min(lo, a);
+          hi = Math.max(hi, b);
+        }
+        if (!cancelled) this.allRange = [lo, hi];
+      })().catch(() => {});
       return () => {
         cancelled = true;
       };
