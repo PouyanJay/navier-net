@@ -34,16 +34,21 @@ jobs:
           pip install -e ".[dev]"
           # The platform API and its FastAPI stack (its tests are in testpaths).
           pip install -e "apps/api[dev]"
+          # The post-processing studio's data service (its tests are below).
+          pip install -e "apps/studio/api[dev]"
 
       - name: Lint
         run: |
-          ruff check src tests apps/api
-          ruff format --check src tests apps/api
+          ruff check src tests apps/api apps/studio/api
+          ruff format --check src tests apps/api apps/studio/api
 
       - name: Test
         # The raw dataset is not in the repository, so data-dependent tests
         # skip here; everything else runs (core solver + API).
         run: pytest -m "not needs_data" --cov --cov-report=term-missing
+
+      - name: Studio service tests
+        run: pytest apps/studio/api/tests -p no:cacheprovider
 
       - name: Config composes
         run: naviernet --cfg job --resolve
@@ -67,6 +72,35 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  studio-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/studio/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/studio/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
 
       - name: Lint
         run: npm run lint
