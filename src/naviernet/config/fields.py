@@ -754,6 +754,19 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.growth_closure_target",
+        "Growth closure rate",
+        "enum",
+        "training",
+        "override",
+        help=(
+            "the measured growth the closure scores: central differences of the frame "
+            "areas, or the slope of one cubic through all the event areas"
+        ),
+        options=("measured", "fitted"),
+        advanced=True,
+    ),
+    FieldSpec(
         "training.collocation_time_bins",
         "Collocation time bins",
         "int",

@@ -987,6 +987,9 @@ class TrainingConfig:
     # gradient, so the measured growth also trains the temperature. Off: it is
     # read detached, and the closure trains the footprint's wetting alone.
     growth_closure_outline_gradient: bool = False
+    # The rate the closure scores: "measured" (central differences of the frame
+    # areas) or "fitted" (the slope of one cubic through all the event areas).
+    growth_closure_target: str = "measured"
     mass_balance_grid: int = 64  # transverse quadrature points, wall to wall
 
     seed: int = 0

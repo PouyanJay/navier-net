@@ -51,6 +51,36 @@ def test_the_measured_growth_is_central_inside_the_event_and_one_sided_at_its_en
     assert rates == pytest.approx([2.0, 3.0, 4.0])
 
 
+def test_the_fitted_growth_is_the_slope_of_a_cubic_through_the_event_areas():
+    times = np.arange(6.0)
+    counts = (1 + 2 * times + times**2).astype(int)
+    alpha = np.zeros((6, 2, 40))
+    for row, count in enumerate(counts):
+        alpha[row, 0, :count] = 1.0
+    data = SimpleNamespace(
+        alpha=alpha,
+        valid=np.ones_like(alpha),
+        x=np.arange(40.0),
+        y=np.arange(2.0),
+        t=times,
+        n_event=6,
+    )
+
+    rates = growth_closure.fitted_growth_rate(data)
+
+    assert rates == pytest.approx(2.0 + 2.0 * times)
+    assert rates != pytest.approx(
+        [growth_closure.measured_growth_rate(data, r) for r in range(6)]
+    )
+
+
+def test_the_growth_target_is_measured_or_fitted_and_nothing_else():
+    data = SimpleNamespace()
+
+    with pytest.raises(ValueError, match="growth_closure_target"):
+        growth_closure.build_plan(data, stride=2, device="cpu", target="smoothed")
+
+
 def _model(tmp_path, overrides=()):
     cfg, paths = staged_capsule_run(tmp_path, [*CLOSURE, *overrides])
     data = BubbleDataset(cfg, paths)
