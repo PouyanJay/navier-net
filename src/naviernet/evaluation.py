@@ -85,9 +85,11 @@ def iou_report(cfg, model, data, c=None) -> dict:
     ious = {
         data.frame_numbers[row]: frame_iou(cfg, model, data, row, c) for row in range(n_event)
     }
+    # The mean is over the images: a ghost frame's mask is a rule's own outline.
+    measured = list(ious.values())[int(getattr(data, "n_ghost", 0)) :]
     return {
         "iou_per_frame": ious,
-        "iou_mean": float(np.mean(list(ious.values()))),
+        "iou_mean": float(np.mean(measured)),
         "iou_holdout": ious.get(holdout) if holdout is not None else None,
         "holdout_frame": holdout,
     }

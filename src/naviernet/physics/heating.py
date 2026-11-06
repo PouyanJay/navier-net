@@ -21,12 +21,30 @@ from naviernet.data.dataset import INTERFACE_ALPHA
 EDGE_SMOOTHING = 0.005
 
 
-def _ratio(x, groups: dict[str, float], sigmoid):
+def _zone_steps(groups: dict[str, float]) -> list[tuple[float, float]]:
+    """The floor's flux over ``q_wall`` as steps along the channel: ``(edge,
+    rise)`` pairs on top of the upstream zone's ratio, the hot zone (when the
+    series has one) sitting between the heater edge and its own end. Empty when
+    the floor carries one flux."""
     edge = groups.get("heater_edge_star")
     if edge is None:
+        return []
+    upstream = groups["q_upstream_ratio"]
+    hot_end = groups.get("hot_zone_end_star")
+    if hot_end is None:
+        return [(edge, 1.0 - upstream)]
+    hot = groups["q_hot_ratio"]
+    return [(edge, hot - upstream), (hot_end, 1.0 - hot)]
+
+
+def _ratio(x, groups: dict[str, float], sigmoid):
+    steps = _zone_steps(groups)
+    if not steps:
         return None
     ratio = groups["q_upstream_ratio"]
-    return ratio + (1.0 - ratio) * sigmoid((x - edge) / EDGE_SMOOTHING)
+    for edge, rise in steps:
+        ratio = ratio + rise * sigmoid((x - edge) / EDGE_SMOOTHING)
+    return ratio
 
 
 # The microlayer's end is smoothed over this share of its life: a numerical
@@ -74,6 +92,25 @@ def wall_flux_ratio_np(xs: np.ndarray, groups: dict[str, float]) -> np.ndarray:
     """:func:`wall_flux_ratio` at streamwise positions ``xs`` (L_ref units)."""
     ratio = _ratio(np.asarray(xs, dtype=float), groups, lambda z: 1.0 / (1.0 + np.exp(-z)))
     return np.ones_like(np.asarray(xs, dtype=float)) if ratio is None else ratio
+
+
+def heated_length(x, groups: dict[str, float]):
+    """The floor's flux over ``q_wall`` integrated from the inlet edge of the
+    view to each ``x`` (a tensor, L_ref units): the length of floor at
+    ``q_wall`` that would have put the same heat into liquid arriving there."""
+    import torch
+
+    steps = _zone_steps(groups)
+    if not steps:
+        return x
+    width = EDGE_SMOOTHING
+    softplus = torch.nn.functional.softplus
+    length = groups["q_upstream_ratio"] * x
+    for edge, rise in steps:
+        # The integral of the smoothed step from 0 to x.
+        start = softplus(torch.as_tensor(-edge / width, dtype=x.dtype, device=x.device))
+        length = length + rise * width * (softplus((x - edge) / width) - start)
+    return length
 
 
 def measured_areas_m2(data, cfg, weight: np.ndarray | None = None) -> np.ndarray:

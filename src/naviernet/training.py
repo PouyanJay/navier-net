@@ -32,6 +32,7 @@ from naviernet import warmup_cache
 from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
+from naviernet.data.ghost import load_ghost_outline
 from naviernet.data.outline import outline_path
 from naviernet.models.geometry import GeometryPriors
 from naviernet.models.measured_outline import MeasuredInterface, MeasuredOutline
@@ -1981,7 +1982,7 @@ def _bind_measured_outline(cfg, model, paths: RunPaths) -> None:
             f"{path} not found: model.measured_outline reads the outline the preprocess "
             f"stage traces, so re-run it (naviernet stage=preprocess dataset={cfg.dataset})"
         )
-    model.nets["phi"].bind_outline(MeasuredOutline.load(path))
+    model.nets["phi"].bind_outline(MeasuredOutline.load(path, load_ghost_outline(cfg, paths)))
 
 
 # The terms the temperature-only stage trains on: the liquid energy equation and

@@ -68,11 +68,33 @@ class ExperimentConfig:
     # forced a jump to saturation across zero distance at the first instant.
     # 0 imposes it everywhere in the liquid (existing runs).
     T_init_layer_um: float = 0.0
+    # The initial liquid along the channel. "uniform": T_init_C everywhere.
+    # "heated": T_init_C at the inlet edge of the view, rising downstream by
+    # what the floor's flux puts into the mean flow, the steady temperature of
+    # liquid flowing over the heaters with no bubble in the channel.
+    T_init_profile: str = "uniform"  # "uniform" | "heated"
     # The floor heated in two zones along the channel: q_upstream_W_cm2 from the
     # field of view's inlet edge to heater_edge_um, q_wall_W_cm2 beyond. Both
     # None: one flux, q_wall_W_cm2, over the whole floor (existing series).
     q_upstream_W_cm2: Optional[float] = None  # noqa: UP045
     heater_edge_um: Optional[float] = None  # noqa: UP045
+    # A third zone between the two: q_hot_W_cm2 from heater_edge_um to
+    # hot_zone_end_um, q_wall_W_cm2 beyond it. Both None: no hot zone.
+    q_hot_W_cm2: Optional[float] = None  # noqa: UP045
+    hot_zone_end_um: Optional[float] = None  # noqa: UP045
+    # Ghost frames (naviernet.data.ghost): the solve starts this long before
+    # the first image, from a round seed bubble ghost_seed_um across on the
+    # cavity, and grows it into the first image's outline by a fixed rule, so
+    # the state at the first image is computed and not imposed. The initial
+    # temperature and the footprint's age then hold at the seed. 0: off.
+    ghost_duration_ms: float = 0.0
+    ghost_seed_um: float = 150.0  # the seed has the area of a disc this wide
+    # "similar": the first image's outline shrunk about its root, the same
+    # shape at every size. "stretch": that outline scaled separately along and
+    # across the channel, widening first and only lengthening by the first
+    # image, so the nose's speed joins the images'. "blob": a round blob that
+    # widens, then lengthens.
+    ghost_shape: str = "similar"  # "similar" | "stretch" | "blob"
     side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
     T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
     # Film evaporation under the bubble (model.footprint_evaporation): the wall

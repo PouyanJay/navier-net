@@ -1,0 +1,81 @@
+# Series-1 at the 300 um calibration with the seed-grown conditions and a ghost
+# start: the solve begins 6 ms before the first image from a small bubble on
+# the cavity, so the state at frame 1 (the film's age over the floor, the
+# cooled layer around the bubble, the flow's memory) is computed, not imposed.
+#
+#   naviernet dataset=Series-1-w300 experiment=ghost_w300 model=trusted \
+#     training=trusted scales.dT_ref_K=1.0 model.measured_outline=true
+#
+# The liquid starts at saturation at the inlet, so the superheat scale cannot
+# come from it: scales.dT_ref_K has to be given (1 K: the liquid warms by about
+# that much over the heaters).
+#
+# The heater values are not the experiment's record (that is trusted_w300).
+# They come from an energy fit of a bubble grown from a seed with every
+# condition free: only heating concentrated near the cavity reproduces growth
+# that is fast early and slows down. They are starting values to calibrate.
+
+defaults:
+  - base_experiment
+
+name: ghost_w300
+
+fluid: ${fluid.name}
+T_sat_C: ${fluid.T_sat_C}
+
+# Three floor zones: nothing upstream of the cavity (233 um), a hot zone over
+# the next 450 um, and the downstream floor.
+q_upstream_W_cm2: 0.0
+heater_edge_um: 233.0
+q_hot_W_cm2: 6.0
+hot_zone_end_um: 683.0
+q_wall_W_cm2: 2.25
+
+wet_fraction_mode: fit
+wet_fraction: 0.88
+# The film under the bubble, fitted from 2 um: it lasts 4.5 ms over the hot
+# zone and 12 ms downstream. It starts fresh under the seed (no footprint age).
+footprint_wetting: microlayer
+microlayer_mode: fit
+microlayer_um: 2.0
+footprint_age_ms: 0.0
+
+# The liquid enters at saturation and starts as steady flow over the heaters
+# leaves it with no bubble in the channel: saturation up to the cavity, about
+# 0.8 K above it at the end of the hot zone and 1.5 K at the end of the view.
+T_inlet_C: 56.6
+T_init_C: 56.6
+T_init_profile: heated
+T_init_layer_um: 20.0
+side_wall_thermal: adiabatic
+
+flow_rate_mL_hr: 20.0
+
+# The ghost start: twelve ghost frames. The seed is the first image's outline
+# shrunk about its root to the area of a disc as wide as the channel is deep;
+# it widens to the first image's width and by the first image only lengthens
+# (stretch), so both the growth and the nose's speed join the images'. Under
+# ghost_shape=similar (the same shape at every size) the nose would reach the
+# first image at 70 mm/s against the 155 mm/s the images start with.
+# At 6 ms the growth the rule asks for stays below what the floor under the
+# ghost bubble can supply at every ghost frame (at 5 ms the seed would need 1.5
+# times it).
+ghost_duration_ms: 6.0
+ghost_seed_um: 150.0
+ghost_shape: stretch
+
+channel_width_um: 300.0
+channel_height_um: 150.0
+
+dt_frame_ms: 0.5
+flow_direction: right_to_left
+
+n_frames_raw: 12
+n_frames_usable: 11
+n_frames_event: 10
+
+notes: >-
+  The Series-1 frames at the 300 um calibration, started 6 ms before the first
+  image from a seed bubble (ghost frames), with a hot heater zone after the
+  cavity. Frame 11 is truncated by the field-of-view edge; frame 12 belongs to
+  the next ebullition cycle and is excluded.

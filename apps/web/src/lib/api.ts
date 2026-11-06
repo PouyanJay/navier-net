@@ -226,8 +226,11 @@ export interface OperatingConditions {
   T_inlet_C: number | null;
   T_init_C: number | null;
   T_init_layer_um: number;
+  T_init_profile: "uniform" | "heated";
   q_upstream_W_cm2: number | null;
   heater_edge_um: number | null;
+  q_hot_W_cm2: number | null;
+  hot_zone_end_um: number | null;
   side_wall_thermal: "adiabatic" | "isothermal";
   T_wall_C: number | null;
   wet_fraction_mode: "fixed" | "fit";
@@ -236,6 +239,9 @@ export interface OperatingConditions {
   microlayer_mode: "fixed" | "fit";
   microlayer_um: number;
   footprint_age_ms: number;
+  ghost_duration_ms: number;
+  ghost_seed_um: number;
+  ghost_shape: "similar" | "stretch" | "blob";
   dT_ref_K: number | null;
 }
 
@@ -292,8 +298,11 @@ export interface ConditionsUpdate {
   T_inlet_C?: number | null;
   T_init_C?: number | null;
   T_init_layer_um?: number;
+  T_init_profile?: "uniform" | "heated";
   q_upstream_W_cm2?: number | null;
   heater_edge_um?: number | null;
+  q_hot_W_cm2?: number | null;
+  hot_zone_end_um?: number | null;
   side_wall_thermal?: "adiabatic" | "isothermal";
   T_wall_C?: number | null;
   wet_fraction_mode?: "fixed" | "fit";
@@ -302,6 +311,9 @@ export interface ConditionsUpdate {
   microlayer_mode?: "fixed" | "fit";
   microlayer_um?: number;
   footprint_age_ms?: number;
+  ghost_duration_ms?: number;
+  ghost_seed_um?: number;
+  ghost_shape?: "similar" | "stretch" | "blob";
   dT_ref_K?: number | null;
 }
 

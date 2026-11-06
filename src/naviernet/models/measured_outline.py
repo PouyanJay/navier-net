@@ -94,12 +94,17 @@ class MeasuredOutline(nn.Module):
         self._build_coarse_lookup()
 
     @classmethod
-    def load(cls, path) -> MeasuredOutline:
-        """The outline a dataset's ``outline.npz`` stores."""
+    def load(cls, path, ghost=None) -> MeasuredOutline:
+        """The outline a dataset's ``outline.npz`` stores, after the ``ghost``
+        frames (:class:`naviernet.data.ghost.GhostOutline`) when the run has any."""
         with np.load(path) as archive:
+            times, stations = archive["t_star"], archive["stations"]
+            if ghost is not None:
+                times = np.concatenate([ghost.times, times])
+                stations = np.concatenate([ghost.stations, stations])
             return cls(
-                archive["t_star"],
-                archive["stations"],
+                times,
+                stations,
                 float(archive["axis_star"]),
                 float(archive["nose_cap_q"]),
                 float(archive["root_cap_q"]),

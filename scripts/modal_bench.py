@@ -107,10 +107,17 @@ def _pack(run_name: str) -> bytes:
 CHECKPOINT_EVERY = 1000
 
 
+def _recipe(overrides: list[str]) -> list[str]:
+    """The recipe, less any config group the run's own overrides choose (an
+    ``experiment=...`` among them replaces the recipe's experiment)."""
+    chosen = {override.split("=", 1)[0] for override in overrides}
+    return [entry for entry in RECIPE if entry.split("=", 1)[0] not in chosen]
+
+
 def _common(run_name: str, seed: int, gpu_steps: list[str]) -> list[str]:
     return [
         f"dataset={DATASET}",
-        *RECIPE,
+        *_recipe(gpu_steps),
         f"run_name={run_name}",
         f"training.seed={seed}",
         "training.device=cuda",
@@ -156,7 +163,9 @@ def _target_steps(extra: list[str]) -> int:
 
     register_configs()
     with initialize_config_dir(config_dir=f"{REMOTE_ROOT}/configs", version_base="1.3"):
-        cfg = compose(config_name="config", overrides=[f"dataset={DATASET}", *RECIPE, *extra])
+        cfg = compose(
+            config_name="config", overrides=[f"dataset={DATASET}", *_recipe(extra), *extra]
+        )
     return int(cfg.training.steps)
 
 

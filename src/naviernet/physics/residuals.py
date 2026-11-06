@@ -42,7 +42,7 @@ from typing import NamedTuple
 import torch
 
 from naviernet.physics.film import film_surface_pressure
-from naviernet.physics.heating import wall_flux_ratio
+from naviernet.physics.heating import heated_length, wall_flux_ratio
 
 
 class StageAResiduals(NamedTuple):
@@ -568,9 +568,10 @@ def thermal_boundary_losses(
     model, groups: dict[str, float], batches: ThermalBatches, c: torch.Tensor | None = None
 ) -> torch.Tensor:
     """The inlet temperature, the initial liquid temperature (where there is
-    liquid, and farther from the frame-1 outline than the layer the bubble
-    already has, ``init_layer_star``), and the side-wall condition: adiabatic
-    (``theta_y = 0``) unless the series gives a wall temperature."""
+    liquid, and farther from the first outline than the layer the bubble
+    already has, ``init_layer_star``; uniform, or rising along the heated floor
+    under ``experiment.T_init_profile=heated``), and the side-wall condition:
+    adiabatic (``theta_y = 0``) unless the series gives a wall temperature."""
     inlet = (
         (model.temperature(batches.inlet, _ctx(c, batches.inlet)) - groups["theta_inlet"]) ** 2
     ).mean()
@@ -584,12 +585,12 @@ def thermal_boundary_losses(
             # (frozen) geometry and carries no gradient.
             distance = model._liquid_distance(batches.initial, cx).detach()
             liquid = liquid * (distance >= layer).to(liquid.dtype)
-        total = (
-            total
-            + (
-                liquid * (model.temperature(batches.initial, cx) - groups["theta_init"]) ** 2
-            ).mean()
-        )
+        start = groups["theta_init"]
+        if "theta_init_rise" in groups:
+            start = start + groups["theta_init_rise"] * heated_length(
+                batches.initial[:, 0:1], groups
+            )
+        total = total + (liquid * (model.temperature(batches.initial, cx) - start) ** 2).mean()
     walls = batches.walls.detach().clone().requires_grad_(True)
     theta_wall = model.temperature(walls, _ctx(c, walls))
     if "theta_wall" in groups:

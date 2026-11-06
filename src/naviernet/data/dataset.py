@@ -113,14 +113,18 @@ class BubbleDataset:
         ]
         # Rows of the growth event -- the prefix every per-frame stage iterates.
         self.n_event = int(self.meta.get("n_frames_event", n_rows))
+        # Leading rows that are ghost frames, not images (see `_prepend_ghost_frames`).
+        self.n_ghost = 0
+        self._prepend_ghost_frames(cfg, paths)
         # `training.holdout_frame` is the 0-based position in the unexcluded
         # sequence (camera frame - 1). Resolve it to a row, so that excluding a
         # frame can never quietly shift supervision onto the holdout. -1 (train
         # on all frames) and an excluded holdout both resolve to "no row".
+        # Only an image can be held out: -1 would otherwise name ghost frame 0.
         holdout_camera = int(cfg.training.holdout_frame) + 1
         self.holdout_row = (
             self.frame_numbers.index(holdout_camera)
-            if holdout_camera in self.frame_numbers
+            if holdout_camera in self.frame_numbers[self.n_ghost :]
             else -1
         )
 
@@ -169,6 +173,50 @@ class BubbleDataset:
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
 
+    def _prepend_ghost_frames(self, cfg, paths: RunPaths) -> None:
+        """Put the ghost frames (``experiment.ghost_duration_ms``) before the
+        images as rows of their own: masks rasterised from the ghost outlines,
+        instants before the first image, frame numbers counting back from 0.
+        They are event rows like any other, so everything that reads the masks
+        (the warm-up's fit, the cover times, the growth the source must supply)
+        sees one history; ``n_ghost`` and :meth:`is_ghost` mark them for the
+        checks that are about the images."""
+        # Imported here: the ghost module reaches the preprocess stage's helpers,
+        # which import the physics, which imports this module.
+        from naviernet.data.ghost import ghost_masks, load_ghost_outline
+
+        ghost = load_ghost_outline(cfg, paths)
+        if ghost is None:
+            return
+        count = len(ghost.times)
+        alpha, sdf = ghost_masks(ghost.stations, self.x, self.y)
+        self.alpha = np.concatenate([alpha, self.alpha])
+        self.sdf = np.concatenate([sdf, self.sdf])
+        self.valid = np.concatenate([np.ones_like(alpha, dtype=self.valid.dtype), self.valid])
+        # The camera sees the flow right to left: its masks are the tensors' flipped.
+        camera = alpha[:, :, ::-1].astype(self.masks_camera.dtype)
+        self.masks_camera = np.concatenate([camera, self.masks_camera])
+        self.t = np.concatenate([ghost.times.astype(self.t.dtype), self.t])
+        first = self.frame_numbers[0]
+        self.frame_numbers = list(range(first - count, first)) + self.frame_numbers
+        self.n_event += count
+        self.n_ghost = count
+        log.info(
+            "ghost start: %d ghost frames before frame %d, from t* = %.3f",
+            count,
+            first,
+            float(self.t[0]),
+        )
+
+    def is_ghost(self, row: int) -> bool:
+        """Whether a row is a ghost frame: a rule's outline, not an image."""
+        return row < self.n_ghost
+
+    @property
+    def image_rows(self) -> list[int]:
+        """The event rows that are images, in order: the event without its ghosts."""
+        return list(range(self.n_ghost, self.n_event))
+
     def _wall_positions(self) -> tuple[float, float]:
         """The channel walls in y*, as preprocessing recorded them.
 
@@ -211,27 +259,30 @@ class BubbleDataset:
     def _split_rows(self, fraction: float, strategy: str) -> list[int]:
         """Rows of the event held out as the axis-A validation split.
 
-        ``fraction`` of the ``n_event`` growth frames, chosen by ``strategy``:
+        ``fraction`` of the event's images, chosen by ``strategy``:
         ``tail`` holds the last frames (extrapolation), ``scatter`` holds interior
         evenly-spaced frames (interpolation). A positive fraction always holds at
         least one frame, and never the whole event -- at least one training frame
-        survives, so an over-large fraction cannot starve supervision.
+        survives, so an over-large fraction cannot starve supervision. Ghost
+        frames are never held out and do not count: a rule's outline validates
+        nothing.
         """
-        if fraction <= 0.0 or self.n_event < 2:
+        images = self.image_rows
+        if fraction <= 0.0 or len(images) < 2:
             return []
 
-        count = max(1, math.ceil(fraction * self.n_event))
+        count = max(1, math.ceil(fraction * len(images)))
 
         if strategy == "tail":
-            count = min(count, self.n_event - 1)
-            return list(range(self.n_event - count, self.n_event))
+            count = min(count, len(images) - 1)
+            return images[len(images) - count :]
         if strategy == "scatter":
             # Choose from the interior rows only, so both endpoints stay in
             # training and the model genuinely interpolates. There are exactly
-            # ``n_event - 2`` interior rows, so cap the count at that (a series too
-            # short to hold an interior frame gets no scatter split) and pick
-            # evenly-spaced *distinct* rows -- never collapsing onto one another.
-            interior = list(range(1, self.n_event - 1))
+            # two fewer interior rows than images, so cap the count at that (a
+            # series too short to hold an interior frame gets no scatter split) and
+            # pick evenly-spaced *distinct* rows -- never collapsing onto one another.
+            interior = images[1:-1]
             count = min(count, len(interior))
             if count == 0:
                 return []
@@ -280,7 +331,8 @@ class BubbleDataset:
         column in y*. Orientation-agnostic: whichever edge is stationary wins,
         so a flipped series needs no special-casing.
         """
-        rows = self._training_visible_event_rows()
+        # Ghost frames are left out: the anchor is a measurement of the images.
+        rows = [r for r in self._training_visible_event_rows() if not self.is_ghost(r)]
         col = self._stationary_root_column(rows)
         return float(self.x[col]), self._root_y_center(rows, col)
 

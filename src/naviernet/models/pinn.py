@@ -678,7 +678,12 @@ class BubblePINN(nn.Module):
         self._footprint_source_star = float(groups["footprint_source_star"])
         self._heater_zones = {
             key: float(groups[key])
-            for key in ("q_upstream_ratio", "heater_edge_star")
+            for key in (
+                "q_upstream_ratio",
+                "heater_edge_star",
+                "q_hot_ratio",
+                "hot_zone_end_star",
+            )
             if key in groups
         }
         self._wet_fraction_init = float(groups["wet_fraction_init"])

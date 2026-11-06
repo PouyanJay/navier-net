@@ -405,6 +405,9 @@ def audit_frame(
     fields = fields_on_grid(model, grid, t)
     record = {
         "frame": int(data.frame_numbers[row]),
+        # A ghost frame is a rule's outline before the first image: audited like
+        # any instant, but no verdict is taken on it.
+        "ghost": row < int(getattr(data, "n_ghost", 0)),
         "t_star": t,
         "mirror": {
             name: mirror_breaking_fraction(values, odd=name in ODD_FIELDS)
@@ -552,12 +555,16 @@ def time_scan(cfg, model, data, groups, equations, n_times: int) -> dict | None:
     return scan
 
 
-def _scan_verdicts(scan: dict | None, acceptance) -> dict:
-    """The equations and the flux balance held at every scanned instant."""
+def _scan_verdicts(scan: dict | None, acceptance, t_first_image: float) -> dict:
+    """The equations and the flux balance held at every scanned instant from
+    the first image on (the ghost frames before it carry no verdict)."""
     if scan is None:
         return {}
-    residual_worst = max((max(v) for v in scan["residual_rms"].values() if v), default=0.0)
-    flux_worst = max(scan["flux_max_abs"])
+    judged = [k for k, t in enumerate(scan["t_star"]) if t >= t_first_image]
+    residual_worst = max(
+        (v[k] for v in scan["residual_rms"].values() for k in judged), default=0.0
+    )
+    flux_worst = max(scan["flux_max_abs"][k] for k in judged)
     return {
         "residuals_in_time": {
             "worst": residual_worst,
@@ -622,14 +629,16 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
             snapshots[f"{record['frame']}/{name}"] = values
     warmup = warmup_fit(paths)
     scan = time_scan(cfg, model, data, groups, equations, int(evaluation.audit_scan_times))
+    # The verdicts are about the images: ghost frames are reported, not judged.
+    judged = [f for f in frames if not f["ghost"]]
     verdicts = _verdicts(
-        frames,
+        judged,
         evaluation.acceptance,
         warmup,
         float(data.domain.x_max - data.domain.x_min),
     )
-    verdicts.update(_scan_verdicts(scan, evaluation.acceptance))
-    verdicts.update(_jump_verdict(frames, evaluation.acceptance))
+    verdicts.update(_scan_verdicts(scan, evaluation.acceptance, judged[0]["t_star"]))
+    verdicts.update(_jump_verdict(judged, evaluation.acceptance))
     report = {
         "run_name": cfg.run_name,
         "dataset": cfg.dataset,
@@ -647,6 +656,7 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
             "jump_pa_max": float(evaluation.acceptance.jump_pa_max),
         },
         "warmup_iou": warmup,
+        "ghost_frames": len(frames) - len(judged),
         "verdicts": verdicts,
         "frames": frames,
         "scan": scan,

@@ -271,6 +271,21 @@ def test_the_capsule_stands_until_the_outline_is_engaged(tmp_path):
     assert torch.equal(measured(x), measured.outline.phi(x))
 
 
+def test_the_physics_stage_trains_from_a_ghost_start(tmp_path):
+    """With ghost frames the window opens before the first image, and the
+    trainer and the outline it engages cover the same instants."""
+    ghost = ["experiment.ghost_duration_ms=1.5", "experiment.ghost_seed_um=60"]
+    cfg, paths = _staged(tmp_path, [*ghost, "training.steps=3"])
+
+    model, data, state = training.train(cfg, paths)
+
+    outline = model.nets["phi"].outline
+    assert data.n_ghost == 3
+    assert float(outline.times[0]) == pytest.approx(data.domain.t_min)
+    assert len(outline.times) == CAPSULE_FRAMES + 3
+    assert np.isfinite(state["hist"][-1]["data"])
+
+
 def test_the_physics_stage_trains_on_the_measured_outline(tmp_path):
     cfg, paths = _staged(tmp_path, ["training.steps=3"])
 
