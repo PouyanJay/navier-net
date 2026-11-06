@@ -268,6 +268,13 @@ def outline_agreement(cfg, model, data, row: int) -> dict:
 # The front's four segments, as the sampler orders them and the jump map names them.
 SEGMENTS = ("upper", "lower", "root", "nose")
 
+# The explicit front the audit samples for its jump and kinematic checks. The
+# Young-Laplace residual converges at 128 body and 64 cap points (within a
+# percent beyond that); the training's 64 and 16 under-resolve the root and
+# nose, so the audit reads the front at this converged resolution.
+AUDIT_FRONT_BODY_SAMPLES = 128
+AUDIT_FRONT_CAP_SAMPLES = 64
+
 
 def _segment_codes(front) -> np.ndarray:
     """0 upper body, 1 lower body, 2 root cap, 3 nose cap, per front sample."""
@@ -348,8 +355,8 @@ def front_conditions(
     with torch.enable_grad():
         front = model.front(
             torch.tensor([[t]], dtype=torch.float32, device=_device(model)),
-            int(model_cfg.front_body_samples),
-            int(model_cfg.front_cap_samples),
+            AUDIT_FRONT_BODY_SAMPLES,
+            AUDIT_FRONT_CAP_SAMPLES,
         )
         mass_flux = (
             interface_mass_flux(model, front, groups)
