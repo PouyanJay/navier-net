@@ -149,7 +149,12 @@ def _growth_closure_plan(cfg, data: BubbleDataset, device):
     """The growth closure's quadrature when its weight is on, else None."""
     if float(getattr(cfg.training, "growth_closure_weight", 0.0)) <= 0.0:
         return None
-    return growth_closure.build_plan(data, int(cfg.training.growth_closure_stride), device)
+    return growth_closure.build_plan(
+        data,
+        int(cfg.training.growth_closure_stride),
+        device,
+        str(getattr(cfg.training, "growth_closure_target", "measured")),
+    )
 
 
 def _validate_growth_closure(tcfg, model_cfg) -> None:

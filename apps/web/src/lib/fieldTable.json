@@ -992,6 +992,26 @@
     "default": 4
   },
   {
+    "key": "training.growth_closure_target",
+    "label": "Growth closure rate",
+    "kind": "enum",
+    "section": "training",
+    "owner": "override",
+    "help": "the measured growth the closure scores: central differences of the frame areas, or the slope of one cubic through all the event areas",
+    "unit": "",
+    "options": [
+      "measured",
+      "fitted"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "growth_closure_target",
+    "default": "measured"
+  },
+  {
     "key": "training.collocation_time_bins",
     "label": "Collocation time bins",
     "kind": "int",

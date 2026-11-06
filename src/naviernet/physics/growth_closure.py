@@ -35,6 +35,12 @@ from naviernet.data.dataset import INTERFACE_ALPHA
 # footprint the model draws a little outside the masks is still integrated.
 FOOTPRINT_MARGIN_PX = 6
 
+# ``training.growth_closure_target``: ``measured`` scores the central differences
+# of the frame areas; ``fitted`` scores the slope of one cubic through all the
+# event areas, a smooth rate without frame-to-frame noise.
+GROWTH_TARGETS = ("measured", "fitted")
+FIT_DEGREE = 3
+
 
 @dataclass(frozen=True)
 class GrowthClosurePlan:
@@ -49,18 +55,33 @@ class GrowthClosurePlan:
     scale: float
 
 
+def _area(data, row: int) -> float:
+    """The measured vapour area of event frame ``row`` in ``L_ref^2``."""
+    pixel = float(data.x[1] - data.x[0]) * float(data.y[1] - data.y[0])
+    return float(((data.alpha[row] > INTERFACE_ALPHA) & (data.valid[row] > 0)).sum()) * pixel
+
+
 def measured_growth_rate(data, row: int) -> float:
     """``dA/dt`` of the measured vapour area at ``row``, in ``L_ref^2 / t_ref``:
     central between the neighbouring frames, one-sided at the ends."""
-    pixel = float(data.x[1] - data.x[0]) * float(data.y[1] - data.y[0])
-    areas = {
-        r: float(((data.alpha[r] > INTERFACE_ALPHA) & (data.valid[r] > 0)).sum()) * pixel
-        for r in (row - 1, row, row + 1)
-        if 0 <= r < data.n_event
-    }
+    areas = {r: _area(data, r) for r in (row - 1, row, row + 1) if 0 <= r < data.n_event}
     rows = sorted(areas)
     first, last = rows[0], rows[-1]
     return (areas[last] - areas[first]) / (float(data.t[last]) - float(data.t[first]))
+
+
+def fitted_growth_rate(data) -> np.ndarray:
+    """``dA/dt`` at every event frame from one cubic through all the event areas:
+    the slope of the trend, not of the frame-to-frame differences."""
+    count = data.n_event
+    if count <= FIT_DEGREE:
+        raise ValueError(
+            f"the fitted growth needs more than {FIT_DEGREE} event frames, got {count}"
+        )
+    times = np.asarray(data.t[:count], dtype=np.float64)
+    areas = np.array([_area(data, r) for r in range(count)], dtype=np.float64)
+    slope = np.polyder(np.polyfit(times, areas, FIT_DEGREE))
+    return np.polyval(slope, times)
 
 
 def _covered_floor(data, stride: int) -> np.ndarray:
@@ -80,13 +101,20 @@ def _covered_floor(data, stride: int) -> np.ndarray:
     return grown & sampled
 
 
-def build_plan(data, stride: int, device) -> GrowthClosurePlan:
+def build_plan(data, stride: int, device, target: str = "measured") -> GrowthClosurePlan:
     if stride < 1:
         raise ValueError(f"training.growth_closure_stride must be >= 1, got {stride}")
+    if target not in GROWTH_TARGETS:
+        raise ValueError(
+            f"training.growth_closure_target must be one of {GROWTH_TARGETS}, got {target!r}"
+        )
     rows, cols = np.nonzero(_covered_floor(data, stride))
     points = np.column_stack([data.x[cols], data.y[rows]]).astype(np.float32)
     cell = abs(float(data.x[1] - data.x[0]) * float(data.y[1] - data.y[0])) * stride**2
-    growth = np.array([measured_growth_rate(data, r) for r in range(data.n_event)])
+    if target == "fitted":
+        growth = fitted_growth_rate(data)
+    else:
+        growth = np.array([measured_growth_rate(data, r) for r in range(data.n_event)])
     return GrowthClosurePlan(
         points=torch.tensor(points, device=device),
         cell=cell,
