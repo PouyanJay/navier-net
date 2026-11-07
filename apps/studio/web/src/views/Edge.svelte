@@ -80,18 +80,23 @@
     return `rgb(${lut[i]} ${lut[i + 1]} ${lut[i + 2]})`;
   }
 
+  // Until the new quantity's responses arrive, the map still holds the old
+  // quantity's values, and a response fetched for one frame must not dress the
+  // outline of another: both cases draw nothing rather than something stale.
   const ring = $derived.by(() => {
-    if (!current) return null;
-    const xs = current.values.edge_x as number[];
-    const ys = current.values.edge_y as number[];
-    const vs = current.values[quantity] as (number | null)[];
+    if (!current || current.frame !== studio.frame) return null;
+    const xs = current.values.edge_x as number[] | undefined;
+    const ys = current.values.edge_y as number[] | undefined;
+    const vs = current.values[quantity] as (number | null)[] | undefined;
+    if (!xs || !ys || !vs) return null;
     return { points: xs.map((x, i) => [x, ys[i]]), colors: vs.map(colorOf) };
   });
 
   const segmentStats = $derived.by(() => {
     if (!current) return [];
-    const codes = current.values.segment as number[];
-    const vs = current.values[quantity] as (number | null)[];
+    const codes = current.values.segment as number[] | undefined;
+    const vs = current.values[quantity] as (number | null)[] | undefined;
+    if (!codes || !vs) return [];
     return current.segments.map((name, k) => {
       const picked = vs.filter(
         (v, i) => codes[i] === k && v !== null && Number.isFinite(v),

@@ -18,6 +18,8 @@ from naviernet_studio.settings import Settings
 log = get_logger(__name__)
 
 SCENE_CACHE_SIZE = 4
+# Camera frames are 0.33 t* apart; anything closer than this is the same instant.
+FRAME_INSTANT_TOLERANCE = 1e-4
 _scenes: dict[str, Scene] = {}
 _cache_lock = threading.Lock()
 
@@ -114,9 +116,11 @@ class Scene:
         return float(min(max(t, self.data.domain.t_min), self.data.domain.t_max))
 
     def frame_of(self, t_star: float) -> int | None:
-        """The camera frame at exactly this instant, if there is one."""
+        """The camera frame at this instant, if there is one. The instants are
+        float32 in the tensors and float64 by the time a request names one, so
+        the match allows the rounding between the two."""
         for row, value in enumerate(self.data.t):
-            if abs(float(value) - t_star) < 1e-6:
+            if abs(float(value) - t_star) < FRAME_INSTANT_TOLERANCE:
                 return int(self.data.frame_numbers[row])
         return None
 
