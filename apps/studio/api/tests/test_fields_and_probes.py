@@ -125,6 +125,39 @@ def test_points_probe_exports_csv_rows_per_frame_and_point(client: TestClient):
     assert len(rows) == 1 + 4
 
 
+def test_a_points_probe_needs_no_sample_count(client: TestClient):
+    # The web once sent n=1 for a single point; n means nothing for points.
+    response = client.post(
+        f"/api/runs/{RUN_ID}/probe",
+        json={
+            "kind": "points",
+            "points_um": [[50, 150]],
+            "quantities": ["u"],
+            "frames": [1],
+            "n": 1,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["frames"][0]["values"]["u"]) == 1
+
+
+def test_a_line_probe_with_one_sample_is_422(client: TestClient):
+    response = client.post(
+        f"/api/runs/{RUN_ID}/probe",
+        json={
+            "kind": "line",
+            "points_um": [[10.0, 150.0], [290.0, 150.0]],
+            "quantities": ["u"],
+            "frames": [1],
+            "n": 1,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "at least 2 samples" in response.text
+
+
 def test_probe_without_an_instant_is_422(client: TestClient):
     response = client.post(
         f"/api/runs/{RUN_ID}/probe",

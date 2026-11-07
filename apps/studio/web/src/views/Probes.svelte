@@ -23,7 +23,8 @@
   let selected = $state<string[]>(["speed"]);
   let groupBy = $state<"frame" | "quantity">("frame");
   let results = $state<Map<string, ProbeResponse>>(new Map());
-  let error = $state<string | null>(null);
+  /** Why a probe has no result, by probe id. */
+  let errors = $state<Map<string, string>>(new Map());
   let busy = $state(false);
   let sectionKind = $state<SectionKind>("gap_top");
   let behind = $state(150);
@@ -43,13 +44,16 @@
       quantities: selected,
       frames,
       points_um: probe.points,
-      n: probe.n,
+      // Points are sampled as they are; only a line or section is resampled.
+      n: probe.kind === "points" ? undefined : probe.n,
       section: probe.section,
       behind_nose_um: probe.behindNoseUm,
       span_um: probe.spanUm,
     };
   }
 
+  // Every visible probe is evaluated on its own, so one that the server
+  // rejects keeps its error while the others keep their curves.
   $effect(() => {
     const run = studio.runId;
     const probes = studio.probes.filter((p) => p.visible);
@@ -57,22 +61,25 @@
     const list = frames;
     if (!run || probes.length === 0 || ids.length === 0 || list.length === 0) {
       results = new Map();
+      errors = new Map();
+      busy = false;
       return;
     }
     let cancelled = false;
     busy = true;
-    Promise.all(probes.map((p) => api.probe(run, request(p)).then((r) => [p.id, r] as const)))
-      .then((pairs) => {
-        if (cancelled) return;
-        results = new Map(pairs);
-        error = null;
-      })
-      .catch((e: Error) => {
-        if (!cancelled) error = e.message;
-      })
-      .finally(() => {
-        if (!cancelled) busy = false;
+    Promise.allSettled(probes.map((p) => api.probe(run, request(p)))).then((outcomes) => {
+      if (cancelled) return;
+      const ok: [string, ProbeResponse][] = [];
+      const failed: [string, string][] = [];
+      outcomes.forEach((outcome, i) => {
+        if (outcome.status === "fulfilled") ok.push([probes[i].id, outcome.value]);
+        else
+          failed.push([probes[i].id, String((outcome.reason as Error).message ?? outcome.reason)]);
       });
+      results = new Map(ok);
+      errors = new Map(failed);
+      busy = false;
+    });
     return () => {
       cancelled = true;
     };
@@ -84,7 +91,7 @@
       if (active?.kind === "points") {
         studio.updateProbe(active.id, { points: [...(active.points ?? []), points[0]] });
       } else {
-        studio.addProbe({ name: `P${count}`, kind: "points", points, n: 1 });
+        studio.addProbe({ name: `P${count}`, kind: "points", points });
       }
       return;
     }
@@ -108,13 +115,16 @@
     selected = selected.includes(id) ? selected.filter((q) => q !== id) : [...selected, id];
   }
 
-  /** One plot per probe: series are frame x quantity. */
+  /** One plot per probe: series are frame x quantity. Only the quantities the
+   * held response carries are drawn: a newly ticked one arrives with the
+   * next evaluation. */
   function seriesFor(probe: Probe): Series[] {
     const r = results.get(probe.id);
     if (!r) return [];
+    const quantities = selected.filter((q) => r.frames.every((f) => q in f.values));
     const out: Series[] = [];
     r.frames.forEach((f, fi) => {
-      selected.forEach((q, qi) => {
+      quantities.forEach((q, qi) => {
         const index = groupBy === "frame" ? fi : qi;
         const dash =
           groupBy === "frame"
@@ -139,7 +149,7 @@
       const n = first?.stations.s_um.length ?? 0;
       const byPoint: Series[] = [];
       for (let k = 0; k < n; k++) {
-        selected.forEach((q, qi) => {
+        quantities.forEach((q, qi) => {
           byPoint.push({
             name: `${probe.name}${n > 1 ? ` ${k + 1}` : ""} · ${q}`,
             color: seriesColor(k),
@@ -237,7 +247,11 @@
       </div>
       <div class="status">
         {#if busy}<span class="muted">evaluating…</span>{/if}
-        {#if error}<span class="chip bad">{error}</span>{/if}
+        {#if errors.size > 0}
+          <span class="chip bad"
+            >{errors.size === 1 ? "1 probe failed" : `${errors.size} probes failed`}</span
+          >
+        {/if}
         <span class="muted">frames {frames.join(", ")}</span>
       </div>
     </div>
@@ -302,6 +316,9 @@
             filename="{studio.runId}_{probe.name}"
             meta={{ run: studio.runId, probe: probe.name, frames: frames.join(" ") }}
           />
+          {#if errors.get(probe.id)}
+            <p class="probe-error" role="alert">{errors.get(probe.id)}</p>
+          {/if}
           <div class="probe-actions">
             <button class="btn" onclick={() => exportCsv(probe)}
               ><Icon icon={icons.download} size={14} /> CSV (server)</button
@@ -338,6 +355,9 @@
                 aria-label="Probe name"
                 onchange={(e) => studio.updateProbe(probe.id, { name: e.currentTarget.value })}
               />
+              {#if errors.get(probe.id)}
+                <span class="chip bad" title={errors.get(probe.id)}>failed</span>
+              {/if}
             </div>
             <label class="vis"
               ><input
@@ -456,6 +476,11 @@
   .probe-actions {
     display: flex;
     gap: var(--s2);
+  }
+  .probe-error {
+    margin: 0;
+    font-size: 12px;
+    color: var(--bad);
   }
   .empty {
     color: var(--muted);

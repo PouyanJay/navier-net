@@ -47,10 +47,26 @@ function remember<T>(key: string, load: () => Promise<T>): Promise<T> {
   return pending;
 }
 
+interface ValidationItem {
+  loc?: (string | number)[];
+  msg?: string;
+}
+
+/** The server's error text: a plain detail, or one line per rejected field
+ * when FastAPI reports validation errors as a list. */
 async function detail(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { detail?: unknown };
-    return typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+    if (typeof body.detail === "string") return body.detail;
+    if (Array.isArray(body.detail)) {
+      return (body.detail as ValidationItem[])
+        .map((item) => {
+          const field = (item.loc ?? []).filter((part) => part !== "body").join(".");
+          return field ? `${field}: ${item.msg ?? "invalid"}` : (item.msg ?? "invalid");
+        })
+        .join("; ");
+    }
+    return JSON.stringify(body.detail);
   } catch {
     return response.statusText;
   }

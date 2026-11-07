@@ -7,7 +7,7 @@ from typing import Literal
 
 import numpy as np
 import torch
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from naviernet_studio import geometry
 from naviernet_studio.scene import Scene
@@ -24,6 +24,8 @@ SectionKind = Literal[
 ProbeKind = Literal["line", "points", "section"]
 
 DEFAULT_SAMPLES = 200
+# A line or section is resampled to n stations; a set of points is sampled as is.
+MIN_SAMPLES = 2
 MAX_SAMPLES = 2000
 MAX_POINTS = 500
 # Columns searched for the bubble edge when a section is tied to it.
@@ -39,7 +41,8 @@ class ProbeRequest(BaseModel):
     t_ms: list[float] | None = None
     # line: polyline vertices; points: the points themselves (µm).
     points_um: list[tuple[float, float]] | None = None
-    n: int = Field(default=DEFAULT_SAMPLES, ge=2, le=MAX_SAMPLES)
+    # Stations along a line or section; ignored for points.
+    n: int = Field(default=DEFAULT_SAMPLES, le=MAX_SAMPLES)
     section: SectionKind | None = None
     # gap sections: distance behind the nose of the cross-section (µm).
     behind_nose_um: float = DEFAULT_BEHIND_NOSE_UM
@@ -47,6 +50,12 @@ class ProbeRequest(BaseModel):
     span_um: tuple[float, float] = DEFAULT_MID_GAP_SPAN_UM
     # gap sections: how far from the edge into the gap to start (fraction).
     edge_offset: float = Field(default=0.0, ge=0.0, le=0.9)
+
+    @model_validator(mode="after")
+    def _enough_samples(self) -> ProbeRequest:
+        if self.kind != "points" and self.n < MIN_SAMPLES:
+            raise ValueError(f"a {self.kind} needs at least {MIN_SAMPLES} samples")
+        return self
 
     def instants(self, scene: Scene) -> list[tuple[int | None, float]]:
         """``(frame, t_star)`` pairs the request names."""

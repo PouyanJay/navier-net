@@ -109,6 +109,9 @@
   // Without an explicit height the scene takes most of the viewport, so the
   // size never depends on what the canvas holds.
   const DEFAULT_HEIGHT = "min(72dvh, 820px)";
+  // Presses closer than this (screen px) to the last draft vertex are the
+  // same click, as in the pair that makes a double-click.
+  const DOUBLE_CLICK_PX = 4;
 
   const dpr = () => Math.max(1, window.devicePixelRatio || 1);
   const sceneHeight = $derived(height > 0 ? height : boxHeight);
@@ -236,8 +239,21 @@
       onDraw?.("point", [[x, y]]);
       return;
     }
+    // The second press of a double-click lands on the last vertex: it ends
+    // the line (see onDoubleClick) and must not duplicate that vertex.
+    const last = draft.at(-1);
+    if (last) {
+      const [lx, ly] = toScreen(view, last[0], last[1]);
+      if (Math.hypot(lx - sx, ly - sy) < DOUBLE_CLICK_PX) return;
+    }
     draft = [...draft, [x, y]];
   }
+
+  // Leaving the line tool abandons the vertices placed so far, so switching
+  // to pan or point never leaves a dashed draft nobody can remove.
+  $effect(() => {
+    if (tool !== "line") draft = [];
+  });
 
   function onDoubleClick() {
     if (tool === "line" && draft.length >= 2) {

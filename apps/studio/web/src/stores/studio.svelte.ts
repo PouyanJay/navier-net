@@ -36,7 +36,8 @@ export interface Probe {
   section?: SectionKind;
   behindNoseUm?: number;
   spanUm?: [number, number];
-  n: number;
+  /** Stations along a line or section; a points probe samples its points as is. */
+  n?: number;
   visible: boolean;
 }
 
