@@ -26,15 +26,23 @@ def get_grid(
     t_ms: float | None = Query(default=None),
     nx: int = Query(default=grids.DEFAULT_NX, ge=8, le=grids.MAX_NX),
     ny: int = Query(default=grids.DEFAULT_NY, ge=8, le=grids.MAX_NY),
+    prefetch: bool = Query(
+        default=True,
+        description="also evaluate these quantities at the other camera frames in the background",
+    ),
     fmt: str = Depends(format_query),
     scene: Scene = Depends(scene_or_404),
 ) -> Response:
     """The quantities on an ``nx`` by ``ny`` lattice spanning the channel wall
     to wall at a camera frame or an instant in ms. Binary by default (see
-    :mod:`naviernet_studio.grids` for the layout); ``fmt=csv`` for a long table."""
+    :mod:`naviernet_studio.grids` for the layout); ``fmt=csv`` for a long table.
+    By default the same quantities are then evaluated at the other camera
+    frames in the background, nearest first, so stepping through them is quick."""
     ids = quantities_or_4xx(scene, q, catalogue.POINT_IDS)
     t_star = instant_or_422(scene, frame, t_ms)
     header, arrays = grids.grid(scene, ids, t_star, nx, ny)
+    if prefetch:
+        grids.prefetch_frames(scene, ids, t_star, nx, ny)
     if fmt == FORMAT_CSV:
         header["provenance"] = exports.provenance(
             scene, ids, frame=header["frame"], t_ms=header["t_ms"]

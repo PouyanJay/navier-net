@@ -302,10 +302,12 @@ def evaluate(
     device = next(scene.model.parameters()).device
     parts: dict[str, list[np.ndarray]] = {i: [] for i in quantity_ids}
     n_chunks = max(1, math.ceil(len(points_star) / CHUNK))
-    with scene.lock, torch.enable_grad():
-        for chunk in np.array_split(points_star.astype(np.float32), n_chunks):
-            if len(chunk) == 0:
-                continue
+    # The lock is taken per chunk, not per call, so a request for the frame on
+    # screen waits behind at most one chunk of the prefetch filling the others.
+    for chunk in np.array_split(points_star.astype(np.float32), n_chunks):
+        if len(chunk) == 0:
+            continue
+        with scene.lock, torch.enable_grad():
             x = torch.tensor(chunk, dtype=torch.float32, device=device)
             if needs_grad:
                 x.requires_grad_(True)
