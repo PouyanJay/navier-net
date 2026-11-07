@@ -242,6 +242,7 @@ export interface OperatingConditions {
   ghost_duration_ms: number;
   ghost_seed_um: number;
   ghost_shape: "similar" | "stretch" | "blob";
+  ghost_growth: "parabola" | "energy";
   dT_ref_K: number | null;
 }
 
@@ -314,6 +315,7 @@ export interface ConditionsUpdate {
   ghost_duration_ms?: number;
   ghost_seed_um?: number;
   ghost_shape?: "similar" | "stretch" | "blob";
+  ghost_growth?: "parabola" | "energy";
   dT_ref_K?: number | null;
 }
 

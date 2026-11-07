@@ -207,6 +207,13 @@ class BubbleDataset:
             first,
             float(self.t[0]),
         )
+        if ghost.duration is not None:
+            log.info(
+                "ghost start: the energy growth takes the seed to the first image in "
+                "%.3f t*, arriving at %.2f times the rate the first two images show",
+                ghost.duration,
+                ghost.rate_ratio,
+            )
 
     def is_ghost(self, row: int) -> bool:
         """Whether a row is a ghost frame: a rule's outline, not an image."""

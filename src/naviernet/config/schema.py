@@ -95,6 +95,13 @@ class ExperimentConfig:
     # image, so the nose's speed joins the images'. "blob": a round blob that
     # widens, then lengthens.
     ghost_shape: str = "similar"  # "similar" | "stretch" | "blob"
+    # "parabola": the area is the parabola from the seed that joins the first
+    # image's area and growth rate over ghost_duration_ms. "energy": the area
+    # grows as fast as the floor's flux evaporates the film under the footprint
+    # (the solver's film law), integrated from the seed until it reaches the
+    # first image; the ghost time is then an output and ghost_duration_ms the
+    # most it may take. Needs footprint_wetting=microlayer.
+    ghost_growth: str = "parabola"  # "parabola" | "energy"
     side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
     T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
     # Film evaporation under the bubble (model.footprint_evaporation): the wall

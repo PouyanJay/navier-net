@@ -85,6 +85,7 @@ const DETAIL = {
     ghost_duration_ms: 0,
     ghost_seed_um: 150,
     ghost_shape: "similar",
+    ghost_growth: "parabola",
     dT_ref_K: null,
   },
 };
@@ -1634,6 +1635,7 @@ describe("new series conditions", () => {
         ghost_duration_ms: 0,
         ghost_seed_um: 150,
         ghost_shape: "similar",
+        ghost_growth: "parabola",
       },
     ]);
   });

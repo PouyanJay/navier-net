@@ -148,6 +148,79 @@ def test_an_unknown_shape_rule_is_refused():
         _ghost("square")
 
 
+# --- The energy growth: the seed grows as fast as the floor dries the film
+
+
+def _law(growth: float = 1.0, life: float = 1e9, zones: dict | None = None) -> ghost.FilmLaw:
+    return ghost.FilmLaw(zones=zones or {}, growth_per_area=growth, life=life)
+
+
+def test_the_energy_growth_is_exponential_while_the_whole_footprint_stays_wet():
+    first = _egg(1.0)
+    seed_area = 0.2 * ghost.polygon_area(first)
+
+    elapsed, areas = ghost.energy_growth(first, AXIS, seed_area, "similar", _law(2.0), 10.0)
+
+    # dA/dt = 2 A: the area doubles its log every half time unit.
+    assert areas[0] == pytest.approx(seed_area)
+    assert areas[-1] >= ghost.polygon_area(first)
+    assert elapsed[0] == pytest.approx(np.log(areas[-1] / seed_area) / 2.0, rel=0.05)
+    assert np.all(np.diff(elapsed) < 0) and np.all(np.diff(areas) > 0)
+
+
+def test_a_film_that_dries_slows_the_energy_growth():
+    first = _egg(1.0)
+    seed_area = 0.2 * ghost.polygon_area(first)
+
+    wet, _ = ghost.energy_growth(first, AXIS, seed_area, "similar", _law(2.0), 10.0)
+    drying, _ = ghost.energy_growth(
+        first, AXIS, seed_area, "similar", _law(2.0, life=0.5), 50.0
+    )
+
+    assert drying[0] > 1.2 * wet[0]
+
+
+def test_the_energy_growth_refuses_a_seed_the_floor_cannot_heat_or_a_time_too_short():
+    first = _egg(1.0)
+    seed_area = 0.2 * ghost.polygon_area(first)
+    cold = {"q_upstream_ratio": 0.0, "heater_edge_star": first[:, 0].max() + 1.0}
+
+    with pytest.raises(ValueError, match="cannot grow"):
+        ghost.energy_growth(first, AXIS, seed_area, "similar", _law(zones=cold), 10.0)
+    with pytest.raises(ValueError, match="within"):
+        ghost.energy_growth(first, AXIS, seed_area, "similar", _law(0.1), 1.0)
+
+
+def test_the_energy_ghost_frames_sit_on_camera_instants_and_arrive_at_the_first_image():
+    times, stations = _measured()
+    experiment = _experiment("stretch", duration_ms=5.0)
+    experiment.ghost_growth = "energy"
+
+    made = ghost.ghost_outline(experiment, L_REF_UM, times, stations, AXIS, _law(1.0))
+
+    # At most the ghost time asked for: 5 ms is ten camera intervals of 0.25 t_ref.
+    assert made.duration is not None and 0 < made.duration <= 2.5
+    assert made.times == pytest.approx(-0.25 * np.arange(len(made.times), 0, -1))
+    assert made.times[0] >= -made.duration
+    areas = [ghost.polygon_area(curve) for curve in made.stations]
+    assert np.all(np.diff(areas) > 0) and areas[-1] < ghost.polygon_area(stations[0])
+    # The seed of a disc 60 um across: the earliest frame is at or above it.
+    assert areas[0] >= 0.25 * np.pi * (60.0 / L_REF_UM) ** 2 - 1e-9
+    # dA/dt = A arrives at the first area; the eggs lengthen 10% per 0.25, so 0.4 A.
+    assert made.rate_ratio == pytest.approx(2.5, rel=0.05)
+
+
+def test_the_energy_growth_needs_the_film_law_and_an_unknown_growth_is_refused():
+    times, stations = _measured()
+    experiment = _experiment()
+    experiment.ghost_growth = "energy"
+    with pytest.raises(ValueError, match="film law"):
+        ghost.ghost_outline(experiment, L_REF_UM, times, stations, AXIS)
+    experiment.ghost_growth = "linear"
+    with pytest.raises(ValueError, match="ghost_growth"):
+        ghost.ghost_outline(experiment, L_REF_UM, times, stations, AXIS)
+
+
 def test_the_ghost_masks_cover_the_outlines_area_and_are_negative_inside():
     xs = np.linspace(0.0, 2.0, 201)
     ys = np.linspace(0.0, 1.0, 101)

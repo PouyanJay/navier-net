@@ -376,6 +376,19 @@ THERMAL: tuple[FieldSpec, ...] = (
         options=("similar", "stretch", "blob"),
     ),
     FieldSpec(
+        "experiment.ghost_growth",
+        "Ghost growth",
+        "enum",
+        *_SERIES,
+        help=(
+            "parabola: the area is the parabola from the seed that joins the first image's "
+            "area and growth rate over the ghost time; energy: the area grows as fast as "
+            "the floor's flux evaporates the film under the footprint, and the ghost time "
+            "is what that takes (at most the ghost start)"
+        ),
+        options=("parabola", "energy"),
+    ),
+    FieldSpec(
         "scales.dT_ref_K",
         "Superheat scale",
         "float",
