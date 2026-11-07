@@ -25,7 +25,8 @@
     type View,
   } from "../lib/transform";
   import { fmt } from "../lib/units";
-  import type { Probe, Tool } from "../stores/studio.svelte";
+  import { arrows, streamlines, type Streamline, type VectorField } from "../lib/vectors";
+  import type { Probe, Tool, VectorMode } from "../stores/studio.svelte";
 
   interface Props {
     grid?: Grid | null;
@@ -57,6 +58,9 @@
     onHover?: (xUm: number, yUm: number, value: number) => void;
     markers?: { x: number; y: number; color: string; label?: string }[];
     rings?: { points: number[][]; colors: string[] } | null;
+    /** The vector drawn over the field as arrows or streamlines, if any. */
+    vectors?: VectorField | null;
+    vectorMode?: VectorMode;
     height?: number;
     background?: string;
   }
@@ -90,6 +94,8 @@
     onHover,
     markers = [],
     rings = null,
+    vectors = null,
+    vectorMode = "map",
     height = 0,
     background = "",
   }: Props = $props();
@@ -319,6 +325,102 @@
     }
     return out;
   });
+
+  // --- vectors ---------------------------------------------------------------
+  // Arrows and streamlines sit on a lattice a fixed number of screen pixels
+  // apart, so zooming in shows more of them rather than bigger ones.
+  const LATTICE_PX = 24;
+  const ARROW_MAX_PX = 0.9 * LATTICE_PX;
+  const ARROW_HEAD_PX = 5;
+  const ARROW_MIN_PX = 1.5;
+  const STREAM_HEAD_PX = 4;
+  // The magnitude that gets the longest arrow: a high percentile rather than
+  // the maximum, so one hot cell does not shrink every other arrow.
+  const ARROW_REFERENCE_PERCENTILE = 0.98;
+
+  /** The part of the field extent on screen (µm). */
+  const visible = $derived.by((): Extent => {
+    const [left, top] = toUm(view, 0, 0);
+    const [right, bottom] = toUm(view, width, sceneHeight);
+    return {
+      x0: Math.max(extent.x0, left),
+      x1: Math.min(extent.x1, right),
+      y0: Math.max(extent.y0, bottom),
+      y1: Math.min(extent.y1, top),
+    };
+  });
+  const latticeUm = $derived(LATTICE_PX / view.scale);
+
+  function segment(x0: number, y0: number, x1: number, y1: number): string {
+    return `M${x0.toFixed(1)} ${y0.toFixed(1)}L${x1.toFixed(1)} ${y1.toFixed(1)}`;
+  }
+
+  /** Two barbs meeting at (hx, hy), pointing along the screen direction (dx, dy). */
+  function head(hx: number, hy: number, dx: number, dy: number, size: number): string {
+    const bx = hx - dx * size;
+    const by = hy - dy * size;
+    const nx = -dy * size * 0.5;
+    const ny = dx * size * 0.5;
+    return (
+      `M${(bx + nx).toFixed(1)} ${(by + ny).toFixed(1)}` +
+      `L${hx.toFixed(1)} ${hy.toFixed(1)}` +
+      `L${(bx - nx).toFixed(1)} ${(by - ny).toFixed(1)}`
+    );
+  }
+
+  const arrowPath = $derived.by((): string => {
+    if (!vectors || vectorMode !== "arrows") return "";
+    const list = arrows(vectors, visible, latticeUm);
+    if (list.length === 0) return "";
+    const sorted = list.map((a) => a.magnitude).sort((a, b) => a - b);
+    const at = Math.min(sorted.length - 1, Math.floor(ARROW_REFERENCE_PERCENTILE * sorted.length));
+    const reference = sorted[at] || 1;
+    const parts: string[] = [];
+    for (const a of list) {
+      const length = ARROW_MAX_PX * Math.min(1, a.magnitude / reference);
+      if (length < ARROW_MIN_PX) continue;
+      const [cx, cy] = toScreen(view, a.x, a.y);
+      // Screen y points down, so the y component flips.
+      const dx = a.dx;
+      const dy = -a.dy;
+      const hx = cx + (dx * length) / 2;
+      const hy = cy + (dy * length) / 2;
+      parts.push(
+        segment(cx - (dx * length) / 2, cy - (dy * length) / 2, hx, hy),
+        head(hx, hy, dx, dy, Math.min(ARROW_HEAD_PX, 0.4 * length)),
+      );
+    }
+    return parts.join("");
+  });
+
+  // Streamlines are traced once per lattice spacing and visible window
+  // (quantised to the lattice), then only projected as the view moves.
+  let traced: { field: VectorField; key: string; lines: Streamline[] } | null = null;
+  const streamPaths = $derived.by((): { lines: string; heads: string } | null => {
+    if (!vectors || vectorMode !== "streamlines") return null;
+    const spacing = latticeUm;
+    const cell = (value: number) => Math.floor(value / spacing);
+    const key = [
+      spacing.toPrecision(3),
+      cell(visible.x0),
+      cell(visible.x1),
+      cell(visible.y0),
+      cell(visible.y1),
+    ].join("|");
+    if (!traced || traced.field !== vectors || traced.key !== key) {
+      traced = { field: vectors, key, lines: streamlines(vectors, visible, spacing) };
+    }
+    const lines: string[] = [];
+    const heads: string[] = [];
+    for (const line of traced.lines) {
+      lines.push(polylinePath(line.points, view));
+      if (line.head) {
+        const [hx, hy] = toScreen(view, line.head.x, line.head.y);
+        heads.push(head(hx, hy, line.head.dx, -line.head.dy, STREAM_HEAD_PX));
+      }
+    }
+    return { lines: lines.join(""), heads: heads.join("") };
+  });
 </script>
 
 <div
@@ -384,6 +486,19 @@
             <path class="halo" d={svgPath(ring, view)} style:stroke={strokeHalo} />
             <path class="main" d={svgPath(ring, view)} style:stroke={strokeMain} />
           {/each}
+        </g>
+      {/if}
+      {#if vectorMode === "arrows" && arrowPath}
+        <g class="vectors">
+          <path class="halo" d={arrowPath} />
+          <path class="main" d={arrowPath} />
+        </g>
+      {:else if streamPaths}
+        <g class="vectors">
+          <path class="halo" d={streamPaths.lines} />
+          <path class="main" d={streamPaths.lines} />
+          <path class="halo" d={streamPaths.heads} />
+          <path class="main" d={streamPaths.heads} />
         </g>
       {/if}
       {#if rings}
@@ -517,6 +632,21 @@
   }
   .boundary .main {
     stroke-width: 1.5;
+  }
+  .vectors path {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .vectors .halo {
+    stroke: var(--canvas);
+    stroke-width: 2.8;
+    stroke-opacity: 0.55;
+  }
+  .vectors .main {
+    stroke: var(--canvas-ink-strong);
+    stroke-width: 1.1;
+    stroke-opacity: 0.9;
   }
   .probes .line {
     fill: none;

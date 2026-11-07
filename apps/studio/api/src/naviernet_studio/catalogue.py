@@ -50,6 +50,14 @@ class Quantity:
     needs: tuple[str, ...] = ()
     caveats: tuple[str, ...] = ()
     components: tuple[str, ...] = ()
+    # The (x, y) component ids of the vector this quantity belongs to, when it
+    # has one: the studio can then draw it as arrows or streamlines.
+    vector: tuple[str, str] | None = None
+
+
+VELOCITY_VECTOR = ("u", "v")
+PRESSURE_GRADIENT_VECTOR = ("dpdx", "dpdy")
+TEMPERATURE_GRADIENT_VECTOR = ("grad_T_x", "grad_T_y")
 
 
 def _q(**kw) -> Quantity:
@@ -98,6 +106,7 @@ VOLUME: tuple[Quantity, ...] = (
         scale="speed_mm_s",
         signed=True,
         cmap="diverging",
+        vector=VELOCITY_VECTOR,
         caveats=(
             "Depth-averaged: the real profile across the 150 µm gap is parabolic; this is its mean.",
         ),
@@ -115,6 +124,7 @@ VOLUME: tuple[Quantity, ...] = (
         scale="speed_mm_s",
         signed=True,
         cmap="diverging",
+        vector=VELOCITY_VECTOR,
     ),
     _q(
         id="speed",
@@ -127,6 +137,7 @@ VOLUME: tuple[Quantity, ...] = (
         plain="How fast the liquid (or vapour) moves at the point, whatever its direction.",
         how="hypot of the two velocity components, times U_ref.",
         scale="speed_mm_s",
+        vector=VELOCITY_VECTOR,
     ),
     _q(
         id="p",
@@ -337,6 +348,7 @@ DERIVED: tuple[Quantity, ...] = (
         signed=True,
         cmap="diverging",
         needs=(NEED_P,),
+        vector=PRESSURE_GRADIENT_VECTOR,
     ),
     _q(
         id="dpdy",
@@ -353,6 +365,7 @@ DERIVED: tuple[Quantity, ...] = (
         signed=True,
         cmap="diverging",
         needs=(NEED_P,),
+        vector=PRESSURE_GRADIENT_VECTOR,
     ),
     _q(
         id="grad_T",
@@ -368,6 +381,41 @@ DERIVED: tuple[Quantity, ...] = (
         needs_grad=True,
         needs=(NEED_T,),
         cmap="thermal",
+        vector=TEMPERATURE_GRADIENT_VECTOR,
+    ),
+    _q(
+        id="grad_T_x",
+        label="Temperature gradient (x)",
+        symbol="∂T/∂x",
+        unit="K/mm",
+        kind=KIND_DERIVED,
+        group="Thermal",
+        tex=r"\partial_x T",
+        plain="How fast the temperature rises along the channel. Positive means the liquid is warmer downstream.",
+        how="Autograd derivative of the superheat, times dT_ref / L_ref.",
+        scale="temperature_grad_K_per_mm",
+        needs_grad=True,
+        signed=True,
+        cmap="diverging",
+        needs=(NEED_T,),
+        vector=TEMPERATURE_GRADIENT_VECTOR,
+    ),
+    _q(
+        id="grad_T_y",
+        label="Temperature gradient (y)",
+        symbol="∂T/∂y",
+        unit="K/mm",
+        kind=KIND_DERIVED,
+        group="Thermal",
+        tex=r"\partial_y T",
+        plain="How fast the temperature rises across the channel, positive toward the upper wall.",
+        how="Autograd derivative of the superheat, times dT_ref / L_ref.",
+        scale="temperature_grad_K_per_mm",
+        needs_grad=True,
+        signed=True,
+        cmap="diverging",
+        needs=(NEED_T,),
+        vector=TEMPERATURE_GRADIENT_VECTOR,
     ),
 )
 

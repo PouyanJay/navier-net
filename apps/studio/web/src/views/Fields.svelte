@@ -8,7 +8,7 @@
   import { Icon, icons } from "../lib/icons";
   import { RunData } from "../lib/runData.svelte";
   import { fmt } from "../lib/units";
-  import { GRID_NX, GRID_NY, studio } from "../stores/studio.svelte";
+  import { GRID_NX, GRID_NY, VECTOR_MODES, studio } from "../stores/studio.svelte";
 
   const field = new FieldState();
   const data = new RunData();
@@ -16,6 +16,11 @@
   let multiples = $state(false);
 
   const quantities = $derived(studio.quantitiesOfKind("volume", "derived"));
+  const vectorHint = $derived(
+    field.vectorIds
+      ? `Draw ${studio.current?.label ?? studio.quantity} as a map, arrows or streamlines`
+      : `${studio.current?.label ?? studio.quantity} is a scalar: it has no direction to draw`,
+  );
   const walls = $derived(studio.run ? studio.run.domain_um.y_walls : null);
   const imageUrl = $derived(
     studio.layers.image && studio.runId
@@ -56,6 +61,15 @@
         <label class="toggle"
           ><input type="checkbox" bind:checked={studio.layers.measured} /> measured mask</label
         >
+        <div class="segmented" role="group" aria-label="Vector drawing" title={vectorHint}>
+          {#each VECTOR_MODES as mode (mode.id)}
+            <button
+              aria-pressed={field.vectorMode === mode.id}
+              disabled={!field.vectorIds && mode.id !== "map"}
+              onclick={() => (studio.vectorMode = mode.id)}>{mode.label}</button
+            >
+          {/each}
+        </div>
         <div class="segmented" role="group" aria-label="Layout">
           <button aria-pressed={!multiples} onclick={() => (multiples = false)}>one frame</button>
           <button aria-pressed={multiples} onclick={() => (multiples = true)}>all frames</button>
@@ -90,6 +104,8 @@
           showWalls={studio.layers.walls}
           showGrid={studio.layers.grid}
           probes={studio.layers.probes ? studio.probes : []}
+          vectors={field.vectors}
+          vectorMode={field.vectorMode}
         />
         <div class="legend">
           <Colorbar

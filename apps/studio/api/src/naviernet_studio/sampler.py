@@ -249,6 +249,10 @@ def _read(bag: _Bag, quantity_id: str) -> torch.Tensor:  # noqa: PLR0911, PLR091
         return bag.p_grad[1]
     if q == "grad_T":
         return torch.hypot(bag.theta_grad[0], bag.theta_grad[1])
+    if q == "grad_T_x":
+        return bag.theta_grad[0]
+    if q == "grad_T_y":
+        return bag.theta_grad[1]
     if q == "res_vof":
         return bag.stage_a.vof
     if q == "res_div":

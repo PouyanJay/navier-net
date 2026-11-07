@@ -182,6 +182,11 @@ button:disabled {
     color var(--duration) var(--ease);
 }
 
+.segmented button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .segmented button[aria-pressed="true"] {
   background: var(--surface-raised);
   color: var(--text);

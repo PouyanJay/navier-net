@@ -36,6 +36,19 @@ def test_components_point_at_catalogued_terms():
             assert part in catalogue.BY_ID, (q.id, part)
 
 
+def test_vector_components_are_point_quantities_of_the_same_unit():
+    for q in catalogue.ALL:
+        if q.vector is None:
+            continue
+        for part in q.vector:
+            assert part in catalogue.POINT_IDS, (q.id, part)
+            assert catalogue.BY_ID[part].unit == q.unit, (q.id, part)
+            assert catalogue.BY_ID[part].needs == q.needs, (q.id, part)
+    assert catalogue.BY_ID["speed"].vector == ("u", "v")
+    assert catalogue.BY_ID["grad_T"].vector == ("grad_T_x", "grad_T_y")
+    assert catalogue.BY_ID["T"].vector is None
+
+
 def test_the_served_catalogue_marks_what_the_tiny_run_lacks(client: TestClient):
     body = client.get("/api/catalogue", params={"run": RUN_ID}).json()
 

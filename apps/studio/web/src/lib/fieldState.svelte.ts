@@ -1,12 +1,14 @@
 /** What the Fields and Residuals views share: the grid of the current
- * quantity at the current frame, prefetch of the other frames, the colormap
- * and the range rule. */
+ * quantity at the current frame, the vector components drawn over it, the
+ * colormap and the range rule. The service prefetches the other frames once
+ * one has been served, so stepping through them is quick. */
 
 import { api } from "./api/client";
 import type { Grid, Quantity } from "./api/types";
 import { defaultColormap, type ColormapName } from "./colormaps";
-import { GRID_NX, GRID_NY, studio } from "../stores/studio.svelte";
+import { GRID_NX, GRID_NY, studio, type VectorMode } from "../stores/studio.svelte";
 import { niceRange, percentileRange } from "./units";
+import type { VectorField } from "./vectors";
 
 const SCRUB_DEBOUNCE_MS = 150;
 
@@ -20,6 +22,31 @@ export class FieldState {
   allRange = $state<[number, number] | null>(null);
 
   readonly quantity = $derived<Quantity | null>(studio.current);
+  /** The (x, y) components of the current quantity's vector, when the run can evaluate both. */
+  readonly vectorIds = $derived.by((): [string, string] | null => {
+    const ids = studio.current?.vector;
+    if (!ids) return null;
+    return ids.every((id) => studio.byId.get(id)?.available) ? ids : null;
+  });
+  /** The drawing asked for, or the map alone when the quantity has no vector. */
+  readonly vectorMode = $derived<VectorMode>(this.vectorIds ? studio.vectorMode : "map");
+  /** What one grid request carries: the scalar first, then the components in a
+   * vector mode, so the model is evaluated once for all of them. */
+  private readonly requested = $derived.by((): string[] => {
+    const ids = this.vectorMode === "map" || !this.vectorIds ? [] : this.vectorIds;
+    return [studio.quantity, ...ids.filter((id) => id !== studio.quantity)];
+  });
+  readonly vectors = $derived.by((): VectorField | null => {
+    const grid = this.grid;
+    const ids = this.vectorIds;
+    if (!grid || !ids || this.vectorMode === "map") return null;
+    const plane = (id: string) => grid.header.quantities.findIndex((q) => q.id === id);
+    const i = plane(ids[0]);
+    const j = plane(ids[1]);
+    if (i < 0 || j < 0) return null;
+    const [ny, nx] = grid.header.shape;
+    return { u: grid.planes[i], v: grid.planes[j], nx, ny, extent: grid.header.extent_um };
+  });
   readonly colormap = $derived<ColormapName>(
     studio.colormap === "auto"
       ? defaultColormap(studio.current?.cmap ?? "sequential", studio.theme)
@@ -42,6 +69,7 @@ export class FieldState {
       const run = studio.runId;
       const quantity = studio.quantity;
       const frame = studio.frame;
+      const ids = this.requested;
       // A picture of another quantity must not be drawn with this quantity's
       // colour scale, so the old grid goes as soon as the quantity changes.
       if (this.shownQuantity !== quantity) this.grid = null;
@@ -53,7 +81,7 @@ export class FieldState {
       this.busy = true;
       const wait = setTimeout(() => {
         api
-          .getGrid(run, [quantity], frame, GRID_NX, GRID_NY)
+          .getGrid(run, ids, frame, GRID_NX, GRID_NY)
           .then((grid) => {
             if (cancelled) return;
             this.shownQuantity = quantity;

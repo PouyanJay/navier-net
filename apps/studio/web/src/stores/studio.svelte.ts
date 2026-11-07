@@ -17,6 +17,14 @@ export const IMAGE_MODES: { id: ImageMode; label: string }[] = [
 export type Palette = "aurora" | "ember" | "tide";
 export type RangeMode = "frame" | "all" | "custom";
 export type Tool = "pan" | "line" | "point";
+/** How a quantity with a vector family is drawn: the scalar map alone, or
+ * arrows or streamlines of its vector over the map. */
+export type VectorMode = "map" | "arrows" | "streamlines";
+export const VECTOR_MODES: { id: VectorMode; label: string }[] = [
+  { id: "map", label: "Map" },
+  { id: "arrows", label: "Arrows" },
+  { id: "streamlines", label: "Streamlines" },
+];
 
 export const VIEWS: { id: ViewId; label: string }[] = [
   { id: "geometry", label: "Geometry" },
@@ -103,6 +111,8 @@ class Studio {
   imageOpacity = $state(0.85);
   /** The camera frame as recorded (actual) or the measured-outline render (outline). */
   imageMode = $state<ImageMode>("outline");
+  /** The preferred vector drawing; Fields applies it only to quantities with a vector. */
+  vectorMode = $state<VectorMode>("map");
   tool = $state<Tool>("pan");
 
   probes = $state<Probe[]>([]);

@@ -34,6 +34,24 @@ def test_a_grid_packs_one_float32_plane_per_quantity(client: TestClient):
     assert header["quantities"][1]["unit"] == "mm/s"
 
 
+def test_vector_components_recompose_their_magnitude(client: TestClient):
+    catalogue = {
+        q["id"]: q for q in client.get("/api/catalogue", params={"run": RUN_ID}).json()
+    }
+    thermal = catalogue["grad_T"]["available"]
+    ids = ["grad_T", "grad_T_x", "grad_T_y"] if thermal else ["speed", "u", "v"]
+    assert catalogue[ids[0]]["vector"] == ids[1:]
+
+    response = client.get(
+        f"/api/runs/{RUN_ID}/grid", params={"q": ",".join(ids), "frame": 2, "nx": 16, "ny": 8}
+    )
+
+    assert response.status_code == 200, response.text
+    _, payload = _unpack(response.content)
+    magnitude, x, y = payload.reshape(3, 8 * 16)
+    np.testing.assert_allclose(np.hypot(x, y), magnitude, rtol=1e-5, atol=1e-6)
+
+
 def test_a_grid_can_be_exported_as_csv_with_provenance(client: TestClient):
     response = client.get(
         f"/api/runs/{RUN_ID}/grid",

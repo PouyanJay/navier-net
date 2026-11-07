@@ -74,6 +74,8 @@ export interface Quantity {
   needs: string[];
   caveats: string[];
   components: string[];
+  /** The (x, y) component ids of the vector this quantity belongs to, if any. */
+  vector: [string, string] | null;
   available?: boolean;
   factor?: number;
 }
