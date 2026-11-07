@@ -27,6 +27,26 @@ def test_raw_frames_are_served_as_png_and_missing_ones_404(client: TestClient):
     assert missing.status_code == 404
 
 
+def test_the_outline_frame_survives_event_frames_without_an_image(
+    client: TestClient, repo_root
+):
+    # A ghost-start run has event frames before the first image; the background
+    # of the set-up must come from the frames that do have one.
+    from naviernet_studio import geometry, scene
+
+    (repo_root / "data" / "raw" / "highest_t" / "1.tif").unlink()
+    # Both caches outlive the per-test repository and would point at the copy
+    # that still has every image.
+    scene._scenes.clear()  # noqa: SLF001
+    geometry._backgrounds.clear()  # noqa: SLF001
+
+    served = client.get(f"/api/runs/{RUN_ID}/geometry/frame/2.png", params={"mode": "outline"})
+    missing = client.get(f"/api/runs/{RUN_ID}/geometry/frame/1.png", params={"mode": "outline"})
+
+    assert served.status_code == 200 and served.headers["content-type"] == "image/png"
+    assert missing.status_code == 404
+
+
 def test_agreement_reports_iou_and_both_contours(client: TestClient):
     body = client.get(f"/api/runs/{RUN_ID}/geometry/agreement", params={"frame": 4}).json()
 

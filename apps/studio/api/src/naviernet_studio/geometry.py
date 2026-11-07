@@ -219,18 +219,24 @@ _background_lock = threading.Lock()
 
 
 def _event_stack(scene: Scene) -> tuple[np.ndarray, np.ndarray] | None:
-    """The event frames as grey levels and the bubble masks placed on the same
-    full-width pixel grid, or None when a raw frame is missing."""
+    """The camera frames among the event frames as grey levels, with the bubble
+    masks placed on the same full-width pixel grid, or None when no raw frame
+    exists. Ghost frames before the first image have no raw frame and are
+    left out, so a ghost-start run still gets its background from the images."""
     data = scene.data
-    numbers = data.frame_numbers[: data.n_event]
-    paths = [scene.paths.raw_frame(n) for n in numbers]
-    if not all(p.is_file() for p in paths):
+    rows = [
+        row
+        for row, n in enumerate(data.frame_numbers[: data.n_event])
+        if scene.paths.raw_frame(n).is_file()
+    ]
+    if not rows:
         return None
+    paths = [scene.paths.raw_frame(data.frame_numbers[row]) for row in rows]
     stack = np.stack([np.asarray(Image.open(p).convert("L"), dtype=np.float32) for p in paths])
     bubble = np.zeros(stack.shape, dtype=bool)
     top = int(data.meta["y_roi"][0])
-    rows = data.masks_camera.shape[1]
-    bubble[:, top : top + rows, :] = data.masks_camera[: data.n_event] > 0
+    height = data.masks_camera.shape[1]
+    bubble[:, top : top + height, :] = data.masks_camera[rows] > 0
     return stack, bubble
 
 

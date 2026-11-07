@@ -165,6 +165,9 @@
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => (image = img);
+    // A frame the service cannot give (a ghost frame, an ungenerated cleaned
+    // frame) must not leave the previous picture on the canvas.
+    img.onerror = () => (image = null);
     img.src = imageUrl;
   });
 
