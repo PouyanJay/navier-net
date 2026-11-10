@@ -45,6 +45,7 @@ from naviernet.physics.growth_closure import measured_growth_rate
 from naviernet.physics.heating import wall_flux_ratio_np
 from naviernet.physics.residuals import (
     IN_PLANE_WEIGHT,
+    front_arc_lengths,
     interface_mass_flux,
     interface_shear_residual,
     kinematic_residual,
@@ -71,6 +72,61 @@ class AuditGrid:
     xs: np.ndarray
     ys: np.ndarray
     y_center: float
+
+
+# Open liquid for the temperature checks: farther than this from the front
+# (L_ref units, 20 um at the 300 um scale), past the thermal layer the
+# saturated front holds against the liquid (about 7 um at Pe 2000), where a
+# steep gradient is physics.
+FRONT_MARGIN_STAR = 0.067
+
+
+def _near(mask: np.ndarray, cells_x: int, cells_y: int) -> np.ndarray:
+    """``mask`` grown by ``cells_x`` columns and ``cells_y`` rows."""
+    grown = mask.copy()
+    for _ in range(cells_x):
+        grown[:, 1:] |= grown[:, :-1]
+        grown[:, :-1] |= grown[:, 1:]
+    for _ in range(cells_y):
+        grown[1:, :] |= grown[:-1, :]
+        grown[:-1, :] |= grown[1:, :]
+    return grown
+
+
+def temperature_record(fields: dict, grid: AuditGrid, groups: dict, l_ref_um: float) -> dict:
+    """The liquid temperature's sanity on the grid, in kelvin: the largest
+    streamwise gradient between neighbouring cells of open liquid (K/mm, with
+    where it sits in microns) and the deepest subcooling below the inlet over
+    all the liquid. Empty when the model carries no temperature."""
+    if "T" not in fields:
+        return {}
+    dt_ref = float(groups["dT_ref"])
+    dx, dy = float(grid.xs[1] - grid.xs[0]), float(abs(grid.ys[1] - grid.ys[0]))
+    vapour = fields["alpha"] >= 0.5
+    open_liquid = ~_near(
+        vapour, int(np.ceil(FRONT_MARGIN_STAR / dx)), int(np.ceil(FRONT_MARGIN_STAR / dy))
+    )
+    both = open_liquid[:, 1:] & open_liquid[:, :-1]
+    theta = fields["T"]
+    gradient = (
+        np.where(both, np.abs(np.diff(theta, axis=1)), 0.0) * dt_ref / (dx * l_ref_um * 1e-3)
+    )
+    row, col = np.unravel_index(int(np.argmax(gradient)), gradient.shape)
+    liquid = theta[~vapour]
+    coldest = float(liquid.min()) if liquid.size else float(groups["theta_inlet"])
+    return {
+        "gradient_K_mm": float(gradient[row, col]),
+        "gradient_at_um": [
+            float(0.5 * (grid.xs[col] + grid.xs[col + 1]) * l_ref_um),
+            float(grid.ys[row] * l_ref_um),
+        ],
+        "subcooling_K": max(0.0, float(groups["theta_inlet"]) - coldest) * dt_ref,
+    }
+
+
+# The strip at the channel's end reported on its own: the last 75 um held 60% of
+# the momentum error at frame 10 of ghost5-15-s0 and at most 4% at frames 3 and 7.
+OUTLET_STRIP_UM = 75.0
 
 
 def _rms(values: np.ndarray) -> float:
@@ -131,12 +187,12 @@ def fields_on_grid(model, grid: AuditGrid, t: float) -> dict[str, np.ndarray]:
     return {name: value.detach().cpu().numpy().reshape(shape) for name, value in out.items()}
 
 
-def residual_rms_on_grid(
+def _squared_residuals(
     model, groups, equations, grid: AuditGrid, t: float
-) -> dict[str, float]:
-    """RMS of each collocation equation's residual over the grid at ``t``."""
+) -> dict[str, np.ndarray]:
+    """Each collocation equation's squared residual at the grid's points."""
     points = _points(grid, t)
-    sums = dict.fromkeys((eq.id for eq in equations), 0.0)
+    parts: dict[str, list[np.ndarray]] = {eq.id: [] for eq in equations}
     with torch.enable_grad():
         for start in range(0, len(points), CHUNK):
             chunk = torch.tensor(
@@ -144,8 +200,38 @@ def residual_rms_on_grid(
             )
             ctx = registry.LossContext(model, chunk, groups=groups)
             for eq in equations:
-                sums[eq.id] += float(eq.pointwise(ctx).detach().sum())
-    return {name: float(np.sqrt(total / len(points))) for name, total in sums.items()}
+                parts[eq.id].append(eq.pointwise(ctx).detach().cpu().numpy().ravel())
+    return {name: np.concatenate(values) for name, values in parts.items()}
+
+
+def _rms_of_squares(squared: dict[str, np.ndarray]) -> dict[str, float]:
+    return {name: float(np.sqrt(values.mean())) for name, values in squared.items()}
+
+
+def residual_rms_on_grid(
+    model, groups, equations, grid: AuditGrid, t: float
+) -> dict[str, float]:
+    """RMS of each collocation equation's residual over the grid at ``t``."""
+    return _rms_of_squares(_squared_residuals(model, groups, equations, grid, t))
+
+
+def outlet_strip_record(
+    squared: dict[str, np.ndarray], grid: AuditGrid, strip_star: float
+) -> dict[str, dict[str, float]]:
+    """Each equation's residual in the last ``strip_star`` of the channel against
+    the rest, and the strip's share of its squared error. By the last frame the
+    nose is about 100 um from the outlet and most of the momentum error sits
+    here, so a whole-grid RMS says little about the rest of the channel."""
+    columns = np.tile(grid.xs, len(grid.ys))
+    in_strip = columns >= float(grid.xs[-1]) - strip_star
+    return {
+        name: {
+            "rms_strip": float(np.sqrt(values[in_strip].mean())),
+            "rms_rest": float(np.sqrt(values[~in_strip].mean())),
+            "share_of_error": float(values[in_strip].sum() / max(values.sum(), 1e-30)),
+        }
+        for name, values in squared.items()
+    }
 
 
 def flux_balance(cfg, model, data, groups, t: float) -> dict:
@@ -267,6 +353,7 @@ def outline_agreement(cfg, model, data, row: int) -> dict:
 
 # The front's four segments, as the sampler orders them and the jump map names them.
 SEGMENTS = ("upper", "lower", "root", "nose")
+ROOT_SEGMENT = SEGMENTS.index("root")
 
 # The explicit front the audit samples for its jump and kinematic checks. The
 # Young-Laplace residual converges at 128 body and 64 cap points (within a
@@ -305,7 +392,31 @@ def jump_shape_pixels(
     return np.abs(laplace) / per_pixel
 
 
-def _laplace_in_pascals(model, laplace: np.ndarray, codes: np.ndarray, t: float) -> dict:
+def _by_length(
+    laplace: np.ndarray, codes: np.ndarray, lengths: np.ndarray, scale: float
+) -> dict:
+    """The jump's error in pascals with each sample counted by the length of front
+    it stands for: the root cap is 10 to 17% of the samples but 4 to 8% of the
+    outline. Also with the root cap left out, where the jump's curvature formula
+    does not apply, and the root cap on its own."""
+    root = codes == ROOT_SEGMENT
+
+    def weighted(values: np.ndarray, keep: np.ndarray) -> float:
+        return float(np.sum(values[keep] * lengths[keep]) / max(np.sum(lengths[keep]), 1e-30))
+
+    everywhere = np.ones_like(root)
+    return {
+        "rms": float(np.sqrt(weighted(laplace**2, everywhere))) * scale,
+        "mean": weighted(laplace, everywhere) * scale,
+        "rms_without_root": float(np.sqrt(weighted(laplace**2, ~root))) * scale,
+        "root_mean": weighted(laplace, root) * scale,
+        "root_rms": float(np.sqrt(weighted(laplace**2, root))) * scale,
+    }
+
+
+def _laplace_in_pascals(
+    model, laplace: np.ndarray, codes: np.ndarray, t: float, lengths: np.ndarray
+) -> dict:
     """The Young-Laplace jump around the front in pascals: the vapour pressure
     (gauge), the jump's mean error (zero when imposed on average), and its
     scatter about that mean, overall and per segment: the part a uniform vapour
@@ -325,6 +436,7 @@ def _laplace_in_pascals(model, laplace: np.ndarray, codes: np.ndarray, t: float)
             for k, name in enumerate(SEGMENTS)
             if (codes == k).any()
         },
+        "laplace_by_length_Pa": _by_length(laplace, codes, lengths, scale),
     }
 
 
@@ -380,7 +492,10 @@ def front_conditions(
         return record, {}
     kappa = front.kappa_par.detach().cpu().numpy().ravel()
     pixels = jump_shape_pixels(laplace, kappa, groups, pixel, width)
-    record.update(_laplace_in_pascals(model, laplace, codes := _segment_codes(front), t))
+    lengths = front_arc_lengths(front).detach().cpu().numpy().ravel()
+    record.update(
+        _laplace_in_pascals(model, laplace, codes := _segment_codes(front), t, lengths)
+    )
     record["jump_px_median"] = float(np.median(pixels))
     record["jump_px_p90"] = float(np.percentile(pixels, 90))
     record["jump_px_by_segment"] = {
@@ -403,6 +518,7 @@ def audit_frame(
     """One event frame's audit record and its field snapshot."""
     t = float(data.t[row])
     fields = fields_on_grid(model, grid, t)
+    squared = _squared_residuals(model, groups, equations, grid, t)
     record = {
         "frame": int(data.frame_numbers[row]),
         # A ghost frame is a rule's outline before the first image: audited like
@@ -413,10 +529,14 @@ def audit_frame(
             name: mirror_breaking_fraction(values, odd=name in ODD_FIELDS)
             for name, values in fields.items()
         },
-        "residual_rms": residual_rms_on_grid(model, groups, equations, grid, t),
+        "residual_rms": _rms_of_squares(squared),
+        "outlet_strip": outlet_strip_record(
+            squared, grid, OUTLET_STRIP_UM / float(cfg.scales.L_ref_um)
+        ),
         "flux": flux_balance(cfg, model, data, groups, t),
         "heat": heat_budget(cfg, model, data, groups, row, fields, grid),
         "outline": outline_agreement(cfg, model, data, row),
+        "temperature": temperature_record(fields, grid, groups, float(cfg.scales.L_ref_um)),
     }
     nx = int(getattr(cfg.evaluation, "relative_error_nx", 0))
     if nx > 0:
@@ -459,7 +579,25 @@ def _verdicts(
     verdicts.update(
         _verdicts_of_fields(mirror_worst, residual_worst, flux_worst, heat_worst, acceptance)
     )
+    verdicts.update(_temperature_verdicts(frames, acceptance))
     return verdicts
+
+
+def _temperature_verdicts(frames: list[dict], acceptance) -> dict:
+    """The liquid temperature's sanity: the steepest streamwise gradient in the
+    open liquid and the deepest subcooling below the inlet, each at its worst
+    frame; nothing for a model without a temperature."""
+    records = [f["temperature"] for f in frames if f.get("temperature")]
+    if not records:
+        return {}
+    return {
+        "liquid_gradient": _at_most(
+            max(r["gradient_K_mm"] for r in records), acceptance.liquid_gradient_max_K_mm
+        ),
+        "subcooling": _at_most(
+            max(r["subcooling_K"] for r in records), acceptance.subcooling_max_K
+        ),
+    }
 
 
 def _outline_verdicts(
@@ -595,6 +733,36 @@ def _jump_verdict(frames: list[dict], acceptance) -> dict:
     }
 
 
+def _worst_of(frames: list[dict]) -> dict:
+    """The worst value of each scored quantity over ``frames``."""
+    fronts = [
+        f["front"] for f in frames if f.get("front") and "laplace_by_length_Pa" in f["front"]
+    ]
+    worst = {
+        "residual": max(max(f["residual_rms"].values(), default=0.0) for f in frames),
+        "flux": max(f["flux"]["max_abs"] for f in frames),
+        "heat": max(f["heat"]["spread"] for f in frames),
+    }
+    if fronts:
+        lengths = [f["laplace_by_length_Pa"] for f in fronts]
+        worst.update(
+            jump_rms_Pa=max(f["laplace_rms_Pa"] for f in fronts),
+            jump_rms_by_length_Pa=max(v["rms"] for v in lengths),
+            jump_rms_by_length_without_root_Pa=max(v["rms_without_root"] for v in lengths),
+            root_rms_Pa=max(v["root_rms"] for v in lengths),
+        )
+    return worst
+
+
+def scoring_summary(frames: list[dict]) -> dict:
+    """The worst values over the judged frames, and without the last of them, which
+    the outlet distorts. A report beside the verdicts: it changes none of them."""
+    summary = {"all_frames": _worst_of(frames)}
+    if len(frames) > 1:
+        summary["without_last_frame"] = _worst_of(frames[:-1])
+    return summary
+
+
 def _at_most(worst: float, limit) -> dict:
     return {"worst": worst, "max": float(limit), "pass": worst <= float(limit)}
 
@@ -654,9 +822,12 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
             "nose_tol": float(evaluation.acceptance.nose_tol),
             "jump_px_max": float(evaluation.acceptance.jump_px_max),
             "jump_pa_max": float(evaluation.acceptance.jump_pa_max),
+            "liquid_gradient_max_K_mm": float(evaluation.acceptance.liquid_gradient_max_K_mm),
+            "subcooling_max_K": float(evaluation.acceptance.subcooling_max_K),
         },
         "warmup_iou": warmup,
         "ghost_frames": len(frames) - len(judged),
+        "scoring": scoring_summary(judged),
         "verdicts": verdicts,
         "frames": frames,
         "scan": scan,

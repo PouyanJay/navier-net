@@ -586,6 +586,29 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.laplace_root",
+        "Root in the Young-Laplace loss",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "whether the bubble's root takes part in the pressure jump; its radius is below "
+            "the half gap, where the jump's curvature formula no longer applies"
+        ),
+        options=("include", "exclude"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.laplace_weighting",
+        "Young-Laplace sample weighting",
+        "enum",
+        "physics",
+        "override",
+        help="whether each edge point counts equally, or by the length of edge it stands for",
+        options=("samples", "length"),
+        advanced=True,
+    ),
+    FieldSpec(
         "model.momentum_inertia",
         "Inertia in the momentum law",
         "bool",
@@ -1360,6 +1383,30 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         unit="Pa",
         lo=0.0,
         hi=1e4,
+    ),
+    FieldSpec(
+        "evaluation.acceptance.liquid_gradient_max_K_mm",
+        "Liquid temperature gradient",
+        "float",
+        *_GATE,
+        help=(
+            "the steepest streamwise temperature change between neighbouring cells of open "
+            "liquid, away from the front; a sharper one is a step the energy equation cannot "
+            "carry"
+        ),
+        unit="K/mm",
+        lo=0.0,
+        hi=1e3,
+    ),
+    FieldSpec(
+        "evaluation.acceptance.subcooling_max_K",
+        "Subcooling below the inlet",
+        "float",
+        *_GATE,
+        help="how far below the inlet temperature the coldest liquid cell may sit",
+        unit="K",
+        lo=0.0,
+        hi=10.0,
     ),
 )
 

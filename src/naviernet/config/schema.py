@@ -471,6 +471,18 @@ class ModelConfig:
     # pointwise jump over-determines the depth-averaged flow there (its error
     # held near 0.29 in every run while the flow law failed beside the front).
     laplace_condition: str = "pointwise"  # "pointwise" | "mean"
+    # Whether the root cap takes part in the Young-Laplace loss. The jump adds the
+    # outline's in-plane curvature to the gap curvature, an expansion for an
+    # in-plane radius much larger than the half gap; the root's radius is 27 to
+    # 35 um against 75 um. There the jump asked the liquid pressure to swing
+    # about 200 Pa across the cap (it moved 6 to 9 Pa on ghost5-15-s0), 20 to 30
+    # times what the momentum law allows. "exclude" leaves those samples out;
+    # the audit still reports them.
+    laplace_root: str = "include"  # "include" | "exclude"
+    # How the samples of the front count in the Young-Laplace loss. "samples":
+    # equally, so the root cap's 10% of the samples outweighs its 4 to 8% of the
+    # perimeter. "length": by the length of front each one stands for.
+    laplace_weighting: str = "samples"  # "samples" | "length"
     # Depth-averaged inertia in the Brinkman law, rho~ (u_t + 6/5 u.grad u),
     # making it the depth-averaged Navier-Stokes of a Hele-Shaw cell (Gondret &
     # Rabaud 1997). Without it the law balances pressure against friction alone,
@@ -655,6 +667,7 @@ class LossWeights:
     vapour_potential: float = 1.0  # WP3: curl-free vapour velocity under the two-phase pressure
     energy_liquid: float = 1.0  # WP4: liquid energy equation of the sharp thermal model
     theta_bc: float = 1.0  # WP4: inlet, initial and side-wall temperature conditions
+    theta_floor: float = 1.0  # WP4: the liquid no colder than the inlet (a bound, fixed weight)
     evap_flux: float = 1.0  # WP4: free source pulled to the interface flux, two-way
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
@@ -1056,6 +1069,18 @@ class AcceptanceConfig:
     # scatter together), in pascals, at the worst frame. About 5 Pa is what the
     # outline's own error (~2 um, ~5% of the nose curvature) leaves on its own.
     jump_pa_max: float = 5.0
+    # The liquid temperature's sanity on the audit grid, in kelvin. The largest
+    # streamwise gradient between neighbouring cells of open liquid (farther than
+    # audit.FRONT_MARGIN_STAR from the front, past the thermal layer the saturated
+    # front holds), in K/mm: the heaters warm a passing parcel by well under 1 K
+    # per mm, so a sharper change is a step the energy equation cannot carry.
+    # ghost2-15-s0 and ghost2-20-s0 held one of 8 and 30 K/mm at frame 1, where
+    # the superheat ended at the nose; the first ghost run 2 K/mm, the runs
+    # started at a uniform 58 C about 3 K/mm. And the deepest
+    # subcooling below the inlet over the liquid: nothing in the channel cools the
+    # liquid, so a colder cell is an error (the same two runs: 0.02 and 0.05 K).
+    liquid_gradient_max_K_mm: float = 6.0
+    subcooling_max_K: float = 0.01
 
 
 @dataclass

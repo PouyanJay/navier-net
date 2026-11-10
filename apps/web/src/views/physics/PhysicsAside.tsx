@@ -49,6 +49,8 @@ const DESC: Record<string, string> = {
     "The liquid's energy equation with the interface held at saturation, so the latent heat is a boundary condition rather than a sink. Heated by the background flux and the cavity disk where there is liquid.",
   theta_bc:
     "The inlet temperature, the liquid's temperature before the first frame, and adiabatic or isothermal side walls, from the series' conditions.",
+  theta_floor:
+    "The liquid is never colder than the inlet: nothing in the channel cools it, so a cell below the inlet temperature is an error. A bound at a fixed weight, so the solver cannot end the superheat with a cold patch.",
   evap_flux:
     "The free source is pulled, both ways, to the evaporation flux through the front: the liquid-side temperature gradient, spread over the interface band with the mass-conservation factor.",
 };

@@ -46,6 +46,7 @@ const TERM_LABELS: Record<string, { family: Family; label: string }> = {
     label: "energy_liquid · liquid energy, saturated interface",
   },
   theta_bc: { family: "extra", label: "theta_bc · temperature conditions" },
+  theta_floor: { family: "extra", label: "theta_floor · liquid no colder than the inlet" },
   evap_flux: {
     family: "extra",
     label: "evap_flux · source from the front flux",

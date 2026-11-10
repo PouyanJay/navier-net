@@ -10,7 +10,15 @@ import numpy as np
 import pytest
 import torch
 
-from naviernet.audit import audit_grid, audit_run, mirror_breaking_fraction
+from naviernet.audit import (
+    AuditGrid,
+    audit_grid,
+    audit_run,
+    mirror_breaking_fraction,
+    outlet_strip_record,
+    scoring_summary,
+    temperature_record,
+)
 from naviernet.data.dataset import BubbleDataset
 from naviernet.physics import mass_balance
 from naviernet.physics.groups import compute_groups
@@ -50,6 +58,8 @@ VERDICTS = {
     "flux_in_time",
     "jump_shape",
     "jump_pressure",
+    "liquid_gradient",
+    "subcooling",
 }
 
 
@@ -164,6 +174,16 @@ def test_audit_of_a_trained_run_reports_every_test_with_verdicts(tmp_path):
     scan = report["scan"]
     assert len(scan["t_star"]) == 5 == len(scan["flux_max_abs"]) == len(scan["laplace_rms"])
     assert all(len(v) == 5 for v in scan["residual_rms"].values())
+    assert set(frame["outlet_strip"]) == set(frame["residual_rms"])
+    assert all(0.0 <= v["share_of_error"] <= 1.0 for v in frame["outlet_strip"].values())
+    assert {"rms", "mean", "rms_without_root", "root_mean", "root_rms"} == set(
+        frame["front"]["laplace_by_length_Pa"]
+    )
+    assert set(report["scoring"]) == {"all_frames", "without_last_frame"}
+    assert (
+        report["scoring"]["all_frames"]["flux"]
+        >= report["scoring"]["without_last_frame"]["flux"]
+    )
     assert 0.0 <= frame["outline"]["iou"] <= 1.0
     assert frame["outline"]["nose_error"] >= 0.0
     assert all(np.isfinite(v) for v in frame["mirror"].values())
@@ -251,3 +271,102 @@ def test_seed_ensemble_comparison_scores_agreement_and_disagreement():
     assert agree["fields"]["u"]["frames"]["1"]["a|b"]["breaking"] == pytest.approx(1.0)
     assert disagree["fields"]["u"]["frames"]["1"]["a|m"]["breaking"] == pytest.approx(-1.0)
     assert disagree["fields"]["v"]["frames"]["1"]["a|m"]["full"] == pytest.approx(-1.0)
+
+
+def _open_channel_grid():
+    """A grid of 15 um cells with a bubble in the middle, the liquid on both sides."""
+    xs = np.linspace(0.0, 3.0, 61)
+    ys = np.linspace(-0.5, 0.5, 21)
+    alpha = np.zeros((len(ys), len(xs)))
+    alpha[8:13, 20:40] = 1.0
+    return AuditGrid(xs=xs, ys=ys, y_center=0.0), alpha
+
+
+def test_a_smooth_warm_liquid_passes_the_temperature_checks():
+    grid, alpha = _open_channel_grid()
+    theta = np.tile(0.1 * grid.xs, (len(grid.ys), 1))  # 0.1 K per L_ref: 0.33 K/mm
+
+    record = temperature_record(
+        {"alpha": alpha, "T": theta}, grid, {"dT_ref": 1.0, "theta_inlet": 0.0}, 300.0
+    )
+
+    assert record["gradient_K_mm"] == pytest.approx(0.1 / 0.3, rel=1e-6)
+    assert record["subcooling_K"] == 0.0
+
+
+def test_a_temperature_step_in_the_open_liquid_is_measured_where_it_sits():
+    grid, alpha = _open_channel_grid()
+    theta = np.where(grid.xs[None, :] < 2.5, 0.3, 0.0) * np.ones((len(grid.ys), 1))
+
+    record = temperature_record(
+        {"alpha": alpha, "T": theta}, grid, {"dT_ref": 2.0, "theta_inlet": 0.0}, 300.0
+    )
+
+    assert record["gradient_K_mm"] == pytest.approx(0.6 / (0.05 * 0.3), rel=1e-6)
+    assert record["gradient_at_um"][0] == pytest.approx(2.475 * 300.0, rel=1e-6)
+
+
+def test_the_thermal_layer_at_the_front_is_not_a_step():
+    grid, alpha = _open_channel_grid()
+    # The superheat drops to saturation over the two cells around the bubble.
+    theta = np.full((len(grid.ys), len(grid.xs)), 0.5)
+    theta[6:15, 18:42] = 0.0
+
+    record = temperature_record(
+        {"alpha": alpha, "T": theta}, grid, {"dT_ref": 1.0, "theta_inlet": 0.0}, 300.0
+    )
+
+    assert record["gradient_K_mm"] == 0.0
+
+
+def test_liquid_below_the_inlet_temperature_is_subcooling():
+    grid, alpha = _open_channel_grid()
+    theta = np.full((len(grid.ys), len(grid.xs)), 0.2)
+    theta[0, 50] = -0.04  # one cold cell in the liquid
+    theta[10, 30] = -1.0  # inside the bubble: not liquid, not counted
+
+    record = temperature_record(
+        {"alpha": alpha, "T": theta}, grid, {"dT_ref": 1.0, "theta_inlet": 0.1}, 300.0
+    )
+
+    assert record["subcooling_K"] == pytest.approx(0.14)
+
+
+def test_a_model_without_a_temperature_has_no_temperature_record():
+    grid, alpha = _open_channel_grid()
+
+    assert (
+        temperature_record({"alpha": alpha}, grid, {"dT_ref": 1.0, "theta_inlet": 0.0}, 300.0)
+        == {}
+    )
+
+
+def test_the_outlet_strip_separates_the_last_columns_from_the_rest():
+    grid = AuditGrid(xs=np.linspace(0.0, 4.0, 5), ys=np.array([0.0, 1.0]), y_center=0.5)
+    squared = {"brinkman": np.array([1.0, 1.0, 1.0, 1.0, 16.0] * 2)}
+
+    record = outlet_strip_record(squared, grid, strip_star=0.5)["brinkman"]
+
+    assert record["rms_strip"] == pytest.approx(4.0)
+    assert record["rms_rest"] == pytest.approx(1.0)
+    assert record["share_of_error"] == pytest.approx(0.8)
+
+
+def _scored_frame(flux: float) -> dict:
+    return {
+        "residual_rms": {"brinkman": 2.0 * flux},
+        "flux": {"max_abs": flux},
+        "heat": {"spread": 0.1},
+    }
+
+
+def test_the_scoring_summary_reports_the_run_with_and_without_its_last_frame():
+    summary = scoring_summary([_scored_frame(0.05), _scored_frame(0.07), _scored_frame(0.5)])
+
+    assert summary["all_frames"]["flux"] == 0.5
+    assert summary["without_last_frame"]["flux"] == 0.07
+    assert summary["without_last_frame"]["residual"] == pytest.approx(0.14)
+
+
+def test_a_single_frame_has_nothing_to_leave_out():
+    assert set(scoring_summary([_scored_frame(0.05)])) == {"all_frames"}

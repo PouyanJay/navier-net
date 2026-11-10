@@ -1,5 +1,5 @@
 # Series-1 at the 300 um calibration with the seed-grown conditions and a ghost
-# start: the solve begins 6 ms before the first image from a small bubble on
+# start: the solve begins about 5 ms before the first image from a small bubble on
 # the cavity, so the state at frame 1 (the film's age over the floor, the
 # cooled layer around the bubble, the flow's memory) is computed, not imposed.
 #
@@ -27,7 +27,16 @@ fluid: ${fluid.name}
 T_sat_C: ${fluid.T_sat_C}
 
 # Three floor zones: nothing upstream of the cavity (233 um), a hot zone over
-# the next 367 um, and the downstream floor.
+# the next 367 um, and the downstream floor. With the ghost history grown by
+# the film law itself (2026-11-07, offline, 15 mL/h), the film alone at 1.0 and
+# 3.5 um feeds frames 1 to 8 within 7% and leaves frames 9 and 10 short by 11
+# to 15%: the part the front's own evaporation has to supply (about a fifth of
+# its upper estimate). Lowering the value to 0.8 (ghost2-20-s0) and 0.7
+# (ghost2-15-s0) did not help: the solver balanced the late frames by ending
+# the superheat at the nose with a temperature step, and the early frames went
+# short. So the value stays at 1.0 and the superheat is held physical instead
+# (training.weights.theta_floor, the mixed energy loss, the audit's
+# temperature checks).
 q_upstream_W_cm2: 0.0
 heater_edge_um: 233.0
 q_hot_W_cm2: 6.5

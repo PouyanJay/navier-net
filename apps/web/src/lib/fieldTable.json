@@ -757,6 +757,46 @@
     "default": "pointwise"
   },
   {
+    "key": "model.laplace_root",
+    "label": "Root in the Young-Laplace loss",
+    "kind": "enum",
+    "section": "physics",
+    "owner": "override",
+    "help": "whether the bubble's root takes part in the pressure jump; its radius is below the half gap, where the jump's curvature formula no longer applies",
+    "unit": "",
+    "options": [
+      "include",
+      "exclude"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "laplace_root",
+    "default": "include"
+  },
+  {
+    "key": "model.laplace_weighting",
+    "label": "Young-Laplace sample weighting",
+    "kind": "enum",
+    "section": "physics",
+    "owner": "override",
+    "help": "whether each edge point counts equally, or by the length of edge it stands for",
+    "unit": "",
+    "options": [
+      "samples",
+      "length"
+    ],
+    "lo": null,
+    "hi": null,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "laplace_weighting",
+    "default": "samples"
+  },
+  {
     "key": "model.momentum_inertia",
     "label": "Inertia in the momentum law",
     "kind": "bool",
@@ -1914,5 +1954,39 @@
     "advanced": false,
     "name": "jump_pa_max",
     "default": 5.0
+  },
+  {
+    "key": "evaluation.acceptance.liquid_gradient_max_K_mm",
+    "label": "Liquid temperature gradient",
+    "kind": "float",
+    "section": "acceptance",
+    "owner": "override",
+    "help": "the steepest streamwise temperature change between neighbouring cells of open liquid, away from the front; a sharper one is a step the energy equation cannot carry",
+    "unit": "K/mm",
+    "options": [],
+    "lo": 0.0,
+    "hi": 1000.0,
+    "optional": false,
+    "baked": false,
+    "advanced": false,
+    "name": "liquid_gradient_max_K_mm",
+    "default": 6.0
+  },
+  {
+    "key": "evaluation.acceptance.subcooling_max_K",
+    "label": "Subcooling below the inlet",
+    "kind": "float",
+    "section": "acceptance",
+    "owner": "override",
+    "help": "how far below the inlet temperature the coldest liquid cell may sit",
+    "unit": "K",
+    "options": [],
+    "lo": 0.0,
+    "hi": 10.0,
+    "optional": false,
+    "baked": false,
+    "advanced": false,
+    "name": "subcooling_max_K",
+    "default": 0.01
   }
 ]

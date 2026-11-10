@@ -799,6 +799,8 @@ _BOUNDARY_CHOICES = {
     "outlet_condition": ("none", "zero_gradient"),
     "inlet_profile": ("plug", "developed"),
     "laplace_condition": ("pointwise", "mean"),
+    "laplace_root": ("include", "exclude"),
+    "laplace_weighting": ("samples", "length"),
 }
 
 
@@ -1985,10 +1987,10 @@ def _bind_measured_outline(cfg, model, paths: RunPaths) -> None:
     model.nets["phi"].bind_outline(MeasuredOutline.load(path, load_ghost_outline(cfg, paths)))
 
 
-# The terms the temperature-only stage trains on: the liquid energy equation and
-# the measured start and inlet temperatures (the interface is at saturation by
-# construction of the gated temperature).
-TEMPERATURE_TERMS = frozenset({"energy_liquid", "theta_bc"})
+# The terms the temperature-only stage trains on: the liquid energy equation, the
+# measured start and inlet temperatures (the interface is at saturation by
+# construction of the gated temperature) and the floor under the liquid.
+TEMPERATURE_TERMS = frozenset({"energy_liquid", "theta_bc", "theta_floor"})
 
 
 def _temperature_stage(step: int, tcfg) -> bool:
