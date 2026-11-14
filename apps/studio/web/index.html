@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-palette="aurora">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>naviernet studio</title>
+    <script>
+      // Restore the theme and palette before first paint, so there is no flash.
+      try {
+        const theme = localStorage.getItem("naviernet-studio:theme");
+        const palette = localStorage.getItem("naviernet-studio:palette");
+        const root = document.documentElement;
+        if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+        if (["aurora", "ember", "tide"].includes(palette)) root.dataset.palette = palette;
+      } catch {
+        /* storage may be unavailable; the defaults stand */
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
