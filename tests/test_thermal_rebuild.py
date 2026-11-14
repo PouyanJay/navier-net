@@ -553,6 +553,105 @@ def test_the_two_heater_inputs_go_together():
         compute_groups(make_config(["experiment.q_upstream_W_cm2=0.45"]))
 
 
+HOT_ZONE = [
+    "experiment.q_upstream_W_cm2=0",
+    "experiment.heater_edge_um=240",
+    "experiment.q_hot_W_cm2=6",
+    "experiment.hot_zone_end_um=690",
+]
+
+
+def test_a_hot_zone_sits_between_the_heater_edge_and_its_own_end():
+    """Nothing upstream of the edge, the hot flux up to the zone's end, q_wall
+    beyond it."""
+    from naviernet.physics.heating import wall_flux_ratio_np
+
+    cfg = make_config(HOT_ZONE)
+    groups = compute_groups(cfg)
+
+    ratio = wall_flux_ratio_np(np.array([0.4, 1.5, 3.0]), groups)
+
+    assert groups["heater_edge_star"] == pytest.approx(0.8)
+    assert groups["hot_zone_end_star"] == pytest.approx(2.3)
+    assert ratio == pytest.approx(
+        [0.0, 6.0 / float(cfg.experiment.q_wall_W_cm2), 1.0], abs=1e-6
+    )
+
+
+def test_the_hot_zone_needs_its_flux_its_end_and_the_heater_edge():
+    with pytest.raises(ValueError, match="hot_zone_end_um"):
+        compute_groups(make_config([*HOT_ZONE[:3]]))
+    with pytest.raises(ValueError, match="heater_edge_um"):
+        compute_groups(make_config(HOT_ZONE[2:]))
+    with pytest.raises(ValueError, match="hot_zone_end_um"):
+        compute_groups(make_config([*HOT_ZONE[:3], "experiment.hot_zone_end_um=200"]))
+
+
+def test_the_heated_length_is_the_floor_flux_summed_from_the_inlet_edge():
+    from naviernet.physics.heating import heated_length, wall_flux_ratio_np
+
+    groups = compute_groups(make_config(HOT_ZONE))
+    xs = np.linspace(0.0, 4.0, 40001)
+    ratio = wall_flux_ratio_np(xs, groups)
+    summed = np.r_[0.0, np.cumsum(0.5 * (ratio[1:] + ratio[:-1]) * np.diff(xs))]
+
+    length = heated_length(torch.tensor(xs[::4000, None]), groups).ravel().numpy()
+
+    assert length == pytest.approx(summed[::4000], abs=1e-4)
+    assert heated_length(torch.tensor([[1.7]]), compute_groups(make_config())).item() == (
+        pytest.approx(1.7)
+    ), "one flux: the heated length is the distance itself"
+
+
+def test_the_heated_start_rises_along_the_floor_as_steady_flow_would_warm_it():
+    """Under T_init_profile=heated the liquid starts at T_init_C at the inlet
+    edge and warmer downstream by the floor's heat over the mean flow's
+    capacity: q W x / (rho cp Q)."""
+    from naviernet.physics.heating import heated_length
+
+    cfg = make_config([*THERMAL_SERIES, *HOT_ZONE, "experiment.T_init_profile=heated"])
+    groups = compute_groups(cfg)
+    exp, fluid = cfg.experiment, cfg.fluid
+    flow = exp.flow_rate_mL_hr * 1e-6 / 3600.0
+    hot_power = 6.0e4 * exp.channel_width_um * 1e-6 * 450e-6  # the whole hot zone, W
+    x_end = torch.tensor([[groups["hot_zone_end_star"] + 0.2]])  # just beyond the zone
+    beyond = float(exp.q_wall_W_cm2) * 1e4 * exp.channel_width_um * 1e-6 * 0.2 * 300e-6
+
+    rise_K = groups["theta_init_rise"] * heated_length(x_end, groups).item() * groups["dT_ref"]
+
+    assert rise_K == pytest.approx(
+        (hot_power + beyond) / (fluid.rho_l * fluid.cp_l * flow), rel=2e-3
+    )
+    assert "theta_init_rise" not in compute_groups(make_config(THERMAL_SERIES))
+
+
+def test_the_initial_condition_scores_the_temperature_against_the_heated_start():
+    from naviernet.physics.heating import heated_length
+
+    groups = {
+        **compute_groups(make_config([*THERMAL_SERIES, *HOT_ZONE])),
+        "theta_inlet": 0.0,
+        "theta_init": 0.2,
+        "theta_init_rise": 0.5,
+    }
+    heated = _LiquidField(lambda x: 0.2 + 0.5 * heated_length(x[:, 0:1], groups))
+    uniform = _LiquidField(lambda x: 0.2 + 0.0 * x[:, 0:1])
+    torch.manual_seed(0)
+    initial = torch.rand(32, 3) * torch.tensor([4.0, 1.0, 0.0])
+    inlet = torch.zeros(4, 3)
+    batches = ThermalBatches(inlet, initial, torch.rand(8, 3))
+
+    assert thermal_boundary_losses(heated, groups, batches).item() == pytest.approx(
+        0.2**2, abs=1e-6
+    ), "only the inlet value is missed"
+    assert thermal_boundary_losses(uniform, groups, batches).item() > 0.2**2 + 0.05
+
+
+def test_an_unknown_initial_profile_is_refused():
+    with pytest.raises(ValueError, match="T_init_profile"):
+        compute_groups(make_config([*THERMAL_SERIES, "experiment.T_init_profile=warm"]))
+
+
 def test_the_film_under_the_weak_zone_evaporates_at_its_own_flux(tmp_path):
     """The footprint source reads the local floor flux: over the upstream zone
     it is the zone's ratio times the downstream value."""

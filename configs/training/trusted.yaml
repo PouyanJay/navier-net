@@ -51,6 +51,10 @@ weights:
   # frame, the inlet) at the data term's weight, and never rebalanced: the
   # first full-chain benchmark let the physics erase the initial superheat.
   theta_bc: 10.0
+  # The liquid no colder than the inlet, at the same weight and never rebalanced:
+  # ghost2-15-s0 and ghost2-20-s0 put the liquid ahead of the nose below the inlet
+  # to end the superheat there, and the relative energy loss let them.
+  theta_floor: 10.0
   evap_flux: 1.0
 
 rebalance_every: 500

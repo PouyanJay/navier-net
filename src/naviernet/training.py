@@ -32,6 +32,7 @@ from naviernet import warmup_cache
 from naviernet.config.schema import resolved_datasets, training_datasets
 from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
+from naviernet.data.ghost import load_ghost_outline
 from naviernet.data.outline import outline_path
 from naviernet.models.geometry import GeometryPriors
 from naviernet.models.measured_outline import MeasuredInterface, MeasuredOutline
@@ -79,7 +80,7 @@ def _pulse_groups(groups: dict, cfg, domain) -> dict:
         **groups,
         "x_pin_star": domain.x_pin,
         "pulse_t0": domain.t_min + cfg.model.pulse_t0 * (domain.t_max - domain.t_min),
-        "pulse_sigma": cfg.model.pulse_width * (domain.x_max - domain.x_min),
+        "pulse_sigma": cfg.model.pulse_width * (domain.x_view - domain.x_min),
     }
 
 
@@ -798,6 +799,8 @@ _BOUNDARY_CHOICES = {
     "outlet_condition": ("none", "zero_gradient"),
     "inlet_profile": ("plug", "developed"),
     "laplace_condition": ("pointwise", "mean"),
+    "laplace_root": ("include", "exclude"),
+    "laplace_weighting": ("samples", "length"),
 }
 
 
@@ -1026,7 +1029,7 @@ def _kinematic_plan(cfg, data: BubbleDataset, device) -> kinematics.KinematicPla
     if not tcfg.kinematics:
         return None
     rate = data.supervised_growth_rate
-    plan = kinematics.build_plan(data.domain, rate, tcfg, device)
+    plan = kinematics.build_plan(data.domain.in_view(), rate, tcfg, device)
     log.info(
         "kinematics on: %d x %d^2 quadrature over t* >= %.3f, r_ref=%.4f",
         plan.n_times,
@@ -1971,8 +1974,9 @@ def _engage_measured_outline(model, on: bool) -> None:
         log.info("interface: the measured outline traced from the images")
 
 
-def _bind_measured_outline(cfg, model, paths: RunPaths) -> None:
-    """Give a ``model.measured_outline`` model its dataset's traced outline."""
+def _bind_measured_outline(cfg, model, paths: RunPaths, data: BubbleDataset) -> None:
+    """Give a ``model.measured_outline`` model its dataset's traced outline,
+    without the frames held out of supervision."""
     if not isinstance(model.nets["phi"], MeasuredInterface):
         return
     path = outline_path(paths)
@@ -1981,13 +1985,18 @@ def _bind_measured_outline(cfg, model, paths: RunPaths) -> None:
             f"{path} not found: model.measured_outline reads the outline the preprocess "
             f"stage traces, so re-run it (naviernet stage=preprocess dataset={cfg.dataset})"
         )
-    model.nets["phi"].bind_outline(MeasuredOutline.load(path))
+    held_out = [float(data.t[row]) for row in data.validation_rows]
+    if held_out:
+        log.info("measured outline: frames at t* %s held out of the traced outline", held_out)
+    model.nets["phi"].bind_outline(
+        MeasuredOutline.load(path, load_ghost_outline(cfg, paths), held_out_times=held_out)
+    )
 
 
-# The terms the temperature-only stage trains on: the liquid energy equation and
-# the measured start and inlet temperatures (the interface is at saturation by
-# construction of the gated temperature).
-TEMPERATURE_TERMS = frozenset({"energy_liquid", "theta_bc"})
+# The terms the temperature-only stage trains on: the liquid energy equation, the
+# measured start and inlet temperatures (the interface is at saturation by
+# construction of the gated temperature) and the floor under the liquid.
+TEMPERATURE_TERMS = frozenset({"energy_liquid", "theta_bc", "theta_floor"})
 
 
 def _temperature_stage(step: int, tcfg) -> bool:
@@ -2154,7 +2163,7 @@ def train(
     model = BubblePINN(
         cfg, pin=_pin_anchor(cfg, data), geometry=_geometry_priors(cfg, data)
     ).to(device)
-    _bind_measured_outline(cfg, model, paths)
+    _bind_measured_outline(cfg, model, paths, data)
     bind_cover_times(cfg, model, data)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
@@ -2333,7 +2342,7 @@ def train(
                 wall_condition=boundaries.wall_condition,
                 initial=initial,
                 outlet_pressure=_outlet_pressure(cfg),
-                view_x_max=float(data.domain.x_max),
+                view_x_max=float(data.domain.x_view),
             )
             # The temperature-only stage has no use for the outline's data term: the
             # outline is locked, and the term would only cost a forward pass.
@@ -2967,7 +2976,7 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
     ).to(device)
     model.load_state_dict(ckpt["model"])
     # A measured-outline run is scored on the outline its physics stage trained on.
-    _bind_measured_outline(cfg, model, paths)
+    _bind_measured_outline(cfg, model, paths, data)
     if isinstance(model.nets["phi"], MeasuredInterface):
         _engage_measured_outline(model, True)
     bind_cover_times(cfg, model, data)

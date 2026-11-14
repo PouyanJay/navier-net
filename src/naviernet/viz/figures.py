@@ -76,7 +76,9 @@ def frames_matching(cfg, model, data, paths: RunPaths) -> None:
             0.01,
             0.72,
             f"frame {data.frame_numbers[i]}   t = {data.t[i] * t_ref_ms:.1f} ms   "
-            f"IoU = {iou:.3f}" + ("   *HOLDOUT*" if is_holdout else ""),
+            f"IoU = {iou:.3f}"
+            + ("   *HOLDOUT*" if is_holdout else "")
+            + ("   ghost" if data.is_ghost(i) else ""),
             transform=ax.transAxes,
             fontsize=9,
             color=HOLDOUT_COLOUR if is_holdout else "k",
@@ -177,7 +179,7 @@ def overlays_on_raw(cfg, model, data, paths: RunPaths) -> None:
     t_ref_ms = reference_time_ms(cfg.scales)
 
     tiles = []
-    for i in range(data.n_event):
+    for i in data.image_rows:  # a ghost frame has no camera image to draw on
         frame_number = data.frame_numbers[i]
         raw = np.asarray(Image.open(paths.raw_frame(frame_number)).convert("RGB"))
         # Un-flip x to return from downstream-positive to camera orientation.

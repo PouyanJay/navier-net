@@ -74,6 +74,28 @@ def test_the_fitted_growth_is_the_slope_of_a_cubic_through_the_event_areas():
     )
 
 
+def test_the_plan_scores_the_images_and_never_the_ghost_frames():
+    times = np.arange(7.0)
+    alpha = np.zeros((7, 2, 40))
+    for row in range(7):
+        alpha[row, 0, : 2 * row + 2] = 1.0
+    data = SimpleNamespace(
+        alpha=alpha,
+        valid=np.ones_like(alpha),
+        x=np.arange(40.0),
+        y=np.arange(2.0),
+        t=times,
+        n_event=7,
+        image_rows=[3, 4, 5, 6],
+    )
+
+    plan = growth_closure.build_plan(data, stride=1, device="cpu")
+    fitted = growth_closure.fitted_growth_rate(data)
+
+    assert plan.times.tolist() == [3.0, 4.0, 5.0, 6.0]
+    assert len(plan.growth) == len(fitted) == 4
+
+
 def test_the_growth_target_is_measured_or_fitted_and_nothing_else():
     data = SimpleNamespace()
 

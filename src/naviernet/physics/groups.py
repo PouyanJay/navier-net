@@ -152,7 +152,10 @@ def compute_groups(cfg) -> dict[str, float]:
     groups["Ja"] = fluid.cp_l * groups["dT_ref"] / fluid.h_lv
     # Depth-averaged wall heat source in the non-dimensional energy equation.
     groups["q_wall_star"] = _wall_source_star(q_wall, fluid, u, groups["dT_ref"], length, h)
-    groups.update(_thermal_conditions(cfg, groups["dT_ref"]))
+    # Steady liquid at the inlet's mean speed warms by this much superheat per
+    # L_ref of floor at q_wall: the heated initial profile's slope.
+    rise = groups["q_wall_star"] / groups["u_inlet_star"]
+    groups.update(_thermal_conditions(cfg, groups["dT_ref"], rise))
     groups.update(_film_evaporation(cfg, fluid, u, length, h))
 
     # Property ratios entering the mixture rules
@@ -272,9 +275,10 @@ def _wall_source_star(q_wall: float, fluid, u: float, dt_ref: float, length: flo
     return q_wall / (fluid.rho_l * fluid.cp_l * u * dt_ref) * (length / h)
 
 
-def _thermal_conditions(cfg, dt_ref: float) -> dict[str, float]:
+def _thermal_conditions(cfg, dt_ref: float, heated_rise: float) -> dict[str, float]:
     """The sharp thermal model's boundary values as superheats on ``dT_ref``:
-    the inlet (saturation when the series gives none), the initial liquid, and
+    the inlet (saturation when the series gives none), the initial liquid (with
+    its rise per heated length, ``heated_rise``, under the heated profile), and
     an isothermal side wall. Absent inputs leave their keys out."""
     exp = cfg.experiment
     t_sat = float(exp.T_sat_C)
@@ -289,6 +293,13 @@ def _thermal_conditions(cfg, dt_ref: float) -> dict[str, float]:
         if layer < 0:
             raise ValueError(f"experiment.T_init_layer_um={layer} must be >= 0 (a thickness)")
         conditions["init_layer_star"] = layer / float(cfg.scales.L_ref_um)
+        profile = str(getattr(exp, "T_init_profile", "uniform"))
+        if profile not in ("uniform", "heated"):
+            raise ValueError(
+                f"experiment.T_init_profile must be 'uniform' or 'heated', got {profile!r}"
+            )
+        if profile == "heated":
+            conditions["theta_init_rise"] = heated_rise
     t_wall = getattr(exp, "T_wall_C", None)
     if str(getattr(exp, "side_wall_thermal", "adiabatic")) == "isothermal":
         if t_wall is None:
@@ -378,14 +389,44 @@ def _heater_zones(exp, length: float) -> dict[str, float]:
             "upstream heater zone needs both its flux and where it ends."
         )
     if upstream is None:
+        if getattr(exp, "q_hot_W_cm2", None) is not None:
+            raise ValueError(
+                "experiment.q_hot_W_cm2 needs the upstream zone: the hot zone starts at "
+                "experiment.heater_edge_um."
+            )
         return {}
     if float(upstream) < 0 or float(edge) < 0:
         raise ValueError(
             f"experiment.q_upstream_W_cm2={upstream} and heater_edge_um={edge} must be >= 0"
         )
-    return {
+    zones = {
         "q_upstream_ratio": float(upstream) / float(exp.q_wall_W_cm2),
         "heater_edge_star": float(edge) * 1e-6 / length,
+    }
+    zones.update(_hot_zone(exp, float(edge), length))
+    return zones
+
+
+def _hot_zone(exp, heater_edge_um: float, length: float) -> dict[str, float]:
+    """The hot zone between the heater edge and its own end, as the ratio of its
+    flux to q_wall_W_cm2 and that end on L_ref; empty without one."""
+    hot = getattr(exp, "q_hot_W_cm2", None)
+    end = getattr(exp, "hot_zone_end_um", None)
+    if (hot is None) != (end is None):
+        raise ValueError(
+            "experiment.q_hot_W_cm2 and experiment.hot_zone_end_um go together: the hot "
+            "zone needs both its flux and where it ends."
+        )
+    if hot is None:
+        return {}
+    if float(hot) < 0 or float(end) <= heater_edge_um:
+        raise ValueError(
+            f"experiment.q_hot_W_cm2={hot} must be >= 0 and hot_zone_end_um={end} beyond "
+            f"heater_edge_um={heater_edge_um}, where the hot zone starts"
+        )
+    return {
+        "q_hot_ratio": float(hot) / float(exp.q_wall_W_cm2),
+        "hot_zone_end_star": float(end) * 1e-6 / length,
     }
 
 

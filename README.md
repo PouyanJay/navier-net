@@ -29,25 +29,28 @@ The physics, in the depth-averaged 2D model:
 
 | | |
 |---|---|
-| Flow | Brinkman law: pressure against the floor and ceiling drag and in-plane viscous friction |
-| Channel | Developed velocity profile at the inlet (10 mL/h); stress-free outlet at a fixed pressure |
-| Bubble edge | Moves with the liquid; held at the boiling point; Young–Laplace imposed on average, which sets the vapour pressure |
+| Flow | Brinkman law with the liquid's inertia: pressure against the floor and ceiling drag and in-plane viscous friction |
+| Channel | Developed velocity profile at the inlet (15 mL/h); a stress-free outlet 1 mm past the view, its pressure left free |
+| Bubble edge | Moves with the liquid; held at the boiling point; Young–Laplace imposed point by point away from the root, which sets the vapour pressure |
 | Heat | Liquid energy equation, two heater zones on the floor |
 | Evaporation | A thin film under the bubble dries out as the floor heats it; the total vapour made is held to the bubble's measured growth |
 
 ## Where it stands
 
-From the current default (one seed), measured against the images and against each equation's own terms:
+The default run is `ghost8-15-s0` (15 mL/h, one seed). It starts about 5 ms before the first image from
+a seed bubble, runs the channel 1 mm past the camera's view, includes the liquid's inertia, and holds
+frame 6 out of every target. Measured against the images and against each equation's own terms:
 
 | | |
 |---|---|
-| Outline against the frames | IoU 0.977 to 0.990 |
-| Vapour pressure | 116 to 172 Pa above the outlet, as Young–Laplace predicts for this channel |
-| Liquid volume | conserved exactly: the backward flow beside the bubble's head that mass conservation on the images requires is there at every frame, reversing at 1.4 ms as in the outlines |
-| What drives that backflow | the liquid pressure, rising about 31 Pa toward the nose along the gap (frame 9) |
-| Temperature equation, relative to its terms | 7–9% at the bubble, 5–15% in the open liquid |
-| Heat budget | closes within the gate (spread 0.27) |
-| Still open | the pressure at the head's curved edge: 60–110 Pa above what Young–Laplace allows there, part of it a fixed step where the round nose meets the flat side; the liquid's inertia is not yet included (momentum 23–28% near the bubble) |
+| Blind frame 6 | IoU 0.990, never trained on, the traced outline included |
+| Outline against the frames | IoU 0.981 to 0.992 |
+| Liquid volume | conserved exactly; the bubble's growth matches the images within a few percent at frames 1 to 10 |
+| Backflow beside the head | present from frame 7, as mass conservation on the images requires |
+| Pressure along the channel | matches friction plus the liquid's braking in the open liquid (frame 9: 40 Pa/mm against 39) |
+| Momentum residual (rms) | 0.18 at frames 1 to 9, 0.19 at frame 10 |
+| Pressure jump at the edge | 22 Pa from Young–Laplace away from the root |
+| Still open | the root's pressure jump (about 170 Pa off); frame 10's braking rests on growth after frame 11 leaves the view |
 
 Every run ends with an audit and a report: the five-check gate, these relative errors, and figures of
 every field.
@@ -67,6 +70,8 @@ naviernet dataset=Series-1-w300 experiment=trusted_w300 model=trusted training=t
 naviernet --cfg job --resolve        # print the composed config, run nothing
 ```
 
+The default run's full command is at the top of `configs/experiment/ghost_w300.yaml`.
+
 On a rented GPU through [Modal](https://modal.com), with a report afterwards:
 
 ```bash
@@ -85,7 +90,7 @@ The raw camera frames are not in the repository. Put TIFFs in `data/raw/<name>/`
 | | |
 |---|---|
 | `src/naviernet` | The solver: models, physics, training, audit |
-| `configs` | [Hydra](https://hydra.cc) configs; `trusted` is the default recipe |
+| `configs` | [Hydra](https://hydra.cc) configs; `experiment/ghost_w300.yaml` holds the default run's full command |
 | `apps/api`, `apps/web` | FastAPI server and React app over the same pipeline |
 | `scripts` | Modal runs, run reports |
 

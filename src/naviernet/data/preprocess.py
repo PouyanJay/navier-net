@@ -335,7 +335,7 @@ def segment_frame(cfg, paths: RunPaths, n: int, roi: tuple[int, int]) -> np.ndar
     )
 
 
-def _signed_distance(mask: np.ndarray) -> np.ndarray:
+def signed_distance(mask: np.ndarray) -> np.ndarray:
     """Pixels to the mask's edge, negative inside."""
     outside = cv2.distanceTransform(1 - mask, cv2.DIST_L2, 5)
     return outside - cv2.distanceTransform(mask, cv2.DIST_L2, 5)
@@ -348,7 +348,7 @@ def mirror_symmetric(
     the zero level of the mean of the bubble's signed distance and its mirror
     image's, so the result is exactly symmetric and sits midway between the two
     wherever the trace was lopsided."""
-    distance = _signed_distance(_fill_interface(interface, shape))
+    distance = signed_distance(_fill_interface(interface, shape))
     rows, cols = np.mgrid[0 : shape[0], 0 : shape[1]].astype(np.float64)
     mirrored = map_coordinates(
         distance, [2.0 * centre_row - rows, cols], order=1, mode="nearest"

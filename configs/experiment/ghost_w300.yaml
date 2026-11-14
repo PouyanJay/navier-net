@@ -1,0 +1,113 @@
+# Series-1 at the 300 um calibration with the seed-grown conditions and a ghost
+# start: the solve begins about 5 ms before the first image from a small bubble on
+# the cavity, so the state at frame 1 (the film's age over the floor, the
+# cooled layer around the bubble, the flow's memory) is computed, not imposed.
+#
+# The default run is ghost8-15-s0 (2026-11-14). It reproduces with:
+#
+#   naviernet dataset=Series-1-w300 experiment=ghost_w300 model=trusted \
+#     training=trusted scales.dT_ref_K=1.0 model.measured_outline=true \
+#     model.momentum_inertia=true model.laplace_condition=pointwise \
+#     model.laplace_root=exclude model.laplace_weighting=length \
+#     model.outlet_pressure_Pa=null training.wall_weight_after_freeze=50.0 \
+#     training.collocation_time_bins=16 training.causal_time_chunks=32 \
+#     training.steps=8000 training.energy_relative_mode=mixed \
+#     training.n_coll=19456 training.n_bc=3264 training.holdout_frame=5 \
+#     training.val_fraction=0.0 training.collocation_late_share=0.3 \
+#     training.collocation_late_frac=0.15 training.collocation_late_bins=8
+#
+# Frame 6 is held out of every target, the traced outline included: the blind
+# test (IoU 0.990). It needs about 40 GB of GPU memory (an L40S).
+#
+# The liquid starts at saturation at the inlet, so the superheat scale cannot
+# come from it: scales.dT_ref_K has to be given (1 K: the liquid warms by about
+# that much over the heaters).
+#
+# The heater values are not the experiment's record (that is trusted_w300).
+# They come from fitting the solver's own film law to the measured growth
+# with every condition free (2026-11-06): only heating concentrated near the
+# cavity reproduces growth that is fast early and slows down. Within the fit's
+# tolerance the hot zone carries 6 to 8 W/cm2 and ends 550 to 650 um from the
+# inlet edge of the view (about 7 mW in all), the downstream floor 0.5 to 1.5
+# W/cm2, the film 3.5 to 4 um; frames 9 and 10 held out are predicted within 6%.
+
+defaults:
+  - base_experiment
+
+name: ghost_w300
+
+fluid: ${fluid.name}
+T_sat_C: ${fluid.T_sat_C}
+
+# Three floor zones: nothing upstream of the cavity (233 um), a hot zone over
+# the next 367 um, and the downstream floor. With the ghost history grown by
+# the film law itself (2026-11-07, offline, 15 mL/h), the film alone at 1.0 and
+# 3.5 um feeds frames 1 to 8 within 7% and leaves frames 9 and 10 short by 11
+# to 15%: the part the front's own evaporation has to supply (about a fifth of
+# its upper estimate). Lowering the value to 0.8 (ghost2-20-s0) and 0.7
+# (ghost2-15-s0) did not help: the solver balanced the late frames by ending
+# the superheat at the nose with a temperature step, and the early frames went
+# short. So the value stays at 1.0 and the superheat is held physical instead
+# (training.weights.theta_floor, the mixed energy loss, the audit's
+# temperature checks).
+q_upstream_W_cm2: 0.0
+heater_edge_um: 233.0
+q_hot_W_cm2: 6.5
+hot_zone_end_um: 600.0
+# ghost8 lowers it to 0.75 at 15 mL/h.
+q_wall_W_cm2: 0.75
+
+wet_fraction_mode: fit
+wet_fraction: 0.88
+# The film under the bubble, fitted from 3.5 um: it lasts 7.3 ms over the hot
+# zone and 47 ms downstream. It starts fresh under the seed (no footprint age).
+footprint_wetting: microlayer
+microlayer_mode: fit
+microlayer_um: 3.5
+footprint_age_ms: 0.0
+
+# The liquid enters at saturation and starts as steady flow over the heaters
+# leaves it with no bubble in the channel: saturation up to the cavity, about
+# 0.8 K above it at the end of the hot zone and 1.5 K at the end of the view.
+T_inlet_C: 56.6
+T_init_C: 56.6
+T_init_profile: heated
+T_init_layer_um: 20.0
+side_wall_thermal: adiabatic
+
+# 15 mL/h, inside the 14 to 20 mL/h the experiment ran at.
+flow_rate_mL_hr: 15.0
+
+# The channel runs 1 mm past the camera's view, so the outlet condition sits
+# away from the bubble's head at frames 9 to 11. The audit scores the view only.
+outlet_extension_um: 1000.0
+
+# The ghost start. The seed is the first image's outline shrunk about its root
+# to the area of a disc as wide as the channel is deep; it widens to the first
+# image's width and by the first image only lengthens (stretch), so the nose's
+# speed joins the images'. Under ghost_shape=similar (the same shape at every
+# size) the nose would reach the first image at 70 mm/s against the 155 mm/s
+# the images start with. The seed grows as fast as the floor's flux
+# evaporates the film under it (energy), so the ghost history is the heater's
+# own and the ghost time is an output: about 5 ms with the values above, at
+# most the 8 ms given here.
+ghost_duration_ms: 8.0
+ghost_seed_um: 150.0
+ghost_shape: stretch
+ghost_growth: energy
+
+channel_width_um: 300.0
+channel_height_um: 150.0
+
+dt_frame_ms: 0.5
+flow_direction: right_to_left
+
+n_frames_raw: 12
+n_frames_usable: 11
+n_frames_event: 10
+
+notes: >-
+  The Series-1 frames at the 300 um calibration, started a few milliseconds
+  before the first image from a seed bubble grown by the floor's own heat
+  (ghost frames), with a hot heater zone after the cavity. Frame 11 is truncated by the field-of-view edge; frame 12 belongs to
+  the next ebullition cycle and is excluded.

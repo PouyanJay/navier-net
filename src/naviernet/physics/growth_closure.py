@@ -19,6 +19,9 @@ bends the temperature to fix an integral; it is read without a parameter graph,
 since no backward pass reaches it. ``training.growth_closure_outline_gradient``
 keeps its gradient instead, so the closure also trains the temperature. A functional on a fixed quadrature,
 outside causal weighting, RBA and the rebalancer, like the mass balance.
+
+The closure scores the images only: a ghost frame's growth is a rule's, and
+the film thickness must not be fitted to it.
 """
 
 from __future__ import annotations
@@ -45,7 +48,7 @@ FIT_DEGREE = 3
 @dataclass(frozen=True)
 class GrowthClosurePlan:
     """``points`` are the sampled floor pixels ``(x, y)``, ``cell`` the area each
-    stands for, ``times`` the event frames' instants, ``growth`` the measured
+    stands for, ``times`` the image frames' instants, ``growth`` the measured
     ``dA/dt`` at each, ``scale`` their mean magnitude."""
 
     points: torch.Tensor
@@ -70,16 +73,22 @@ def measured_growth_rate(data, row: int) -> float:
     return (areas[last] - areas[first]) / (float(data.t[last]) - float(data.t[first]))
 
 
+def image_rows(data) -> list[int]:
+    """The event rows that are images: the dataset's own list, or every event
+    row of a dataset without ghost frames."""
+    return list(getattr(data, "image_rows", range(data.n_event)))
+
+
 def fitted_growth_rate(data) -> np.ndarray:
-    """``dA/dt`` at every event frame from one cubic through all the event areas:
-    the slope of the trend, not of the frame-to-frame differences."""
-    count = data.n_event
-    if count <= FIT_DEGREE:
+    """``dA/dt`` at every image frame from one cubic through all the image
+    areas: the slope of the trend, not of the frame-to-frame differences."""
+    rows = image_rows(data)
+    if len(rows) <= FIT_DEGREE:
         raise ValueError(
-            f"the fitted growth needs more than {FIT_DEGREE} event frames, got {count}"
+            f"the fitted growth needs more than {FIT_DEGREE} image frames, got {len(rows)}"
         )
-    times = np.asarray(data.t[:count], dtype=np.float64)
-    areas = np.array([_area(data, r) for r in range(count)], dtype=np.float64)
+    times = np.asarray([data.t[r] for r in rows], dtype=np.float64)
+    areas = np.array([_area(data, r) for r in rows], dtype=np.float64)
     slope = np.polyder(np.polyfit(times, areas, FIT_DEGREE))
     return np.polyval(slope, times)
 
@@ -111,14 +120,17 @@ def build_plan(data, stride: int, device, target: str = "measured") -> GrowthClo
     rows, cols = np.nonzero(_covered_floor(data, stride))
     points = np.column_stack([data.x[cols], data.y[rows]]).astype(np.float32)
     cell = abs(float(data.x[1] - data.x[0]) * float(data.y[1] - data.y[0])) * stride**2
+    rows = image_rows(data)
     if target == "fitted":
         growth = fitted_growth_rate(data)
     else:
-        growth = np.array([measured_growth_rate(data, r) for r in range(data.n_event)])
+        growth = np.array([measured_growth_rate(data, r) for r in rows])
     return GrowthClosurePlan(
         points=torch.tensor(points, device=device),
         cell=cell,
-        times=torch.tensor(np.asarray(data.t[: data.n_event], dtype=np.float32), device=device),
+        times=torch.tensor(
+            np.asarray([data.t[r] for r in rows], dtype=np.float32), device=device
+        ),
         growth=torch.tensor(growth, dtype=torch.float32, device=device),
         scale=max(float(np.abs(growth).mean()), 1e-9),
     )
@@ -149,7 +161,7 @@ def _without_parameter_graph(model):
 def source_totals(
     model, plan: GrowthClosurePlan, outline_gradient: bool = False
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """``int s dA`` at every event frame, ``(n,)``, split into the footprint's
+    """``int s dA`` at every image frame, ``(n,)``, split into the footprint's
     part (with its gradient) and the outline's: detached and read without a
     parameter graph, or with its gradient to the temperature under
     ``outline_gradient`` (``training.growth_closure_outline_gradient``)."""
@@ -169,7 +181,7 @@ def growth_closure_loss(
     model, plan: GrowthClosurePlan, outline_gradient: bool = False
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Mean squared gap between the vapour made and the measured growth over
-    the event frames, on the mean measured rate; plus its log record."""
+    the image frames, on the mean measured rate; plus its log record."""
     footprint, outline = source_totals(model, plan, outline_gradient)
     gap = (footprint + outline - plan.growth) / plan.scale
     loss = (gap**2).mean()

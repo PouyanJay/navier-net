@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 
 import numpy as np
@@ -70,10 +70,23 @@ class Domain:
     # placed here are at the channel, not at the image edge.
     y_wall_lo: float
     y_wall_hi: float
+    # The camera's view ends here; ``x_max`` is the channel's outlet, past it by
+    # ``experiment.outlet_extension_um``. None: the channel ends at the view.
+    x_view_max: float | None = None
+
+    @property
+    def x_view(self) -> float:
+        """Where the images end: the outlet unless the channel is extended."""
+        return self.x_max if self.x_view_max is None else self.x_view_max
 
     @property
     def area(self) -> float:
-        return (self.x_max - self.x_min) * (self.y_max - self.y_min)
+        """The camera view's area: what an image's pixel fraction is a share of."""
+        return (self.x_view - self.x_min) * (self.y_max - self.y_min)
+
+    def in_view(self) -> Domain:
+        """This domain cut at the camera's view, for measurements on the images."""
+        return replace(self, x_max=self.x_view, x_view_max=None)
 
     @property
     def y_center(self) -> float:
@@ -113,14 +126,18 @@ class BubbleDataset:
         ]
         # Rows of the growth event -- the prefix every per-frame stage iterates.
         self.n_event = int(self.meta.get("n_frames_event", n_rows))
+        # Leading rows that are ghost frames, not images (see `_prepend_ghost_frames`).
+        self.n_ghost = 0
+        self._prepend_ghost_frames(cfg, paths)
         # `training.holdout_frame` is the 0-based position in the unexcluded
         # sequence (camera frame - 1). Resolve it to a row, so that excluding a
         # frame can never quietly shift supervision onto the holdout. -1 (train
         # on all frames) and an excluded holdout both resolve to "no row".
+        # Only an image can be held out: -1 would otherwise name ghost frame 0.
         holdout_camera = int(cfg.training.holdout_frame) + 1
         self.holdout_row = (
             self.frame_numbers.index(holdout_camera)
-            if holdout_camera in self.frame_numbers
+            if holdout_camera in self.frame_numbers[self.n_ghost :]
             else -1
         )
 
@@ -134,9 +151,14 @@ class BubbleDataset:
         )
 
         y_wall_lo, y_wall_hi = self._wall_positions()
+        x_view = float(self.x[-1])
+        extension = float(getattr(cfg.experiment, "outlet_extension_um", 0.0) or 0.0)
+        if extension < 0.0:
+            raise ValueError("experiment.outlet_extension_um must be zero or positive")
         self.domain = Domain(
             x_min=float(self.x[0]),
-            x_max=float(self.x[-1]),
+            x_max=x_view + extension / float(cfg.scales.L_ref_um),
+            x_view_max=x_view,
             y_min=float(self.y[0]),
             y_max=float(self.y[-1]),
             t_min=float(self.t[0]),
@@ -168,6 +190,57 @@ class BubbleDataset:
         self._train_idx = np.where(trainable)[0]
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
+
+    def _prepend_ghost_frames(self, cfg, paths: RunPaths) -> None:
+        """Put the ghost frames (``experiment.ghost_duration_ms``) before the
+        images as rows of their own: masks rasterised from the ghost outlines,
+        instants before the first image, frame numbers counting back from 0.
+        They are event rows like any other, so everything that reads the masks
+        (the warm-up's fit, the cover times, the growth the source must supply)
+        sees one history; ``n_ghost`` and :meth:`is_ghost` mark them for the
+        checks that are about the images."""
+        # Imported here: the ghost module reaches the preprocess stage's helpers,
+        # which import the physics, which imports this module.
+        from naviernet.data.ghost import ghost_masks, load_ghost_outline
+
+        ghost = load_ghost_outline(cfg, paths)
+        if ghost is None:
+            return
+        count = len(ghost.times)
+        alpha, sdf = ghost_masks(ghost.stations, self.x, self.y)
+        self.alpha = np.concatenate([alpha, self.alpha])
+        self.sdf = np.concatenate([sdf, self.sdf])
+        self.valid = np.concatenate([np.ones_like(alpha, dtype=self.valid.dtype), self.valid])
+        # The camera sees the flow right to left: its masks are the tensors' flipped.
+        camera = alpha[:, :, ::-1].astype(self.masks_camera.dtype)
+        self.masks_camera = np.concatenate([camera, self.masks_camera])
+        self.t = np.concatenate([ghost.times.astype(self.t.dtype), self.t])
+        first = self.frame_numbers[0]
+        self.frame_numbers = list(range(first - count, first)) + self.frame_numbers
+        self.n_event += count
+        self.n_ghost = count
+        log.info(
+            "ghost start: %d ghost frames before frame %d, from t* = %.3f",
+            count,
+            first,
+            float(self.t[0]),
+        )
+        if ghost.duration is not None:
+            log.info(
+                "ghost start: the energy growth takes the seed to the first image in "
+                "%.3f t*, arriving at %.2f times the rate the first two images show",
+                ghost.duration,
+                ghost.rate_ratio,
+            )
+
+    def is_ghost(self, row: int) -> bool:
+        """Whether a row is a ghost frame: a rule's outline, not an image."""
+        return row < self.n_ghost
+
+    @property
+    def image_rows(self) -> list[int]:
+        """The event rows that are images, in order: the event without its ghosts."""
+        return list(range(self.n_ghost, self.n_event))
 
     def _wall_positions(self) -> tuple[float, float]:
         """The channel walls in y*, as preprocessing recorded them.
@@ -211,27 +284,30 @@ class BubbleDataset:
     def _split_rows(self, fraction: float, strategy: str) -> list[int]:
         """Rows of the event held out as the axis-A validation split.
 
-        ``fraction`` of the ``n_event`` growth frames, chosen by ``strategy``:
+        ``fraction`` of the event's images, chosen by ``strategy``:
         ``tail`` holds the last frames (extrapolation), ``scatter`` holds interior
         evenly-spaced frames (interpolation). A positive fraction always holds at
         least one frame, and never the whole event -- at least one training frame
-        survives, so an over-large fraction cannot starve supervision.
+        survives, so an over-large fraction cannot starve supervision. Ghost
+        frames are never held out and do not count: a rule's outline validates
+        nothing.
         """
-        if fraction <= 0.0 or self.n_event < 2:
+        images = self.image_rows
+        if fraction <= 0.0 or len(images) < 2:
             return []
 
-        count = max(1, math.ceil(fraction * self.n_event))
+        count = max(1, math.ceil(fraction * len(images)))
 
         if strategy == "tail":
-            count = min(count, self.n_event - 1)
-            return list(range(self.n_event - count, self.n_event))
+            count = min(count, len(images) - 1)
+            return images[len(images) - count :]
         if strategy == "scatter":
             # Choose from the interior rows only, so both endpoints stay in
             # training and the model genuinely interpolates. There are exactly
-            # ``n_event - 2`` interior rows, so cap the count at that (a series too
-            # short to hold an interior frame gets no scatter split) and pick
-            # evenly-spaced *distinct* rows -- never collapsing onto one another.
-            interior = list(range(1, self.n_event - 1))
+            # two fewer interior rows than images, so cap the count at that (a
+            # series too short to hold an interior frame gets no scatter split) and
+            # pick evenly-spaced *distinct* rows -- never collapsing onto one another.
+            interior = images[1:-1]
             count = min(count, len(interior))
             if count == 0:
                 return []
@@ -280,7 +356,8 @@ class BubbleDataset:
         column in y*. Orientation-agnostic: whichever edge is stationary wins,
         so a flipped series needs no special-casing.
         """
-        rows = self._training_visible_event_rows()
+        # Ghost frames are left out: the anchor is a measurement of the images.
+        rows = [r for r in self._training_visible_event_rows() if not self.is_ghost(r)]
         col = self._stationary_root_column(rows)
         return float(self.x[col]), self._root_y_center(rows, col)
 
@@ -498,14 +575,50 @@ class BubbleDataset:
         ``0`` (the default) is the independent per-point draw, unchanged.
         """
         points = self._sample_collocation_points(n, rng)
+        n_late = self._late_count(n)
+        late_start = self._late_start()
+        if n_late:
+            points[:n_late, 2] = rng.uniform(late_start, self.domain.t_max, n_late)
         if time_bins > 0:
-            points[:, 2] = self._snap_to_bins(points[:, 2], rng, time_bins)
+            points[n_late:, 2] = self._snap_to_bins(points[n_late:, 2], rng, time_bins)
+            if n_late:
+                late_bins = self._late_bins or time_bins
+                points[:n_late, 2] = self._snap_to_bins(
+                    points[:n_late, 2], rng, late_bins, start=late_start
+                )
         return torch.tensor(points, device=self.device, requires_grad=True)
 
-    def _snap_to_bins(self, times: np.ndarray, rng, time_bins: int) -> np.ndarray:
-        """Each time replaced by the nearest of ``time_bins`` stratified instants."""
+    @property
+    def _late_bins(self) -> int:
+        return int(getattr(self.cfg.training, "collocation_late_bins", 0) or 0)
+
+    def _late_count(self, n: int) -> int:
+        """How many of the uniform half's points go to the end of the window
+        (``training.collocation_late_share``); 0 when the setting is off."""
+        tcfg = self.cfg.training
+        share = float(getattr(tcfg, "collocation_late_share", 0.0) or 0.0)
+        frac = float(getattr(tcfg, "collocation_late_frac", 0.0) or 0.0)
+        if not (0.0 <= share <= 1.0 and 0.0 <= frac <= 1.0):
+            raise ValueError(
+                "training.collocation_late_share and collocation_late_frac must lie in [0, 1]"
+            )
+        if share == 0.0 or frac == 0.0:
+            return 0
+        return int(round(share * (n // 2)))
+
+    def _late_start(self) -> float:
+        """Where the end-of-window stretch begins, in t*."""
         d = self.domain
-        edges = np.linspace(d.t_min, d.t_max, time_bins + 1)
+        frac = float(getattr(self.cfg.training, "collocation_late_frac", 0.0) or 0.0)
+        return d.t_max - frac * (d.t_max - d.t_min)
+
+    def _snap_to_bins(
+        self, times: np.ndarray, rng, time_bins: int, start: float | None = None
+    ) -> np.ndarray:
+        """Each time replaced by the nearest of ``time_bins`` stratified instants
+        over ``[start, t_max]`` (the whole window when ``start`` is None)."""
+        d = self.domain
+        edges = np.linspace(d.t_min if start is None else start, d.t_max, time_bins + 1)
         instants = rng.uniform(edges[:-1], edges[1:]).astype(np.float32)
         return instants[np.abs(times[:, None] - instants[None, :]).argmin(axis=1)]
 

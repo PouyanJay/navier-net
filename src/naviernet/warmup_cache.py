@@ -88,6 +88,8 @@ AFTER_WARMUP = (
     "training.one_way_advection",
     "model.momentum_inertia",
     "model.laplace_condition",
+    "model.laplace_root",
+    "model.laplace_weighting",
     "model.hard_kinematics",
     "model.kinematic_blend_length",
     "model.kinematic_side",

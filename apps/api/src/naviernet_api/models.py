@@ -172,8 +172,11 @@ class OperatingConditions(BaseModel):
     T_inlet_C: float | None
     T_init_C: float | None
     T_init_layer_um: float
+    T_init_profile: str
     q_upstream_W_cm2: float | None
     heater_edge_um: float | None
+    q_hot_W_cm2: float | None
+    hot_zone_end_um: float | None
     side_wall_thermal: str
     T_wall_C: float | None
     wet_fraction_mode: str
@@ -182,6 +185,11 @@ class OperatingConditions(BaseModel):
     microlayer_mode: str
     microlayer_um: float
     footprint_age_ms: float
+    ghost_duration_ms: float
+    ghost_seed_um: float
+    ghost_shape: str
+    ghost_growth: str
+    outlet_extension_um: float = 0.0
     dT_ref_K: float | None
 
 
@@ -255,8 +263,11 @@ class ConditionsUpdate(BaseModel):
     T_inlet_C: float | None = None
     T_init_C: float | None = None
     T_init_layer_um: float | None = None
+    T_init_profile: Literal["uniform", "heated"] | None = None
     q_upstream_W_cm2: float | None = None
     heater_edge_um: float | None = None
+    q_hot_W_cm2: float | None = None
+    hot_zone_end_um: float | None = None
     side_wall_thermal: Literal["adiabatic", "isothermal"] | None = None
     T_wall_C: float | None = None
     wet_fraction_mode: Literal["fixed", "fit"] | None = None
@@ -265,6 +276,11 @@ class ConditionsUpdate(BaseModel):
     microlayer_mode: Literal["fixed", "fit"] | None = None
     microlayer_um: float | None = None
     footprint_age_ms: float | None = None
+    ghost_duration_ms: float | None = None
+    ghost_seed_um: float | None = None
+    ghost_shape: Literal["similar", "stretch", "blob"] | None = None
+    ghost_growth: Literal["parabola", "energy"] | None = None
+    outlet_extension_um: float | None = None
     dT_ref_K: float | None = None
 
 

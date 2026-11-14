@@ -68,11 +68,40 @@ class ExperimentConfig:
     # forced a jump to saturation across zero distance at the first instant.
     # 0 imposes it everywhere in the liquid (existing runs).
     T_init_layer_um: float = 0.0
+    # The initial liquid along the channel. "uniform": T_init_C everywhere.
+    # "heated": T_init_C at the inlet edge of the view, rising downstream by
+    # what the floor's flux puts into the mean flow, the steady temperature of
+    # liquid flowing over the heaters with no bubble in the channel.
+    T_init_profile: str = "uniform"  # "uniform" | "heated"
     # The floor heated in two zones along the channel: q_upstream_W_cm2 from the
     # field of view's inlet edge to heater_edge_um, q_wall_W_cm2 beyond. Both
     # None: one flux, q_wall_W_cm2, over the whole floor (existing series).
     q_upstream_W_cm2: Optional[float] = None  # noqa: UP045
     heater_edge_um: Optional[float] = None  # noqa: UP045
+    # A third zone between the two: q_hot_W_cm2 from heater_edge_um to
+    # hot_zone_end_um, q_wall_W_cm2 beyond it. Both None: no hot zone.
+    q_hot_W_cm2: Optional[float] = None  # noqa: UP045
+    hot_zone_end_um: Optional[float] = None  # noqa: UP045
+    # Ghost frames (naviernet.data.ghost): the solve starts this long before
+    # the first image, from a round seed bubble ghost_seed_um across on the
+    # cavity, and grows it into the first image's outline by a fixed rule, so
+    # the state at the first image is computed and not imposed. The initial
+    # temperature and the footprint's age then hold at the seed. 0: off.
+    ghost_duration_ms: float = 0.0
+    ghost_seed_um: float = 150.0  # the seed has the area of a disc this wide
+    # "similar": the first image's outline shrunk about its root, the same
+    # shape at every size. "stretch": that outline scaled separately along and
+    # across the channel, widening first and only lengthening by the first
+    # image, so the nose's speed joins the images'. "blob": a round blob that
+    # widens, then lengthens.
+    ghost_shape: str = "similar"  # "similar" | "stretch" | "blob"
+    # "parabola": the area is the parabola from the seed that joins the first
+    # image's area and growth rate over ghost_duration_ms. "energy": the area
+    # grows as fast as the floor's flux evaporates the film under the footprint
+    # (the solver's film law), integrated from the seed until it reaches the
+    # first image; the ghost time is then an output and ghost_duration_ms the
+    # most it may take. Needs footprint_wetting=microlayer.
+    ghost_growth: str = "parabola"  # "parabola" | "energy"
     side_wall_thermal: str = "adiabatic"  # "adiabatic" | "isothermal"
     T_wall_C: Optional[float] = None  # noqa: UP045 -- side-wall temperature (isothermal only)
     # Film evaporation under the bubble (model.footprint_evaporation): the wall
@@ -94,6 +123,11 @@ class ExperimentConfig:
     microlayer_mode: str = "fixed"  # "fixed" | "fit"
     microlayer_um: float = 0.5
     footprint_age_ms: float = 0.0
+    # The channel the equations cover runs this far past the camera's view at
+    # the outlet end: liquid only, no images, so the outlet condition sits away
+    # from a bubble whose nose nears the edge of the view. The images, the data
+    # term and the audit stay inside the view. 0: the channel ends at the view.
+    outlet_extension_um: float = 0.0
 
 
 @dataclass
@@ -442,6 +476,18 @@ class ModelConfig:
     # pointwise jump over-determines the depth-averaged flow there (its error
     # held near 0.29 in every run while the flow law failed beside the front).
     laplace_condition: str = "pointwise"  # "pointwise" | "mean"
+    # Whether the root cap takes part in the Young-Laplace loss. The jump adds the
+    # outline's in-plane curvature to the gap curvature, an expansion for an
+    # in-plane radius much larger than the half gap; the root's radius is 27 to
+    # 35 um against 75 um. There the jump asked the liquid pressure to swing
+    # about 200 Pa across the cap (it moved 6 to 9 Pa on ghost5-15-s0), 20 to 30
+    # times what the momentum law allows. "exclude" leaves those samples out;
+    # the audit still reports them.
+    laplace_root: str = "include"  # "include" | "exclude"
+    # How the samples of the front count in the Young-Laplace loss. "samples":
+    # equally, so the root cap's 10% of the samples outweighs its 4 to 8% of the
+    # perimeter. "length": by the length of front each one stands for.
+    laplace_weighting: str = "samples"  # "samples" | "length"
     # Depth-averaged inertia in the Brinkman law, rho~ (u_t + 6/5 u.grad u),
     # making it the depth-averaged Navier-Stokes of a Hele-Shaw cell (Gondret &
     # Rabaud 1997). Without it the law balances pressure against friction alone,
@@ -626,6 +672,7 @@ class LossWeights:
     vapour_potential: float = 1.0  # WP3: curl-free vapour velocity under the two-phase pressure
     energy_liquid: float = 1.0  # WP4: liquid energy equation of the sharp thermal model
     theta_bc: float = 1.0  # WP4: inlet, initial and side-wall temperature conditions
+    theta_floor: float = 1.0  # WP4: the liquid no colder than the inlet (a bound, fixed weight)
     evap_flux: float = 1.0  # WP4: free source pulled to the interface flux, two-way
     kinematic: float = 1.0  # R4: kinematic condition on the explicit front
     laplace: float = 1.0  # R4: Young-Laplace jump across the explicit front
@@ -651,6 +698,16 @@ class TrainingConfig:
     # variance falls rather than its bias rising. 0 = the independent per-point
     # draw, unchanged.
     collocation_time_bins: int = 0
+    # Denser collocation at the end of the window, where a solve has no later
+    # time to lean on and every past run's residual climbed 2 to 4 times its
+    # middle value. ``collocation_late_share`` of the uniform half is drawn in
+    # the last ``collocation_late_frac`` of [t_min, t_max] instead of over all
+    # of it, and snapped to its own ``collocation_late_bins`` stratified
+    # instants there (0: as many as ``collocation_time_bins``). Share 0 = off,
+    # the draw unchanged.
+    collocation_late_share: float = 0.0
+    collocation_late_frac: float = 0.0
+    collocation_late_bins: int = 0
 
     # Frame withheld from supervision entirely (0-based) and used as the
     # honest generalisation test. Set to -1 to train on every frame. This is the
@@ -1027,6 +1084,18 @@ class AcceptanceConfig:
     # scatter together), in pascals, at the worst frame. About 5 Pa is what the
     # outline's own error (~2 um, ~5% of the nose curvature) leaves on its own.
     jump_pa_max: float = 5.0
+    # The liquid temperature's sanity on the audit grid, in kelvin. The largest
+    # streamwise gradient between neighbouring cells of open liquid (farther than
+    # audit.FRONT_MARGIN_STAR from the front, past the thermal layer the saturated
+    # front holds), in K/mm: the heaters warm a passing parcel by well under 1 K
+    # per mm, so a sharper change is a step the energy equation cannot carry.
+    # ghost2-15-s0 and ghost2-20-s0 held one of 8 and 30 K/mm at frame 1, where
+    # the superheat ended at the nose; the first ghost run 2 K/mm, the runs
+    # started at a uniform 58 C about 3 K/mm. And the deepest
+    # subcooling below the inlet over the liquid: nothing in the channel cools the
+    # liquid, so a colder cell is an error (the same two runs: 0.02 and 0.05 K).
+    liquid_gradient_max_K_mm: float = 6.0
+    subcooling_max_K: float = 0.01
 
 
 @dataclass

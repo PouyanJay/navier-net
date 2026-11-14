@@ -103,16 +103,16 @@ def _terms(model, x: torch.Tensor, groups: dict, inertia: bool) -> dict[str, tup
 
 
 def _points(data, t: float, nx: int, ny: int, n_random: int, seed: int) -> np.ndarray:
-    """An ``nx`` by ``ny`` grid across the channel at ``t``, plus ``n_random``
-    points drawn uniformly over it from ``seed``."""
-    xs = np.linspace(data.domain.x_min, data.domain.x_max, nx)
+    """An ``nx`` by ``ny`` grid across the camera's view of the channel at ``t``,
+    plus ``n_random`` points drawn uniformly over it from ``seed``."""
+    xs = np.linspace(data.domain.x_min, data.domain.x_view, nx)
     ys = np.linspace(data.y_lo, data.y_hi, ny)
     grid_x, grid_y = np.meshgrid(xs, ys)
     plane = [np.column_stack([grid_x.ravel(), grid_y.ravel()])]
     if n_random > 0:
         rng = np.random.default_rng(seed)
         low = [data.domain.x_min, data.y_lo]
-        high = [data.domain.x_max, data.y_hi]
+        high = [data.domain.x_view, data.y_hi]
         plane.append(rng.uniform(low, high, size=(n_random, 2)))
     plane = np.concatenate(plane)
     return np.column_stack([plane, np.full(len(plane), t)])

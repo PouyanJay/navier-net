@@ -200,6 +200,17 @@ THERMAL: tuple[FieldSpec, ...] = (
         hi=1e4,
     ),
     FieldSpec(
+        "experiment.T_init_profile",
+        "Initial temperature profile",
+        "enum",
+        *_SERIES,
+        help=(
+            "uniform: the initial temperature everywhere; heated: that temperature at the "
+            "inlet edge, rising downstream as steady flow over the heaters warms it"
+        ),
+        options=("uniform", "heated"),
+    ),
+    FieldSpec(
         "experiment.q_upstream_W_cm2",
         "Upstream heater flux",
         "float",
@@ -219,6 +230,31 @@ THERMAL: tuple[FieldSpec, ...] = (
         "float",
         *_SERIES,
         help="where the upstream heater zone ends, from the inlet edge of the view",
+        unit="µm",
+        lo=0.0,
+        hi=_LENGTH_UM[1],
+        optional=True,
+    ),
+    FieldSpec(
+        "experiment.q_hot_W_cm2",
+        "Hot-zone heater flux",
+        "float",
+        *_SERIES,
+        help=(
+            "the floor's flux from the heater edge to the hot zone's end; not set means no "
+            "hot zone"
+        ),
+        unit="W/cm²",
+        lo=0.0,
+        hi=_FLUX_W_CM2[1],
+        optional=True,
+    ),
+    FieldSpec(
+        "experiment.hot_zone_end_um",
+        "Hot-zone end",
+        "float",
+        *_SERIES,
+        help="where the hot zone ends, from the inlet edge of the view",
         unit="µm",
         lo=0.0,
         hi=_LENGTH_UM[1],
@@ -304,6 +340,66 @@ THERMAL: tuple[FieldSpec, ...] = (
         unit="ms",
         lo=0.0,
         hi=100.0,
+    ),
+    FieldSpec(
+        "experiment.outlet_extension_um",
+        "Outlet extension",
+        "float",
+        *_SERIES,
+        help=(
+            "the channel the equations cover runs this far past the camera's view, "
+            "liquid only, so the outlet sits away from the bubble; 0 ends it at the view"
+        ),
+        unit="µm",
+        lo=0.0,
+        hi=5000.0,
+    ),
+    FieldSpec(
+        "experiment.ghost_duration_ms",
+        "Ghost start",
+        "float",
+        *_SERIES,
+        help=(
+            "the solve starts this long before the first image, from a seed bubble grown "
+            "into that image's outline by a fixed rule; 0 starts at the first image"
+        ),
+        unit="ms",
+        lo=0.0,
+        hi=100.0,
+    ),
+    FieldSpec(
+        "experiment.ghost_seed_um",
+        "Ghost seed diameter",
+        "float",
+        *_SERIES,
+        help="the seed bubble the ghost start grows from has the area of a disc this wide",
+        unit="µm",
+        lo=1.0,
+        hi=_LENGTH_UM[1],
+    ),
+    FieldSpec(
+        "experiment.ghost_shape",
+        "Ghost shape",
+        "enum",
+        *_SERIES,
+        help=(
+            "similar: the first image's outline shrunk about its root; stretch: that outline "
+            "widening first, then lengthening; blob: a round blob that widens, then lengthens"
+        ),
+        options=("similar", "stretch", "blob"),
+    ),
+    FieldSpec(
+        "experiment.ghost_growth",
+        "Ghost growth",
+        "enum",
+        *_SERIES,
+        help=(
+            "parabola: the area is the parabola from the seed that joins the first image's "
+            "area and growth rate over the ghost time; energy: the area grows as fast as "
+            "the floor's flux evaporates the film under the footprint, and the ghost time "
+            "is what that takes (at most the ghost start)"
+        ),
+        options=("parabola", "energy"),
     ),
     FieldSpec(
         "scales.dT_ref_K",
@@ -500,6 +596,29 @@ PHYSICS: tuple[FieldSpec, ...] = (
             "average around the edge, which sets the vapour pressure and reports the rest"
         ),
         options=("pointwise", "mean"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.laplace_root",
+        "Root in the Young-Laplace loss",
+        "enum",
+        "physics",
+        "override",
+        help=(
+            "whether the bubble's root takes part in the pressure jump; its radius is below "
+            "the half gap, where the jump's curvature formula no longer applies"
+        ),
+        options=("include", "exclude"),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.laplace_weighting",
+        "Young-Laplace sample weighting",
+        "enum",
+        "physics",
+        "override",
+        help="whether each edge point counts equally, or by the length of edge it stands for",
+        options=("samples", "length"),
         advanced=True,
     ),
     FieldSpec(
@@ -775,6 +894,39 @@ TRAINING: tuple[FieldSpec, ...] = (
         help="distinct instants per collocation batch; the thermal source needs at least one",
         lo=0,
         hi=1024,
+    ),
+    FieldSpec(
+        "training.collocation_late_share",
+        "Late collocation share",
+        "float",
+        "training",
+        "override",
+        help="share of the uniform collocation points drawn at the end of the window",
+        lo=0.0,
+        hi=1.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.collocation_late_frac",
+        "Late collocation span",
+        "float",
+        "training",
+        "override",
+        help="the end of the window those points cover, as a fraction of it",
+        lo=0.0,
+        hi=1.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.collocation_late_bins",
+        "Late collocation instants",
+        "int",
+        "training",
+        "override",
+        help="distinct instants for the late points; 0 uses the collocation time bins",
+        lo=0,
+        hi=1024,
+        advanced=True,
     ),
     FieldSpec(
         "training.causal_gate_min_weight",
@@ -1277,6 +1429,30 @@ ACCEPTANCE: tuple[FieldSpec, ...] = (
         unit="Pa",
         lo=0.0,
         hi=1e4,
+    ),
+    FieldSpec(
+        "evaluation.acceptance.liquid_gradient_max_K_mm",
+        "Liquid temperature gradient",
+        "float",
+        *_GATE,
+        help=(
+            "the steepest streamwise temperature change between neighbouring cells of open "
+            "liquid, away from the front; a sharper one is a step the energy equation cannot "
+            "carry"
+        ),
+        unit="K/mm",
+        lo=0.0,
+        hi=1e3,
+    ),
+    FieldSpec(
+        "evaluation.acceptance.subcooling_max_K",
+        "Subcooling below the inlet",
+        "float",
+        *_GATE,
+        help="how far below the inlet temperature the coldest liquid cell may sit",
+        unit="K",
+        lo=0.0,
+        hi=10.0,
     ),
 )
 

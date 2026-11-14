@@ -34,7 +34,7 @@ const LINKS: Record<FieldName, string[]> = {
   ],
   s: ["div", "energy", "evap_flux"],
   p: ["mom", "darcy", "brinkman", "laplace"],
-  T: ["energy", "energy_liquid", "theta_bc", "evap_flux"],
+  T: ["energy", "energy_liquid", "theta_bc", "theta_floor", "evap_flux"],
 };
 
 const RES_LABEL: Record<string, string> = {
@@ -52,6 +52,7 @@ const RES_LABEL: Record<string, string> = {
   energy: "r_energy",
   energy_liquid: "r_energy_l · liquid, interface saturated",
   theta_bc: "L_theta · inlet, initial, walls",
+  theta_floor: "L_floor · liquid no colder than the inlet",
   evap_flux: "r_flux · source from the front flux",
 };
 
@@ -72,6 +73,7 @@ const RES_ORDER = [
   "energy",
   "energy_liquid",
   "theta_bc",
+  "theta_floor",
   "evap_flux",
 ];
 

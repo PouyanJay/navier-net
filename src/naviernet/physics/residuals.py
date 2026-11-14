@@ -42,7 +42,7 @@ from typing import NamedTuple
 import torch
 
 from naviernet.physics.film import film_surface_pressure
-from naviernet.physics.heating import wall_flux_ratio
+from naviernet.physics.heating import heated_length, wall_flux_ratio
 
 
 class StageAResiduals(NamedTuple):
@@ -554,6 +554,23 @@ def energy_liquid_balance(
     return residual, scale.detach()
 
 
+def subcooling_residual(
+    model, x: torch.Tensor, groups: dict[str, float], c: torch.Tensor | None = None
+) -> torch.Tensor:
+    """``(1 - alpha) [theta_inlet - theta]_+``: how far the liquid sits below the
+    inlet temperature, ``(N, 1)``. Nothing in the channel cools the liquid (the
+    inlet is its coldest source and the front sits at saturation), so this is
+    zero in any physical field. As a loss it is the floor that keeps the solver
+    from paying for a temperature step with a cold patch: the relative energy
+    loss alone charges a step in the open liquid almost nothing (its error can
+    never exceed its own terms), and ghost2-15-s0 and ghost2-20-s0 bought zero
+    edge evaporation that way, with the liquid ahead of the nose 0.02 to 0.05 K
+    below the inlet."""
+    cx = _ctx(c, x)
+    liquid = 1.0 - model.alpha(x, cx).detach()
+    return liquid * (groups["theta_inlet"] - model.temperature(x, cx)).clamp(min=0.0)
+
+
 class ThermalBatches(NamedTuple):
     """The sampled points the temperature conditions are scored on: the inlet
     line, the first instant, and the side walls (a leaf, for the adiabatic
@@ -568,9 +585,10 @@ def thermal_boundary_losses(
     model, groups: dict[str, float], batches: ThermalBatches, c: torch.Tensor | None = None
 ) -> torch.Tensor:
     """The inlet temperature, the initial liquid temperature (where there is
-    liquid, and farther from the frame-1 outline than the layer the bubble
-    already has, ``init_layer_star``), and the side-wall condition: adiabatic
-    (``theta_y = 0``) unless the series gives a wall temperature."""
+    liquid, and farther from the first outline than the layer the bubble
+    already has, ``init_layer_star``; uniform, or rising along the heated floor
+    under ``experiment.T_init_profile=heated``), and the side-wall condition:
+    adiabatic (``theta_y = 0``) unless the series gives a wall temperature."""
     inlet = (
         (model.temperature(batches.inlet, _ctx(c, batches.inlet)) - groups["theta_inlet"]) ** 2
     ).mean()
@@ -584,12 +602,12 @@ def thermal_boundary_losses(
             # (frozen) geometry and carries no gradient.
             distance = model._liquid_distance(batches.initial, cx).detach()
             liquid = liquid * (distance >= layer).to(liquid.dtype)
-        total = (
-            total
-            + (
-                liquid * (model.temperature(batches.initial, cx) - groups["theta_init"]) ** 2
-            ).mean()
-        )
+        start = groups["theta_init"]
+        if "theta_init_rise" in groups:
+            start = start + groups["theta_init_rise"] * heated_length(
+                batches.initial[:, 0:1], groups
+            )
+        total = total + (liquid * (model.temperature(batches.initial, cx) - start) ** 2).mean()
     walls = batches.walls.detach().clone().requires_grad_(True)
     theta_wall = model.temperature(walls, _ctx(c, walls))
     if "theta_wall" in groups:
@@ -937,6 +955,54 @@ def kinematic_residual(
     if mass_flux is not None:
         advance = advance + mass_flux
     return front.normal_speed - advance
+
+
+def root_cap_mask(front) -> torch.Tensor:
+    """``True`` on the samples of the root cap, ``(N, 1)``."""
+    return (front.on_cap > 0.5) & (front.u < 0.5)
+
+
+def _cell_lengths(points: torch.Tensor, closed_ends: bool) -> torch.Tensor:
+    """The length of curve each of the ordered ``points`` stands for, ``(M,)``:
+    half the step to each neighbour. With ``closed_ends`` the end points sit on
+    the segment's seams; otherwise the seam is one step further on, as on the
+    body, whose samples exclude it."""
+    steps = (points[1:] - points[:-1]).norm(dim=1)
+    cells = torch.zeros(len(points), device=points.device, dtype=points.dtype)
+    cells[:-1] += 0.5 * steps
+    cells[1:] += 0.5 * steps
+    if not closed_ends:
+        cells[0] += steps[0]
+        cells[-1] += steps[-1]
+    return cells
+
+
+def front_arc_lengths(front) -> torch.Tensor:
+    """Each front sample's share of the outline's length, ``(N, 1)``, detached and
+    averaging one at every instant, so a weighted loss keeps its scale and every
+    instant keeps its say. Relies on the layout both front models share: within
+    a segment the samples at one instant run in order along the curve."""
+    with torch.no_grad():
+        xy = front.points[:, :2]
+        times = front.points[:, 2]
+        on_cap = front.on_cap.squeeze(1) > 0.5
+        root = root_cap_mask(front).squeeze(1)
+        upper = front.side.squeeze(1) > 0
+        segments = (
+            (~on_cap & upper, False),
+            (~on_cap & ~upper, False),
+            (root, True),
+            (on_cap & ~root, True),
+        )
+        lengths = torch.zeros(len(xy), device=xy.device, dtype=xy.dtype)
+        for instant in torch.unique(times):
+            now = times == instant
+            for member, closed_ends in segments:
+                index = torch.nonzero(now & member).squeeze(1)
+                if len(index) > 1:
+                    lengths[index] = _cell_lengths(xy[index], closed_ends)
+            lengths[now] = lengths[now] / lengths[now].mean().clamp(min=1e-12)
+        return lengths.unsqueeze(1)
 
 
 def laplace_jump_residual(model, front, groups: dict[str, float]) -> torch.Tensor:

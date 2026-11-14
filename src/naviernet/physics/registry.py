@@ -41,13 +41,16 @@ from naviernet.physics.residuals import (
     energy_residuals,
     evap_flux_closure,
     footprint_source_penalty_sq,
+    front_arc_lengths,
     interface_mass_flux,
     interface_shear_residual,
     kinematic_residual,
     laplace_jump_residual,
     momentum_residuals,
+    root_cap_mask,
     source_penalty_sq,
     stage_a_residuals,
+    subcooling_residual,
     thermal_boundary_losses,
     vapour_potential_residual,
 )
@@ -365,38 +368,66 @@ def _theta_bc_term(ctx: LossContext) -> torch.Tensor:
     return thermal_boundary_losses(ctx.model, ctx.groups, batches, ctx.c)
 
 
+def _theta_floor_sq(ctx: LossContext) -> torch.Tensor:
+    return subcooling_residual(ctx.model, ctx.x_coll, ctx.groups, ctx.c) ** 2
+
+
 def _evap_flux_sq(ctx: LossContext) -> torch.Tensor:
     return evap_flux_closure(ctx.model, ctx.x_coll, ctx.c) ** 2
 
 
+def _laplace_weights(ctx: LossContext) -> torch.Tensor:
+    """What each front sample counts for in the Young-Laplace loss, ``(N, 1)``:
+    the length it stands for or one each, zero on a root cap left out."""
+    model_cfg = ctx.model.cfg.model
+    front = ctx.front
+    if str(getattr(model_cfg, "laplace_weighting", "samples")) == "length":
+        weights = front_arc_lengths(front)
+    else:
+        weights = torch.ones_like(front.on_cap)
+    if str(getattr(model_cfg, "laplace_root", "include")) == "exclude":
+        weights = weights * (~root_cap_mask(front)).to(weights.dtype)
+    return weights
+
+
 def _laplace_term(ctx: LossContext) -> torch.Tensor:
     residual = laplace_jump_residual(ctx.model, ctx.front, ctx.groups)
+    weights = _laplace_weights(ctx)
     if str(getattr(ctx.model.cfg.model, "laplace_condition", "pointwise")) == "mean":
-        residual = per_instant_mean(residual, ctx.front.points[:, 2])
+        residual = per_instant_mean(residual, ctx.front.points[:, 2], weights)
         return (residual**2).mean()
-    return in_view_mean(residual**2, ctx.front.points[:, 0:1], ctx.view_x_max)
+    return in_view_mean(residual**2, ctx.front.points[:, 0:1], ctx.view_x_max, weights)
 
 
 def in_view_mean(
-    values: torch.Tensor, x: torch.Tensor, view_x_max: float | None
+    values: torch.Tensor,
+    x: torch.Tensor,
+    view_x_max: float | None,
+    weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """The mean of ``values`` ``(N, 1)`` over the samples at ``x <= view_x_max``:
     where the nose has left the camera's view its shape is a guess, and a
-    pointwise jump there would tie the pressure to that guess."""
-    if view_x_max is None:
-        return values.mean()
-    inside = (x.detach() <= view_x_max).to(values.dtype)
-    return (values * inside).sum() / inside.sum().clamp(min=1.0)
+    pointwise jump there would tie the pressure to that guess. ``weights``
+    ``(N, 1)`` makes it a weighted mean; none counts every sample once."""
+    if weights is None:
+        weights = torch.ones_like(values)
+    if view_x_max is not None:
+        weights = weights * (x.detach() <= view_x_max).to(values.dtype)
+    return (values * weights).sum() / weights.sum().clamp(min=1e-12)
 
 
-def per_instant_mean(values: torch.Tensor, times: torch.Tensor) -> torch.Tensor:
+def per_instant_mean(
+    values: torch.Tensor, times: torch.Tensor, weights: torch.Tensor | None = None
+) -> torch.Tensor:
     """``values`` ``(N, 1)`` averaged over the samples sharing each instant of
     ``times`` ``(N,)``: one mean per instant, ``(K, 1)``."""
     _, which = torch.unique(times.detach(), return_inverse=True)
+    if weights is None:
+        weights = torch.ones_like(values)
     count = torch.zeros(int(which.max()) + 1, 1, device=values.device, dtype=values.dtype)
-    total = torch.zeros_like(count).index_add(0, which, values)
-    count = count.index_add(0, which, torch.ones_like(values))
-    return total / count
+    total = torch.zeros_like(count).index_add(0, which, values * weights)
+    count = count.index_add(0, which, weights)
+    return total / count.clamp(min=1e-12)
 
 
 def _film_term(ctx: LossContext) -> torch.Tensor:
@@ -742,6 +773,22 @@ REGISTRY: tuple[Equation, ...] = (
         # Their weight is the configured one, held at the data term's.
         rebalanced=False,
         term=_theta_bc_term,
+    ),
+    Equation(
+        id="theta_floor",
+        stage="B",
+        name="Liquid no colder than the inlet",
+        tex=r"(1-\alpha)\,[\theta_\text{in} - \theta]_+ = 0",
+        weight_key="theta_floor",
+        fields_required=("phi", "T"),
+        groups=("theta_inlet",),
+        mode="sharp",
+        flag="sharp_thermal",
+        # A bound, not a balance: held at its configured weight like theta_bc,
+        # so the physics cannot rebalance it away.
+        rebalanced=False,
+        pointwise=_theta_floor_sq,
+        term=_mean(_theta_floor_sq),
     ),
     Equation(
         id="evap_flux",

@@ -94,7 +94,8 @@ def render_video(cfg, model, data, paths: RunPaths, n_t: int | None = None) -> P
     dt_frame_ms = cfg.experiment.dt_frame_ms
     # Camera frame -> tensor row, for the event frames only. Excluded frames are
     # absent, so the clock passes their instant without a measured contour to flash.
-    event_rows = {frame: row for row, frame in enumerate(data.event_frames)}
+    # Ghost frames are absent too: there is no measured contour before the first image.
+    event_rows = {data.frame_numbers[row]: row for row in data.image_rows}
 
     times = np.linspace(data.t[0], data.t[-2], n_t)
     # Real time between rendered frames, versus the wall-clock time each frame
