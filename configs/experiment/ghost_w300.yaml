@@ -3,8 +3,21 @@
 # the cavity, so the state at frame 1 (the film's age over the floor, the
 # cooled layer around the bubble, the flow's memory) is computed, not imposed.
 #
+# The default run is ghost8-15-s0 (2026-11-14). It reproduces with:
+#
 #   naviernet dataset=Series-1-w300 experiment=ghost_w300 model=trusted \
-#     training=trusted scales.dT_ref_K=1.0 model.measured_outline=true
+#     training=trusted scales.dT_ref_K=1.0 model.measured_outline=true \
+#     model.momentum_inertia=true model.laplace_condition=pointwise \
+#     model.laplace_root=exclude model.laplace_weighting=length \
+#     model.outlet_pressure_Pa=null training.wall_weight_after_freeze=50.0 \
+#     training.collocation_time_bins=16 training.causal_time_chunks=32 \
+#     training.steps=8000 training.energy_relative_mode=mixed \
+#     training.n_coll=19456 training.n_bc=3264 training.holdout_frame=5 \
+#     training.val_fraction=0.0 training.collocation_late_share=0.3 \
+#     training.collocation_late_frac=0.15 training.collocation_late_bins=8
+#
+# Frame 6 is held out of every target, the traced outline included: the blind
+# test (IoU 0.990). It needs about 40 GB of GPU memory (an L40S).
 #
 # The liquid starts at saturation at the inlet, so the superheat scale cannot
 # come from it: scales.dT_ref_K has to be given (1 K: the liquid warms by about
@@ -41,7 +54,8 @@ q_upstream_W_cm2: 0.0
 heater_edge_um: 233.0
 q_hot_W_cm2: 6.5
 hot_zone_end_um: 600.0
-q_wall_W_cm2: 1.0
+# ghost8 lowers it to 0.75 at 15 mL/h.
+q_wall_W_cm2: 0.75
 
 wet_fraction_mode: fit
 wet_fraction: 0.88
@@ -61,7 +75,12 @@ T_init_profile: heated
 T_init_layer_um: 20.0
 side_wall_thermal: adiabatic
 
-flow_rate_mL_hr: 20.0
+# 15 mL/h, inside the 14 to 20 mL/h the experiment ran at.
+flow_rate_mL_hr: 15.0
+
+# The channel runs 1 mm past the camera's view, so the outlet condition sits
+# away from the bubble's head at frames 9 to 11. The audit scores the view only.
+outlet_extension_um: 1000.0
 
 # The ghost start. The seed is the first image's outline shrunk about its root
 # to the area of a disc as wide as the channel is deep; it widens to the first
