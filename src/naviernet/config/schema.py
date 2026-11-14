@@ -123,6 +123,11 @@ class ExperimentConfig:
     microlayer_mode: str = "fixed"  # "fixed" | "fit"
     microlayer_um: float = 0.5
     footprint_age_ms: float = 0.0
+    # The channel the equations cover runs this far past the camera's view at
+    # the outlet end: liquid only, no images, so the outlet condition sits away
+    # from a bubble whose nose nears the edge of the view. The images, the data
+    # term and the audit stay inside the view. 0: the channel ends at the view.
+    outlet_extension_um: float = 0.0
 
 
 @dataclass
@@ -693,6 +698,16 @@ class TrainingConfig:
     # variance falls rather than its bias rising. 0 = the independent per-point
     # draw, unchanged.
     collocation_time_bins: int = 0
+    # Denser collocation at the end of the window, where a solve has no later
+    # time to lean on and every past run's residual climbed 2 to 4 times its
+    # middle value. ``collocation_late_share`` of the uniform half is drawn in
+    # the last ``collocation_late_frac`` of [t_min, t_max] instead of over all
+    # of it, and snapped to its own ``collocation_late_bins`` stratified
+    # instants there (0: as many as ``collocation_time_bins``). Share 0 = off,
+    # the draw unchanged.
+    collocation_late_share: float = 0.0
+    collocation_late_frac: float = 0.0
+    collocation_late_bins: int = 0
 
     # Frame withheld from supervision entirely (0-based) and used as the
     # honest generalisation test. Set to -1 to train on every frame. This is the

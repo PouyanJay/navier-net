@@ -145,12 +145,14 @@ def mirror_breaking_fraction(field: np.ndarray, odd: bool = False) -> float:
 
 
 def audit_grid(data, nx: int, ny: int) -> AuditGrid:
-    """``nx`` stations across the domain and ``ny`` rows centred on the channel
-    centreline of the run's wall span, reaching the nearer wall."""
+    """``nx`` stations across the camera's view and ``ny`` rows centred on the
+    channel centreline of the run's wall span, reaching the nearer wall. An
+    outlet extension past the view is left out, so every number stays about
+    the imaged channel and comparable with runs that end at the view."""
     y_center = 0.5 * (data.y_lo + data.y_hi)
     half = min(y_center - data.y_lo, data.y_hi - y_center)
     return AuditGrid(
-        xs=np.linspace(data.domain.x_min, data.domain.x_max, nx),
+        xs=np.linspace(data.domain.x_min, data.domain.x_view, nx),
         ys=y_center + np.linspace(-half, half, ny),
         y_center=float(y_center),
     )
@@ -239,7 +241,7 @@ def flux_balance(cfg, model, data, groups, t: float) -> dict:
     value upstream of the root, where the flux must simply equal the inlet's."""
     device = _device(model)
     plan = mass_balance.build_plan(
-        data.domain,
+        data.domain.in_view(),
         (data.y_lo, data.y_hi),
         groups,
         cfg.training,
@@ -803,7 +805,7 @@ def audit_run(cfg, model, data, paths: RunPaths) -> dict:
         judged,
         evaluation.acceptance,
         warmup,
-        float(data.domain.x_max - data.domain.x_min),
+        float(data.domain.x_view - data.domain.x_min),
     )
     verdicts.update(_scan_verdicts(scan, evaluation.acceptance, judged[0]["t_star"]))
     verdicts.update(_jump_verdict(judged, evaluation.acceptance))

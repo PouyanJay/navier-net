@@ -189,6 +189,7 @@ class OperatingConditions(BaseModel):
     ghost_seed_um: float
     ghost_shape: str
     ghost_growth: str
+    outlet_extension_um: float = 0.0
     dT_ref_K: float | None
 
 
@@ -279,6 +280,7 @@ class ConditionsUpdate(BaseModel):
     ghost_seed_um: float | None = None
     ghost_shape: Literal["similar", "stretch", "blob"] | None = None
     ghost_growth: Literal["parabola", "energy"] | None = None
+    outlet_extension_um: float | None = None
     dT_ref_K: float | None = None
 
 

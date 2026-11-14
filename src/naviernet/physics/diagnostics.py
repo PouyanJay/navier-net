@@ -470,7 +470,7 @@ def film_report(model, data, groups: dict[str, float]) -> dict:
             _stations(PROFILE_STATIONS * 4), dtype=torch.float32, device=device
         ),
         grid=torch.cartesian_prod(
-            torch.linspace(domain.x_min, domain.x_max, PARTITION_GRID, device=device),
+            torch.linspace(domain.x_min, domain.x_view, PARTITION_GRID, device=device),
             torch.linspace(domain.y_min, domain.y_max, PARTITION_GRID, device=device),
         ),
         device=device,

@@ -330,3 +330,36 @@ def test_switching_the_outline_on_keeps_the_shared_warm_up(tmp_path):
         warmup_cache.warmup_key(cfg, paths, keys)[0]
         == warmup_cache.warmup_key(off, paths, keys)[0]
     )
+
+
+def test_a_held_out_frame_is_left_out_of_the_traced_outline(tmp_path):
+    # Arrange
+    cfg, paths = _staged(tmp_path)
+    held_out = float(2 * CAPSULE_DT)
+
+    # Act
+    full = MeasuredOutline.load(tracing.outline_path(paths))
+    blind = MeasuredOutline.load(tracing.outline_path(paths), held_out_times=[held_out])
+
+    # Assert: the blind outline skips that frame and keeps every other one.
+    assert len(full.times) == CAPSULE_FRAMES
+    assert len(blind.times) == CAPSULE_FRAMES - 1
+    assert not np.any(np.isclose(blind.times.numpy(), held_out))
+
+
+def test_training_binds_the_outline_without_the_held_out_frame(tmp_path):
+    # Arrange
+    cfg, paths = _staged(tmp_path, ["training.holdout_frame=2"])
+    data = BubbleDataset(cfg, paths)
+    priors = training._geometry_priors(cfg, data)
+    measured = MeasuredInterface(priors, mirror_axis=CAPSULE_Y_CENTER)
+
+    class _Model:
+        nets = {"phi": measured}
+
+    # Act
+    training._bind_measured_outline(cfg, _Model(), paths, data)
+
+    # Assert
+    held_out_t = float(data.t[data.holdout_row])
+    assert not np.any(np.isclose(measured.outline.times.numpy(), held_out_t))

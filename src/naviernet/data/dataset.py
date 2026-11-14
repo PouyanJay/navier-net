@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 
 import numpy as np
@@ -70,10 +70,23 @@ class Domain:
     # placed here are at the channel, not at the image edge.
     y_wall_lo: float
     y_wall_hi: float
+    # The camera's view ends here; ``x_max`` is the channel's outlet, past it by
+    # ``experiment.outlet_extension_um``. None: the channel ends at the view.
+    x_view_max: float | None = None
+
+    @property
+    def x_view(self) -> float:
+        """Where the images end: the outlet unless the channel is extended."""
+        return self.x_max if self.x_view_max is None else self.x_view_max
 
     @property
     def area(self) -> float:
-        return (self.x_max - self.x_min) * (self.y_max - self.y_min)
+        """The camera view's area: what an image's pixel fraction is a share of."""
+        return (self.x_view - self.x_min) * (self.y_max - self.y_min)
+
+    def in_view(self) -> Domain:
+        """This domain cut at the camera's view, for measurements on the images."""
+        return replace(self, x_max=self.x_view, x_view_max=None)
 
     @property
     def y_center(self) -> float:
@@ -138,9 +151,14 @@ class BubbleDataset:
         )
 
         y_wall_lo, y_wall_hi = self._wall_positions()
+        x_view = float(self.x[-1])
+        extension = float(getattr(cfg.experiment, "outlet_extension_um", 0.0) or 0.0)
+        if extension < 0.0:
+            raise ValueError("experiment.outlet_extension_um must be zero or positive")
         self.domain = Domain(
             x_min=float(self.x[0]),
-            x_max=float(self.x[-1]),
+            x_max=x_view + extension / float(cfg.scales.L_ref_um),
+            x_view_max=x_view,
             y_min=float(self.y[0]),
             y_max=float(self.y[-1]),
             t_min=float(self.t[0]),
@@ -557,14 +575,50 @@ class BubbleDataset:
         ``0`` (the default) is the independent per-point draw, unchanged.
         """
         points = self._sample_collocation_points(n, rng)
+        n_late = self._late_count(n)
+        late_start = self._late_start()
+        if n_late:
+            points[:n_late, 2] = rng.uniform(late_start, self.domain.t_max, n_late)
         if time_bins > 0:
-            points[:, 2] = self._snap_to_bins(points[:, 2], rng, time_bins)
+            points[n_late:, 2] = self._snap_to_bins(points[n_late:, 2], rng, time_bins)
+            if n_late:
+                late_bins = self._late_bins or time_bins
+                points[:n_late, 2] = self._snap_to_bins(
+                    points[:n_late, 2], rng, late_bins, start=late_start
+                )
         return torch.tensor(points, device=self.device, requires_grad=True)
 
-    def _snap_to_bins(self, times: np.ndarray, rng, time_bins: int) -> np.ndarray:
-        """Each time replaced by the nearest of ``time_bins`` stratified instants."""
+    @property
+    def _late_bins(self) -> int:
+        return int(getattr(self.cfg.training, "collocation_late_bins", 0) or 0)
+
+    def _late_count(self, n: int) -> int:
+        """How many of the uniform half's points go to the end of the window
+        (``training.collocation_late_share``); 0 when the setting is off."""
+        tcfg = self.cfg.training
+        share = float(getattr(tcfg, "collocation_late_share", 0.0) or 0.0)
+        frac = float(getattr(tcfg, "collocation_late_frac", 0.0) or 0.0)
+        if not (0.0 <= share <= 1.0 and 0.0 <= frac <= 1.0):
+            raise ValueError(
+                "training.collocation_late_share and collocation_late_frac must lie in [0, 1]"
+            )
+        if share == 0.0 or frac == 0.0:
+            return 0
+        return int(round(share * (n // 2)))
+
+    def _late_start(self) -> float:
+        """Where the end-of-window stretch begins, in t*."""
         d = self.domain
-        edges = np.linspace(d.t_min, d.t_max, time_bins + 1)
+        frac = float(getattr(self.cfg.training, "collocation_late_frac", 0.0) or 0.0)
+        return d.t_max - frac * (d.t_max - d.t_min)
+
+    def _snap_to_bins(
+        self, times: np.ndarray, rng, time_bins: int, start: float | None = None
+    ) -> np.ndarray:
+        """Each time replaced by the nearest of ``time_bins`` stratified instants
+        over ``[start, t_max]`` (the whole window when ``start`` is None)."""
+        d = self.domain
+        edges = np.linspace(d.t_min if start is None else start, d.t_max, time_bins + 1)
         instants = rng.uniform(edges[:-1], edges[1:]).astype(np.float32)
         return instants[np.abs(times[:, None] - instants[None, :]).argmin(axis=1)]
 

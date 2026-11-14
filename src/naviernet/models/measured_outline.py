@@ -94,11 +94,17 @@ class MeasuredOutline(nn.Module):
         self._build_coarse_lookup()
 
     @classmethod
-    def load(cls, path, ghost=None) -> MeasuredOutline:
+    def load(cls, path, ghost=None, held_out_times=()) -> MeasuredOutline:
         """The outline a dataset's ``outline.npz`` stores, after the ``ghost``
-        frames (:class:`naviernet.data.ghost.GhostOutline`) when the run has any."""
+        frames (:class:`naviernet.data.ghost.GhostOutline`) when the run has any.
+
+        Frames at ``held_out_times`` are left out, so a frame held out of
+        supervision is blind for the shape too: the outline crosses it on the
+        spline through its neighbours instead of passing through its tracing."""
         with np.load(path) as archive:
             times, stations = archive["t_star"], archive["stations"]
+            keep = ~np.isin(np.round(times, 4), np.round(np.asarray(held_out_times), 4))
+            times, stations = times[keep], stations[keep]
             if ghost is not None:
                 times = np.concatenate([ghost.times, times])
                 stations = np.concatenate([ghost.stations, stations])

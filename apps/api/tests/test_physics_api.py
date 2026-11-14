@@ -28,6 +28,7 @@ def test_physics_lists_the_registry_equations_with_state(client):
         "vapour_potential",
         "energy_liquid",
         "theta_bc",
+        "theta_floor",
         "evap_flux",
         "kinematic",
         "laplace",
