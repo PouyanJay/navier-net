@@ -363,11 +363,17 @@ class SourceLayout:
 @dataclass(frozen=True)
 class LiquidFields:
     """One instant's two potentials, and the root-mean-square miss of ``Phi``'s
-    condition at the collocation points."""
+    condition at the collocation points.
+
+    ``inflow_response`` is solved only when the inflow changes in time
+    (``model.unsteady_inflow``): the potential whose normal derivative on the
+    front is ``-n.U_in`` alone. ``Phi`` is linear in the inflow, so at ``f``
+    times the set flow it is ``potential + (f - 1) inflow_response``."""
 
     potential: HarmonicField
     capacity: HarmonicField
     kinematic_rms: float
+    inflow_response: HarmonicField | None = None
 
 
 @dataclass(frozen=True)
@@ -426,12 +432,15 @@ class _Unknowns:
 
 def _regularised_solve(matrix: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
     """``argmin |A q - b|^2 + (TIKHONOV sigma_max)^2 |q|^2`` for each instant's
-    ``A`` ``(T, N, n)`` and ``b`` ``(T, N)``, ``(T, n)``. The SVD runs on the CPU,
-    where LAPACK takes these small matrices faster than a GPU does."""
+    ``A`` ``(T, N, n)`` and ``b`` ``(T, N)``, ``(T, n)``; several right-hand sides
+    ``(T, N, k)`` share the factorisation and give ``(T, n, k)``. The SVD runs on
+    the CPU, where LAPACK takes these small matrices faster than a GPU does."""
+    columns = rhs if rhs.dim() == 3 else rhs.unsqueeze(-1)
     u, s, vh = torch.linalg.svd(matrix.cpu(), full_matrices=False)
     lam = TIKHONOV * s[:, :1]
-    filtered = (s / (s**2 + lam**2)).unsqueeze(-1) * (u.mT @ rhs.cpu().unsqueeze(-1))
-    return (vh.mT @ filtered)[..., 0].to(matrix.device)
+    filtered = (s / (s**2 + lam**2)).unsqueeze(-1) * (u.mT @ columns.cpu())
+    solution = (vh.mT @ filtered).to(matrix.device)
+    return solution if rhs.dim() == 3 else solution[..., 0]
 
 
 def _place_sources(
@@ -460,15 +469,23 @@ def _place_sources(
 
 
 def _solve_potential(
-    unknowns: _Unknowns, problem: FrontProblem
-) -> tuple[list[HarmonicField], list[float]]:
+    unknowns: _Unknowns, problem: FrontProblem, with_inflow_response: bool = False
+) -> tuple[list[HarmonicField], list[float], list[HarmonicField | None]]:
     """Each instant's ``Phi`` with ``dPhi/dn = V_n - n.U_in`` at its collocation
-    points, in least squares, and the root-mean-square miss there."""
+    points, in least squares, and the root-mean-square miss there. With
+    ``with_inflow_response``, also the potential of ``dPhi/dn = -n.U_in`` alone
+    (see :class:`LiquidFields`), from the same factorisation; ``None`` otherwise."""
     xy, normal = problem.collocation.points, problem.collocation.normal
     slope = unknowns.basis(xy, 1, NEUMANN)
     flux = normal[..., :1] * slope.real + normal[..., 1:2] * (1j * slope).real
     rhs = problem.collocation.speed - problem.inflow_normal
-    q = _regularised_solve(flux, rhs)
+    responses: list[HarmonicField | None] = [None] * len(rhs)
+    if with_inflow_response:
+        both = _regularised_solve(flux, torch.stack([rhs, -problem.inflow_normal], dim=-1))
+        q = both[..., 0]
+        responses = [unknowns.field(i, both[i, :, 1]) for i in range(len(both))]
+    else:
+        q = _regularised_solve(flux, rhs)
     misses = torch.sqrt(((flux @ q.unsqueeze(-1))[..., 0] - rhs).pow(2).mean(dim=1)).tolist()
     scales = problem.collocation.speed.abs().amax(dim=1).tolist()
     for miss, scale in zip(misses, scales, strict=True):
@@ -479,7 +496,7 @@ def _solve_potential(
                 "sources",
                 100.0 * miss / scale,
             )
-    return [unknowns.field(i, q[i]) for i in range(len(q))], misses
+    return [unknowns.field(i, q[i]) for i in range(len(q))], misses, responses
 
 
 def _solve_capacity(unknowns: _Unknowns, problem: FrontProblem) -> list[HarmonicField]:
@@ -492,16 +509,24 @@ def _solve_capacity(unknowns: _Unknowns, problem: FrontProblem) -> list[Harmonic
 
 
 def solve_liquid_fields(
-    channel: Channel, problem: FrontProblem, layout: SourceLayout, inside
+    channel: Channel,
+    problem: FrontProblem,
+    layout: SourceLayout,
+    inside,
+    with_inflow_response: bool = False,
 ) -> list[LiquidFields]:
     """Both potentials at each of the problem's instants, all solved together.
     The fronts are the upper half only under a mirror axis; ``inside`` says which
-    points ``(T, n, 2)`` lie in the vapour at their own instant."""
+    points ``(T, n, 2)`` lie in the vapour at their own instant.
+    ``with_inflow_response`` adds each instant's response to the inflow."""
     placed = _place_sources(channel, problem.sources, layout.offset, inside)
     unknowns = _Unknowns.placed(channel, placed, layout.mirror_axis)
-    potentials, misses = _solve_potential(unknowns, problem)
+    potentials, misses, responses = _solve_potential(unknowns, problem, with_inflow_response)
     capacities = _solve_capacity(unknowns, problem)
-    return [LiquidFields(*parts) for parts in zip(potentials, capacities, misses, strict=True)]
+    return [
+        LiquidFields(*parts)
+        for parts in zip(potentials, capacities, misses, responses, strict=True)
+    ]
 
 
 class FieldCache:

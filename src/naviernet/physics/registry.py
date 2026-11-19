@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 import torch
 
 from naviernet.models.geometry import FrontSamples
+from naviernet.physics import depth_drain
 from naviernet.physics.film import (
     advancing_mask,
     depletion_residual,
@@ -119,6 +120,24 @@ class LossContext:
         self._energy: EnergyResiduals | None = None
         self._energy_liquid: tuple[torch.Tensor, torch.Tensor] | None = None
         self._mass_flux: torch.Tensor | None = None
+        self._depth_split: depth_drain.DepthSplit | None = None
+
+    @property
+    def depth_split(self) -> depth_drain.DepthSplit | None:
+        """The edge rule's mismatch on this step's front in its root, drained
+        and kept parts under ``model.depth_drain``; ``None`` otherwise."""
+        if not getattr(self.model, "depth_drain", False):
+            return None
+        if self._depth_split is None:
+            self._depth_split = depth_drain.depth_split(
+                self.model, self.front, self.groups, self.view_x_max
+            )
+        return self._depth_split
+
+    @property
+    def depth_split_taken(self) -> depth_drain.DepthSplit | None:
+        """The split this step's edge rule was charged on, if it was evaluated."""
+        return self._depth_split
 
     @property
     def front(self) -> FrontSamples:
@@ -391,8 +410,20 @@ def _laplace_weights(ctx: LossContext) -> torch.Tensor:
 
 
 def _laplace_term(ctx: LossContext) -> torch.Tensor:
-    residual = laplace_jump_residual(ctx.model, ctx.front, ctx.groups)
     weights = _laplace_weights(ctx)
+    split = ctx.depth_split
+    if split is not None:
+        # The plain rule on all of the mismatch the root's law does not answer
+        # for, and the drained part charged a second time, by the unit. A
+        # plain error e is charged e^2, so its next unit costs 2e: at the
+        # price p every unit of drain costs what the next unit of a plain
+        # error of p does.
+        outside_the_law = split.kept + split.drained
+        plain = in_view_mean(
+            outside_the_law**2, ctx.front.points[:, 0:1], ctx.view_x_max, weights
+        )
+        return plain + 2.0 * ctx.model.depth_drain_price * split.needed
+    residual = laplace_jump_residual(ctx.model, ctx.front, ctx.groups)
     if str(getattr(ctx.model.cfg.model, "laplace_condition", "pointwise")) == "mean":
         residual = per_instant_mean(residual, ctx.front.points[:, 2], weights)
         return (residual**2).mean()

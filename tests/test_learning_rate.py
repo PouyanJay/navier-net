@@ -39,3 +39,28 @@ def test_a_compressed_physics_stage_sweeps_the_full_length_rates():
         assert learning_rate(3000 + physics_step, short) == pytest.approx(
             learning_rate(3000 + 4 * physics_step, full)
         )
+
+
+def test_a_physics_floor_holds_the_rate_once_the_schedule_reaches_it():
+    # ghost10's schedule: 1.25e-4 from step 7200, halved again at 8700.
+    falling = _tcfg(physics_lr_halflife=1500)
+    held = _tcfg(physics_lr_halflife=1500, physics_lr_floor=1.25e-4)
+
+    assert learning_rate(8700, falling) == pytest.approx(6.25e-5)
+    for step in (8700, 10000, 12000):
+        assert learning_rate(step, held) == pytest.approx(1.25e-4)
+
+
+def test_a_physics_floor_leaves_the_rates_above_it_alone():
+    falling = _tcfg(physics_lr_halflife=1500)
+    held = _tcfg(physics_lr_halflife=1500, physics_lr_floor=1.25e-4)
+
+    for step in (1, 2500, 3000, 3001, 4200, 5700, 7200, 8000, 8699):
+        assert learning_rate(step, held) == learning_rate(step, falling)
+
+
+def test_a_physics_floor_does_not_lift_the_warm_up():
+    lifted = _tcfg(physics_lr_floor=5e-3)
+
+    assert learning_rate(3000, lifted) == pytest.approx(1e-3), "warm-up keeps its schedule"
+    assert learning_rate(3001, lifted) == pytest.approx(5e-3)

@@ -22,12 +22,14 @@ import torch.nn as nn
 from torch.func import functional_call
 
 from naviernet.models.attention import SelfAdaptiveWeights
+from naviernet.models.depth_curve import DepthRootCurve
 from naviernet.models.film import LiquidFilm
 from naviernet.models.geometry import (
     GeometricInterface,
     GeometryContext,
     GeometryPriors,
 )
+from naviernet.models.inflow import InflowCurve
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softplus, logit
 from naviernet.models.measured_outline import MeasuredInterface
 from naviernet.models.potential_flow import (
@@ -254,6 +256,7 @@ class BubblePINN(nn.Module):
         # Last of all, for the same reason: its stream-function net draws from
         # the RNG only when the flag is on.
         self._init_exact_continuity(cfg)
+        self._init_depth_drain(cfg)
 
     def _validate_sharp_interface(self, cfg, names: list[str]) -> None:
         """Reject a sharp-interface composition that cannot work, before any net
@@ -274,6 +277,49 @@ class BubblePINN(nn.Module):
                 "it requires the 'p' field in model.fields (the Stage-B field set); "
                 f"this model has {names}."
             )
+
+    def _init_depth_drain(self, cfg) -> None:
+        """The depth's share of the edge rule (``model.depth_drain``, see
+        :mod:`naviernet.physics.depth_drain`): the root's law, the shape
+        tolerance and the drain's price, in the run's units."""
+        model = cfg.model
+        self.depth_drain = bool(getattr(model, "depth_drain", False))
+        self.depth_root: DepthRootCurve | None = None
+        if not self.depth_drain:
+            return
+        if not self.sharp_interface:
+            raise ValueError(
+                "model.depth_drain splits the mismatch of the edge's pressure step, so "
+                "it needs model.sharp_interface=true"
+            )
+        if str(getattr(model, "laplace_condition", "pointwise")) != "pointwise":
+            raise ValueError(
+                "model.depth_drain rebuilds the bubble from the pressure step at every "
+                "point of the edge, so it needs model.laplace_condition=pointwise"
+            )
+        if str(getattr(model, "laplace_weighting", "samples")) != "length":
+            raise ValueError(
+                "model.depth_drain measures the drain and the rebuilt edge by length of "
+                "edge, so the edge rule must too: it needs model.laplace_weighting=length"
+            )
+        tolerance_um = float(model.depth_drain_tolerance_um)
+        if not tolerance_um > 0.0:
+            raise ValueError(
+                f"model.depth_drain_tolerance_um must be positive, got {tolerance_um}"
+            )
+        price_Pa = float(model.depth_drain_price_Pa)
+        if price_Pa < 0.0:
+            raise ValueError(
+                "model.depth_drain_price_Pa is what a drain costs on top of the plain "
+                f"rule, so it cannot be negative; got {price_Pa}"
+            )
+        length_um = float(cfg.scales.L_ref_um)
+        pressure_Pa = float(cfg.fluid.rho_l) * float(cfg.scales.U_ref) ** 2
+        self.depth_drain_tolerance = tolerance_um / length_um
+        self.depth_drain_price = price_Pa / pressure_Pa
+        self.depth_root = DepthRootCurve(
+            float(model.depth_root_reach_um) / length_um, int(model.depth_root_knots)
+        )
 
     def _validate_receding_cap(self, cfg) -> None:
         """The receding Bretherton branch modifies the gap curvature the jump
@@ -473,6 +519,13 @@ class BubblePINN(nn.Module):
         (``model.exact_continuity``, see :meth:`_exact_velocity`): the stream
         function's net, and the cache of the potentials solved per instant."""
         self.exact_continuity = bool(getattr(cfg.model, "exact_continuity", False))
+        self.inflow_curve: InflowCurve | None = None
+        unsteady = bool(getattr(cfg.model, "unsteady_inflow", False))
+        if unsteady and not self.exact_continuity:
+            raise ValueError(
+                "model.unsteady_inflow changes the flow the exact liquid velocity is built "
+                "on, so it needs model.exact_continuity=true"
+            )
         if not self.exact_continuity:
             return
         self._validate_exact_continuity(cfg)
@@ -494,6 +547,23 @@ class BubblePINN(nn.Module):
             self.stream_net.mlp[-1].weight.zero_()
             self.stream_net.mlp[-1].bias.zero_()
         self._liquid_fields = FieldCache()
+        if unsteady:
+            priors = self.nets["phi"].priors
+            self.inflow_curve = InflowCurve(
+                float(priors.t_min),
+                float(priors.t_max),
+                int(cfg.model.unsteady_inflow_intervals),
+                float(cfg.model.unsteady_inflow_min),
+                float(cfg.model.unsteady_inflow_max),
+            )
+
+    def inflow_factor(self, t: torch.Tensor) -> torch.Tensor:
+        """The inlet's flow at each instant ``t`` ``(N, 1)`` as a multiple of the
+        set flow rate, ``(N, 1)``: one under a steady inlet, the trained curve
+        under ``model.unsteady_inflow``."""
+        if self.inflow_curve is None:
+            return torch.ones_like(t)
+        return self.inflow_curve(t)
 
     def _validate_exact_continuity(self, cfg) -> None:
         model = cfg.model
@@ -1312,6 +1382,11 @@ class BubblePINN(nn.Module):
         through any of them. Each part is divergence-free, so the volume each section
         carries is the inlet's plus the bubble's growth behind it, exactly.
 
+        Under ``model.unsteady_inflow`` the inlet profile is scaled by the
+        instant's multiple ``f(t)`` of the set flow, and ``Phi``, linear in the
+        inflow, by the same: ``f U_in e_x + grad(Phi + (f - 1) R)``, with ``R``
+        the potential's response to the inflow alone.
+
         The vapour (``phi > 0``) keeps the network's velocity, as under
         ``model.kinematic_side=liquid``. The two sides are evaluated on their
         own rows: the potentials' sources sit inside the vapour, and evaluating
@@ -1342,13 +1417,21 @@ class BubblePINN(nn.Module):
         psi_x, psi_y, _ = torch.autograd.grad(
             psi, x, torch.ones_like(psi), create_graph=create_graph
         )[0].split(1, dim=1)
-        return self._inflow(x[:, 1:2]) + u_phi + psi_y, v_phi - psi_x
+        inflow = self._inflow(x[:, 1:2])
+        if self.inflow_curve is None:
+            return inflow + u_phi + psi_y, v_phi - psi_x
+        factor = self.inflow_curve(x[:, 2:3])
+        u_response, v_response = self._inflow_response_terms(x)
+        excess = factor - 1.0
+        return (
+            factor * inflow + u_phi + excess * u_response + psi_y,
+            v_phi + excess * v_response - psi_x,
+        )
 
     def _potential_terms(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
         """``(Phi_x, Phi_y, C)`` at ``x``, each point at its own instant's fields,
         all instants in one sum."""
-        instants, groups = torch.unique(x[:, 2].detach(), return_inverse=True)
-        solved = self._fields_at(instants.tolist())
+        solved, groups = self._fields_of(x)
         potential = FieldStack([fields.potential for fields in solved], groups)
         capacity = FieldStack([fields.capacity for fields in solved], groups)
         xy = x[:, :2]
@@ -1357,6 +1440,20 @@ class BubblePINN(nn.Module):
             harmonic(potential, xy, 0, 1),
             harmonic(capacity, xy, 0, 0),
         )
+
+    def _inflow_response_terms(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """``(R_x, R_y)`` at ``x``: the gradient of the potential's response to
+        the inflow, each point at its own instant's."""
+        solved, groups = self._fields_of(x)
+        response = FieldStack([fields.inflow_response for fields in solved], groups)
+        xy = x[:, :2]
+        return harmonic(response, xy, 1, 0), harmonic(response, xy, 0, 1)
+
+    def _fields_of(self, x: torch.Tensor) -> tuple[list[LiquidFields], torch.Tensor]:
+        """The solved fields of the instants among ``x``, and each point's index
+        into them."""
+        instants, groups = torch.unique(x[:, 2].detach(), return_inverse=True)
+        return self._fields_at(instants.tolist()), groups
 
     def _inflow(self, y: torch.Tensor) -> torch.Tensor:
         """The inlet's streamwise profile ``U_in(y)``, ``(N, 1)``: uniform in x,
@@ -1394,7 +1491,11 @@ class BubblePINN(nn.Module):
             problem = FrontProblem(stacked, dense, dense.normal[..., 0] * inflow)
             times = [instants[i] for i in members]
             fields = solve_liquid_fields(
-                self.channel, problem, layout, self._vapour_test(times)
+                self.channel,
+                problem,
+                layout,
+                self._vapour_test(times),
+                with_inflow_response=self.inflow_curve is not None,
             )
             for i, field in zip(members, fields, strict=True):
                 solved[i] = field

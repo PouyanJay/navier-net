@@ -39,7 +39,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from naviernet.physics import mass_balance, registry
+from naviernet.physics import depth_drain, mass_balance, registry
 from naviernet.physics.groups import compute_groups
 from naviernet.physics.growth_closure import measured_growth_rate
 from naviernet.physics.heating import wall_flux_ratio_np
@@ -514,6 +514,39 @@ def front_conditions(
     }
 
 
+def depth_drain_record(model, groups, t: float, view_x_max: float | None) -> dict | None:
+    """How the edge rule's mismatch at instant ``t`` is split under
+    ``model.depth_drain``: the force (each part's size summed along the edge
+    and across the channel's depth, micronewtons) kept in the 2D solution,
+    drained to the depth and answered by the root's law, each as a share of
+    the three; the size of the drain the loss charges (RMS along a half,
+    pascals); and how far the bubble rebuilt from the forces sits from the
+    real outline (RMS, microns, the worse half) with nothing drained and with
+    the drain. ``None`` without the flag or before the first image."""
+    if not getattr(model, "depth_drain", False):
+        return None
+    instant = torch.tensor([[t]], dtype=torch.float32, device=_device(model))
+    with torch.enable_grad():
+        front = model.front(instant, AUDIT_FRONT_BODY_SAMPLES, AUDIT_FRONT_CAP_SAMPLES)
+        split = depth_drain.depth_split(model, front, groups, view_x_max)
+    if len(split.move_before) == 0:
+        return None
+    length = float(model.cfg.scales.L_ref_um) * 1e-6
+    pressure = float(model.cfg.fluid.rho_l) * float(model.cfg.scales.U_ref) ** 2
+    micronewtons = pressure * length * groups["H_star"] * length * 1e6
+    record = {
+        f"{name}_force_uN": force * micronewtons
+        for name, force in depth_drain.part_forces(split).items()
+    }
+    record.update(
+        {f"{name}_share": share for name, share in depth_drain.force_shares(split).items()}
+    )
+    record["drain_rms_Pa"] = float(split.needed.detach()) * pressure
+    record["edge_move_undrained_um"] = float(split.move_before.max()) * length * 1e6
+    record["edge_move_um"] = float(split.move_after.max()) * length * 1e6
+    return record
+
+
 def audit_frame(
     cfg, model, data, groups, equations, grid: AuditGrid, row: int
 ) -> tuple[dict, dict]:
@@ -556,6 +589,9 @@ def audit_frame(
     record["front"], front = front_conditions(
         model, groups, t, pixel, float(data.y_hi - data.y_lo)
     )
+    drain = depth_drain_record(model, groups, t, float(data.domain.x_view))
+    if drain is not None:
+        record["depth_drain"] = drain
     return record, {**fields, **front}
 
 

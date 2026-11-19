@@ -34,11 +34,14 @@ from naviernet.data.adaptive import rad_resample
 from naviernet.data.dataset import BubbleDataset
 from naviernet.data.ghost import load_ghost_outline
 from naviernet.data.outline import outline_path
+from naviernet.models.depth_curve import DEPTH_PREFIX
 from naviernet.models.geometry import GeometryPriors
+from naviernet.models.inflow import INFLOW_PREFIX
 from naviernet.models.measured_outline import MeasuredInterface, MeasuredOutline
 from naviernet.models.pinn import STREAM_PREFIX, BoundPINN, BubblePINN
 from naviernet.physics import (
     cap_supervision,
+    depth_drain,
     front_velocity,
     growth_closure,
     heating,
@@ -50,7 +53,12 @@ from naviernet.physics import (
     root_supervision,
     weighting,
 )
-from naviernet.physics.groups import N_COND, compute_groups, conditioning_vector
+from naviernet.physics.groups import (
+    N_COND,
+    compute_groups,
+    conditioning_vector,
+    reference_time_ms,
+)
 from naviernet.physics.shape_solve import bind_solved_shape
 from naviernet.utils.logging import get_logger
 from naviernet.utils.paths import RunPaths
@@ -146,6 +154,84 @@ def bind_cover_times(cfg, model, data: BubbleDataset) -> None:
     model.bind_cover_times(data.x, data.y, heating.cover_times(data, age))
 
 
+def bind_depth_drain(model, data: BubbleDataset) -> None:
+    """Give a ``model.depth_drain`` model the first image's time: the split
+    acts on the imaged bubble, not on the ghost frames before it. A no-op
+    without the flag."""
+    if getattr(model, "depth_root", None) is None:
+        return
+    model.depth_root.bind_first_image(float(data.t[data.n_ghost]))
+
+
+# Instants of the imaged stretch the root's law is fitted on.
+ROOT_FIT_INSTANTS = 64
+
+
+def _fit_root_law(cfg, model, data: BubbleDataset, groups: dict, device) -> None:
+    """Fit the root's law to the pressure step the run already has, once: it
+    is held from here on, so the solver cannot move it to hide an error."""
+    law = model.depth_root
+    times = torch.linspace(
+        law.starts_at, float(data.domain.t_max), ROOT_FIT_INSTANTS, device=device
+    ).reshape(-1, 1)
+    front = model.front(
+        times,
+        n_body=int(cfg.model.front_body_samples),
+        n_cap=int(cfg.model.front_cap_samples),
+    )
+    depth_drain.fit_root_curve(model, front, groups, float(data.domain.x_view))
+    with torch.no_grad():
+        at_tip = float(law(torch.zeros(1, 1, device=device))) * _pressure_scale_Pa(cfg)
+    log.info(
+        "depth drain: the root's law is the fit of the run's own pressure step and is "
+        "held from here, %.0f Pa at the root tip",
+        at_tip,
+    )
+
+
+def _root_law_is_new(model, incompatible=None) -> bool:
+    """Whether a ``model.depth_drain`` model has a root law nothing saved
+    carries yet: a run with no checkpoint, or one whose checkpoint lacks it."""
+    if getattr(model, "depth_root", None) is None:
+        return False
+    if incompatible is None:
+        return True
+    return any(k.startswith(DEPTH_PREFIX) for k in incompatible.missing_keys)
+
+
+def _require_trained_pressure(state: dict, tcfg) -> None:
+    """Refuse to start ``model.depth_drain`` on a run whose physics stage has
+    not trained the pressure yet: the root's law is fitted to that pressure
+    step, and a drain read off an untrained one means nothing."""
+    if int(state["done"]) > int(tcfg.stage_b_warmup_steps):
+        return
+    raise ValueError(
+        "model.depth_drain continues a run whose physics stage has already trained the "
+        "pressure: the root's law is fitted to that pressure step and held, and the "
+        f"drain is read off it. This run is at step {int(state['done'])}, not past its "
+        f"warm-up ({int(tcfg.stage_b_warmup_steps)} steps): train it past the warm-up "
+        "without the flag, then continue it with the flag on."
+    )
+
+
+def _pressure_scale_Pa(cfg) -> float:
+    """The run's pressure unit ``rho_l U_ref^2`` in pascals."""
+    return float(cfg.fluid.rho_l) * float(cfg.scales.U_ref) ** 2
+
+
+def _depth_drain_record(ctx) -> dict[str, float]:
+    """The step's split of the edge rule's mismatch for the log: the shares of
+    its force kept in 2D, drained to the depth and answered by the root's law,
+    and the size of the drain the loss charges, in pascals. Nothing without
+    ``model.depth_drain``."""
+    split = ctx.depth_split_taken
+    if split is None:
+        return {}
+    record = {f"edge_{part}": share for part, share in depth_drain.force_shares(split).items()}
+    record["edge_drain_Pa"] = float(split.needed.detach()) * _pressure_scale_Pa(ctx.model.cfg)
+    return record
+
+
 def _growth_closure_plan(cfg, data: BubbleDataset, device):
     """The growth closure's quadrature when its weight is on, else None."""
     if float(getattr(cfg.training, "growth_closure_weight", 0.0)) <= 0.0:
@@ -190,12 +276,95 @@ def _stage_b_keys(cfg) -> tuple[str, ...]:
     return tuple(registry.stage_b_terms(equations))
 
 
-def _inlet_velocity(cfg, groups: dict, data: BubbleDataset, inlet: torch.Tensor, mean: float):
+def _inlet_velocity(
+    cfg, groups: dict, data: BubbleDataset, inlet: torch.Tensor, mean: float, model=None
+):
     """The inlet's streamwise velocity target: the plug's mean, or one value per
-    inlet point on the developed profile (``model.inlet_profile``)."""
+    inlet point on the developed profile (``model.inlet_profile``). When the
+    model's inflow changes in time (``model.unsteady_inflow``), each point's
+    target is its own instant's."""
     if str(getattr(cfg.model, "inlet_profile", "plug")) == "plug":
-        return mean
-    return residuals.developed_inlet_profile(inlet[:, 1:2], data.y_lo, data.y_hi, mean, groups)
+        target = mean
+    else:
+        target = residuals.developed_inlet_profile(
+            inlet[:, 1:2], data.y_lo, data.y_hi, mean, groups
+        )
+    if getattr(model, "inflow_curve", None) is None:
+        return target
+    return target * model.inflow_factor(inlet[:, 2:3])
+
+
+# Instants the inflow curve is read at for the log.
+INFLOW_RECORD_INSTANTS = 129
+
+
+def _inflow_record(cfg, model) -> dict[str, float]:
+    """The lowest, average and highest inflow of the trained curve over the
+    run's time window, in mL/h, for the log; nothing under a steady inlet. When
+    the average is held over each bubble cycle
+    (``training.inflow_mean_period_ms``), the lowest and highest cycle averages
+    too."""
+    curve = getattr(model, "inflow_curve", None)
+    if curve is None:
+        return {}
+    span = _inflow_mean_span(cfg)
+    with torch.no_grad():
+        instants = torch.linspace(
+            curve.t_min, curve.t_max, INFLOW_RECORD_INSTANTS, device=curve.coefficients.device
+        )
+        factor = curve(instants.reshape(-1, 1))
+        average = curve.mean()
+        cycles = None if span is None else curve.running_mean(span)
+    set_flow = float(cfg.experiment.flow_rate_mL_hr)
+    record = {
+        "inflow_min_mL_hr": set_flow * float(factor.min()),
+        "inflow_mean_mL_hr": set_flow * float(average),
+        "inflow_max_mL_hr": set_flow * float(factor.max()),
+    }
+    if cycles is not None:
+        record["inflow_cycle_low_mL_hr"] = set_flow * float(cycles.min())
+        record["inflow_cycle_high_mL_hr"] = set_flow * float(cycles.max())
+    return record
+
+
+def _inflow_mean_span(cfg) -> float | None:
+    """The stretch the inflow's average is held over, in the run's time units:
+    one bubble cycle (``training.inflow_mean_period_ms``), or ``None`` for the
+    whole window."""
+    period_ms = float(getattr(cfg.training, "inflow_mean_period_ms", 0.0))
+    if period_ms <= 0.0:
+        return None
+    return period_ms / reference_time_ms(cfg.scales)
+
+
+def _inflow_mean_penalty(
+    model, tolerance: float = 0.0, span: float | None = None
+) -> torch.Tensor:
+    """The squared miss of the inflow's average from the set flow, as a share
+    of it (``training.inflow_mean_weight``). An average within ``tolerance`` of
+    the set flow (a share too, ``training.inflow_mean_tolerance``) costs
+    nothing; beyond it only the excess counts. The average is over the window,
+    or, given a ``span``, over every stretch of that length inside it (their
+    mean cost): a pump set to a flow rate delivers it over each bubble cycle,
+    and a window average would let the stretch before the first image lend to
+    the imaged one."""
+    curve = model.inflow_curve
+    averages = curve.mean().reshape(1) if span is None else curve.running_mean(span)
+    excess = torch.relu((averages - 1.0).abs() - tolerance)
+    return (excess**2).mean()
+
+
+def _validate_inflow(tcfg, mcfg) -> None:
+    for setting in ("inflow_mean_weight", "inflow_mean_tolerance", "inflow_mean_period_ms"):
+        value = float(getattr(tcfg, setting, 0.0))
+        if value < 0.0:
+            raise ValueError(f"training.{setting} must be >= 0, got {value}")
+    weight = float(getattr(tcfg, "inflow_mean_weight", 0.0))
+    if weight > 0.0 and not bool(getattr(mcfg, "unsteady_inflow", False)):
+        raise ValueError(
+            "training.inflow_mean_weight holds the average of an inflow that changes in "
+            "time, so it needs model.unsteady_inflow=true"
+        )
 
 
 def _outlet_pressure(cfg) -> float | None:
@@ -203,7 +372,7 @@ def _outlet_pressure(cfg) -> float | None:
     pressure = getattr(cfg.model, "outlet_pressure_Pa", None)
     if pressure is None:
         return None
-    return float(pressure) / (float(cfg.fluid.rho_l) * float(cfg.scales.U_ref) ** 2)
+    return float(pressure) / _pressure_scale_Pa(cfg)
 
 
 def _sharp(cfg) -> bool:
@@ -288,23 +457,82 @@ def _front_times(cfg, data: BubbleDataset, device, rng=None) -> torch.Tensor | N
     return torch.linspace(d.t_min, d.t_max, n, device=device).reshape(-1, 1)
 
 
-def _stream_net_only_differs(incompatible, ckpt: dict, path, tcfg) -> bool:
-    """Whether the checkpoint and the model differ only by model.exact_continuity's
-    stream-function net, as a shared warm-up does. Any other unexpected
-    parameter, or a stream net the physics stage has trained, is an error."""
-    unexpected = [k for k in incompatible.unexpected_keys if not k.startswith(STREAM_PREFIX)]
+# What only the physics stage holds, by state-dict prefix, and the flag each
+# belongs to: the stream-function net and the inflow curve, which it trains,
+# and the root's depth law, which it fits once and holds. A checkpoint may
+# lack them (a shared warm-up, or a run continued with the flag newly on) or
+# carry them untouched from a warm-up.
+PHYSICS_ONLY_FLAGS = {
+    STREAM_PREFIX: "model.exact_continuity",
+    INFLOW_PREFIX: "model.unsteady_inflow",
+    DEPTH_PREFIX: "model.depth_drain",
+}
+PHYSICS_ONLY_PREFIXES = tuple(PHYSICS_ONLY_FLAGS)
+# The curves among them: a run that gains only these keeps its optimiser, a
+# trained curve starting clean.
+CURVE_PREFIXES = (INFLOW_PREFIX, DEPTH_PREFIX)
+
+
+def _physics_only_parameters_differ(incompatible, ckpt: dict, path, tcfg) -> bool:
+    """Whether the checkpoint and the model differ only by parameters the
+    physics stage alone trains (:data:`PHYSICS_ONLY_FLAGS`), as a shared warm-up
+    does. Any other unexpected parameter, or one of these the physics stage has
+    trained and this model would drop, is an error."""
+    unexpected = [
+        k for k in incompatible.unexpected_keys if not k.startswith(PHYSICS_ONLY_PREFIXES)
+    ]
     if unexpected:
         raise RuntimeError(f"checkpoint {path} has parameters not in this model: {unexpected}")
+    past_warmup = int(ckpt["state"]["done"]) > int(tcfg.stage_b_warmup_steps)
+    for prefix, flag in PHYSICS_ONLY_FLAGS.items():
+        if past_warmup and any(k.startswith(prefix) for k in incompatible.unexpected_keys):
+            raise RuntimeError(
+                f"checkpoint {path} was trained with {flag} past its warm-up; "
+                "resume it with the flag on"
+            )
     dropped = bool(incompatible.unexpected_keys)
-    if dropped and int(ckpt["state"]["done"]) > int(tcfg.stage_b_warmup_steps):
-        raise RuntimeError(
-            f"checkpoint {path} was trained with model.exact_continuity past its warm-up; "
-            "resume it with the flag on"
-        )
     fresh = bool(incompatible.missing_keys) and all(
-        k.startswith(STREAM_PREFIX) for k in incompatible.missing_keys
+        k.startswith(PHYSICS_ONLY_PREFIXES) for k in incompatible.missing_keys
     )
     return dropped or fresh
+
+
+def _only_curves_are_fresh(incompatible) -> bool:
+    """Whether the model has everything the checkpoint saved plus curves alone
+    (:data:`CURVE_PREFIXES`): a run saved without ``model.unsteady_inflow`` or
+    ``model.depth_drain`` and continued with it."""
+    return (
+        not incompatible.unexpected_keys
+        and bool(incompatible.missing_keys)
+        and all(k.startswith(CURVE_PREFIXES) for k in incompatible.missing_keys)
+    )
+
+
+def _carry_optimiser(opt, model, saved: dict, fresh: list[str]) -> bool:
+    """Load a checkpoint's optimiser state into ``opt`` when the model has
+    gained the parameters named ``fresh`` since it was saved: every other
+    parameter keeps its moments (both models list them in the same order) and
+    the fresh ones start clean. False, with ``opt`` untouched, when the saved
+    state does not line up with the model's other parameters."""
+    gained = set(fresh)
+    names = [name for name, _ in model.named_parameters()]
+    groups = saved["param_groups"]
+    kept = [name for name in names if name not in gained]
+    if len(groups) != 1 or len(groups[0]["params"]) != len(kept):
+        return False
+    saved_ids = iter(groups[0]["params"])
+    spare = max(groups[0]["params"], default=-1) + 1
+    ids = []
+    for name in names:
+        if name in gained:
+            ids.append(spare)
+            spare += 1
+        else:
+            ids.append(next(saved_ids))
+    opt.load_state_dict(
+        {"state": saved["state"], "param_groups": [{**groups[0], "params": ids}]}
+    )
+    return True
 
 
 def _at_collocation_instants(x_coll, inlet, walls, outlet):
@@ -545,10 +773,13 @@ def _validate_training_config(cfg) -> None:
     _validate_energy_relative(tcfg)
     _validate_self_adaptive(tcfg)
     _validate_physics_stage(cfg)
+    _validate_inflow(tcfg, cfg.model)
     if int(getattr(tcfg, "physics_lr_halflife", 0)) < 0:
         raise ValueError(
             f"training.physics_lr_halflife must be >= 0, got {tcfg.physics_lr_halflife}"
         )
+    if float(getattr(tcfg, "physics_lr_floor", 0.0)) < 0.0:
+        raise ValueError(f"training.physics_lr_floor must be >= 0, got {tcfg.physics_lr_floor}")
 
 
 def _validate_rebalance_cap(tcfg) -> None:
@@ -2016,11 +2247,22 @@ def _temperature_stage_engages_at(step: int, tcfg) -> bool:
 
 def learning_rate(step: int, tcfg) -> float:
     """The learning rate at ``step``: halved every ``lr_halflife`` steps of the
-    schedule's clock. The temperature-only stage restarts the clock, so the
-    temperature trains from the full rate."""
+    schedule's clock, and in the physics stage never below
+    ``training.physics_lr_floor``. The temperature-only stage restarts the
+    clock, so the temperature trains from the full rate."""
     if _temperature_stage(step, tcfg):
         return tcfg.lr * 0.5 ** ((step - int(tcfg.temperature_stage_from)) // tcfg.lr_halflife)
-    return tcfg.lr * 0.5 ** (math.floor(_lr_clock(step, tcfg)) // tcfg.lr_halflife)
+    scheduled = tcfg.lr * 0.5 ** (math.floor(_lr_clock(step, tcfg)) // tcfg.lr_halflife)
+    return max(scheduled, _physics_lr_floor(step, tcfg))
+
+
+def _physics_lr_floor(step: int, tcfg) -> float:
+    """The rate the physics stage is held at once its schedule falls that far
+    (``training.physics_lr_floor``). The warm-up keeps its own schedule, and
+    zero sets no floor."""
+    if step <= int(tcfg.stage_b_warmup_steps):
+        return 0.0
+    return float(getattr(tcfg, "physics_lr_floor", 0.0))
 
 
 def _lr_clock(step: int, tcfg) -> float:
@@ -2165,6 +2407,7 @@ def train(
     ).to(device)
     _bind_measured_outline(cfg, model, paths, data)
     bind_cover_times(cfg, model, data)
+    bind_depth_drain(model, data)
     opt = torch.optim.Adam(model.parameters(), lr=tcfg.lr)
     kin_plan = _kinematic_plan(cfg, data, device)
     fv_plan = _front_velocity_plan(cfg, data, device)
@@ -2187,21 +2430,38 @@ def train(
     coll_equations = registry.collocation_equations(equations)
     coll_keys = frozenset(e.weight_key for e in coll_equations)
     state = _initial_state(cfg, equations)
+    root_law_is_new = _root_law_is_new(model)
     if paths.checkpoint.exists():
         ckpt = torch.load(paths.checkpoint, map_location=device, weights_only=False)
         _check_architecture_compat(cfg, ckpt, paths.checkpoint)
         incompatible = model.load_state_dict(ckpt["model"], strict=False)
-        if _stream_net_only_differs(incompatible, ckpt, paths.checkpoint, tcfg):
-            # A shared warm-up crossing model.exact_continuity (saved with the
-            # stream function's net, untouched through the warm-up, or without
-            # it): the run resumes the warm-up's state whole, causal gate
-            # included, so it is comparable with the runs that share it. The
-            # optimiser's parameters differ, and it restarts at the handoff anyway.
+        root_law_is_new = _root_law_is_new(model, incompatible)
+        if _physics_only_parameters_differ(incompatible, ckpt, paths.checkpoint, tcfg):
+            # A checkpoint crossing a physics-stage flag (a shared warm-up saved
+            # with or without the stream function's net or the inflow curve,
+            # untouched through the warm-up): the run resumes the saved state
+            # whole, causal gate included, so it is comparable with the runs
+            # that share it. The optimiser's parameters differ, and it restarts
+            # at the handoff anyway; a run that only gains curves (the inflow's,
+            # the root's depth law) keeps its optimiser, a trained curve
+            # starting clean.
             state = ckpt["state"]
+            carried = _only_curves_are_fresh(incompatible) and _carry_optimiser(
+                opt, model, ckpt["opt"], incompatible.missing_keys
+            )
             log.info(
-                "resuming from %s at step %d across model.exact_continuity's stream net",
+                "resuming from %s at step %d across %s (%s)",
                 paths.checkpoint,
                 state["done"],
+                " and ".join(
+                    flag
+                    for prefix, flag in PHYSICS_ONLY_FLAGS.items()
+                    if any(
+                        k.startswith(prefix)
+                        for k in (*incompatible.missing_keys, *incompatible.unexpected_keys)
+                    )
+                ),
+                "the optimiser carried over" if carried else "the optimiser starts over",
             )
         elif incompatible.missing_keys:
             # Warm start: e.g. a Stage-A checkpoint feeding a Stage-B run. Keep the
@@ -2222,6 +2482,8 @@ def train(
             opt.load_state_dict(ckpt["opt"])
             state = ckpt["state"]
             log.info("resuming from %s at step %d", paths.checkpoint, state["done"])
+    if root_law_is_new:
+        _require_trained_pressure(state, tcfg)
 
     # Offset the seed by completed steps so a resumed run does not replay the
     # same sample sequence it already saw.
@@ -2265,6 +2527,8 @@ def train(
     _require_guard_arms(tcfg, stage_b_keys, state, first_step)
     if _geometry_frozen(first_step, tcfg, stage_b_keys):
         _freeze_geometry(model, True)  # a run resumed inside the physics stage
+    if root_law_is_new:
+        _fit_root_law(cfg, model, data, groups, device)
     if _temperature_stage(first_step, tcfg):
         _lock_flow(model)  # a run resumed inside the temperature-only stage
         equations = _temperature_equations(equations)
@@ -2335,7 +2599,7 @@ def train(
                 x_coll,
                 inlet,
                 walls,
-                _inlet_velocity(cfg, groups, data, inlet, u_inlet),
+                _inlet_velocity(cfg, groups, data, inlet, u_inlet, model),
                 groups,
                 front_times=front_times,
                 outlet=outlet,
@@ -2449,6 +2713,15 @@ def train(
                 # evaluated once the flow is locked.
                 mass_total, mass_record = mass_balance.mass_balance_loss(model, mass_plan)
                 total = total + float(tcfg.mass_balance_weight) * mass_total
+            inflow_weight = float(getattr(tcfg, "inflow_mean_weight", 0.0))
+            if inflow_weight > 0.0 and not temperature_only:
+                # Outside the causal gate, RBA and the rebalancer, like the
+                # functionals above: a condition on the inlet, not a residual.
+                total = total + inflow_weight * _inflow_mean_penalty(
+                    model,
+                    float(getattr(tcfg, "inflow_mean_tolerance", 0.0)),
+                    _inflow_mean_span(cfg),
+                )
             closure_record: dict[str, float] = {}
             if (
                 closure_plan is not None
@@ -2483,6 +2756,8 @@ def train(
             record.update(mass_record)
             record.update(closure_record)
             record.update(_wetting_record(model))
+            record.update(_inflow_record(cfg, model))
+            record.update(_depth_drain_record(ctx))
             record["step"] = step
             record["lr"] = lr
             record["grad_norm"] = float(grad_norm)
@@ -2754,6 +3029,11 @@ def _train_joint(
             "experiment.footprint_wetting=microlayer is single-dataset for now: the cover "
             "times are read from one series' images"
         )
+    if bool(getattr(cfg.model, "depth_drain", False)):
+        raise ValueError(
+            "model.depth_drain is single-dataset for now: the first image's time is read "
+            "from one series"
+        )
     if bool(getattr(tcfg, "freeze_geometry", False)):
         raise NotImplementedError(
             "training.freeze_geometry is single-dataset for now: the two-stage schedule is "
@@ -2980,6 +3260,7 @@ def load_model(cfg, paths: RunPaths) -> tuple[BubblePINN, BubbleDataset, dict]:
     if isinstance(model.nets["phi"], MeasuredInterface):
         _engage_measured_outline(model, True)
     bind_cover_times(cfg, model, data)
+    bind_depth_drain(model, data)
     # The interface thickness the run ENDED at, not the one it started from:
     # scoring a sharpened model through its initial blur would measure a
     # different solution than the one that was trained.

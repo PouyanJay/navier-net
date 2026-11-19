@@ -547,6 +547,50 @@ class ModelConfig:
     exact_continuity_body_sources: int = 160
     exact_continuity_cap_sources: int = 40
     exact_continuity_offset: float = 1.0
+    # The inlet's flow changes in time: one smooth curve the run trains with
+    # its fields, as a multiple of experiment.flow_rate_mL_hr, kept between
+    # unsteady_inflow_min and unsteady_inflow_max (multiples too) and built on
+    # unsteady_inflow_intervals equal spans of the run's time window. A growing
+    # bubble pushes back on the liquid feeding the channel and what is held
+    # back returns as the growth eases; under a steady inlet the liquid beside
+    # the head has to absorb that (ghost8, ghost10: forced backward past the
+    # nose at up to 0.4 m/s in frames 8 to 10, about 200 Pa at the nose tip
+    # that the outline does not show). Needs exact_continuity. See
+    # models/inflow.py and training.inflow_mean_weight.
+    unsteady_inflow: bool = False
+    unsteady_inflow_intervals: int = 10
+    unsteady_inflow_min: float = 0.0
+    unsteady_inflow_max: float = 2.0
+    # The depth's share of the edge rule, a 2.5D edge (physics/depth_drain.py).
+    # From the first image on, the mismatch of the edge's pressure step is split
+    # three ways. The root's part is one law of the distance from the root tip,
+    # the same at every instant, over depth_root_reach_um behind the tip on
+    # depth_root_knots values: fitted once to the pressure step of the run this
+    # one continues, then held. The drained part is the least that would have
+    # to go to the third dimension so the bubble rebuilt from the kept forces
+    # stays within depth_drain_tolerance_um (RMS) of the real outline: nothing
+    # where it already does. The kept part is the rest.
+    # The loss charges all of the mismatch outside the root's law at
+    # training.weights.laplace, as the plain rule does, and the drained part a
+    # second time by the unit: each pascal of it (RMS along a half) costs what
+    # the next pascal of a plain error of depth_drain_price_Pa costs (0: the
+    # split is only counted). So nothing is cheaper than under the plain rule
+    # and the part that bends the shape is the dearest; a charge by the unit
+    # keeps its pull on a small drain and does not let one instant the 2D
+    # model cannot fix take the run over. Needs laplace_condition=pointwise and
+    # laplace_weighting=length, and a run already past its warm-up to continue.
+    # The tolerance is a third of the liquid gap beside the bubble's head (31
+    # to 34 um on Series-1-w300): a rebuilt bubble further off than that would
+    # not leave the liquid the passage the real one does.
+    # Why not a cheaper drain: ghost13-15-s0 charged the drained part a tenth
+    # of the kept part and trained the root's curve. By step 8,000 it drained
+    # 1.3 to 15.9 uN in frames 7 to 11 where ghost10 needs 0.4 to 7.2, and its
+    # root curve had grown along the whole tail.
+    depth_drain: bool = False
+    depth_drain_tolerance_um: float = 10.0
+    depth_drain_price_Pa: float = 5.0
+    depth_root_reach_um: float = 150.0
+    depth_root_knots: int = 15
     # Zero tangential stress on the liquid side of the front (the Brinkman law
     # only). The law is second order, so the front needs a tangential condition
     # beside the kinematic one; without it the liquid can be dragged along the
@@ -884,6 +928,10 @@ class TrainingConfig:
     # the warm-up, so a physics stage of fewer, larger steps (more points per
     # step) sweeps the same rates as the full-length one. Zero keeps one clock.
     physics_lr_halflife: int = 0
+    # The lowest learning rate of the physics stage: once the schedule falls to
+    # it the rate holds there, so a run continued past its planned length keeps
+    # training at the rate it reached. Zero sets no floor.
+    physics_lr_floor: float = 0.0
 
     # --- Accuracy techniques (opt-in; every default is a no-op, so an unchanged
     # config trains byte-for-byte as before). See
@@ -1032,6 +1080,20 @@ class TrainingConfig:
     mass_balance_weight: float = 1.0
     mass_balance_stations: int = 32  # x-stations of the cumulative source integral
     mass_balance_times: int = 8  # fixed time slices across the window
+    # Under model.unsteady_inflow, holds the inflow's average over the run's
+    # time window at the set flow rate: the squared miss of the average, as a
+    # share of the set flow, times this weight. Outside the rebalancer. Zero
+    # leaves the average free within the band. An average within
+    # inflow_mean_tolerance of the set flow (a share: 0.1 is 10%) costs
+    # nothing; beyond it only the excess counts. inflow_mean_period_ms is the
+    # bubble's cycle time: when set, the average is held over every stretch of
+    # that length inside the window, not once over the whole window. A pump set
+    # to a flow rate delivers it over each cycle, and under a ghost start the
+    # window's average would let the stretch before the first image lend to
+    # the imaged one. Series-1-w300 repeats every 5.5 ms.
+    inflow_mean_weight: float = 0.0
+    inflow_mean_tolerance: float = 0.0
+    inflow_mean_period_ms: float = 0.0
     # Growth closure: at every event frame the vapour the source makes,
     # int s dA, equals the measured growth of the bubble's area. The outline
     # flux's part is detached, so the term trains the footprint's wetting and

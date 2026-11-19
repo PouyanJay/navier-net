@@ -575,6 +575,119 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.unsteady_inflow",
+        "Inflow changes in time",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "the flow through the inlet is a smooth curve in time that the run finds, "
+            "instead of the fixed flow rate; needs exact continuity in the liquid"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.unsteady_inflow_intervals",
+        "Inflow curve: time spans",
+        "int",
+        "physics",
+        "override",
+        help="equal spans of the run's time window the inflow curve is built on",
+        lo=1,
+        hi=200,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.unsteady_inflow_min",
+        "Inflow curve: lowest flow",
+        "float",
+        "physics",
+        "override",
+        help="the lowest inflow allowed, as a multiple of the flow rate; below 0 lets it reverse",
+        lo=-10.0,
+        hi=1.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.unsteady_inflow_max",
+        "Inflow curve: highest flow",
+        "float",
+        "physics",
+        "override",
+        help="the highest inflow allowed, as a multiple of the flow rate",
+        lo=1.0,
+        hi=10.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.depth_drain",
+        "Depth takes part of the edge rule",
+        "bool",
+        "physics",
+        "override",
+        help=(
+            "from the first image on, the mismatch of the edge's pressure step is split: "
+            "one law at the root, fitted once and held; the least drain that keeps the "
+            "rebuilt bubble near the real outline, which the loss charges a second time; "
+            "and the rest. Continues a run already past its warm-up"
+        ),
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.depth_drain_tolerance_um",
+        "Depth drain: shape tolerance",
+        "float",
+        "physics",
+        "override",
+        help=(
+            "how far (RMS) the bubble rebuilt from the kept forces may sit from the real "
+            "outline; only what is needed to stay within it counts as drained"
+        ),
+        unit="µm",
+        lo=0.1,
+        hi=100.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.depth_drain_price_Pa",
+        "Depth drain: price",
+        "float",
+        "physics",
+        "override",
+        help=(
+            "what a drain costs on top of the plain edge rule: each pascal of it is "
+            "charged like the next pascal of a plain error of this size. 0 only counts "
+            "the split"
+        ),
+        unit="Pa",
+        lo=0.0,
+        hi=100.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.depth_root_reach_um",
+        "Root law: reach",
+        "float",
+        "physics",
+        "override",
+        help="how far behind the root tip the root's depth law acts",
+        unit="µm",
+        lo=10.0,
+        hi=1000.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "model.depth_root_knots",
+        "Root law: values",
+        "int",
+        "physics",
+        "override",
+        help="values the root's depth law is built on, equally spaced over its reach",
+        lo=2,
+        hi=200,
+        advanced=True,
+    ),
+    FieldSpec(
         "model.kinematic_blend_length",
         "Kinematic blend length",
         "float",
@@ -834,6 +947,49 @@ TRAINING: tuple[FieldSpec, ...] = (
         help="weight of the mass balance term; it sits outside the rebalancer",
         lo=_WEIGHT[0],
         hi=_WEIGHT[1],
+    ),
+    FieldSpec(
+        "training.inflow_mean_weight",
+        "Inflow average weight",
+        "float",
+        "training",
+        "override",
+        help=(
+            "holds the average of an inflow that changes in time at the flow rate; "
+            "0 leaves the average free"
+        ),
+        lo=_WEIGHT[0],
+        hi=_WEIGHT[1],
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.inflow_mean_tolerance",
+        "Inflow average tolerance",
+        "float",
+        "training",
+        "override",
+        help=(
+            "how far the average inflow may sit from the flow rate at no cost, as a "
+            "share of it (0.1 is 10%)"
+        ),
+        lo=0.0,
+        hi=1.0,
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.inflow_mean_period_ms",
+        "Inflow averaging cycle",
+        "float",
+        "training",
+        "override",
+        help=(
+            "the bubble's cycle time: the average inflow is held over every stretch "
+            "this long; 0 holds it once over the whole run window"
+        ),
+        unit="ms",
+        lo=0.0,
+        hi=100.0,
+        advanced=True,
     ),
     FieldSpec(
         "training.growth_closure_weight",
@@ -1197,6 +1353,20 @@ TRAINING: tuple[FieldSpec, ...] = (
         ),
         lo=0,
         hi=1_000_000,
+        advanced=True,
+    ),
+    FieldSpec(
+        "training.physics_lr_floor",
+        "Physics-stage learning-rate floor",
+        "float",
+        "training",
+        "override",
+        help=(
+            "the lowest learning rate after the warm-up: the rate stops halving once it "
+            "falls to this. 0 sets no floor"
+        ),
+        lo=0.0,
+        hi=1.0,
         advanced=True,
     ),
     FieldSpec(

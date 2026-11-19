@@ -90,7 +90,18 @@ def axial_flux_defect(
     created_per_length = _trapezoid(source.reshape(shape), plan.dy)
     upstream = torch.cumulative_trapezoid(created_per_length, plan.stations, dim=1)
     upstream = torch.cat([torch.zeros_like(upstream[:, :1]), upstream], dim=1)
-    return (flux - plan.q_in - upstream) / plan.q_in
+    return (flux - _inflow(model, plan) - upstream) / plan.q_in
+
+
+def _inflow(model, plan: MassBalancePlan) -> torch.Tensor | float:
+    """The inlet flux at each of the plan's instants, ``(n_times, 1)``: the set
+    flux, times the instant's multiple of it when the model's inflow changes in
+    time (``model.unsteady_inflow``)."""
+    factor = getattr(model, "inflow_factor", None)
+    if factor is None:
+        return plan.q_in
+    instants = plan.points[:: plan.n_stations * plan.n_grid, 2:3]
+    return plan.q_in * factor(instants)
 
 
 def mass_balance_loss(
