@@ -106,6 +106,7 @@ AFTER_WARMUP = (
     "model.depth_drain",
     "model.depth_drain_tolerance_um",
     "model.depth_drain_price_Pa",
+    "model.depth_drain_ease",
     "model.depth_root_reach_um",
     "model.depth_root_knots",
     "training.inflow_mean_weight",

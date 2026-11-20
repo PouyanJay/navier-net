@@ -28,6 +28,18 @@ on a small drain does not fade, so the solver has a reason to take it all the
 way to none, and the pull on a large one does not grow, so an instant the 2D
 model cannot bring within the tolerance does not take the run over.
 
+Where the outlines themselves force the liquid to turn around the bubble's head,
+the second charge can ease (``model.depth_drain_ease``). At the set inflow, with
+the bubble filling the depth, mass conservation fixes how fast the liquid ahead
+of the nose moves and how fast it must pass through the gaps beside the head;
+in the nose's frame it speeds up from the one to the other, and the pressure
+that takes (:func:`turnaround`) is one the 2D flow law cannot avoid and the
+outline does not show. The price is divided by one plus that pressure's ratio
+to the capillary pressure of the head's own in-plane curve, times the setting.
+The ratio is read off the front's own motion, the measured outline's under
+``model.measured_outline``, never off the trained fields, and carries no
+gradient: the solver cannot move it. The plain rule is never eased.
+
 The bubble the kept forces would shape is read off a linear model of the
 rebuild: a mismatch in the pressure step is a mismatch in the edge's bend, the
 bend summed along the edge tilts it, and the tilt carried along the edge moves
@@ -60,6 +72,10 @@ TIME_SLACK = 1e-6
 
 # The halves an instant's outline is walked in: above and below the axis.
 HALVES = 2
+
+# A head that fills the channel leaves the liquid no gap: the gaps are held to
+# this share of the channel's width so the turnaround stays finite.
+GAP_FLOOR = 1e-6
 
 
 class HalfEdges(NamedTuple):
@@ -94,7 +110,11 @@ class DepthSplit(NamedTuple):
     a half), averaged over the front's halves with an instant before the first
     image counting as none: a scalar that carries the gradient of the least
     drain with respect to the mismatch. ``move_before`` and ``move_after`` are
-    :class:`Drain`'s."""
+    :class:`Drain`'s. ``charged`` is ``needed`` with each half's size counted
+    at ``price_share`` ``(C,)``, the share of the drain's price its instant is
+    charged (one everywhere without ``model.depth_drain_ease``): what the loss
+    prices. ``turnaround`` is the pressure the outlines force on the liquid
+    turning around the head at each half's instant, ``(C,)``."""
 
     kept: torch.Tensor
     drained: torch.Tensor
@@ -103,6 +123,20 @@ class DepthSplit(NamedTuple):
     needed: torch.Tensor
     move_before: torch.Tensor
     move_after: torch.Tensor
+    charged: torch.Tensor
+    price_share: torch.Tensor
+    turnaround: torch.Tensor
+
+
+class Turnaround(NamedTuple):
+    """What the outlines force on the liquid passing the head, per half
+    ``(C,)`` with an instant's two halves alike: the pressure it takes to
+    speed the liquid up from ahead of the nose to the gaps beside the head,
+    and that pressure over the capillary pressure of the head's in-plane
+    curve."""
+
+    pressure: torch.Tensor
+    ratio: torch.Tensor
 
 
 def imaged(front, starts_at: float) -> torch.Tensor:
@@ -318,6 +352,41 @@ def smallest_drain(
     return Drain(drain, before, after)
 
 
+@torch.no_grad()
+def turnaround(
+    front, edges: HalfEdges, inflow: float, channel_width: float, stiffness: float
+) -> Turnaround:
+    """The pressure the outline's own motion forces on the liquid as it passes
+    the head, at each imaged instant, from mass conservation alone.
+
+    With the bubble filling the depth and the inlet at ``inflow`` (its mean
+    speed), the liquid ahead of the nose moves at the inflow plus the bubble's
+    growth over ``channel_width``. The head sweeps its own width at the nose's
+    speed; what of that the liquid ahead does not carry off passes through the
+    gaps beside the head. Seen from the nose the liquid speeds up from the one
+    to the other, and by Bernoulli that takes half the difference of the
+    squared speeds. ``stiffness`` is the pressure step per unit of in-plane
+    bend, so a round head of the head's half width holds its curve with
+    ``stiffness`` over that half width: the ratio compares the two."""
+    at = edges.order.cpu()
+    speed = front.normal_speed.detach().double().cpu()[at, 0]
+    instants = len(at) // HALVES
+
+    def per_instant(per_half: torch.Tensor) -> torch.Tensor:
+        return per_half.reshape(HALVES, instants)
+
+    growth = per_instant((speed * edges.cells).sum(dim=1)).sum(dim=0)
+    nose = per_instant(speed[:, 0] / edges.normal[:, 0, 0]).mean(dim=0)
+    # The lower half is mirrored, so the halves' heights add to the head's width.
+    head = per_instant(edges.points[..., 1].max(dim=1).values).sum(dim=0)
+    gaps = (channel_width - head).clamp(min=GAP_FLOOR * channel_width)
+    ahead = inflow + growth / channel_width
+    through = (ahead * channel_width - nose * head) / gaps
+    pressure = 0.5 * ((through - nose) ** 2 - (ahead - nose) ** 2).abs()
+    ratio = pressure * 0.5 * head / stiffness
+    return Turnaround(pressure.repeat(HALVES), ratio.repeat(HALVES))
+
+
 def _spread(
     values: torch.Tensor, order: torch.Tensor, size: int, mean: bool, dtype: torch.dtype
 ) -> torch.Tensor:
@@ -354,8 +423,9 @@ def depth_split(model, front, groups: dict[str, float], view_x_max: float | None
     edges = half_edges(front, model.depth_root.starts_at)
     if edges is None:
         empty = torch.zeros(0, dtype=torch.float64)
+        none = mismatch.new_zeros(())
         return DepthSplit(
-            mismatch, nothing, nothing, nothing.detach(), mismatch.new_zeros(()), empty, empty
+            mismatch, nothing, nothing, nothing.detach(), none, empty, empty, none, empty, empty
         )
     law = root_part(model, front, edges)
     rest = mismatch - law
@@ -363,38 +433,60 @@ def depth_split(model, front, groups: dict[str, float], view_x_max: float | None
     if view_x_max is not None:
         seen = front.points[:, 0:1].detach() <= view_x_max
     at = edges.order.cpu()
+    stiffness = IN_PLANE_WEIGHT / groups["We"]
     solved = smallest_drain(
         (rest.detach() * seen.to(rest.dtype)).double().cpu()[at, 0],
         edges,
-        IN_PLANE_WEIGHT / groups["We"],
+        stiffness,
         float(model.depth_drain_tolerance),
         open_to_drain=seen.cpu()[at, 0],
     )
     size = len(mismatch)
     drain = _spread(solved.drain, edges.order, size, mean=True, dtype=mismatch.dtype)
     lengths = _spread(edges.cells, edges.order, size, mean=False, dtype=mismatch.dtype)
+    forced = turnaround(
+        front,
+        edges,
+        float(groups["u_inlet_star"]),
+        float(model.depth_drain_channel_width),
+        stiffness,
+    )
+    price_share = 1.0 / (1.0 + float(model.depth_drain_ease) * forced.ratio)
+    sizes = _drain_sizes(solved.drain, rest, edges)
+    needed = _over_the_halves(sizes, front)
+    charged = needed
+    if float(model.depth_drain_ease) > 0.0:
+        charged = _over_the_halves(sizes * price_share.to(sizes.dtype).to(sizes.device), front)
     return DepthSplit(
         rest - drain,
         drain,
         law,
         lengths,
-        _needed(solved.drain, rest, edges, front),
+        needed,
         solved.move_before,
         solved.move_after,
+        charged,
+        price_share,
+        forced.pressure,
     )
 
 
-def _needed(drain: torch.Tensor, rest: torch.Tensor, edges: HalfEdges, front) -> torch.Tensor:
-    """The size of the least drain averaged over the front's halves, a scalar,
-    an instant before the first image counting as none. The least drain's sum
-    of squares changes with the mismatch at twice the drain itself, a length
-    of edge at a time (the multiplier rule of the problem
-    :func:`smallest_drain` solves), which is the gradient a drain that moves
-    one for one with the mismatch has: so each half's drain ``(C, n)`` is
-    carried on ``rest``'s gradient."""
+def _drain_sizes(drain: torch.Tensor, rest: torch.Tensor, edges: HalfEdges) -> torch.Tensor:
+    """The size of each half's least drain ``(C,)``, carrying the gradient of
+    the least drain with respect to the mismatch. The least drain's sum of
+    squares changes with the mismatch at twice the drain itself, a length of
+    edge at a time (the multiplier rule of the problem :func:`smallest_drain`
+    solves), which is the gradient a drain that moves one for one with the
+    mismatch has: so each half's drain ``(C, n)`` is carried on ``rest``'s
+    gradient."""
     moving = rest - rest.detach()
     carried = drain.to(rest.dtype).to(rest.device) + moving[edges.order, 0]
-    sizes = drain_size(carried, edges.cells.to(rest.dtype).to(rest.device))
+    return drain_size(carried, edges.cells.to(rest.dtype).to(rest.device))
+
+
+def _over_the_halves(sizes: torch.Tensor, front) -> torch.Tensor:
+    """Per-half sizes averaged over the front's halves, a scalar, an instant
+    before the first image counting as none."""
     instants = len(torch.unique(front.points[:, 2].detach()))
     return sizes.sum() / (HALVES * instants)
 

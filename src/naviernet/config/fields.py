@@ -665,6 +665,21 @@ PHYSICS: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "model.depth_drain_ease",
+        "Depth drain: easing",
+        "float",
+        "physics",
+        "override",
+        help=(
+            "lets the drain's price fall where the outline itself forces the liquid to "
+            "turn around the head: the price is divided by 1 + this times the forced "
+            "pressure over the head's capillary pressure. 0 keeps one price everywhere"
+        ),
+        lo=0.0,
+        hi=100.0,
+        advanced=True,
+    ),
+    FieldSpec(
         "model.depth_root_reach_um",
         "Root law: reach",
         "float",

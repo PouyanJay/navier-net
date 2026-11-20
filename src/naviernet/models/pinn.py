@@ -281,7 +281,7 @@ class BubblePINN(nn.Module):
     def _init_depth_drain(self, cfg) -> None:
         """The depth's share of the edge rule (``model.depth_drain``, see
         :mod:`naviernet.physics.depth_drain`): the root's law, the shape
-        tolerance and the drain's price, in the run's units."""
+        tolerance, the drain's price and its easing, in the run's units."""
         model = cfg.model
         self.depth_drain = bool(getattr(model, "depth_drain", False))
         self.depth_root: DepthRootCurve | None = None
@@ -313,10 +313,23 @@ class BubblePINN(nn.Module):
                 "model.depth_drain_price_Pa is what a drain costs on top of the plain "
                 f"rule, so it cannot be negative; got {price_Pa}"
             )
+        ease = float(getattr(model, "depth_drain_ease", 0.0))
+        if ease < 0.0:
+            raise ValueError(
+                "model.depth_drain_ease divides the drain's price where the outline "
+                f"forces the liquid to turn around, so it cannot be negative; got {ease}"
+            )
+        if ease > 0.0 and bool(getattr(model, "unsteady_inflow", False)):
+            raise ValueError(
+                "model.depth_drain_ease works the forced turnaround out at the set "
+                "inflow, so it cannot be combined with model.unsteady_inflow"
+            )
         length_um = float(cfg.scales.L_ref_um)
         pressure_Pa = float(cfg.fluid.rho_l) * float(cfg.scales.U_ref) ** 2
         self.depth_drain_tolerance = tolerance_um / length_um
         self.depth_drain_price = price_Pa / pressure_Pa
+        self.depth_drain_ease = ease
+        self.depth_drain_channel_width = float(cfg.experiment.channel_width_um) / length_um
         self.depth_root = DepthRootCurve(
             float(model.depth_root_reach_um) / length_um, int(model.depth_root_knots)
         )

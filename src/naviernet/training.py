@@ -222,13 +222,17 @@ def _pressure_scale_Pa(cfg) -> float:
 def _depth_drain_record(ctx) -> dict[str, float]:
     """The step's split of the edge rule's mismatch for the log: the shares of
     its force kept in 2D, drained to the depth and answered by the root's law,
-    and the size of the drain the loss charges, in pascals. Nothing without
-    ``model.depth_drain``."""
+    and the size of the drain, in pascals; under ``model.depth_drain_ease``
+    also the size the loss prices once each instant's share of the price is
+    counted. Nothing without ``model.depth_drain``."""
     split = ctx.depth_split_taken
     if split is None:
         return {}
+    pascals = _pressure_scale_Pa(ctx.model.cfg)
     record = {f"edge_{part}": share for part, share in depth_drain.force_shares(split).items()}
-    record["edge_drain_Pa"] = float(split.needed.detach()) * _pressure_scale_Pa(ctx.model.cfg)
+    record["edge_drain_Pa"] = float(split.needed.detach()) * pascals
+    if ctx.model.depth_drain_ease > 0.0:
+        record["edge_charged_Pa"] = float(split.charged.detach()) * pascals
     return record
 
 

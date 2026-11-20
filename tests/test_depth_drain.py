@@ -24,7 +24,7 @@ from naviernet.physics.residuals import (
     root_cap_mask,
 )
 
-from .conftest import staged_capsule_run
+from .conftest import staged_capsule_run, staged_walled_capsule_run
 
 SHARP = [
     "model=stage_b",
@@ -34,6 +34,16 @@ SHARP = [
     "model.pressure_representation=two_phase",
 ]
 DRAIN = [*SHARP, "model.laplace_weighting=length", "model.depth_drain=true"]
+# What a changing inflow needs beside the flag itself.
+UNSTEADY_INFLOW = [
+    "model.walls_at=physical",
+    "model.hard_walls=true",
+    "model.mirror_symmetry=true",
+    "model.exact_continuity=true",
+    "model.exact_continuity_body_sources=32",
+    "model.exact_continuity_cap_sources=8",
+    "model.unsteady_inflow=true",
+]
 
 # The synthetic outline: an ellipse 3 long and 1 wide about the axis, in a
 # pressure scale where one unit of pressure bends the edge by one unit.
@@ -353,6 +363,86 @@ def test_a_half_that_drains_nothing_has_no_size_and_no_gradient():
     assert torch.equal(gradient, torch.zeros_like(gradient))
 
 
+# --- the turnaround the outline forces on the liquid -------------------------------
+
+# The synthetic bubble moves along the channel at this speed without changing.
+BUBBLE_SPEED = 0.2
+CHANNEL_WIDTH = 2.0
+
+
+def _turnaround(inflow: float, front=None) -> depth_drain.Turnaround:
+    front = _front() if front is None else front
+    edges = depth_drain.half_edges(front, starts_at=0.0)
+    return depth_drain.turnaround(front, edges, inflow, CHANNEL_WIDTH, STIFFNESS)
+
+
+def _lengthening_front(rate: float):
+    """An ellipse whose root tip stays put while its half length grows at
+    ``rate``: the nose advances at twice that and the area grows at
+    ``pi * HALF_WIDTH * rate``."""
+    q = 2.0 * math.pi * np.arange(128) / 128
+    stations = []
+    for time in (-1.0, 0.0, 1.0):
+        half_length = HALF_LENGTH + rate * time
+        stations.append(
+            np.stack(
+                [0.5 + half_length * (1.0 + np.cos(q)), AXIS + HALF_WIDTH * np.sin(q)], axis=1
+            )
+        )
+    outline = MeasuredOutline(
+        np.array([-1.0, 0.0, 1.0]), np.stack(stations), AXIS, nose_cap_q=0.2, root_cap_q=0.2
+    )
+    return outline.front(torch.tensor([0.0]), 96, 33)
+
+
+def test_a_bubble_carried_along_by_the_liquid_forces_no_turnaround():
+    forced = _turnaround(inflow=BUBBLE_SPEED)
+
+    assert float(forced.pressure.abs().max()) < 1e-4
+    assert float(forced.ratio.abs().max()) < 1e-4
+
+
+def test_a_bubble_outrunning_the_liquid_sends_it_back_through_the_gaps():
+    # Still liquid ahead and a head half the channel wide: all the head sweeps
+    # goes back through gaps as wide as itself, at the bubble's speed. Seen
+    # from the nose the liquid goes from that speed to twice it.
+    forced = _turnaround(inflow=0.0)
+
+    by_hand = 0.5 * ((2.0 * BUBBLE_SPEED) ** 2 - BUBBLE_SPEED**2)
+    assert float(forced.pressure[0]) == pytest.approx(by_hand, rel=1e-2)
+
+
+def test_the_turnaround_is_measured_against_the_heads_capillary_pressure():
+    forced = _turnaround(inflow=0.0)
+
+    capillary = STIFFNESS / HALF_WIDTH
+    assert float(forced.ratio[0]) == pytest.approx(
+        float(forced.pressure[0]) / capillary, rel=1e-3
+    )
+
+
+def test_a_growing_bubble_pushes_the_liquid_ahead_of_it():
+    rate = 0.1
+    forced = _turnaround(inflow=0.0, front=_lengthening_front(rate))
+
+    nose = 2.0 * rate
+    head = 2.0 * HALF_WIDTH
+    ahead = math.pi * HALF_WIDTH * rate / CHANNEL_WIDTH
+    through = (ahead * CHANNEL_WIDTH - nose * head) / (CHANNEL_WIDTH - head)
+    by_hand = 0.5 * abs((through - nose) ** 2 - (ahead - nose) ** 2)
+    assert float(forced.pressure[0]) == pytest.approx(by_hand, rel=1e-2)
+
+
+def test_an_instants_two_halves_share_one_turnaround():
+    front = _front(times=(0.0, 0.5))
+
+    forced = _turnaround(inflow=0.0, front=front)
+
+    upper, lower = forced.pressure.reshape(2, -1)
+    assert forced.pressure.shape == (4,)
+    assert torch.equal(upper, lower)
+
+
 # --- the split on a model ---------------------------------------------------------
 
 
@@ -520,6 +610,64 @@ def test_at_no_price_the_split_is_only_counted(tmp_path):
     assert float(with_split.detach()) == pytest.approx(float(plain.detach()), rel=1e-6)
 
 
+def test_with_no_easing_every_instant_is_charged_the_whole_price(tmp_path):
+    cfg, data, model = _model(tmp_path)
+    _tight(model)
+    front, groups = _model_front(data, model), compute_groups(cfg)
+
+    split = depth_drain.depth_split(model, front, groups, view_x_max=None)
+
+    assert split.charged is split.needed
+    assert torch.equal(split.price_share, torch.ones_like(split.price_share))
+
+
+def test_the_price_falls_with_the_turnaround_the_outline_forces(tmp_path):
+    cfg, data, model = _model(tmp_path, [*DRAIN, "model.depth_drain_ease=2.0"])
+    front, groups = _model_front(data, model), compute_groups(cfg)
+
+    split = depth_drain.depth_split(model, front, groups, view_x_max=None)
+
+    edges = depth_drain.half_edges(front, model.depth_root.starts_at)
+    forced = depth_drain.turnaround(
+        front,
+        edges,
+        groups["u_inlet_star"],
+        model.depth_drain_channel_width,
+        math.pi / 4.0 / groups["We"],
+    )
+    assert float(forced.ratio.max()) > 0.0
+    assert torch.allclose(split.price_share, 1.0 / (1.0 + 2.0 * forced.ratio))
+    assert not split.price_share.requires_grad
+
+
+def test_the_eased_charge_counts_each_half_at_its_share_of_the_price(tmp_path):
+    cfg, data, model = _model(tmp_path, [*DRAIN, "model.depth_drain_ease=2.0"])
+    _tight(model)
+    front, groups = _model_front(data, model), compute_groups(cfg)
+
+    split = depth_drain.depth_split(model, front, groups, view_x_max=None)
+
+    edges = depth_drain.half_edges(front, model.depth_root.starts_at)
+    sizes = depth_drain.drain_size(split.drained.double()[edges.order, 0], edges.cells)
+    assert split.charged.requires_grad
+    assert float(split.charged.detach()) == pytest.approx(
+        float((sizes * split.price_share).mean()), rel=1e-5
+    )
+    assert float(split.charged.detach()) < float(split.needed.detach())
+
+
+def test_easing_lowers_the_second_charge_and_leaves_the_plain_rule_whole(tmp_path):
+    cfg, data, model = _model(tmp_path)
+    _tight(model)
+    whole = _edge_term(cfg, data, model)
+
+    model.depth_drain_ease = 2.0
+    eased = _edge_term(cfg, data, model)
+
+    plain = _plain_rule(cfg, data, model)
+    assert float(plain.detach()) < float(eased.detach()) < float(whole.detach())
+
+
 def test_the_plain_rule_is_charged_outside_the_roots_law(tmp_path):
     cfg, data, model = _model(tmp_path)
     _bend_the_root_law(model)
@@ -558,11 +706,23 @@ def test_a_root_cap_left_out_stays_out_at_every_instant(tmp_path):
         (["model.laplace_weighting=samples"], "laplace_weighting=length"),
         (["model.depth_drain_tolerance_um=0.0"], "depth_drain_tolerance_um"),
         (["model.depth_drain_price_Pa=-1.0"], "depth_drain_price_Pa"),
+        (["model.depth_drain_ease=-1.0"], "depth_drain_ease"),
     ],
 )
 def test_a_setting_the_split_cannot_work_with_is_refused(tmp_path, overrides, message):
     with pytest.raises(ValueError, match=message):
         _model(tmp_path, [*DRAIN, *overrides])
+
+
+def test_easing_is_refused_under_a_changing_inflow(tmp_path):
+    # The forced turnaround is worked out at the set inflow.
+    cfg, paths = staged_walled_capsule_run(
+        tmp_path, [*DRAIN, *UNSTEADY_INFLOW, "model.depth_drain_ease=1.0"]
+    )
+    data = BubbleDataset(cfg, paths)
+
+    with pytest.raises(ValueError, match="cannot be combined with model.unsteady_inflow"):
+        BubblePINN(cfg, geometry=training._geometry_priors(cfg, data))
 
 
 WARMUP_STEPS = 1
@@ -629,6 +789,25 @@ def test_a_run_with_the_flag_records_the_split(tmp_path):
     assert last["edge_drain_Pa"] >= 0.0
 
 
+def test_a_run_with_no_easing_records_no_eased_charge(tmp_path):
+    paths = _train_past_the_warm_up_without_the_flag(tmp_path)
+
+    _, _, state = _continue_with_the_flag(tmp_path, paths)
+
+    assert "edge_charged_Pa" not in state["hist"][-1]
+
+
+def test_a_run_with_easing_records_what_the_loss_prices(tmp_path):
+    paths = _train_past_the_warm_up_without_the_flag(tmp_path)
+    cfg, _ = _training_run(tmp_path, steps=1, drain=True)
+    cfg.model.depth_drain_ease = 2.0
+
+    _, _, state = training.train(cfg, paths)
+
+    last = state["hist"][-1]
+    assert 0.0 <= last["edge_charged_Pa"] <= last["edge_drain_Pa"]
+
+
 def test_a_run_without_the_flag_records_no_split(tmp_path):
     paths = _train_past_the_warm_up_without_the_flag(tmp_path)
 
@@ -673,6 +852,20 @@ def test_the_audit_reports_the_split_of_a_frame(tmp_path):
     assert record["drained_force_uN"] > 0.0
     assert record["drain_rms_Pa"] > 0.0
     assert record["edge_move_um"] < record["edge_move_undrained_um"]
+
+
+def test_the_audit_reports_the_forced_turnaround_and_the_share_of_the_price(tmp_path):
+    cfg, data, model = _model(tmp_path)
+    groups, instant = compute_groups(cfg), float(data.t[1])
+
+    whole = depth_drain_record(model, groups, instant, view_x_max=None)
+    model.depth_drain_ease = 2.0
+    eased = depth_drain_record(model, groups, instant, view_x_max=None)
+
+    assert whole["turnaround_Pa"] > 0.0
+    assert whole["drain_price_share"] == 1.0
+    assert eased["turnaround_Pa"] == whole["turnaround_Pa"]
+    assert 0.0 < eased["drain_price_share"] < 1.0
 
 
 def test_the_audit_reports_no_split_without_the_flag(tmp_path):

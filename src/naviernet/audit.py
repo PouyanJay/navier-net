@@ -522,7 +522,10 @@ def depth_drain_record(model, groups, t: float, view_x_max: float | None) -> dic
     the three; the size of the drain the loss charges (RMS along a half,
     pascals); and how far the bubble rebuilt from the forces sits from the
     real outline (RMS, microns, the worse half) with nothing drained and with
-    the drain. ``None`` without the flag or before the first image."""
+    the drain; and the pressure the outline forces on the liquid turning
+    around the head (pascals) with the share of the drain's price the instant
+    is charged under ``model.depth_drain_ease``. ``None`` without the flag or
+    before the first image."""
     if not getattr(model, "depth_drain", False):
         return None
     instant = torch.tensor([[t]], dtype=torch.float32, device=_device(model))
@@ -544,6 +547,8 @@ def depth_drain_record(model, groups, t: float, view_x_max: float | None) -> dic
     record["drain_rms_Pa"] = float(split.needed.detach()) * pressure
     record["edge_move_undrained_um"] = float(split.move_before.max()) * length * 1e6
     record["edge_move_um"] = float(split.move_after.max()) * length * 1e6
+    record["turnaround_Pa"] = float(split.turnaround.max()) * pressure
+    record["drain_price_share"] = float(split.price_share.min())
     return record
 
 

@@ -417,12 +417,14 @@ def _laplace_term(ctx: LossContext) -> torch.Tensor:
         # for, and the drained part charged a second time, by the unit. A
         # plain error e is charged e^2, so its next unit costs 2e: at the
         # price p every unit of drain costs what the next unit of a plain
-        # error of p does.
+        # error of p does. Under model.depth_drain_ease an instant's share of
+        # that price falls with the turnaround its outline forces on the
+        # liquid; the plain rule is charged in full either way.
         outside_the_law = split.kept + split.drained
         plain = in_view_mean(
             outside_the_law**2, ctx.front.points[:, 0:1], ctx.view_x_max, weights
         )
-        return plain + 2.0 * ctx.model.depth_drain_price * split.needed
+        return plain + 2.0 * ctx.model.depth_drain_price * split.charged
     residual = laplace_jump_residual(ctx.model, ctx.front, ctx.groups)
     if str(getattr(ctx.model.cfg.model, "laplace_condition", "pointwise")) == "mean":
         residual = per_instant_mean(residual, ctx.front.points[:, 2], weights)

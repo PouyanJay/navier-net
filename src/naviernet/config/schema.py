@@ -586,9 +586,24 @@ class ModelConfig:
     # of the kept part and trained the root's curve. By step 8,000 it drained
     # 1.3 to 15.9 uN in frames 7 to 11 where ghost10 needs 0.4 to 7.2, and its
     # root curve had grown along the whole tail.
+    # depth_drain_ease lets the price fall where the outlines themselves force
+    # the liquid to turn around the head. At the set inflow, with the bubble
+    # filling the depth, mass conservation gives the speed of the liquid ahead
+    # of the nose and in the gaps beside the head; the pressure it takes to get
+    # from one to the other is one the 2D flow law cannot avoid and the outline
+    # does not show. An instant's price is divided by 1 + depth_drain_ease
+    # times that pressure over the capillary pressure of the head's in-plane
+    # curve (0: no easing; 1: halved where the two are equal). The ratio comes
+    # from the outline's own motion, not from the trained fields. On
+    # Series-1-w300 at 15 mL/h it is under 0.1 in frames 2 to 6, then 0.3, 0.8,
+    # 1.6, 3.0 in frames 7 to 10. Why: with the price alone the solver was
+    # pushed against that forced flow in frame 10 and bent the flow law there
+    # (momentum error 0.44 with the plain rule, 0.60 at price 20 and tolerance
+    # 5 um after 300 steps) while the frame's edge forces did not improve.
     depth_drain: bool = False
     depth_drain_tolerance_um: float = 10.0
     depth_drain_price_Pa: float = 5.0
+    depth_drain_ease: float = 0.0
     depth_root_reach_um: float = 150.0
     depth_root_knots: int = 15
     # Zero tangential stress on the liquid side of the front (the Brinkman law
