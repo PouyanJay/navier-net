@@ -587,7 +587,8 @@ class ModelConfig:
     # 1.3 to 15.9 uN in frames 7 to 11 where ghost10 needs 0.4 to 7.2, and its
     # root curve had grown along the whole tail.
     # depth_drain_ease lets the price fall where the outlines themselves force
-    # the liquid to turn around the head. At the set inflow, with the bubble
+    # the liquid to turn around the head. At the inflow (the set one, or the
+    # trained curve's at each instant under unsteady_inflow), with the bubble
     # filling the depth, mass conservation gives the speed of the liquid ahead
     # of the nose and in the gaps beside the head; the pressure it takes to get
     # from one to the other is one the 2D flow law cannot avoid and the outline

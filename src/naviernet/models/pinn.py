@@ -319,11 +319,6 @@ class BubblePINN(nn.Module):
                 "model.depth_drain_ease divides the drain's price where the outline "
                 f"forces the liquid to turn around, so it cannot be negative; got {ease}"
             )
-        if ease > 0.0 and bool(getattr(model, "unsteady_inflow", False)):
-            raise ValueError(
-                "model.depth_drain_ease works the forced turnaround out at the set "
-                "inflow, so it cannot be combined with model.unsteady_inflow"
-            )
         length_um = float(cfg.scales.L_ref_um)
         pressure_Pa = float(cfg.fluid.rho_l) * float(cfg.scales.U_ref) ** 2
         self.depth_drain_tolerance = tolerance_um / length_um

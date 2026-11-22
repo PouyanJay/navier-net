@@ -29,7 +29,7 @@ way to none, and the pull on a large one does not grow, so an instant the 2D
 model cannot bring within the tolerance does not take the run over.
 
 Where the outlines themselves force the liquid to turn around the bubble's head,
-the second charge can ease (``model.depth_drain_ease``). At the set inflow, with
+the second charge can ease (``model.depth_drain_ease``). At the inflow, with
 the bubble filling the depth, mass conservation fixes how fast the liquid ahead
 of the nose moves and how fast it must pass through the gaps beside the head;
 in the nose's frame it speeds up from the one to the other, and the pressure
@@ -38,7 +38,10 @@ outline does not show. The price is divided by one plus that pressure's ratio
 to the capillary pressure of the head's own in-plane curve, times the setting.
 The ratio is read off the front's own motion, the measured outline's under
 ``model.measured_outline``, never off the trained fields, and carries no
-gradient: the solver cannot move it. The plain rule is never eased.
+gradient: the solver cannot move it. The inflow is the set one, or under
+``model.unsteady_inflow`` the trained curve's at each instant, read as a plain
+value: the price follows the inflow the run has learned, but no instant can
+lower its price by moving it. The plain rule is never eased.
 
 The bubble the kept forces would shape is read off a linear model of the
 rebuild: a mismatch in the pressure step is a mismatch in the edge's bend, the
@@ -353,15 +356,30 @@ def smallest_drain(
 
 
 @torch.no_grad()
+def inflow_at(model, front, edges: HalfEdges, groups: dict[str, float]) -> torch.Tensor:
+    """The inlet's mean speed at each imaged instant, ``(instants,)`` double on
+    the CPU: the set speed, times the trained curve's multiple under
+    ``model.unsteady_inflow``. A plain value, with no gradient."""
+    instants = len(edges.order) // HALVES
+    times = front.points[edges.order[:instants, 0], 2:3].detach()
+    factor = model.inflow_factor(times)[:, 0]
+    return float(groups["u_inlet_star"]) * factor.detach().double().cpu()
+
+
+@torch.no_grad()
 def turnaround(
-    front, edges: HalfEdges, inflow: float, channel_width: float, stiffness: float
+    front,
+    edges: HalfEdges,
+    inflow: float | torch.Tensor,
+    channel_width: float,
+    stiffness: float,
 ) -> Turnaround:
     """The pressure the outline's own motion forces on the liquid as it passes
     the head, at each imaged instant, from mass conservation alone.
 
     With the bubble filling the depth and the inlet at ``inflow`` (its mean
-    speed), the liquid ahead of the nose moves at the inflow plus the bubble's
-    growth over ``channel_width``. The head sweeps its own width at the nose's
+    speed, one for all instants or one per instant), the liquid ahead of the
+    nose moves at the inflow plus the bubble's growth over ``channel_width``. The head sweeps its own width at the nose's
     speed; what of that the liquid ahead does not carry off passes through the
     gaps beside the head. Seen from the nose the liquid speeds up from the one
     to the other, and by Bernoulli that takes half the difference of the
@@ -447,7 +465,7 @@ def depth_split(model, front, groups: dict[str, float], view_x_max: float | None
     forced = turnaround(
         front,
         edges,
-        float(groups["u_inlet_star"]),
+        inflow_at(model, front, edges, groups),
         float(model.depth_drain_channel_width),
         stiffness,
     )

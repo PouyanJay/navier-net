@@ -714,15 +714,79 @@ def test_a_setting_the_split_cannot_work_with_is_refused(tmp_path, overrides, me
         _model(tmp_path, [*DRAIN, *overrides])
 
 
-def test_easing_is_refused_under_a_changing_inflow(tmp_path):
-    # The forced turnaround is worked out at the set inflow.
-    cfg, paths = staged_walled_capsule_run(
-        tmp_path, [*DRAIN, *UNSTEADY_INFLOW, "model.depth_drain_ease=1.0"]
-    )
+def _walled_model(tmp_path, overrides):
+    cfg, paths = staged_walled_capsule_run(tmp_path, list(overrides))
     data = BubbleDataset(cfg, paths)
+    torch.manual_seed(0)
+    model = BubblePINN(cfg, geometry=training._geometry_priors(cfg, data))
+    training.bind_depth_drain(model, data)
+    return cfg, data, model
 
-    with pytest.raises(ValueError, match="cannot be combined with model.unsteady_inflow"):
-        BubblePINN(cfg, geometry=training._geometry_priors(cfg, data))
+
+def test_under_a_changing_inflow_the_price_follows_the_learned_inflow(tmp_path):
+    cfg, data, model = _walled_model(
+        tmp_path / "eased", [*DRAIN, *UNSTEADY_INFLOW, "model.depth_drain_ease=1.0"]
+    )
+    with torch.no_grad():
+        n = len(model.inflow_curve.coefficients)
+        model.inflow_curve.coefficients.copy_(torch.linspace(-1.0, 1.0, n))
+    front, groups = _model_front(data, model), compute_groups(cfg)
+
+    split = depth_drain.depth_split(model, front, groups, view_x_max=None)
+
+    edges = depth_drain.half_edges(front, model.depth_root.starts_at)
+    inflow = depth_drain.inflow_at(model, front, edges, groups)
+    forced = depth_drain.turnaround(
+        front, edges, inflow, model.depth_drain_channel_width, math.pi / 4.0 / groups["We"]
+    )
+    assert float(inflow.max() - inflow.min()) > 0.0
+    assert torch.allclose(split.price_share, 1.0 / (1.0 + forced.ratio))
+    assert not split.price_share.requires_grad
+
+
+def test_the_learned_inflow_is_read_per_instant_off_the_curve(tmp_path):
+    cfg, data, model = _walled_model(tmp_path, [*DRAIN, *UNSTEADY_INFLOW])
+    with torch.no_grad():
+        n = len(model.inflow_curve.coefficients)
+        model.inflow_curve.coefficients.copy_(torch.linspace(-1.0, 1.0, n))
+    front, groups = _model_front(data, model), compute_groups(cfg)
+    edges = depth_drain.half_edges(front, model.depth_root.starts_at)
+
+    inflow = depth_drain.inflow_at(model, front, edges, groups)
+
+    times = torch.unique(front.points[:, 2].detach()).reshape(-1, 1)
+    by_hand = groups["u_inlet_star"] * model.inflow_curve(times)[:, 0].detach().double()
+    assert not inflow.requires_grad
+    assert torch.allclose(inflow, by_hand[-len(inflow) :])
+
+
+def test_under_a_steady_inlet_the_inflow_is_the_set_one(tmp_path):
+    cfg, data, model = _model(tmp_path)
+    front, groups = _model_front(data, model), compute_groups(cfg)
+    edges = depth_drain.half_edges(front, model.depth_root.starts_at)
+
+    inflow = depth_drain.inflow_at(model, front, edges, groups)
+
+    assert torch.allclose(inflow, torch.full_like(inflow, groups["u_inlet_star"]))
+
+
+def test_one_inflow_per_instant_gives_each_instant_its_own_turnaround():
+    front = _front(times=(0.0, 0.5))
+    edges = depth_drain.half_edges(front, starts_at=0.0)
+
+    both = depth_drain.turnaround(
+        front,
+        edges,
+        torch.tensor([0.0, BUBBLE_SPEED], dtype=torch.float64),
+        CHANNEL_WIDTH,
+        STIFFNESS,
+    )
+
+    first = depth_drain.turnaround(front, edges, 0.0, CHANNEL_WIDTH, STIFFNESS)
+    second = depth_drain.turnaround(front, edges, BUBBLE_SPEED, CHANNEL_WIDTH, STIFFNESS)
+    upper = both.pressure.reshape(2, -1)[0]
+    assert float(upper[0]) == pytest.approx(float(first.pressure[0]))
+    assert float(upper[1]) == pytest.approx(float(second.pressure[1]))
 
 
 WARMUP_STEPS = 1
