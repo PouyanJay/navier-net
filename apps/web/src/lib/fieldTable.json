@@ -1487,6 +1487,23 @@
     "default": 0
   },
   {
+    "key": "training.instant_grid",
+    "label": "Instant grid",
+    "kind": "int",
+    "section": "training",
+    "owner": "override",
+    "help": "the physics stage draws its instants from this many evenly spaced intervals of the window, so each instant's flow solve is done once and kept; 0 draws every instant afresh",
+    "unit": "",
+    "options": [],
+    "lo": 0,
+    "hi": 65536,
+    "optional": false,
+    "baked": false,
+    "advanced": true,
+    "name": "instant_grid",
+    "default": 0
+  },
+  {
     "key": "training.causal_gate_min_weight",
     "label": "Causal convergence gate",
     "kind": "float",

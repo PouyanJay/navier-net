@@ -190,6 +190,11 @@ class BubbleDataset:
         self._train_idx = np.where(trainable)[0]
         probabilities = weights[self._train_idx]
         self._train_p = probabilities / probabilities.sum()
+        # The running sum the weighted draw searches, built once: rng.choice
+        # builds it again from the probabilities on every call, 40 ms of a
+        # step over a few million pixels.
+        self._train_cdf = self._train_p.cumsum()
+        self._train_cdf /= self._train_cdf[-1]
 
     def _prepend_ghost_frames(self, cfg, paths: RunPaths) -> None:
         """Put the ghost frames (``experiment.ghost_duration_ms``) before the
@@ -546,9 +551,15 @@ class BubbleDataset:
             axis=1,
         ).astype(np.float32)
 
+    def _draw_trainable(self, n: int, rng) -> np.ndarray:
+        """``n`` interface-weighted pixels of the training frames: the draw
+        ``rng.choice(..., p=self._train_p)`` makes, number for number, read off
+        the running sum kept at start-up."""
+        return self._train_idx[self._train_cdf.searchsorted(rng.random(n), side="right")]
+
     def sample_supervised(self, n: int, rng) -> tuple[torch.Tensor, torch.Tensor]:
         """Interface-weighted supervised points drawn from the training frames."""
-        idx = self._train_idx[rng.choice(len(self._train_idx), n, p=self._train_p)]
+        idx = self._draw_trainable(n, rng)
         coords = self._coords(idx)
         target = 1.0 / (1.0 + np.exp(self.sdf.ravel()[idx] / self.eps))
         return (
@@ -634,7 +645,7 @@ class BubbleDataset:
             axis=1,
         ).astype(np.float32)
 
-        idx = self._train_idx[rng.choice(len(self._train_idx), n - n_uniform, p=self._train_p)]
+        idx = self._draw_trainable(n - n_uniform, rng)
         # Jitter off the pixel grid so residuals are not evaluated only where
         # supervision already pins the solution.
         near_interface = self._coords(idx)

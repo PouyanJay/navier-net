@@ -676,3 +676,67 @@ def test_the_film_under_the_weak_zone_evaporates_at_its_own_flux(tmp_path):
 
     assert down == pytest.approx(groups["footprint_source_star"] * 0.5, rel=1e-3)
     assert up == pytest.approx(down * ratio, rel=1e-2)
+
+
+def _source_one_instant_at_a_time(model, x: torch.Tensor) -> torch.Tensor:
+    """The outline's thermal source as the sum over each instant's own front,
+    one front call per instant: what the batched sum must reproduce."""
+    sigma = model.source_kernel_width
+    source = torch.zeros_like(x[:, :1])
+    for instant in torch.unique(x[:, 2]):
+        members = x[:, 2] == instant
+        flux, weights, points = model._front_flux(instant, None)
+        offsets = x[members, :2].unsqueeze(1) - points.unsqueeze(0)
+        kernel = torch.exp(-(offsets**2).sum(dim=-1) / (2.0 * sigma**2))
+        kernel = kernel / (2.0 * torch.pi * sigma**2)
+        source[members] = model._source_coefficient * (kernel * (flux * weights).T).sum(
+            dim=1, keepdim=True
+        )
+    return source
+
+
+def _points_at_mixed_instants(data, n: int = 96) -> torch.Tensor:
+    torch.manual_seed(3)
+    place = torch.rand(n, 2) * torch.tensor([2.0, 1.0])
+    instants = torch.tensor([float(data.t[k]) for k in (1, 3, 2)])
+    return torch.cat([place, instants[torch.arange(n) % 3].reshape(-1, 1)], dim=1)
+
+
+def test_the_fronts_of_several_instants_are_read_as_each_is_alone(tmp_path):
+    _, data, model = _model(tmp_path, [*SHARP_THERMAL, "model.source_mode=thermal"])
+    instants = torch.tensor([float(data.t[k]) for k in (1, 2, 3)])
+
+    flux, weights, points = model._front_fluxes(instants, None)
+
+    for k, instant in enumerate(instants):
+        alone = model._front_flux(instant, None)
+        assert torch.allclose(flux[k], alone[0], atol=1e-6)
+        assert torch.allclose(weights[k], alone[1], atol=1e-7)
+        assert torch.allclose(points[k], alone[2], atol=1e-7)
+
+
+def test_the_source_of_a_mixed_batch_is_each_points_own_instants(tmp_path):
+    _, data, model = _model(tmp_path, [*SHARP_THERMAL, "model.source_mode=thermal"])
+    x = _points_at_mixed_instants(data)
+
+    source = model.thermal_source(x)
+
+    expected = _source_one_instant_at_a_time(model, x)
+    assert float(expected.abs().max()) > 0.0
+    assert torch.allclose(source, expected, rtol=1e-5, atol=1e-8)
+
+
+def test_the_batched_source_carries_the_same_gradient_to_the_temperature(tmp_path):
+    _, data, model = _model(tmp_path, [*SHARP_THERMAL, "model.source_mode=thermal"])
+    x = _points_at_mixed_instants(data)
+    weights = list(model.nets["T"].parameters())
+
+    batched = torch.autograd.grad(model.thermal_source(x).sum(), weights, allow_unused=True)
+    looped = torch.autograd.grad(
+        _source_one_instant_at_a_time(model, x).sum(), weights, allow_unused=True
+    )
+
+    for got, expected in zip(batched, looped, strict=True):
+        assert (got is None) == (expected is None)
+        if got is not None:
+            assert torch.allclose(got, expected, rtol=1e-4, atol=1e-8)

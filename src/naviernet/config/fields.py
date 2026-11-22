@@ -1100,6 +1100,21 @@ TRAINING: tuple[FieldSpec, ...] = (
         advanced=True,
     ),
     FieldSpec(
+        "training.instant_grid",
+        "Instant grid",
+        "int",
+        "training",
+        "override",
+        help=(
+            "the physics stage draws its instants from this many evenly spaced "
+            "intervals of the window, so each instant's flow solve is done once "
+            "and kept; 0 draws every instant afresh"
+        ),
+        lo=0,
+        hi=65536,
+        advanced=True,
+    ),
+    FieldSpec(
         "training.causal_gate_min_weight",
         "Causal convergence gate",
         "float",

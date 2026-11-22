@@ -419,18 +419,20 @@ def _boundary_plan(cfg) -> _BoundaryPlan:
     )
 
 
-def _mass_balance_plan(cfg, data: BubbleDataset, groups: dict, device, rng=None):
+def _mass_balance_plan(
+    cfg, data: BubbleDataset, groups: dict, device, rng=None, instant_grid: int = 0
+):
     """The cross-section mass-balance quadrature when the term is on, else None.
     With ``rng`` (``training.quadrature_jitter``) its instants are a fresh
     stratified draw, so the balance is scored across the window rather than at
-    the same eight instants every step."""
+    the same eight instants every step; on the ``instant_grid`` when one is
+    given."""
     if not bool(getattr(cfg.training, "mass_balance", False)):
         return None
     at_times = None
     if rng is not None:
-        at_times = torch.tensor(
-            _stratified_times(data.domain, int(cfg.training.mass_balance_times), rng)
-        )
+        drawn = _stratified_times(data.domain, int(cfg.training.mass_balance_times), rng)
+        at_times = torch.tensor(_on_instant_grid(drawn, data.domain, instant_grid))
     return mass_balance.build_plan(
         data.domain, (data.y_lo, data.y_hi), groups, cfg.training, device, at_times=at_times
     )
@@ -443,21 +445,89 @@ def _stratified_times(domain, n: int, rng) -> np.ndarray:
     return rng.uniform(edges[:-1], edges[1:]).astype(np.float32)
 
 
-def _front_times(cfg, data: BubbleDataset, device, rng=None) -> torch.Tensor | None:
+def _apart(index: np.ndarray) -> np.ndarray:
+    """Ascending whole numbers made strictly ascending, each moved up no
+    further than it must."""
+    steps = np.arange(len(index))
+    return np.maximum.accumulate(index - steps) + steps
+
+
+def _on_instant_grid(times: np.ndarray, domain, instant_grid: int) -> np.ndarray:
+    """Ascending, distinct ``times`` each moved to the nearest of
+    ``instant_grid + 1`` evenly spaced instants over the window
+    (``training.instant_grid``); as drawn when the grid is 0. Two that land on
+    one grid instant are moved a grid step apart, so they stay distinct. Each
+    grid instant is worked out from its index, so it is the same float32
+    whichever draw lands on it and a per-instant solve kept under it is found
+    again."""
+    if instant_grid <= 0:
+        return times
+    if len(times) > instant_grid + 1:
+        raise ValueError(
+            f"training.instant_grid={instant_grid} has fewer instants than the "
+            f"{len(times)} one draw needs"
+        )
+    start = float(domain.t_min)
+    spacing = (float(domain.t_max) - start) / instant_grid
+    index = np.round((times.astype(np.float64) - start) / spacing).astype(np.int64)
+    index = _apart(np.clip(index, 0, instant_grid))
+    # What was pushed past the window's end comes back down, the same way.
+    index = instant_grid - _apart(np.maximum(instant_grid - index, 0)[::-1])[::-1]
+    return (start + index * spacing).astype(np.float32)
+
+
+def _collocation_on_grid(x_coll: torch.Tensor, domain, instant_grid: int) -> torch.Tensor:
+    """The collocation batch with its instants on the ``instant_grid``: the
+    batch as drawn when the grid is 0, else a fresh leaf with each point's time
+    moved (the time bins have already collapsed them onto a few instants)."""
+    if instant_grid <= 0:
+        return x_coll
+    moved = x_coll.detach().clone()
+    instants, of_point = np.unique(moved[:, 2].cpu().numpy(), return_inverse=True)
+    times = _on_instant_grid(instants, domain, instant_grid)[of_point]
+    moved[:, 2] = torch.as_tensor(times, device=moved.device)
+    return moved.requires_grad_(True)
+
+
+def _instant_grid(step: int, tcfg, stage_b_keys: tuple[str, ...]) -> int:
+    """The grid this step's instants are drawn on (``training.instant_grid``),
+    0 for none: only once the geometry is frozen, when what is built per
+    instant on the outline no longer changes and is worth keeping."""
+    if not _geometry_frozen(step, tcfg, stage_b_keys):
+        return 0
+    return int(getattr(tcfg, "instant_grid", 0) or 0)
+
+
+def _validate_instant_grid(tcfg) -> None:
+    grid = int(getattr(tcfg, "instant_grid", 0) or 0)
+    if grid < 0:
+        raise ValueError(f"training.instant_grid is a count of intervals; got {grid}")
+    if grid > 0 and int(tcfg.collocation_time_bins) <= 0:
+        raise ValueError(
+            "training.instant_grid moves the collocation's time bins onto a grid, so it "
+            "needs training.collocation_time_bins > 0"
+        )
+
+
+def _front_times(
+    cfg, data: BubbleDataset, device, rng=None, instant_grid: int = 0
+) -> torch.Tensor | None:
     """The times the interface conditions are sampled at, or ``None`` when the run
     is not sharp-interface.
 
     Without ``rng``, a fixed uniform sweep of the window. With it
     (``training.quadrature_jitter``), a fresh stratified draw each step: the
     first full-chain seed satisfied the Young-Laplace condition at the sixteen
-    fixed instants and violated it between them three to one.
+    fixed instants and violated it between them three to one. The draw is on
+    the ``instant_grid`` when one is given.
     """
     if not _sharp(cfg):
         return None
     d = data.domain
     n = int(cfg.model.front_times)
     if rng is not None:
-        return torch.tensor(_stratified_times(d, n, rng), device=device).reshape(-1, 1)
+        drawn = _on_instant_grid(_stratified_times(d, n, rng), d, instant_grid)
+        return torch.tensor(drawn, device=device).reshape(-1, 1)
     return torch.linspace(d.t_min, d.t_max, n, device=device).reshape(-1, 1)
 
 
@@ -762,6 +832,7 @@ def _validate_training_config(cfg) -> None:
     tcfg = cfg.training
     _validate_causal(tcfg)
     _validate_weighting(tcfg)
+    _validate_instant_grid(tcfg)
     _validate_kinematics(tcfg, cfg.model.fields)
     _validate_front_velocity(tcfg, cfg.model)
     _validate_root_supervision(tcfg, cfg.model)
@@ -2025,6 +2096,16 @@ def _release_nose_dof(model) -> None:
     log.info("nose DOF released: w_nose(t) may move")
 
 
+def _stepped(opt) -> list[torch.Tensor]:
+    """The parameters the optimiser steps: what a step's backward pass has to
+    reach. The sample points are leaves of the graph too (the equations are
+    differentiated through them), and a backward pass left to itself carries
+    every gradient on to them as well, through the outline's distance and the
+    liquid's closed-form potentials, for numbers nothing reads. The parameters'
+    own gradients are the same either way."""
+    return [p for group in opt.param_groups for p in group["params"] if p.requires_grad]
+
+
 def _clip_gradients(model, tcfg) -> torch.Tensor:
     """Bound the step a gradient spike can take (``training.grad_clip`` > 0) and
     return the total gradient norm before any clipping, for the run's record.
@@ -2569,6 +2650,8 @@ def train(
             if rba
             else data.sample_collocation(tcfg.n_coll, rng, tcfg.collocation_time_bins)
         )
+        instant_grid = _instant_grid(step, tcfg, stage_b_keys)
+        x_coll = _collocation_on_grid(x_coll, data.domain, instant_grid)
         inlet, walls = data.sample_boundary(tcfg.n_bc, rng)
         outlet = data.sample_outlet(tcfg.n_bc, rng) if boundaries.outlet else None
         initial = data.sample_initial(tcfg.n_bc, rng) if thermal else None
@@ -2592,8 +2675,8 @@ def train(
         if getattr(model, "exact_liquid", False):
             inlet, walls, outlet = _at_collocation_instants(x_coll, inlet, walls, outlet)
         if _jitter_rng(tcfg, rng) is not None:
-            front_times = _front_times(cfg, data, device, rng)
-            mass_plan = _mass_balance_plan(cfg, data, groups, device, rng)
+            front_times = _front_times(cfg, data, device, rng, instant_grid)
+            mass_plan = _mass_balance_plan(cfg, data, groups, device, rng, instant_grid)
         # Every equation of the step reads the fields at the same batches:
         # computed once and shared (BubblePINN.caching_fields), with their
         # derivatives (residuals.sharing_gradients), not per equation.
@@ -2740,7 +2823,7 @@ def train(
                     bool(getattr(tcfg, "growth_closure_outline_gradient", False)),
                 )
                 total = total + float(tcfg.growth_closure_weight) * closure_total
-            total.backward()
+            total.backward(inputs=_stepped(opt))
         grad_norm = _clip_gradients(model, tcfg)
         opt.step()
         if tcfg.checkpoint_every and step % tcfg.checkpoint_every == 0:

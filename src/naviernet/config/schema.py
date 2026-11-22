@@ -768,6 +768,18 @@ class TrainingConfig:
     collocation_late_share: float = 0.0
     collocation_late_frac: float = 0.0
     collocation_late_bins: int = 0
+    # The physics stage's instants on a fixed grid: every instant a step draws
+    # (the collocation's time bins, the front's times, the mass balance's) is
+    # moved to the nearest of ``instant_grid + 1`` evenly spaced instants over
+    # the window. Under model.exact_continuity each distinct instant costs a
+    # solve of the liquid's potentials, which depend on the frozen outline
+    # alone; on a grid each instant is solved once in the run and kept, where
+    # fresh instants were solved again every step (about a third of a step with
+    # no sample points at all, 2026-11-21). The draws themselves are unchanged
+    # (same strata, same random numbers), so 1024 moves an instant by at most
+    # 1/2048 of the window, about 3 um of nose travel on Series-1-w300.
+    # 0 = off, every instant its own. Acts only once the geometry is frozen.
+    instant_grid: int = 0
 
     # Frame withheld from supervision entirely (0-based) and used as the
     # honest generalisation test. Set to -1 to train on every frame. This is the

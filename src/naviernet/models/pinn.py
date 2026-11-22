@@ -33,6 +33,7 @@ from naviernet.models.inflow import InflowCurve
 from naviernet.models.layers import AdaptiveTanh, FourierFeatures, inverse_softplus, logit
 from naviernet.models.measured_outline import MeasuredInterface
 from naviernet.models.potential_flow import (
+    CACHE_SIZE,
     INLET_X,
     Channel,
     FieldCache,
@@ -77,6 +78,23 @@ STREAM_PREFIX = "stream_net."
 # is the difference of two solves. On exact4-s0's frame-9 gap the inertia it
 # gives agrees to 0.1% for steps from 3e-4 to 1e-2.
 RATE_STEP = 1e-3
+
+
+# Points whose thermal source is summed over their instant's front at once.
+SOURCE_CHUNK = 32768
+
+# Instants the rate's stencil reaches from one instant: itself and a step
+# either side (two steps to one side at the window's ends, a handful).
+RATE_STENCIL = 3
+
+
+def _field_cache_size(cfg) -> int:
+    """How many instants' solved potentials the model keeps: the fixed
+    quadratures alone when every step draws fresh instants, and under
+    ``training.instant_grid`` every grid instant with its rate stencil, so
+    each is solved once in the run."""
+    grid = int(getattr(cfg.training, "instant_grid", 0) or 0)
+    return CACHE_SIZE + RATE_STENCIL * (grid + 1) if grid > 0 else CACHE_SIZE
 
 
 def _shifted(velocity, base: torch.Tensor, shift: float):
@@ -554,7 +572,7 @@ class BubblePINN(nn.Module):
         with torch.no_grad():
             self.stream_net.mlp[-1].weight.zero_()
             self.stream_net.mlp[-1].bias.zero_()
-        self._liquid_fields = FieldCache()
+        self._liquid_fields = FieldCache(_field_cache_size(cfg))
         if unsteady:
             priors = self.nets["phi"].priors
             self.inflow_curve = InflowCurve(
@@ -1583,7 +1601,10 @@ class BubblePINN(nn.Module):
         shaped by the images and the interface conditions, never through this
         side door. The flux itself keeps its gradient, so the temperature learns
         from the growth the source has to carry. Points are grouped by their
-        instant, so a batch whose times are binned costs one front per bin.
+        instant, so a batch whose times are binned costs one front per bin, and
+        the bins' fronts are sampled and their flux read in one call
+        (:meth:`_front_fluxes`): one instant at a time, the small launches were
+        a third of a step on the H100 once the liquid's solves were kept.
 
         Under ``model.footprint_evaporation`` the film's source
         (:meth:`footprint_source`) is added: the wall flux under the bubble
@@ -1593,15 +1614,16 @@ class BubblePINN(nn.Module):
         sigma = self.source_kernel_width
         source = torch.zeros_like(x[:, :1])
         instants, inverse = torch.unique(x[:, 2].detach(), return_inverse=True)
-        for k, instant in enumerate(instants):
-            members = inverse == k
-            flux, weights, points = self._front_flux(instant, c)
-            offsets = x[members, :2].unsqueeze(1) - points.unsqueeze(0)
+        flux, weights, points = self._front_fluxes(instants, c)
+        strength = (flux * weights)[..., 0]
+        parts = []
+        for rows in torch.arange(len(x), device=x.device).split(SOURCE_CHUNK):
+            own = inverse[rows]
+            offsets = x[rows, :2].unsqueeze(1) - points[own]
             kernel = torch.exp(-(offsets**2).sum(dim=-1) / (2.0 * sigma**2))
             kernel = kernel / (2.0 * torch.pi * sigma**2)
-            source[members] = coefficient * (kernel * (flux * weights).T).sum(
-                dim=1, keepdim=True
-            )
+            parts.append(coefficient * (kernel * strength[own]).sum(dim=1, keepdim=True))
+        source = torch.cat(parts) if parts else source
         return source + self.footprint_source(x, c)
 
     def interface_flux_at(self, front, c: torch.Tensor | None = None) -> torch.Tensor:
@@ -1638,15 +1660,22 @@ class BubblePINN(nn.Module):
         self, instant: torch.Tensor, c: torch.Tensor | None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """``(flux, arclength weights, xy)`` of the front at one instant."""
+        flux, weights, points = self._front_fluxes(instant.reshape(1), c)
+        return flux[0], weights[0], points[0]
+
+    def _front_fluxes(
+        self, instants: torch.Tensor, c: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """``(flux, arclength weights, xy)`` of the front at each of ``instants``
+        ``(K,)``: ``(K, P, 1)``, ``(K, P, 1)`` and ``(K, P, 2)``, every front
+        sampled in one geometry call and every flux read in one."""
         model_cfg = self.cfg.model
         n_body, n_cap = int(model_cfg.front_body_samples), int(model_cfg.front_cap_samples)
-        front = self.front(instant.reshape(1, 1), n_body, n_cap, c)
-        points = front.points.detach()[:, :2]
-        return (
-            self.interface_flux_at(front, c),
-            _arclength_weights(points, n_body, n_cap),
-            points,
-        )
+        counts = (n_body, n_body, n_cap, n_cap)
+        front = self.front(instants.reshape(-1, 1), n_body, n_cap, c)
+        flux = _by_instant(self.interface_flux_at(front, c), len(instants), counts)
+        points = _by_instant(front.points.detach()[:, :2], len(instants), counts)
+        return flux, _arclength_weights(points, n_body, n_cap), points
 
     def pressure(self, x: torch.Tensor, c: torch.Tensor | None = None) -> torch.Tensor:
         """The pressure field. Stage B; raises if the pressure field was not configured.

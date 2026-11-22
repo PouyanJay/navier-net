@@ -136,11 +136,12 @@ def build_plan(data, stride: int, device, target: str = "measured") -> GrowthClo
     )
 
 
-def outline_vapour(model, instant: torch.Tensor) -> torch.Tensor:
-    """The outline flux's part of ``int s dA`` at one instant: the coefficient
-    times the flux integrated along the front (the kernel is normalised)."""
-    flux, weights, _ = model._front_flux(instant, None)
-    return model._source_coefficient * (flux * weights).sum()
+def outline_vapour(model, instants: torch.Tensor) -> torch.Tensor:
+    """The outline flux's part of ``int s dA`` at each of ``instants``, ``(n,)``:
+    the coefficient times the flux integrated along the front (the kernel is
+    normalised), every front in one call."""
+    flux, weights, _ = model._front_fluxes(instants.reshape(-1), None)
+    return model._source_coefficient * (flux * weights).sum(dim=(1, 2))
 
 
 @contextmanager
@@ -165,16 +166,19 @@ def source_totals(
     part (with its gradient) and the outline's: detached and read without a
     parameter graph, or with its gradient to the temperature under
     ``outline_gradient`` (``training.growth_closure_outline_gradient``)."""
-    footprint, outline = [], []
-    for instant in plan.times:
-        x = torch.cat([plan.points, instant.expand(len(plan.points), 1)], dim=1)
-        footprint.append(model.footprint_source(x).sum() * plan.cell)
-        if outline_gradient:
-            outline.append(outline_vapour(model, instant))
-        else:
-            with _without_parameter_graph(model):
-                outline.append(outline_vapour(model, instant).detach())
-    return torch.stack(footprint), torch.stack(outline)
+    n_times, n_points = len(plan.times), len(plan.points)
+    x = torch.cat(
+        [
+            plan.points.repeat(n_times, 1),
+            plan.times.reshape(-1, 1).repeat_interleave(n_points, dim=0),
+        ],
+        dim=1,
+    )
+    footprint = model.footprint_source(x).reshape(n_times, n_points).sum(dim=1) * plan.cell
+    if outline_gradient:
+        return footprint, outline_vapour(model, plan.times)
+    with _without_parameter_graph(model):
+        return footprint, outline_vapour(model, plan.times).detach()
 
 
 def growth_closure_loss(

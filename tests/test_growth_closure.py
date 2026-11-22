@@ -185,3 +185,19 @@ def test_the_switch_lets_the_closure_train_the_temperature(tmp_path):
     loss.backward()
 
     assert any(p.grad is not None for p in model.nets["T"].parameters())
+
+
+def test_every_frames_totals_are_those_of_the_frame_alone(tmp_path):
+    data, model = _model(tmp_path)
+    plan = growth_closure.build_plan(data, stride=2, device="cpu")
+
+    footprint, outline = growth_closure.source_totals(model, plan, outline_gradient=True)
+
+    for k, instant in enumerate(plan.times):
+        x = torch.cat([plan.points, instant.expand(len(plan.points), 1)], dim=1)
+        flux, weights, _ = model._front_flux(instant, None)
+        alone = model._source_coefficient * (flux * weights).sum()
+        assert float(footprint[k]) == pytest.approx(
+            float(model.footprint_source(x).sum()) * plan.cell, rel=1e-5
+        )
+        assert float(outline[k]) == pytest.approx(float(alone), rel=1e-5, abs=1e-9)

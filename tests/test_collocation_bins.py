@@ -126,3 +126,13 @@ def test_a_run_trains_end_to_end_with_binned_times(tmp_path):
     train(cfg, paths)
     model, _, _ = load_model(cfg, paths)
     assert model is not None
+
+
+def test_the_weighted_pixel_draw_is_the_one_the_generator_makes(tmp_path):
+    data = _dataset(tmp_path)
+
+    drawn = data._draw_trainable(64, np.random.default_rng(7))
+
+    rng = np.random.default_rng(7)
+    expected = data._train_idx[rng.choice(len(data._train_idx), 64, p=data._train_p)]
+    assert np.array_equal(drawn, expected)
